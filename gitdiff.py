@@ -8,9 +8,12 @@ from __future__ import annotations
 import argparse
 import os
 from typing import Optional
+from rich.text import Text
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
+from textual import events
 from textual.widgets import (
     Static,
     Header,
@@ -35,19 +38,53 @@ class FileList(ListView):
             entries = sorted(os.listdir(path))
         except Exception as exc:
             self.clear()
-            self.append(ListItem(Label(f"Error reading {path}: {exc}", style="red")))
+            self.append(ListItem(Label(Text(f"Error reading {path}: {exc}", style="red"))))
             return
 
         self.clear()
         # Parent entry
-        self.append(ListItem(Label("..", style="white on blue")))
+        self.append(ListItem(Label(Text("..", style="white on blue"))))
 
         for name in entries:
             full = os.path.join(path, name)
             if os.path.isdir(full):
-                self.append(ListItem(Label(name, style="white on blue")))
+                self.append(ListItem(Label(Text(name, style="white on blue"))))
             else:
                 self.append(ListItem(Label(name)))
+
+    def on_key(self, event: events.Key) -> None:
+        """Only allow up/down/left/right in this column.
+
+        - Up: move to previous entry
+        - Down: move to next entry
+        - Left/Right: show a temporary "TBD" modal
+        - Other keys: ignore
+        """
+        key = event.key
+        if key == "up":
+            event.stop()
+            self.action_cursor_up()
+        elif key == "down":
+            event.stop()
+            self.action_cursor_down()
+        elif key in ("left", "right"):
+            event.stop()
+            # show a simple modal informing this is TBD
+            self.app.push_screen(_TBDModal())
+        else:
+            # ignore other keys
+            event.stop()
+
+
+class _TBDModal(ModalScreen):
+    """Simple modal that shows a "TBD" message and closes on any key."""
+
+    def compose(self) -> ComposeResult:
+        yield Static(Text("TBD", style="bold"), id="tbd-msg")
+
+    def on_key(self, event: events.Key) -> None:
+        event.stop()
+        self.app.pop_screen()
 
 
 class ThreeColumnApp(App):
@@ -73,10 +110,16 @@ Horizontal {
         yield Header()
         with Horizontal():
             # left column: flex so it takes remaining space
-            yield FileList(id="left")
+            with Vertical(id="left-column"):
+                yield Label(Text("Files", style="bold"), id="left-title")
+                yield FileList(id="left")
             # two minimal right columns
-            yield Static("Right minimal 1", id="right1")
-            yield Static("Right minimal 2", id="right2")
+            with Vertical(id="right1-column"):
+                yield Label(Text("History", style="bold"), id="right1-title")
+                yield Static("Right minimal 1", id="right1")
+            with Vertical(id="right2-column"):
+                yield Label(Text("Diff", style="bold"), id="right2-title")
+                yield Static("Right minimal 2", id="right2")
         yield Footer()
 
     async def on_mount(self) -> None:  # set sizes and populate left
