@@ -410,23 +410,24 @@ class HistoryList(ListView):
             right2 = self.app.query_one("#right2", ListView)
             # set widths to 50/50
             try:
-                # Adjust outer columns so left/right1 split the screen 50/50
+                # Adjust outer columns so left/right1 split the screen 25/75
                 try:
-                    self.app.query_one("#left-column").styles.width = "50%"
+                    self.app.query_one("#left-column").styles.width = "25%"
                     self.app.query_one("#left-column").styles.flex = 0
                 except Exception:
                     pass
                 try:
-                    self.app.query_one("#right1-column").styles.width = "50%"
+                    self.app.query_one("#right1-column").styles.width = "75%"
                     self.app.query_one("#right1-column").styles.flex = 0
                 except Exception:
                     pass
+                # inner lists should fill their outer column
                 left.styles.width = "100%"
                 left.styles.flex = 0
             except Exception:
                 pass
             try:
-                self.styles.width = "50%"
+                self.styles.width = "100%"
                 self.styles.display = None
                 self.styles.flex = 0
             except Exception:
@@ -488,7 +489,7 @@ class HistoryList(ListView):
             if idx is None or idx < 0 or idx >= len(nodes) - 1:
                 # nothing to diff
                 try:
-                    self.app.push_screen(_TBDModal("No later commit to diff with"))
+                    self.app.push_screen(_TBDModal("No earlier commit to diff with"))
                 except Exception:
                     pass
                 return
@@ -658,12 +659,12 @@ class DiffList(ListView):
                 except Exception:
                     pass
                 try:
-                    self.app.query_one("#right1-column").styles.width = "20%"
+                    self.app.query_one("#right1-column").styles.width = "15%"
                     self.app.query_one("#right1-column").styles.flex = 0
                 except Exception:
                     pass
                 try:
-                    self.app.query_one("#right2-column").styles.width = "75%"
+                    self.app.query_one("#right2-column").styles.width = "80%"
                     self.app.query_one("#right2-column").styles.flex = 0
                 except Exception:
                     pass
@@ -725,7 +726,7 @@ class _TBDModal(ModalScreen):
 
 
 class GitHistoryTool(App):
-    TITLE = "Git History Tool"
+    TITLE = "Git History Navigator"
     CSS = """
 Horizontal {
     height: 100%;
