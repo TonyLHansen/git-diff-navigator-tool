@@ -441,6 +441,10 @@ class FileList(ListView):
                                     pli._hash = pseudo
                                 except Exception:
                                     pass
+                                try:
+                                    pli._raw_text = display_pseudo
+                                except Exception:
+                                    pass
                                 hist.append(pli)
 
                             for line in out.splitlines():
@@ -449,6 +453,10 @@ class FileList(ListView):
                                     m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
                                     if m:
                                         li._hash = m.group(2)
+                                except Exception:
+                                    pass
+                                try:
+                                    li._raw_text = line
                                 except Exception:
                                     pass
                                 hist.append(li)
@@ -590,10 +598,20 @@ class HistoryList(ListView):
             if idx < 0 or idx >= len(nodes):
                 return
 
-            # helper to get label text and style
+            # helper to get label and style
             def _label_text_and_style(node):
                 try:
                     lbl = node.query_one(Label)
+                    style = None
+                    try:
+                        style = getattr(lbl.renderable, "style", None)
+                    except Exception:
+                        style = None
+                    # derive visible text from stored raw_text when available
+                    raw = getattr(node, "_raw_text", None)
+                    if raw is not None:
+                        return raw, style, lbl
+                    # fallback to reading renderable
                     if hasattr(lbl, "text"):
                         text = lbl.text
                     else:
@@ -604,11 +622,6 @@ class HistoryList(ListView):
                             text = str(renderable)
                         else:
                             text = str(lbl)
-                    style = None
-                    try:
-                        style = getattr(lbl.renderable, "style", None)
-                    except Exception:
-                        style = None
                     return text, style, lbl
                 except Exception:
                     return str(node), None, None
@@ -633,7 +646,7 @@ class HistoryList(ListView):
                         if style:
                             lbl.update(Text(new_text, style=style))
                         else:
-                            lbl.update(new_text)
+                            lbl.update(Text(new_text))
                     target._checked = False
                 except Exception:
                     pass
@@ -649,7 +662,7 @@ class HistoryList(ListView):
                         if style:
                             lbl.update(Text(new_text, style=style))
                         else:
-                            lbl.update(new_text)
+                            lbl.update(Text(new_text))
                     prev_checked._checked = False
                 except Exception:
                     pass
@@ -657,16 +670,18 @@ class HistoryList(ListView):
             # Set check on target
             try:
                 text, style, lbl = _label_text_and_style(target)
-                stripped = text.lstrip("✓ ").lstrip()
-                new_text = "✓ " + stripped
+                stripped = text.lstrip("✓").lstrip()
+                new_text = "✓" + stripped
                 if lbl is not None:
                     if style:
                         lbl.update(Text(new_text, style=style))
                     else:
-                        lbl.update(new_text)
+                        lbl.update(Text(new_text))
                 target._checked = True
             except Exception:
                 pass
+        except Exception:
+            pass
 
 
     def on_focus(self, event: events.Focus) -> None:
@@ -1339,6 +1354,10 @@ class GitHistoryTool(App):
                         m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
                         if m:
                             li._hash = m.group(2)
+                    except Exception:
+                        pass
+                    try:
+                        li._raw_text = line
                     except Exception:
                         pass
                     hist.append(li)
