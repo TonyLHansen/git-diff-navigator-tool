@@ -436,7 +436,7 @@ class FileList(ListView):
                                     except Exception:
                                         display_pseudo = "MODS"
 
-                                pli = ListItem(Label(Text(display_pseudo)))
+                                pli = ListItem(Label(Text(" " + display_pseudo)))
                                 try:
                                     pli._hash = pseudo
                                 except Exception:
@@ -444,7 +444,7 @@ class FileList(ListView):
                                 hist.append(pli)
 
                             for line in out.splitlines():
-                                li = ListItem(Label(Text(line)))
+                                li = ListItem(Label(Text(" " + line)))
                                 try:
                                     m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
                                     if m:
@@ -453,7 +453,7 @@ class FileList(ListView):
                                     pass
                                 hist.append(li)
                         else:
-                            hist.append(ListItem(Label(Text(f"No git history for {item_name}"))))
+                            hist.append(ListItem(Label(Text(" " + f"No git history for {item_name}"))))
 
                         # highlight and focus the top entry
                         try:
@@ -570,8 +570,104 @@ class FileList(ListView):
             return
 
 
+
 class HistoryList(ListView):
     """ListView used for the History column. Left arrow moves focus back to Files."""
+
+    def toggle_check_current(self) -> None:
+        """Toggle a single checkmark on the currently selected history item.
+
+        Only one history ListItem may be checked at a time. The checkmark is
+        shown as a leading "✓ " replacing the leading space. If the current
+        item is already checked it will be unchecked. Any other checked item
+        will be cleared.
+        """
+        try:
+            nodes = getattr(self, "_nodes", [])
+            if not nodes:
+                return
+            idx = getattr(self, "index", 0) or 0
+            if idx < 0 or idx >= len(nodes):
+                return
+
+            # helper to get label text and style
+            def _label_text_and_style(node):
+                try:
+                    lbl = node.query_one(Label)
+                    if hasattr(lbl, "text"):
+                        text = lbl.text
+                    else:
+                        renderable = getattr(lbl, "renderable", None)
+                        if isinstance(renderable, Text):
+                            text = renderable.plain
+                        elif renderable is not None:
+                            text = str(renderable)
+                        else:
+                            text = str(lbl)
+                    style = None
+                    try:
+                        style = getattr(lbl.renderable, "style", None)
+                    except Exception:
+                        style = None
+                    return text, style, lbl
+                except Exception:
+                    return str(node), None, None
+
+            # Find previously checked node and clear it (unless it's the same)
+            prev_checked = None
+            for node in nodes:
+                if getattr(node, "_checked", False):
+                    prev_checked = node
+                    break
+
+            target = nodes[idx]
+
+            # If target is already checked, uncheck it and restore leading space
+            if prev_checked is target:
+                try:
+                    text, style, lbl = _label_text_and_style(target)
+                    # remove any leading check and whitespace
+                    stripped = text.lstrip("✓ ").lstrip()
+                    new_text = " " + stripped
+                    if lbl is not None:
+                        if style:
+                            lbl.update(Text(new_text, style=style))
+                        else:
+                            lbl.update(new_text)
+                    target._checked = False
+                except Exception:
+                    pass
+                return
+
+            # Clear previous checked if different
+            if prev_checked is not None and prev_checked is not target:
+                try:
+                    text, style, lbl = _label_text_and_style(prev_checked)
+                    stripped = text.lstrip("✓ ").lstrip()
+                    new_text = " " + stripped
+                    if lbl is not None:
+                        if style:
+                            lbl.update(Text(new_text, style=style))
+                        else:
+                            lbl.update(new_text)
+                    prev_checked._checked = False
+                except Exception:
+                    pass
+
+            # Set check on target
+            try:
+                text, style, lbl = _label_text_and_style(target)
+                stripped = text.lstrip("✓ ").lstrip()
+                new_text = "✓ " + stripped
+                if lbl is not None:
+                    if style:
+                        lbl.update(Text(new_text, style=style))
+                    else:
+                        lbl.update(new_text)
+                target._checked = True
+            except Exception:
+                pass
+
 
     def on_focus(self, event: events.Focus) -> None:
         """When the HistoryList receives focus, ensure the first item is highlighted."""
@@ -684,6 +780,15 @@ class HistoryList(ListView):
         if key and key.lower() == "q":
             try:
                 event.key = key.lower()
+            except Exception:
+                pass
+            return
+        # Mark/unmark the file referenced by this history view
+        if key and key.lower() == "m":
+            event.stop()
+            # Toggle checkmark on the current history item (in this column)
+            try:
+                self.toggle_check_current()
             except Exception:
                 pass
             return
@@ -1229,7 +1334,7 @@ class GitHistoryTool(App):
 
             if out:
                 for line in out.splitlines():
-                    li = ListItem(Label(Text(line)))
+                    li = ListItem(Label(Text(" " + line)))
                     try:
                         m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
                         if m:
@@ -1238,7 +1343,7 @@ class GitHistoryTool(App):
                         pass
                     hist.append(li)
             else:
-                hist.append(ListItem(Label(Text(f"No git history for {item_name}"))))
+                hist.append(ListItem(Label(Text(" " + f"No git history for {item_name}"))))
 
             # Make History column visible and try to apply focus/layout
             try:
