@@ -1,55 +1,55 @@
 Git History Navigator (gitdiff)
-===============================
+================================
 
 Overview
 --------
-Git History Navigator is a terminal Textual TUI that provides a three-column view for
-browsing a filesystem tree, viewing git history for a selected file, and exploring diffs.
+The Git History Navigator is a terminal Textual TUI that provides a three-column view for
+
+* browsing a filesystem tree,
+* viewing the git history for a selected file, and
+* exploring the diffs between different versions.
+
 The three columns are titled: Files (left), History (middle), Diff (right).
+
+Type `q` or `Q` to exit the program.
 
 Key features
 ------------
+
+Arrow keys move up and down the various columns.
+Left and Right arrow keys perform differently in each column.
+
 - Files column: navigable directory listing; directories highlighted with a blue background.
-- History column: shows commit history for a selected file (uses `git log --follow` to preserve renames).
-- Diff column: shows unified diffs between commits, between staged and working copies, or between staged and HEAD.
-- Repository awareness: optionally uses `pygit2` (if installed) to detect repository root and file status.
-- Status markers & colors: files are prefixed with a short marker (e.g. "?", "A", "M") and colored by status.
-  - ` ` (space) tracked & clean — bright white
-  - `?` untracked — grey50
-  - `M` modified — yellow
-  - `A` staged (index changes) — cyan
-  - `D` deleted in working tree — red
-  - `I` ignored — dim italic
-  - `!` conflicted — magenta
-- Pseudo-history entries: when relevant, `STAGED` and `MODS` pseudo-log lines are inserted at the top
-  of the History column with date stamps:
-  - `YYYY-MM-DD STAGED` — per-file staged timestamp (from `pygit2` index entry mtime, fallback to `.git/index` mtime)
-  - `YYYY-MM-DD MODS` — working-tree file mtime (if there are unstaged modifications)
-- Smart diff resolution: the app maps pseudo-hashes (`STAGED`, `MODS`) and real commit hashes to the
-  appropriate `git diff` invocations:
-  - working vs staged: `git diff -- <file>`
-  - staged vs HEAD: `git diff --cached -- <file>`
-  - working vs commit: `git diff <commit> -- <file>`
-  - staged vs commit: `git diff --cached <commit> -- <file>`
-  - commit vs commit: `git diff <old> <new> -- <file>`
+  - Status markers & colors: files are prefixed with a short marker and colored by status:
+    - ` ` (space) tracked & clean — bright white
+    - `U` untracked — bold yellow
+    - `M` modified — yellow
+    - `A` staged (index changes) — cyan
+    - `D` deleted in working tree — red
+    - `I` ignored — dim italic
+    - `!` conflicted — magenta
 
-Keyboard / Navigation
----------------------
-- Up / Down: move selection in the current column (ListView keyboard handling).
-- Right (in Files):
-  - on directory: enter it and refresh Files column
-  - on file: populate History column for that file (git log)
-- Left (in Files):
-  - on `..` entry: go up a directory and highlight previous directory
-  - on other entries: ignored (no action)
-- Right (in History): show Diff column and compute appropriate `git diff` between selected lines (handles pseudo-lines).
-- Left (in History or Diff): move focus back to the left column.
-- q: quit
+  - A Right Arrow will 
+    - (for files) open the History column for the current filename
+    - (for directories) navigates to the current directory name.
+  - A Left Arrow on the directory ".." will navigate to the parent directory.
 
-Footer and Palette
-------------------
-- The Textual command palette (Ctrl+P) is disabled in this app (to avoid the built-in palette).
-- The footer shows custom hints: `q Quit  ← ↑ ↓ →`.
+- History column:
+  - Lines are populated from `git log --follow`.
+  - Pseudo-log entries `STAGED` and `MODS` are inserted at the top when the file has been staged, and when there are uncommitted/unstaged modifications, respectively.
+  - Press `m` (or `M`) to _mark_ the current log row with a leading `✓`.
+    - Only one history row may be checked at a time — toggling a new row clears any prior checkmark.
+  - A Right Arrow will 
+    - open the Diff column for the currently highlighted log entry against the checkmarked entry (if there is a checkmarked entry) or the next entry in the list.
+  - A Left Arrow will close the History column.
+
+- Diff column:
+  - Lines are populated using `git diff` between the two hashes (or pseudo-hashes for staged and modified unstaged versions).
+  - A header line indicates the two hashes being compared, e.g.:
+    `Comparing: <old_hash>..<new_hash>`.
+  - The order is always the lower list item vs the higher item, so diffs read `older..newer`.
+  - A Left Arrow will close the Diff column.
+
 
 Implementation notes
 --------------------
@@ -57,8 +57,8 @@ Implementation notes
 - UI: Textual (ListView, ListItem, Label, ModalScreen)
 - Git integration:
   - `git` CLI is used for `log --follow` and `diff` (preserves `--follow` rename semantics).
-  - `pygit2` (optional) is used for repository discovery and per-file index metadata (status map and index entry mtimes).
-- Data model: ListItems have attached metadata attributes `_filename`, `_hash`, and `_repo_status` for robust lookups.
+  - `pygit2` is used for repository discovery, status mapping, and per-index-entry mtime (used for `STAGED` timestamps).
+- Data model: ListItems have attached metadata attributes `_filename`, `_hash`, `_repo_status`, and `_raw_text` for robust lookups and reliable UI updates.
 
 Running
 -------
@@ -68,26 +68,15 @@ In this repository's root, activate the Python venv and run:
 ./venv-3.14/bin/python gitdiff.py [path]
 ```
 
-`[path]` is optional — defaults to the current working directory.
+`[path]` is optional — defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
 
 Dependencies
 ------------
-- Required: `textual`, `rich` (expected in development environment)
-- Optional but recommended: `pygit2` (enables repository discovery, per-file staged timestamps, and status mapping)
-
-Extensibility and customization
--------------------------------
-- Status colors and marker symbols can be edited in `gitdiff.py` where the `markers` and style mapping live.
-- The pseudo-history behavior (`STAGED`/`MODS`) and diff resolution is implemented in the History and Diff handlers
-  — those can be changed to alter which diffs are shown by default.
-- Footer text and title styling live in the small CSS block at the top of `GitHistoryTool.CSS` and can be tuned.
+- Required: `textual`, `rich`, `pygit2`.
 
 Troubleshooting
 ---------------
 - If the app shows no git history for a file, confirm the file is inside a git repo and that `git` is available on PATH.
-- If `pygit2` is missing, the app falls back to treating files as untracked for coloring and will still use the `git` CLI
-  for history/diff operations.
-- If the UI layout hides the footer or title, check terminal height and that no external CSS edits were made.
 
 Source
 ------
