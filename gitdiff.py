@@ -119,8 +119,8 @@ class FileList(ListView):
                                     style = "grey50"
                                     repo_status = "untracked"
                                 else:
-                                    # tracked and clean
-                                    style = None
+                                    # tracked and clean — display in bright white
+                                    style = "white"
                                     repo_status = "tracked_clean"
                             except Exception:
                                 style = None
