@@ -81,6 +81,66 @@ class FileList(ListView):
             except Exception:
                 pass
 
+    def on_focus(self, event: events.Focus) -> None:
+        """When Files column receives focus, make it full-width and hide others."""
+        try:
+            # Make the left column (the whole left vertical) full width,
+            # and collapse the two right columns so titles/later columns
+            # don't reserve space.
+            try:
+                self.app.query_one("#left-column").styles.width = "100%"
+                self.app.query_one("#left-column").styles.flex = 0
+            except Exception:
+                pass
+            try:
+                self.app.query_one("#right1-column").styles.width = "0%"
+                self.app.query_one("#right1-column").styles.flex = 0
+            except Exception:
+                pass
+            try:
+                self.app.query_one("#right2-column").styles.width = "0%"
+                self.app.query_one("#right2-column").styles.flex = 0
+            except Exception:
+                pass
+            # Ensure inner left list fills its column
+            self.styles.width = "100%"
+            self.styles.flex = 0
+        except Exception:
+            pass
+        try:
+            right1 = self.app.query_one("#right1", HistoryList)
+            right1.styles.display = "none"
+        except Exception:
+            pass
+        try:
+            right2 = self.app.query_one("#right2", ListView)
+            right2.styles.display = "none"
+        except Exception:
+            pass
+
+        # show/hide titles for columns: left visible, others hidden
+        try:
+            lbl = self.query_one("#left-title", Label)
+            lbl.styles.display = None
+            lbl.styles.height = None
+            lbl.styles.width = None
+        except Exception:
+            pass
+        try:
+            lbl = self.query_one("#right1-title", Label)
+            lbl.styles.display = "none"
+            lbl.styles.height = 0
+            lbl.styles.width = 0
+        except Exception:
+            pass
+        try:
+            lbl = self.query_one("#right2-title", Label)
+            lbl.styles.display = "none"
+            lbl.styles.height = 0
+            lbl.styles.width = 0
+        except Exception:
+            pass
+
     def on_key(self, event: events.Key) -> None:
         """Only allow up/down/left/right in this column.
 
@@ -344,6 +404,69 @@ class HistoryList(ListView):
         except Exception:
             pass
 
+        # When History receives focus, make Files/History split 50/50 and hide Diff
+        try:
+            left = self.app.query_one("#left", FileList)
+            right2 = self.app.query_one("#right2", ListView)
+            # set widths to 50/50
+            try:
+                # Adjust outer columns so left/right1 split the screen 50/50
+                try:
+                    self.app.query_one("#left-column").styles.width = "50%"
+                    self.app.query_one("#left-column").styles.flex = 0
+                except Exception:
+                    pass
+                try:
+                    self.app.query_one("#right1-column").styles.width = "50%"
+                    self.app.query_one("#right1-column").styles.flex = 0
+                except Exception:
+                    pass
+                left.styles.width = "100%"
+                left.styles.flex = 0
+            except Exception:
+                pass
+            try:
+                self.styles.width = "50%"
+                self.styles.display = None
+                self.styles.flex = 0
+            except Exception:
+                pass
+            # hide diff list and shrink its outer column to zero so the
+            # title doesn't consume space
+            try:
+                right2.styles.display = "none"
+            except Exception:
+                pass
+            try:
+                self.app.query_one("#right2-column").styles.width = "0%"
+                self.app.query_one("#right2-column").styles.flex = 0
+            except Exception:
+                pass
+        except Exception:
+            pass
+        # Titles: show left and history, hide diff
+        try:
+            lbl = self.app.query_one("#left-title", Label)
+            lbl.styles.display = None
+            lbl.styles.height = None
+            lbl.styles.width = None
+        except Exception:
+            pass
+        try:
+            lbl = self.app.query_one("#right1-title", Label)
+            lbl.styles.display = None
+            lbl.styles.height = None
+            lbl.styles.width = None
+        except Exception:
+            pass
+        try:
+            lbl = self.app.query_one("#right2-title", Label)
+            lbl.styles.display = "none"
+            lbl.styles.height = 0
+            lbl.styles.width = 0
+        except Exception:
+            pass
+
     def on_key(self, event: events.Key) -> None:
         # handle left/right keys to move between columns or show diff
         key = event.key
@@ -522,6 +645,69 @@ class DiffList(ListView):
         except Exception:
             pass
 
+        # When Diff receives focus, show all columns and set widths: Files 5%, History 20%, Diff 75%
+        try:
+            left = self.app.query_one("#left", FileList)
+            hist = self.app.query_one("#right1", HistoryList)
+            diff = self.app.query_one("#right2", ListView)
+            try:
+                # adjust outer columns to the target proportions
+                try:
+                    self.app.query_one("#left-column").styles.width = "5%"
+                    self.app.query_one("#left-column").styles.flex = 0
+                except Exception:
+                    pass
+                try:
+                    self.app.query_one("#right1-column").styles.width = "20%"
+                    self.app.query_one("#right1-column").styles.flex = 0
+                except Exception:
+                    pass
+                try:
+                    self.app.query_one("#right2-column").styles.width = "75%"
+                    self.app.query_one("#right2-column").styles.flex = 0
+                except Exception:
+                    pass
+                left.styles.width = "100%"
+                left.styles.flex = 0
+            except Exception:
+                pass
+            try:
+                hist.styles.width = "100%"
+                hist.styles.flex = 0
+                hist.styles.display = None
+            except Exception:
+                pass
+            try:
+                diff.styles.width = "100%"
+                diff.styles.display = None
+                diff.styles.flex = 0
+            except Exception:
+                pass
+        except Exception:
+            pass
+        # Show all titles when diff active
+        try:
+            lbl = self.app.query_one("#left-title", Label)
+            lbl.styles.display = None
+            lbl.styles.height = None
+            lbl.styles.width = None
+        except Exception:
+            pass
+        try:
+            lbl = self.app.query_one("#right1-title", Label)
+            lbl.styles.display = None
+            lbl.styles.height = None
+            lbl.styles.width = None
+        except Exception:
+            pass
+        try:
+            lbl = self.app.query_one("#right2-title", Label)
+            lbl.styles.display = None
+            lbl.styles.height = None
+            lbl.styles.width = None
+        except Exception:
+            pass
+
 
 class _TBDModal(ModalScreen):
     """Simple modal that shows a message (default "TBD") and closes on any key."""
@@ -583,12 +769,20 @@ Horizontal {
         left = self.query_one("#left", FileList)
         right1 = self.query_one("#right1", HistoryList)
         right2 = self.query_one("#right2", ListView)
+        # Start with Files column full-width, other columns hidden
+        try:
+            left.styles.width = "100%"
+            left.styles.flex = 0
+        except Exception:
+            try:
+                left.styles.flex = 1
+            except Exception:
+                pass
 
-        # make left flexible so it expands, keep the right columns small
-        left.styles.flex = 1
-        right1.styles.width = 40
-        right2.styles.width = 80
-        # hide the Diff column initially
+        try:
+            right1.styles.display = "none"
+        except Exception:
+            pass
         try:
             right2.styles.display = "none"
         except Exception:
