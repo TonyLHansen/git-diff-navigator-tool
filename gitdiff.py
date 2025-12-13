@@ -116,7 +116,7 @@ class FileList(ListView):
                                     repo_status = "modified"
                                 # untracked / new in worktree
                                 elif flags & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
-                                    style = "grey50"
+                                    style = "grey15"
                                     repo_status = "untracked"
                                 else:
                                     # tracked and clean — display in bright white
