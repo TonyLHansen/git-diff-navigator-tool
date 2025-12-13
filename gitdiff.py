@@ -12,6 +12,14 @@ import re
 from typing import Optional
 from rich.text import Text
 
+# Optional pygit2 (preferred for repository queries)
+try:
+    import pygit2
+    PYGIT2_AVAILABLE = True
+except Exception:
+    pygit2 = None
+    PYGIT2_AVAILABLE = False
+
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
@@ -64,7 +72,92 @@ class FileList(ListView):
             if os.path.isdir(full):
                 li = ListItem(Label(Text(name, style="white on blue")))
             else:
-                li = ListItem(Label(name))
+                # determine repo status (tracked/modified/untracked/conflicted/etc.) if available
+                style = None
+                repo_status = None
+                try:
+                    app = getattr(self, "app", None)
+                    if app and getattr(app, "repo_available", False) and app.repo_root:
+                        # path relative to repo root
+                        try:
+                            rel = os.path.relpath(full, app.repo_root)
+                        except Exception:
+                            rel = None
+                        if rel and not rel.startswith(".."):
+                            flags = app.repo_status_map.get(rel, 0)
+                            # Map pygit2 status flags to styles
+                            try:
+                                # conflicted
+                                if flags & getattr(pygit2, "GIT_STATUS_CONFLICTED", 0):
+                                    style = "magenta"
+                                    repo_status = "conflicted"
+                                # staged (index changes)
+                                elif flags & (
+                                    getattr(pygit2, "GIT_STATUS_INDEX_NEW", 0)
+                                    | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
+                                    | getattr(pygit2, "GIT_STATUS_INDEX_DELETED", 0)
+                                ):
+                                    style = "cyan"
+                                    repo_status = "staged"
+                                # deleted in working tree
+                                elif flags & getattr(pygit2, "GIT_STATUS_WT_DELETED", 0):
+                                    style = "red"
+                                    repo_status = "wt_deleted"
+                                # ignored
+                                elif flags & getattr(pygit2, "GIT_STATUS_IGNORED", 0):
+                                    style = "dim italic"
+                                    repo_status = "ignored"
+                                # modified in worktree or index-modified
+                                elif flags & (
+                                    getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0)
+                                    | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
+                                ):
+                                    style = "yellow"
+                                    repo_status = "modified"
+                                # untracked / new in worktree
+                                elif flags & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
+                                    style = "grey50"
+                                    repo_status = "untracked"
+                                else:
+                                    # tracked and clean
+                                    style = None
+                                    repo_status = "tracked_clean"
+                            except Exception:
+                                style = None
+                                repo_status = None
+                        else:
+                            # outside repo tree -> untracked/not-in-repo
+                            style = "grey50"
+                            repo_status = "untracked"
+                    else:
+                        # no repo available -> treat as untracked
+                        style = "grey50"
+                        repo_status = "untracked"
+                except Exception:
+                    style = None
+                    repo_status = None
+
+                # Prefer a short marker to make status visually obvious
+                markers = {
+                    "conflicted": "!",
+                    "staged": "A",
+                    "wt_deleted": "D",
+                    "ignored": "I",
+                    "modified": "M",
+                    "untracked": "?",
+                    "tracked_clean": " ",
+                }
+                marker = markers.get(repo_status, " ")
+                display = f"{marker} {name}"
+
+                if style:
+                    li = ListItem(Label(Text(display, style=style)))
+                else:
+                    li = ListItem(Label(display))
+                try:
+                    li._repo_status = repo_status
+                except Exception:
+                    pass
             # attach filename to the ListItem for reliable lookup later
             try:
                 li._filename = name
@@ -244,6 +337,53 @@ class FileList(ListView):
                             pass
 
                         if out:
+                            # Before appending real commits, optionally insert
+                            # pseudo-log lines for staged/modified working tree.
+                            try:
+                                app = getattr(self, "app", None)
+                                pseudo_entries: list[str] = []
+                                if app and getattr(app, "repo_available", False) and app.repo_root:
+                                    try:
+                                        rel = os.path.relpath(os.path.join(self.app.path, item_name), app.repo_root)
+                                    except Exception:
+                                        rel = None
+                                    if rel and not rel.startswith(".."):
+                                        flags = app.repo_status_map.get(rel, 0)
+                                        idx_flags = (
+                                            getattr(pygit2, "GIT_STATUS_INDEX_NEW", 0)
+                                            | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
+                                            | getattr(pygit2, "GIT_STATUS_INDEX_DELETED", 0)
+                                        )
+                                        wt_flags = (
+                                            getattr(pygit2, "GIT_STATUS_WT_NEW", 0)
+                                            | getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0)
+                                            | getattr(pygit2, "GIT_STATUS_WT_DELETED", 0)
+                                        )
+                                        has_index = bool(flags & idx_flags)
+                                        has_wt = bool(flags & wt_flags)
+                                        # If both staged and further modifications exist,
+                                        # show MODS (working) first, then STAGED.
+                                        if has_wt and has_index:
+                                            pseudo_entries = ["MODS", "STAGED"]
+                                        elif has_index:
+                                            pseudo_entries = ["STAGED"]
+                                        elif has_wt:
+                                            pseudo_entries = ["MODS"]
+                                # If no repo available but file looks modified in FS,
+                                # fall back to showing MODS when `git diff` would
+                                # have non-empty output vs HEAD. We keep simple
+                                # behavior and only use repo flags when available.
+                            except Exception:
+                                pseudo_entries = []
+
+                            for pseudo in pseudo_entries:
+                                pli = ListItem(Label(Text(pseudo)))
+                                try:
+                                    pli._hash = pseudo
+                                except Exception:
+                                    pass
+                                hist.append(pli)
+
                             for line in out.splitlines():
                                 li = ListItem(Label(Text(line)))
                                 try:
@@ -541,21 +681,48 @@ class HistoryList(ListView):
                     pass
                 return
 
-            # run git diff previous_hash current_hash -- filename
+            # run git diff for a variety of hash/pseudo-hash combinations
+            def _is_pseudo(h: str | None) -> bool:
+                return h in ("STAGED", "MODS")
+
+            def _build_diff_cmd(prev: str | None, curr: str | None, fname: str) -> list[str]:
+                # prev = older, curr = newer
+                # MODS = working tree; STAGED = index
+                try:
+                    if _is_pseudo(prev) or _is_pseudo(curr):
+                        # working vs staged
+                        if (prev == "STAGED" and curr == "MODS") or (prev == "MODS" and curr == "STAGED"):
+                            return ["git", "diff", "--", fname]
+
+                        # working vs commit: use `git diff <commit> -- <file>`
+                        if curr == "MODS" and prev and not _is_pseudo(prev):
+                            return ["git", "diff", prev, "--", fname]
+                        if prev == "MODS" and curr and not _is_pseudo(curr):
+                            return ["git", "diff", curr, "--", fname]
+
+                        # staged vs commit: use --cached <commit>
+                        if curr == "STAGED" and prev and not _is_pseudo(prev):
+                            return ["git", "diff", "--cached", prev, "--", fname]
+                        if prev == "STAGED" and curr and not _is_pseudo(curr):
+                            return ["git", "diff", "--cached", curr, "--", fname]
+
+                        # fallback: if one side is STAGED or MODS with no commit on the other
+                        if curr == "STAGED" and prev is None:
+                            return ["git", "diff", "--cached", "--", fname]
+                        if curr == "MODS" and prev is None:
+                            return ["git", "diff", "--", fname]
+
+                    # default: two real commits/hashes
+                    if prev and curr:
+                        return ["git", "diff", prev, curr, "--", fname]
+                except Exception:
+                    pass
+                # ultimate fallback: show working-tree diff
+                return ["git", "diff", "--", fname]
+
             try:
-                proc = subprocess.run(
-                    [
-                        "git",
-                        "diff",
-                        previous_hash,
-                        current_hash,
-                        "--",
-                        filename,
-                    ],
-                    cwd=self.app.path,
-                    capture_output=True,
-                    text=True,
-                )
+                cmd = _build_diff_cmd(previous_hash, current_hash, filename)
+                proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
                 diff_out = proc.stdout or proc.stderr or ""
             except Exception as exc:
                 try:
@@ -749,6 +916,55 @@ Horizontal {
         self.path = os.path.abspath(path or os.getcwd())
         # store the full path that will be displayed at startup
         self.displayed_path = self.path
+        # repository cache populated at mount
+        self.repo_available = False
+        self.repo_root: Optional[str] = None
+        self.repo_index_set: set[str] = set()
+        self.repo_status_map: dict[str, int] = {}
+
+    def build_repo_cache(self) -> None:
+        """Discover repository (if any) and build in-memory index/status maps.
+
+        If pygit2 is unavailable or no repo is found, treat as empty repository
+        (no tracked files).
+        """
+        self.repo_available = False
+        self.repo_root = None
+        self.repo_index_set = set()
+        self.repo_status_map = {}
+
+        if not PYGIT2_AVAILABLE:
+            return
+
+        try:
+            # discover repo from current path
+            gitdir = pygit2.discover_repository(self.path)
+            if not gitdir:
+                return
+            repo = pygit2.Repository(gitdir)
+            workdir = repo.workdir
+            if not workdir:
+                return
+            self.repo_root = os.path.abspath(workdir)
+            # index: tracked files
+            try:
+                idx = repo.index
+                self.repo_index_set = {entry.path for entry in idx}
+            except Exception:
+                self.repo_index_set = set()
+
+            # status: mapping path -> flags
+            try:
+                status_map = repo.status()
+                # keys are paths relative to repo root
+                self.repo_status_map = {k: int(v) for k, v in status_map.items()}
+            except Exception:
+                self.repo_status_map = {}
+
+            self.repo_available = True
+        except Exception:
+            # leave as not available
+            self.repo_available = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -766,10 +982,16 @@ Horizontal {
                 yield DiffList(id="right2")
         yield Footer()
 
-    async def on_mount(self) -> None:  # set sizes and populate left
+    async def on_mount(self) -> None:
+        """set sizes and populate left"""
         left = self.query_one("#left", FileList)
         right1 = self.query_one("#right1", HistoryList)
         right2 = self.query_one("#right2", ListView)
+        # build repository cache (pygit2-based) before populating file list
+        try:
+            self.build_repo_cache()
+        except Exception:
+            pass
         # Start with Files column full-width, other columns hidden
         try:
             left.styles.width = "100%"
