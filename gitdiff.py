@@ -34,6 +34,12 @@ class FileList(ListView):
     def set_path(self, path: str) -> None:
         path = os.path.abspath(path)
         self.path = path
+        # keep the app aware of the full path currently displayed
+        try:
+            if hasattr(self, "app"):
+                self.app.displayed_path = self.path
+        except Exception:
+            pass
         try:
             entries = sorted(os.listdir(path))
         except Exception as exc:
@@ -43,14 +49,22 @@ class FileList(ListView):
 
         self.clear()
         # Parent entry
-        self.append(ListItem(Label(Text("..", style="white on blue"))))
+        parent_item = ListItem(Label(Text("..", style="white on blue")))
+        parent_item._filename = ".."
+        self.append(parent_item)
 
         for name in entries:
             full = os.path.join(path, name)
             if os.path.isdir(full):
-                self.append(ListItem(Label(Text(name, style="white on blue"))))
+                li = ListItem(Label(Text(name, style="white on blue")))
             else:
-                self.append(ListItem(Label(name)))
+                li = ListItem(Label(name))
+            # attach filename to the ListItem for reliable lookup later
+            try:
+                li._filename = name
+            except Exception:
+                pass
+            self.append(li)
 
     def on_key(self, event: events.Key) -> None:
         """Only allow up/down/left/right in this column.
@@ -61,15 +75,70 @@ class FileList(ListView):
         - Other keys: ignore
         """
         key = event.key
+        if key == "q":
+            # Allow global quit to bubble to the app
+            return
         if key == "up":
             event.stop()
             self.action_cursor_up()
         elif key == "down":
             event.stop()
             self.action_cursor_down()
-        elif key in ("left", "right"):
+        elif key == "right":
             event.stop()
-            # show a simple modal informing this is TBD
+            # If the highlighted entry is a directory (and not ".."), enter it.
+            child = self.highlighted_child
+            if child is None:
+                return
+            # Prefer filename attached to the ListItem (set in set_path)
+            item_name = getattr(child, "_filename", None)
+            if item_name is None:
+                try:
+                    label = child.query_one(Label)
+                    # Label implementations vary: prefer `text`, then `renderable`.
+                    if hasattr(label, "text"):
+                        item_name = label.text
+                    else:
+                        renderable = getattr(label, "renderable", None)
+                        if isinstance(renderable, Text):
+                            item_name = renderable.plain
+                        elif renderable is not None:
+                            item_name = str(renderable)
+                        else:
+                            item_name = str(label)
+                except Exception as exc:
+                    # Fallback: show the exception message in the modal
+                    try:
+                        self.app.push_screen(_TBDModal(str(exc)))
+                    except Exception:
+                        # Last-resort fallback
+                        self.app.push_screen(_TBDModal())
+                    return
+
+            if item_name != "..":
+                full = os.path.join(self.path, item_name)
+                if os.path.isdir(full):
+                    # switch the listing to the selected directory
+                    self.set_path(full)
+                    # ensure highlight resets to first item
+                    try:
+                        self.index = 0
+                    except Exception:
+                        pass
+                    # update app-level current path as well
+                    try:
+                        self.app.path = os.path.abspath(full)
+                    except Exception:
+                        pass
+                    # focus back on this list
+                    self.focus()
+                    return
+
+            # Not a directory we can enter — show TBD for now
+            self.app.push_screen(_TBDModal())
+        elif key == "left":
+            event.stop()
+            # left arrow not implemented yet
             self.app.push_screen(_TBDModal())
         else:
             # ignore other keys
@@ -77,17 +146,22 @@ class FileList(ListView):
 
 
 class _TBDModal(ModalScreen):
-    """Simple modal that shows a "TBD" message and closes on any key."""
+    """Simple modal that shows a message (default "TBD") and closes on any key."""
+
+    def __init__(self, message: str | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.message = message or "TBD"
 
     def compose(self) -> ComposeResult:
-        yield Static(Text("TBD", style="bold"), id="tbd-msg")
+        yield Static(Text(self.message, style="bold"), id="tbd-msg")
 
     def on_key(self, event: events.Key) -> None:
         event.stop()
         self.app.pop_screen()
 
 
-class ThreeColumnApp(App):
+class GitHistoryTool(App):
+    TITLE = "Git History Tool"
     CSS = """
 Horizontal {
     height: 100%;
@@ -105,6 +179,8 @@ Horizontal {
     def __init__(self, path: Optional[str] = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.path = os.path.abspath(path or os.getcwd())
+        # store the full path that will be displayed at startup
+        self.displayed_path = self.path
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -140,7 +216,7 @@ def main() -> None:
     parser.add_argument("path", nargs="?", help="Directory to list", default=os.getcwd())
     args = parser.parse_args()
 
-    app = ThreeColumnApp(args.path)
+    app = GitHistoryTool(args.path)
     app.run()
 
 
