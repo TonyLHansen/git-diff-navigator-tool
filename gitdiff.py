@@ -48,13 +48,17 @@ class FileList(ListView):
             return
 
         self.clear()
-        # Parent entry
-        parent_item = ListItem(Label(Text("..", style="white on blue")))
-        parent_item._filename = ".."
-        self.append(parent_item)
+        # Parent entry — omit when this directory contains a .git subdirectory
+        if not os.path.isdir(os.path.join(path, ".git")):
+            parent_item = ListItem(Label(Text("..", style="white on blue")))
+            parent_item._filename = ".."
+            self.append(parent_item)
 
         for name in entries:
             full = os.path.join(path, name)
+            # Do not display the .git subdirectory
+            if name == ".git":
+                continue
             if os.path.isdir(full):
                 li = ListItem(Label(Text(name, style="white on blue")))
             else:
@@ -65,6 +69,15 @@ class FileList(ListView):
             except Exception:
                 pass
             self.append(li)
+
+        # After populating, ensure the top entry is highlighted.
+        try:
+            self.call_after_refresh(self._highlight_top)
+        except Exception:
+            try:
+                self.index = 0
+            except Exception:
+                pass
 
     def on_key(self, event: events.Key) -> None:
         """Only allow up/down/left/right in this column.
@@ -138,11 +151,92 @@ class FileList(ListView):
             self.app.push_screen(_TBDModal())
         elif key == "left":
             event.stop()
-            # left arrow not implemented yet
+            # If left pressed on the parent entry, go up a directory and
+            # highlight the directory we came from.
+            child = self.highlighted_child
+            if child is None:
+                return
+            item_name = getattr(child, "_filename", None)
+            if item_name is None:
+                try:
+                    label = child.query_one(Label)
+                    item_name = label.text if hasattr(label, "text") else str(label)
+                except Exception as exc:
+                    try:
+                        self.app.push_screen(_TBDModal(str(exc)))
+                    except Exception:
+                        self.app.push_screen(_TBDModal())
+                    return
+
+            if item_name == "..":
+                prev_basename = os.path.basename(self.path)
+                parent = os.path.dirname(self.path)
+                if parent == self.path or not parent:
+                    # already at filesystem root
+                    self.app.push_screen(_TBDModal("Already at root"))
+                    return
+
+                # change to parent directory
+                self.set_path(parent)
+
+                # After the DOM refresh, highlight the directory we came from.
+                try:
+                    self.call_after_refresh(self._highlight_filename, prev_basename)
+                except Exception:
+                    try:
+                        # Fallback: set to first item
+                        self.index = 0
+                    except Exception:
+                        pass
+
+                # update app-level path info
+                try:
+                    self.app.path = os.path.abspath(parent)
+                    self.app.displayed_path = self.path
+                except Exception:
+                    pass
+
+                self.focus()
+                return
+
+            # Not the parent entry — show TBD for other left behaviors
             self.app.push_screen(_TBDModal())
         else:
             # ignore other keys
             event.stop()
+
+    def _highlight_filename(self, name: str) -> None:
+        """Highlight the ListItem whose attached `_filename` equals `name`.
+
+        This is intended to be called via `call_after_refresh` after the
+        DOM has been updated by `set_path`.
+        """
+        try:
+            nodes = getattr(self, "_nodes", [])
+            for idx, node in enumerate(nodes):
+                if getattr(node, "_filename", None) == name:
+                    try:
+                        self.index = idx
+                    except Exception:
+                        pass
+                    return
+            # not found: default to first
+            try:
+                self.index = 0
+            except Exception:
+                pass
+        except Exception:
+            return
+
+            def _highlight_top(self) -> None:
+                """Highlight the first entry in the list after a refresh."""
+                try:
+                    # If there are nodes, set index to 0; otherwise leave unset.
+                    nodes = getattr(self, "_nodes", [])
+                    if nodes:
+                        self.index = 0
+                except Exception:
+                    return
 
 
 class _TBDModal(ModalScreen):
