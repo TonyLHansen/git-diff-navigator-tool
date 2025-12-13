@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-
-Usage: python textual_three_column.py [path]
+Git Diff Navigator TUI
 """
 from __future__ import annotations
 
@@ -12,13 +11,7 @@ import re
 from typing import Optional
 from rich.text import Text
 
-# Optional pygit2 (preferred for repository queries)
-try:
-    import pygit2
-    PYGIT2_AVAILABLE = True
-except Exception:
-    pygit2 = None
-    PYGIT2_AVAILABLE = False
+import pygit2
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -42,6 +35,12 @@ class FileList(ListView):
     """
 
     def set_path(self, path: str) -> None:
+        """Set the directory to display and populate the list view.
+
+        This updates `self.path`, clears the current ListView contents, and
+        appends directory and file entries. Files are annotated with
+        `_filename` and `_repo_status` metadata when available.
+        """
         path = os.path.abspath(path)
         self.path = path
         # keep the app aware of the full path currently displayed
@@ -656,7 +655,11 @@ class HistoryList(ListView):
             pass
 
     def on_key(self, event: events.Key) -> None:
-        # handle left/right keys to move between columns or show diff
+        """Handle left/right keys to move between columns or show diffs.
+
+        Left moves focus back to the Files column. Right computes hashes for
+        the selected history entry pair and populates the Diff column.
+        """
         key = event.key
         if key == "q":
             return
@@ -820,6 +823,7 @@ class DiffList(ListView):
     """ListView used for the Diff column. Left arrow moves focus back to History."""
 
     def on_key(self, event: events.Key) -> None:
+        """Handle left key to move focus back to History; pass other keys through."""
         key = event.key
         if key == "q":
             return
@@ -928,18 +932,27 @@ class _TBDModal(ModalScreen):
     """Simple modal that shows a message (default "TBD") and closes on any key."""
 
     def __init__(self, message: str | None = None, **kwargs) -> None:
+        """Create the modal with an optional `message` to display."""
         super().__init__(**kwargs)
         self.message = message or "TBD"
 
     def compose(self) -> ComposeResult:
+        """Compose the modal contents (a single Static message)."""
         yield Static(Text(self.message, style="bold"), id="tbd-msg")
 
     def on_key(self, event: events.Key) -> None:
+        """Close the modal on any key press."""
         event.stop()
         self.app.pop_screen()
 
 
 class GitHistoryTool(App):
+    """Main Textual application providing the three-column git navigator.
+
+    The app composes three columns: `Files`, `History`, and `Diff`. It builds a
+    repository cache (using `pygit2`) and handles keyboard
+    navigation and git operations to populate history and diffs.
+    """
     TITLE = "Git History Navigator"
 # CSS: reserve one line for `#title` and let the main Horizontal flex to fill rest
     CSS = """
@@ -971,6 +984,11 @@ class GitHistoryTool(App):
     BINDINGS = [("q", "quit", "Quit")]
 
     def __init__(self, path: Optional[str] = None, **kwargs) -> None:
+        """Initialize the app state.
+
+        If `path` names a file, treat its directory as the working path and
+        remember the filename to open its history on mount.
+        """
         super().__init__(**kwargs)
         # If the provided path is a file, treat its directory as the app path
         # and remember the filename so we can immediately open its history.
@@ -992,18 +1010,14 @@ class GitHistoryTool(App):
         self.repo_index_mtime_map: dict[str, float] = {}
 
     def build_repo_cache(self) -> None:
-        """Discover repository (if any) and build in-memory index/status maps.
-
-        If pygit2 is unavailable or no repo is found, treat as empty repository
-        (no tracked files).
+        """
+        Discover repository (if any) and build in-memory index/status maps.
         """
         self.repo_available = False
         self.repo_root = None
         self.repo_index_set = set()
         self.repo_status_map = {}
-
-        if not PYGIT2_AVAILABLE:
-            return
+        self.repo_index_mtime_map = {}
 
         try:
             # discover repo from current path
@@ -1067,7 +1081,7 @@ class GitHistoryTool(App):
             self.repo_available = False
 
     def compose(self) -> ComposeResult:
-        # Show the app name in a simple label (no Header circle/logo)
+        """Compose the app UI: title, three-column layout, and footer hints."""
         with Vertical(id="root"):
             yield Label(Text(self.TITLE, style="bold"), id="title")
             with Horizontal(id="main"):
@@ -1082,10 +1096,15 @@ class GitHistoryTool(App):
                 with Vertical(id="right2-column"):
                     yield Label(Text("Diff", style="bold"), id="right2-title")
                     yield DiffList(id="right2")
-            yield Label(Text("q Quit  ← ↑ ↓ →", style="bold"), id="footer")
+            yield Label(Text("q (Quit)  ← ↑ ↓ →", style="bold"), id="footer")
 
     async def on_mount(self) -> None:
-        """set sizes and populate left"""
+        """Mount-time initialization: build repo cache and populate Files.
+
+        This method configures initial layout sizes, builds the repository
+        cache, and sets the initial path listing. If the app was launched with
+        a filename, it will also open that file's history.
+        """
         left = self.query_one("#left", FileList)
         right1 = self.query_one("#right1", HistoryList)
         right2 = self.query_one("#right2", ListView)
@@ -1236,8 +1255,9 @@ class GitHistoryTool(App):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Three-column Textual TUI")
-    parser.add_argument("path", nargs="?", help="Directory to list", default=os.getcwd())
+    """Entry point: parse CLI args and run the Textual app."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("path", nargs="?", help="Directory/file to list", default=os.getcwd())
     args = parser.parse_args()
 
     app = GitHistoryTool(args.path)
