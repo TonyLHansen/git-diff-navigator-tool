@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 from typing import Optional
 from rich.text import Text
 
@@ -147,6 +148,63 @@ class FileList(ListView):
                     self.focus()
                     return
 
+                # If it's a file, run `git log` and show output in History column
+                try:
+                    # Run git log in the current directory for the filename
+                    proc = subprocess.run(
+                        [
+                            "git",
+                            "log",
+                            "--follow",
+                            "--date=short",
+                            "--pretty=format:%ad %h %s",
+                            "--",
+                            item_name,
+                        ],
+                        cwd=self.path,
+                        capture_output=True,
+                        text=True,
+                    )
+                    out = proc.stdout.strip()
+                    # update the History column (right1)
+                    try:
+                        hist = self.app.query_one("#right1", ListView)
+                        # populate the history ListView with lines from git output
+                        try:
+                            # clear existing items
+                            hist.clear()
+                        except Exception:
+                            pass
+
+                        if out:
+                            for line in out.splitlines():
+                                hist.append(ListItem(Label(Text(line))))
+                        else:
+                            hist.append(ListItem(Label(Text(f"No git history for {item_name}"))))
+
+                        # highlight and focus the top entry
+                        try:
+                            hist.index = 0
+                        except Exception:
+                            pass
+                        try:
+                                hist.focus()
+                        except Exception:
+                            pass
+                    except Exception:
+                        # If unable to update, show modal with output or message
+                        msg = out or f"No git history for {item_name}"
+                        try:
+                            self.app.push_screen(_TBDModal(msg))
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    try:
+                        self.app.push_screen(_TBDModal(str(exc)))
+                    except Exception:
+                        pass
+                return
+
             # Not a directory we can enter — show TBD for now
             self.app.push_screen(_TBDModal())
         elif key == "left":
@@ -228,15 +286,63 @@ class FileList(ListView):
         except Exception:
             return
 
-            def _highlight_top(self) -> None:
-                """Highlight the first entry in the list after a refresh."""
+    def _highlight_top(self) -> None:
+        """Highlight the first entry in the list after a refresh."""
+        try:
+            # If there are nodes, set index to 0; otherwise leave unset.
+            nodes = getattr(self, "_nodes", [])
+            if nodes:
+                self.index = 0
+        except Exception:
+            return
+
+
+class HistoryList(ListView):
+    """ListView used for the History column. Left arrow moves focus back to Files."""
+
+    def on_key(self, event: events.Key) -> None:
+        key = event.key
+        if key == "q":
+            return
+        if key == "left":
+            event.stop()
+            try:
+                files = self.app.query_one("#left", FileList)
+                files.focus()
+            except Exception:
+                pass
+            return
+        # let other keys be handled by default (up/down handled by ListView)
+
+    def on_focus(self, event: events.Focus) -> None:
+        """When the HistoryList receives focus, ensure the first item is highlighted."""
+        try:
+            # Force a re-apply of the highlight after focus; sometimes the
+            # ListView won't re-highlight if the index hasn't changed.
+            def _apply() -> None:
                 try:
-                    # If there are nodes, set index to 0; otherwise leave unset.
                     nodes = getattr(self, "_nodes", [])
-                    if nodes:
-                        self.index = 0
+                    if not nodes:
+                        return
+                    target = self.index if self.index is not None else 0
+                    # clear then restore to force watch_index
+                    try:
+                        self.index = None
+                    except Exception:
+                        pass
+                    try:
+                        self.index = target
+                    except Exception:
+                        pass
                 except Exception:
                     return
+
+            try:
+                self.call_after_refresh(_apply)
+            except Exception:
+                _apply()
+        except Exception:
+            pass
 
 
 class _TBDModal(ModalScreen):
@@ -263,7 +369,7 @@ Horizontal {
 #left {
     border: solid white;
 }
-#right1, #right2 {
+#right1 {
     border: heavy #555555;
 }
 """
@@ -286,21 +392,17 @@ Horizontal {
             # two minimal right columns
             with Vertical(id="right1-column"):
                 yield Label(Text("History", style="bold"), id="right1-title")
-                yield Static("Right minimal 1", id="right1")
-            with Vertical(id="right2-column"):
-                yield Label(Text("Diff", style="bold"), id="right2-title")
-                yield Static("Right minimal 2", id="right2")
+                yield HistoryList(id="right1")
+            # Diff column removed — only Files and History are shown
         yield Footer()
 
     async def on_mount(self) -> None:  # set sizes and populate left
         left = self.query_one("#left", FileList)
-        right1 = self.query_one("#right1", Static)
-        right2 = self.query_one("#right2", Static)
+        right1 = self.query_one("#right1", HistoryList)
 
-        # make left flexible so it expands, keep the right columns small
+        # make left flexible so it expands, keep the right column small
         left.styles.flex = 1
         right1.styles.width = 20
-        right2.styles.width = 12
 
         left.set_path(self.path)
 
