@@ -377,7 +377,54 @@ class FileList(ListView):
                                 pseudo_entries = []
 
                             for pseudo in pseudo_entries:
-                                pli = ListItem(Label(Text(pseudo)))
+                                # Attach a best-effort timestamp for STAGED entries.
+                                display_pseudo = pseudo
+                                if pseudo == "STAGED":
+                                    try:
+                                        app = getattr(self, "app", None)
+                                        display_pseudo = "STAGED"
+                                        if app and getattr(app, "repo_root", None):
+                                            try:
+                                                rel = os.path.relpath(os.path.join(self.path, item_name), app.repo_root)
+                                            except Exception:
+                                                rel = None
+                                            mtime = None
+                                            if rel:
+                                                try:
+                                                    mtime = app.repo_index_mtime_map.get(rel)
+                                                except Exception:
+                                                    mtime = None
+                                            # fallback to index file mtime if per-file not available
+                                            if not mtime:
+                                                try:
+                                                    index_path = os.path.join(app.repo_root, ".git", "index")
+                                                    mtime = os.path.getmtime(index_path)
+                                                except Exception:
+                                                    mtime = None
+                                            if mtime:
+                                                import datetime
+
+                                                display_pseudo = f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} STAGED"
+                                    except Exception:
+                                        display_pseudo = "STAGED"
+                                elif pseudo == "MODS":
+                                    try:
+                                        # use working-tree file mtime for MODS
+                                        try:
+                                            fp = os.path.join(self.path, item_name)
+                                            mtime = os.path.getmtime(fp)
+                                        except Exception:
+                                            mtime = None
+                                        if mtime:
+                                            import datetime
+
+                                            display_pseudo = f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} MODS"
+                                        else:
+                                            display_pseudo = "MODS"
+                                    except Exception:
+                                        display_pseudo = "MODS"
+
+                                pli = ListItem(Label(Text(display_pseudo)))
                                 try:
                                     pli._hash = pseudo
                                 except Exception:
@@ -471,8 +518,8 @@ class FileList(ListView):
                 self.focus()
                 return
 
-            # Not the parent entry — show TBD for other left behaviors
-            self.app.push_screen(_TBDModal())
+            # Left on non-parent: ignore (do nothing)
+            return
         else:
             # ignore other keys
             event.stop()
@@ -894,10 +941,16 @@ class _TBDModal(ModalScreen):
 
 class GitHistoryTool(App):
     TITLE = "Git History Navigator"
+# CSS: reserve one line for `#title` and let the main Horizontal flex to fill rest
     CSS = """
-Horizontal {
-    height: 100%;
+/* Reserve a one-line title bar for the app name */
+#title {
+    height: 1;
+    padding: 0 1;
+    width: 100%;
+    text-align: center;
 }
+/* Let the layout determine main area height so footer remains visible */
 #left {
     border: solid white;
 }
@@ -906,6 +959,12 @@ Horizontal {
 }
 #right2 {
     border: heavy #555555;
+}
+/* footer area: show quit and navigation hints */
+#footer {
+    height: 1;
+    padding: 0 1;
+    text-align: left;
 }
 """
 
@@ -921,6 +980,8 @@ Horizontal {
         self.repo_root: Optional[str] = None
         self.repo_index_set: set[str] = set()
         self.repo_status_map: dict[str, int] = {}
+        # per-file index mtime map (path -> mtime seconds)
+        self.repo_index_mtime_map: dict[str, float] = {}
 
     def build_repo_cache(self) -> None:
         """Discover repository (if any) and build in-memory index/status maps.
@@ -952,6 +1013,37 @@ Horizontal {
                 self.repo_index_set = {entry.path for entry in idx}
             except Exception:
                 self.repo_index_set = set()
+            # per-index-entry mtime map (best-effort)
+            try:
+                idx = repo.index
+                mmap: dict[str, float] = {}
+                for entry in idx:
+                    try:
+                        mtime_val = None
+                        # pygit2 index entry may expose mtime directly or as a tuple/object
+                        if hasattr(entry, "mtime"):
+                            mtime_val = getattr(entry, "mtime")
+                        # normalize common shapes
+                        if isinstance(mtime_val, tuple) and len(mtime_val) >= 1:
+                            mtime_val = mtime_val[0]
+                        elif hasattr(mtime_val, "seconds"):
+                            mtime_val = getattr(mtime_val, "seconds")
+                        elif hasattr(mtime_val, "tv_sec"):
+                            mtime_val = getattr(mtime_val, "tv_sec")
+                        # fallback: stat the working copy file
+                        if not mtime_val:
+                            try:
+                                p = os.path.join(self.repo_root, entry.path)
+                                mtime_val = os.path.getmtime(p)
+                            except Exception:
+                                mtime_val = None
+                        if mtime_val:
+                            mmap[entry.path] = float(mtime_val)
+                    except Exception:
+                        continue
+                self.repo_index_mtime_map = mmap
+            except Exception:
+                self.repo_index_mtime_map = {}
 
             # status: mapping path -> flags
             try:
@@ -967,26 +1059,43 @@ Horizontal {
             self.repo_available = False
 
     def compose(self) -> ComposeResult:
-        yield Header()
-        with Horizontal():
-            # left column: flex so it takes remaining space
-            with Vertical(id="left-column"):
-                yield Label(Text("Files", style="bold"), id="left-title")
-                yield FileList(id="left")
-            # two minimal right columns
-            with Vertical(id="right1-column"):
-                yield Label(Text("History", style="bold"), id="right1-title")
-                yield HistoryList(id="right1")
-            with Vertical(id="right2-column"):
-                yield Label(Text("Diff", style="bold"), id="right2-title")
-                yield DiffList(id="right2")
-        yield Footer()
+        # Show the app name in a simple label (no Header circle/logo)
+        with Vertical(id="root"):
+            yield Label(Text(self.TITLE, style="bold"), id="title")
+            with Horizontal(id="main"):
+                # left column: flex so it takes remaining space
+                with Vertical(id="left-column"):
+                    yield Label(Text("Files", style="bold"), id="left-title")
+                    yield FileList(id="left")
+                # two minimal right columns
+                with Vertical(id="right1-column"):
+                    yield Label(Text("History", style="bold"), id="right1-title")
+                    yield HistoryList(id="right1")
+                with Vertical(id="right2-column"):
+                    yield Label(Text("Diff", style="bold"), id="right2-title")
+                    yield DiffList(id="right2")
+            yield Label(Text("q Quit  ← ↑ ↓ →", style="bold"), id="footer")
 
     async def on_mount(self) -> None:
         """set sizes and populate left"""
         left = self.query_one("#left", FileList)
         right1 = self.query_one("#right1", HistoryList)
         right2 = self.query_one("#right2", ListView)
+        # Ensure the main horizontal fills remaining space so the title remains visible
+        try:
+            # ensure root fills the app and main flexes so footer remains visible
+            root = self.query_one("#root")
+            root.styles.height = "100%"
+            root.styles.flex = 1
+        except Exception:
+            pass
+        try:
+            main = self.query_one("#main")
+            main.styles.flex = 1
+            # do not force 100% height here; allow footer to occupy its line
+            main.styles.height = None
+        except Exception:
+            pass
         # build repository cache (pygit2-based) before populating file list
         try:
             self.build_repo_cache()
@@ -1012,6 +1121,16 @@ Horizontal {
             pass
 
         left.set_path(self.path)
+
+    def on_key(self, event: events.Key) -> None:
+        """Global key handler: disable the Ctrl+P palette key so it doesn't open."""
+        try:
+            key = event.key
+            if key and key.lower() == "ctrl+p":
+                event.stop()
+                return
+        except Exception:
+            pass
 
 
 def main() -> None:
