@@ -972,7 +972,15 @@ class GitHistoryTool(App):
 
     def __init__(self, path: Optional[str] = None, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.path = os.path.abspath(path or os.getcwd())
+        # If the provided path is a file, treat its directory as the app path
+        # and remember the filename so we can immediately open its history.
+        given = path or os.getcwd()
+        if os.path.isfile(given):
+            self.initial_file = os.path.basename(given)
+            self.path = os.path.abspath(os.path.dirname(given) or os.getcwd())
+        else:
+            self.initial_file = None
+            self.path = os.path.abspath(given)
         # store the full path that will be displayed at startup
         self.displayed_path = self.path
         # repository cache populated at mount
@@ -1121,6 +1129,100 @@ class GitHistoryTool(App):
             pass
 
         left.set_path(self.path)
+
+        # If launched with a filename, populate and focus its history immediately
+        try:
+            if getattr(self, "initial_file", None):
+                try:
+                    self._open_history_for_file(self.initial_file)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _open_history_for_file(self, item_name: str) -> None:
+        """Populate the History column for `item_name` and focus it.
+
+        Mirrors the behavior used when pressing Right on a file in the Files column.
+        """
+        try:
+            proc = subprocess.run(
+                [
+                    "git",
+                    "log",
+                    "--follow",
+                    "--date=short",
+                    "--pretty=format:%ad %h %s",
+                    "--",
+                    item_name,
+                ],
+                cwd=self.path,
+                capture_output=True,
+                text=True,
+            )
+            out = proc.stdout.strip()
+
+            hist = self.query_one("#right1", ListView)
+            try:
+                hist.clear()
+            except Exception:
+                pass
+
+            try:
+                hist._filename = item_name
+            except Exception:
+                pass
+
+            if out:
+                for line in out.splitlines():
+                    li = ListItem(Label(Text(line)))
+                    try:
+                        m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
+                        if m:
+                            li._hash = m.group(2)
+                    except Exception:
+                        pass
+                    hist.append(li)
+            else:
+                hist.append(ListItem(Label(Text(f"No git history for {item_name}"))))
+
+            # Make History column visible and try to apply focus/layout
+            try:
+                hist.styles.display = None
+            except Exception:
+                pass
+            # Highlight the file in the Files column after the DOM refresh
+            try:
+                left = self.query_one("#left", FileList)
+                try:
+                    left.call_after_refresh(left._highlight_filename, item_name)
+                except Exception:
+                    try:
+                        left.index = 0
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                self.query_one("#left-column").styles.width = "25%"
+                self.query_one("#left-column").styles.flex = 0
+                self.query_one("#right1-column").styles.width = "75%"
+                self.query_one("#right1-column").styles.flex = 0
+            except Exception:
+                pass
+            try:
+                hist.index = 0
+            except Exception:
+                pass
+            try:
+                hist.focus()
+            except Exception:
+                pass
+        except Exception as exc:
+            try:
+                self.push_screen(_TBDModal(str(exc)))
+            except Exception:
+                pass
 
     def on_key(self, event: events.Key) -> None:
         """Global key handler: disable the Ctrl+P palette key so it doesn't open."""
