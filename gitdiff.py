@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+import re
 from typing import Optional
 from rich.text import Text
 
@@ -176,9 +177,22 @@ class FileList(ListView):
                         except Exception:
                             pass
 
+                        # remember which file this history is for
+                        try:
+                            hist._filename = item_name
+                        except Exception:
+                            pass
+
                         if out:
                             for line in out.splitlines():
-                                hist.append(ListItem(Label(Text(line))))
+                                li = ListItem(Label(Text(line)))
+                                try:
+                                    m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
+                                    if m:
+                                        li._hash = m.group(2)
+                                except Exception:
+                                    pass
+                                hist.append(li)
                         else:
                             hist.append(ListItem(Label(Text(f"No git history for {item_name}"))))
 
@@ -300,20 +314,6 @@ class FileList(ListView):
 class HistoryList(ListView):
     """ListView used for the History column. Left arrow moves focus back to Files."""
 
-    def on_key(self, event: events.Key) -> None:
-        key = event.key
-        if key == "q":
-            return
-        if key == "left":
-            event.stop()
-            try:
-                files = self.app.query_one("#left", FileList)
-                files.focus()
-            except Exception:
-                pass
-            return
-        # let other keys be handled by default (up/down handled by ListView)
-
     def on_focus(self, event: events.Focus) -> None:
         """When the HistoryList receives focus, ensure the first item is highlighted."""
         try:
@@ -326,6 +326,184 @@ class HistoryList(ListView):
                         return
                     target = self.index if self.index is not None else 0
                     # clear then restore to force watch_index
+                    try:
+                        self.index = None
+                    except Exception:
+                        pass
+                    try:
+                        self.index = target
+                    except Exception:
+                        pass
+                except Exception:
+                    return
+
+            try:
+                self.call_after_refresh(_apply)
+            except Exception:
+                _apply()
+        except Exception:
+            pass
+
+    def on_key(self, event: events.Key) -> None:
+        # handle left/right keys to move between columns or show diff
+        key = event.key
+        if key == "q":
+            return
+        if key == "left":
+            event.stop()
+            try:
+                files = self.app.query_one("#left", FileList)
+                files.focus()
+            except Exception:
+                pass
+            return
+        if key == "right":
+            event.stop()
+            # need at least two items after current index
+            idx = getattr(self, "index", None)
+            nodes = getattr(self, "_nodes", [])
+            if idx is None or idx < 0 or idx >= len(nodes) - 1:
+                # nothing to diff
+                try:
+                    self.app.push_screen(_TBDModal("No later commit to diff with"))
+                except Exception:
+                    pass
+                return
+
+            # helper to extract the text of a ListItem label
+            def _text_of(node) -> str:
+                try:
+                    lbl = node.query_one(Label)
+                    if hasattr(lbl, "text"):
+                        return lbl.text
+                    renderable = getattr(lbl, "renderable", None)
+                    if isinstance(renderable, Text):
+                        return renderable.plain
+                    if renderable is not None:
+                        return str(renderable)
+                    return str(lbl)
+                except Exception:
+                    return str(node)
+
+            current_line = _text_of(nodes[idx])
+            next_line = _text_of(nodes[idx + 1])
+
+            # Prefer attached _hash on ListItems; fallback to regex parsing
+            current_hash = getattr(nodes[idx], "_hash", None)
+            previous_hash = getattr(nodes[idx + 1], "_hash", None)
+            if not current_hash or not previous_hash:
+                try:
+                    m1 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", current_line)
+                    m2 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", next_line)
+                    if not m1 or not m2:
+                        raise ValueError(
+                            f"Lines not in expected format:\n{current_line!r}\n{next_line!r}"
+                        )
+                    current_hash = m1.group(2)
+                    previous_hash = m2.group(2)
+                except Exception as exc:
+                    try:
+                        self.app.push_screen(_TBDModal(f"Could not parse hashes: {exc}"))
+                    except Exception:
+                        pass
+                    return
+
+            # determine filename for the history (attached when populated)
+            filename = getattr(self, "_filename", None)
+            if not filename:
+                try:
+                    self.app.push_screen(_TBDModal("Unknown filename for history"))
+                except Exception:
+                    pass
+                return
+
+            # run git diff previous_hash current_hash -- filename
+            try:
+                proc = subprocess.run(
+                    [
+                        "git",
+                        "diff",
+                        previous_hash,
+                        current_hash,
+                        "--",
+                        filename,
+                    ],
+                    cwd=self.app.path,
+                    capture_output=True,
+                    text=True,
+                )
+                diff_out = proc.stdout or proc.stderr or ""
+            except Exception as exc:
+                try:
+                    self.app.push_screen(_TBDModal(str(exc)))
+                except Exception:
+                    pass
+                return
+
+            # show the Diff column and populate it
+            try:
+                diff_view = self.app.query_one("#right2", ListView)
+                try:
+                    diff_view.clear()
+                except Exception:
+                    pass
+                if diff_out:
+                    for line in diff_out.splitlines():
+                        diff_view.append(ListItem(Label(Text(line))))
+                else:
+                    diff_view.append(ListItem(Label(Text(f"No diff between {previous_hash}..{current_hash}"))))
+
+                # make sure Diff column is visible
+                try:
+                    diff_view.styles.display = None
+                except Exception:
+                    pass
+
+                try:
+                    diff_view.index = 0
+                except Exception:
+                    pass
+                try:
+                    diff_view.focus()
+                except Exception:
+                    pass
+            except Exception as exc:
+                try:
+                    self.app.push_screen(_TBDModal(str(exc)))
+                except Exception:
+                    pass
+            return
+
+        # Other keys: let default handling run by not stopping the event.
+        return
+
+
+class DiffList(ListView):
+    """ListView used for the Diff column. Left arrow moves focus back to History."""
+
+    def on_key(self, event: events.Key) -> None:
+        key = event.key
+        if key == "q":
+            return
+        if key == "left":
+            event.stop()
+            try:
+                hist = self.app.query_one("#right1", HistoryList)
+                hist.focus()
+            except Exception:
+                pass
+            return
+        # let other keys be handled by default (up/down handled by ListView)
+
+    def on_focus(self, event: events.Focus) -> None:
+        """When the DiffList receives focus, ensure the first item is highlighted."""
+        try:
+            def _apply() -> None:
+                try:
+                    nodes = getattr(self, "_nodes", [])
+                    if not nodes:
+                        return
+                    target = self.index if self.index is not None else 0
                     try:
                         self.index = None
                     except Exception:
@@ -372,6 +550,9 @@ Horizontal {
 #right1 {
     border: heavy #555555;
 }
+#right2 {
+    border: heavy #555555;
+}
 """
 
     BINDINGS = [("q", "quit", "Quit")]
@@ -393,16 +574,25 @@ Horizontal {
             with Vertical(id="right1-column"):
                 yield Label(Text("History", style="bold"), id="right1-title")
                 yield HistoryList(id="right1")
-            # Diff column removed — only Files and History are shown
+            with Vertical(id="right2-column"):
+                yield Label(Text("Diff", style="bold"), id="right2-title")
+                yield DiffList(id="right2")
         yield Footer()
 
     async def on_mount(self) -> None:  # set sizes and populate left
         left = self.query_one("#left", FileList)
         right1 = self.query_one("#right1", HistoryList)
+        right2 = self.query_one("#right2", ListView)
 
-        # make left flexible so it expands, keep the right column small
+        # make left flexible so it expands, keep the right columns small
         left.styles.flex = 1
-        right1.styles.width = 20
+        right1.styles.width = 40
+        right2.styles.width = 80
+        # hide the Diff column initially
+        try:
+            right2.styles.display = "none"
+        except Exception:
+            pass
 
         left.set_path(self.path)
 
