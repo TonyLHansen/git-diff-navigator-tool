@@ -817,20 +817,30 @@ class HistoryList(ListView):
             return
         if key == "right":
             event.stop()
-            # need at least two items after current index
+            # need at least one other item to diff against (either checked or next)
             idx = getattr(self, "index", None)
             nodes = getattr(self, "_nodes", [])
-            if idx is None or idx < 0 or idx >= len(nodes) - 1:
-                # nothing to diff
+            if idx is None or idx < 0 or not nodes:
                 try:
-                    self.app.push_screen(_TBDModal("No earlier commit to diff with"))
+                    self.app.push_screen(_TBDModal("No commit to diff with"))
                 except Exception:
                     pass
                 return
 
+            # Find any checked item in the history
+            checked_idx = None
+            for i, node in enumerate(nodes):
+                if getattr(node, "_checked", False):
+                    checked_idx = i
+                    break
+
             # helper to extract the text of a ListItem label
             def _text_of(node) -> str:
                 try:
+                    # prefer stored raw text
+                    raw = getattr(node, "_raw_text", None)
+                    if raw is not None:
+                        return raw
                     lbl = node.query_one(Label)
                     if hasattr(lbl, "text"):
                         return lbl.text
@@ -843,19 +853,41 @@ class HistoryList(ListView):
                 except Exception:
                     return str(node)
 
-            current_line = _text_of(nodes[idx])
-            next_line = _text_of(nodes[idx + 1])
+            # Determine the pair of indices to diff: default is current vs next
+            if checked_idx is None or checked_idx == idx:
+                # behave as before: need a next item
+                if idx >= len(nodes) - 1:
+                    try:
+                        self.app.push_screen(_TBDModal("No earlier commit to diff with"))
+                    except Exception:
+                        pass
+                    return
+                i_newer = idx
+                i_older = idx + 1
+            else:
+                # If there is a checked item and it's not the current one,
+                # diff between the current item and the checked item.
+                # Order: lower item in the list (larger index) is prev, higher (smaller index) is curr.
+                i1 = idx
+                i2 = checked_idx
+                if i1 == i2:
+                    return
+                i_older = max(i1, i2)
+                i_newer = min(i1, i2)
+
+            current_line = _text_of(nodes[i_newer])
+            previous_line = _text_of(nodes[i_older])
 
             # Prefer attached _hash on ListItems; fallback to regex parsing
-            current_hash = getattr(nodes[idx], "_hash", None)
-            previous_hash = getattr(nodes[idx + 1], "_hash", None)
+            current_hash = getattr(nodes[i_newer], "_hash", None)
+            previous_hash = getattr(nodes[i_older], "_hash", None)
             if not current_hash or not previous_hash:
                 try:
                     m1 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", current_line)
-                    m2 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", next_line)
+                    m2 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", previous_line)
                     if not m1 or not m2:
                         raise ValueError(
-                            f"Lines not in expected format:\n{current_line!r}\n{next_line!r}"
+                            f"Lines not in expected format:\n{current_line!r}\n{previous_line!r}"
                         )
                     current_hash = m1.group(2)
                     previous_hash = m2.group(2)
@@ -932,6 +964,14 @@ class HistoryList(ListView):
                     diff_view.clear()
                 except Exception:
                     pass
+
+                # Header indicating which two hashes are being compared
+                try:
+                    header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
+                    diff_view.append(header)
+                except Exception:
+                    pass
+
                 if diff_out:
                     for line in diff_out.splitlines():
                         diff_view.append(ListItem(Label(Text(line))))
