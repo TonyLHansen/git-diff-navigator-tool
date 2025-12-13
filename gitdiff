@@ -1,0 +1,4 @@
+#!/bin/bash
+
+source venv-3.14/bin/activate
+./gitdiff.py "$@"
