@@ -233,6 +233,13 @@ class FileList(ListView):
         except Exception:
             pass
 
+        # Footer: base hints when in Files view
+        try:
+            footer = self.app.query_one("#footer", Label)
+            footer.update(Text("q (Quit)  ← ↑ ↓ →", style="bold"))
+        except Exception:
+            pass
+
     def on_key(self, event: events.Key) -> None:
         """Only allow up/down/left/right in this column.
 
@@ -242,8 +249,14 @@ class FileList(ListView):
         - Other keys: ignore
         """
         key = event.key
-        if key == "q":
-            # Allow global quit to bubble to the app
+        if key and key.lower() == "q":
+            # Allow global quit (q/Q) to bubble to the app. Ensure the
+            # event.key is normalized to lowercase so the app-level handler
+            # which checks for 'q' will receive a lower-case key.
+            try:
+                event.key = key.lower()
+            except Exception:
+                pass
             return
         if key == "up":
             event.stop()
@@ -654,6 +667,13 @@ class HistoryList(ListView):
         except Exception:
             pass
 
+        # Footer: add History-specific hint
+        try:
+            footer = self.app.query_one("#footer", Label)
+            footer.update(Text("q (Quit)  ← ↑ ↓ →   m (Mark)", style="bold"))
+        except Exception:
+            pass
+
     def on_key(self, event: events.Key) -> None:
         """Handle left/right keys to move between columns or show diffs.
 
@@ -661,7 +681,11 @@ class HistoryList(ListView):
         the selected history entry pair and populates the Diff column.
         """
         key = event.key
-        if key == "q":
+        if key and key.lower() == "q":
+            try:
+                event.key = key.lower()
+            except Exception:
+                pass
             return
         if key == "left":
             event.stop()
@@ -825,7 +849,11 @@ class DiffList(ListView):
     def on_key(self, event: events.Key) -> None:
         """Handle left key to move focus back to History; pass other keys through."""
         key = event.key
-        if key == "q":
+        if key and key.lower() == "q":
+            try:
+                event.key = key.lower()
+            except Exception:
+                pass
             return
         if key == "left":
             event.stop()
@@ -924,6 +952,13 @@ class DiffList(ListView):
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
+        except Exception:
+            pass
+
+        # Footer: add Diff-specific hint
+        try:
+            footer = self.app.query_one("#footer", Label)
+            footer.update(Text("q (Quit)  ← ↑ ↓ →   PgUp/PgDn", style="bold"))
         except Exception:
             pass
 
@@ -1244,11 +1279,29 @@ class GitHistoryTool(App):
                 pass
 
     def on_key(self, event: events.Key) -> None:
-        """Global key handler: disable the Ctrl+P palette key so it doesn't open."""
+        """Global key handler.
+
+        - Block the Ctrl+P palette shortcut.
+        - Accept uppercase `Q` as a quit key in addition to lowercase `q`.
+        """
         try:
             key = event.key
             if key and key.lower() == "ctrl+p":
                 event.stop()
+                return
+            if key in ("q", "Q"):
+                # Ensure quitting works for uppercase Q as well.
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+                try:
+                    self.action_quit()
+                except Exception:
+                    try:
+                        self.exit()
+                    except Exception:
+                        pass
                 return
         except Exception:
             pass
