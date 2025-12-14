@@ -29,7 +29,7 @@ from textual.widgets import (
 
 # Set up logging to help debug key event issues (currently disabled)
 # Uncomment the basicConfig line below to enable logging to /tmp/gitdiff_debug.log
-DOLOGGING = False
+DOLOGGING = True
 if DOLOGGING:
     logging.basicConfig(
         filename='tmp/gitdiff_debug.log',
@@ -963,6 +963,11 @@ class HistoryList(ListView):
                 # ultimate fallback: show working-tree diff
                 return ["git", "diff", "--", fname]
 
+            # Store current diff info for potential re-render
+            self.app.current_commit_sha = current_hash
+            self.app.current_prev_sha = previous_hash
+            self.app.current_diff_file = filename
+
             try:
                 cmd = _build_diff_cmd(previous_hash, current_hash, filename)
                 proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
@@ -991,24 +996,28 @@ class HistoryList(ListView):
 
                 if diff_out:
                     for line in diff_out.splitlines():
-                        # Colorize diff lines like git does
-                        if line.startswith('+++') or line.startswith('---'):
-                            # File headers in bold white
-                            styled_text = Text(line, style="bold white")
-                        elif line.startswith('+'):
-                            # Additions in green
-                            styled_text = Text(line, style="green")
-                        elif line.startswith('-'):
-                            # Deletions in red
-                            styled_text = Text(line, style="red")
-                        elif line.startswith('@@'):
-                            # Hunk headers in cyan
-                            styled_text = Text(line, style="cyan")
-                        elif line.startswith('diff --git') or line.startswith('index '):
-                            # Diff metadata in bold
-                            styled_text = Text(line, style="bold")
+                        # Colorize diff lines like git does (if enabled)
+                        if self.app.colorize_diff:
+                            if line.startswith('+++') or line.startswith('---'):
+                                # File headers in bold white
+                                styled_text = Text(line, style="bold white")
+                            elif line.startswith('+'):
+                                # Additions in green
+                                styled_text = Text(line, style="green")
+                            elif line.startswith('-'):
+                                # Deletions in red
+                                styled_text = Text(line, style="red")
+                            elif line.startswith('@@'):
+                                # Hunk headers in cyan
+                                styled_text = Text(line, style="cyan")
+                            elif line.startswith('diff --git') or line.startswith('index '):
+                                # Diff metadata in bold
+                                styled_text = Text(line, style="bold")
+                            else:
+                                # Context lines in default color
+                                styled_text = Text(line)
                         else:
-                            # Context lines in default color
+                            # No colorization
                             styled_text = Text(line)
                         diff_view.append(ListItem(Label(styled_text)))
                 else:
@@ -1043,79 +1052,188 @@ class DiffList(ListView):
     """ListView used for the Diff column. Left arrow moves focus back to History."""
 
     def on_key(self, event: events.Key) -> None:
-        """Handle left key to move focus back to History; handle PgUp/PgDn with visible selection."""
+        """Handle left key to move focus back to History; handle PgUp/PgDn with visible selection; handle c/C to toggle colorization."""
         key = event.key
+        logger.debug(f"DiffList.on_key: key={key}")
+
+        # Handle c/C to toggle colorization
+        if key and key.lower() == "c":
+            event.stop()
+            logger.debug(f"DiffList: c/C pressed, colorize_diff={getattr(self.app, 'colorize_diff', None)}")
+            try:
+                # Toggle the colorization flag
+                self.app.colorize_diff = not self.app.colorize_diff
+                logger.debug(f"DiffList: toggled to colorize_diff={self.app.colorize_diff}")
+                
+                # Re-render the diff if we have current diff info
+                logger.debug(f"DiffList: current_commit_sha={getattr(self.app, 'current_commit_sha', None)}, current_prev_sha={getattr(self.app, 'current_prev_sha', None)}, current_diff_file={getattr(self.app, 'current_diff_file', None)}")
+                if (getattr(self.app, 'current_commit_sha', None) and 
+                    getattr(self.app, 'current_prev_sha', None) and 
+                    getattr(self.app, 'current_diff_file', None)):
+                    
+                    logger.debug("DiffList: re-rendering diff with new colorization")
+                    # Save current scroll position and selection
+                    saved_scroll_y = self.scroll_y
+                    saved_index = self.index
+                    
+                    # Directly re-run the diff command
+                    import subprocess
+                    
+                    previous_hash = self.app.current_prev_sha
+                    current_hash = self.app.current_commit_sha
+                    filename = self.app.current_diff_file
+                    
+                    # Same diff command building logic
+                    def _build_diff_cmd(prev, curr, fname):
+                        try:
+                            if prev == "STAGED" and curr == "MODS":
+                                return ["git", "diff", "HEAD", "--", fname]
+                            if curr == "MODS" and prev is not None:
+                                return ["git", "diff", prev, "--", fname]
+                            if curr == "STAGED" and prev is not None:
+                                return ["git", "diff", "--cached", prev, "--", fname]
+                            if curr == "STAGED" and prev is None:
+                                return ["git", "diff", "--cached", "--", fname]
+                            if curr == "MODS" and prev is None:
+                                return ["git", "diff", "--", fname]
+                        except Exception:
+                            pass
+                        if prev and curr:
+                            return ["git", "diff", prev, curr, "--", fname]
+                        return ["git", "diff", "--", fname]
+                    
+                    cmd = _build_diff_cmd(previous_hash, current_hash, filename)
+                    proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
+                    diff_out = proc.stdout or proc.stderr or ""
+                    
+                    # Clear and repopulate
+                    self.clear()
+                    
+                    # Header
+                    from rich.text import Text
+                    from textual.widgets import Label
+                    from textual.widgets._list_view import ListItem
+                    header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
+                    self.append(header)
+                    
+                    if diff_out:
+                        for line in diff_out.splitlines():
+                            if self.app.colorize_diff:
+                                if line.startswith('+++') or line.startswith('---'):
+                                    styled_text = Text(line, style="bold white")
+                                elif line.startswith('+'):
+                                    styled_text = Text(line, style="green")
+                                elif line.startswith('-'):
+                                    styled_text = Text(line, style="red")
+                                elif line.startswith('@@'):
+                                    styled_text = Text(line, style="cyan")
+                                elif line.startswith('diff --git') or line.startswith('index '):
+                                    styled_text = Text(line, style="bold")
+                                else:
+                                    styled_text = Text(line)
+                            else:
+                                styled_text = Text(line)
+                            self.append(ListItem(Label(styled_text)))
+                    else:
+                        self.append(ListItem(Label(Text(f"No diff between {previous_hash}..{current_hash}"))))
+                    
+                    # Restore scroll position and selection
+                    def restore_state():
+                        try:
+                            self.scroll_y = saved_scroll_y
+                            if saved_index is not None:
+                                self.index = saved_index
+                        except Exception:
+                            pass
+                    
+                    self.call_after_refresh(restore_state)
+                    logger.debug("DiffList: diff re-rendered successfully")
+                else:
+                    logger.debug("DiffList: no current diff info available")
+                        
+            except Exception as e:
+                logger.debug(f"DiffList: exception in c/C handler: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
+            return
+        
         if key and key.lower() == "q":
             try:
                 event.key = key.lower()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"DiffList: exception in q handler: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
             return
         if key == "left":
             event.stop()
             try:
                 hist = self.app.query_one("#right1", HistoryList)
                 hist.focus()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"DiffList: exception in left arrow handler: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
             return
         
-        # Handle PageUp/PageDown to keep selection visible
+        # Handle PageUp/PageDown - move selection by page and scroll to position it appropriately
         if key in ("pageup", "pagedown"):
+            logger.debug(f"DiffList: {key} pressed")
             event.stop()
             try:
                 nodes = getattr(self, "_nodes", [])
                 if not nodes:
+                    logger.debug(f"DiffList: WARNING - _nodes is empty for {key}")
                     return
                 
-                # Perform the scroll
-                if key == "pageup":
-                    self.scroll_page_up()
-                else:
-                    self.scroll_page_down()
+                current_index = self.index if self.index is not None else 0
+                visible_height = self.scrollable_content_region.height
+                page_size = max(1, visible_height // 2)  # Half screen at a time like built-in behavior
                 
-                # After scrolling, move selection to appropriate edge
-                def update_selection():
+                logger.debug(f"DiffList: {key} - current_index={current_index}, page_size={page_size}, visible_height={visible_height}, nodes={len(nodes)}")
+                
+                # Calculate new index
+                if key == "pagedown":
+                    new_index = min(current_index + page_size, len(nodes) - 1)
+                else:  # pageup
+                    new_index = max(current_index - page_size, 0)
+                
+                logger.debug(f"DiffList: {key} - moving from index {current_index} to {new_index}")
+                
+                # Set the new index
+                self.index = new_index
+                
+                # Now explicitly scroll to position the selected line
+                # For pagedown: try to put it at the top of the viewport
+                # For pageup: try to put it at the bottom of the viewport
+                def scroll_to_position():
                     try:
-                        # Get the scroll position and visible height
-                        scroll_y = self.scroll_y
-                        visible_height = self.scrollable_content_region.height
-                        
-                        # Calculate which items are roughly visible
-                        # Assume items are roughly 1 line tall
-                        first_visible_approx = int(scroll_y)
-                        last_visible_approx = int(scroll_y + visible_height) - 1
-                        
-                        # Clamp to valid range
-                        first_visible_approx = max(0, min(first_visible_approx, len(nodes) - 1))
-                        last_visible_approx = max(0, min(last_visible_approx, len(nodes) - 1))
-                        
-                        # For PgDn: move to first visible item
-                        # For PgUp: move to last visible item
+                        # Assume each line is ~1 unit tall, so scroll position ≈ line index
                         if key == "pagedown":
-                            new_index = first_visible_approx
+                            # Position at top of viewport (or as close as possible)
+                            target_scroll = float(new_index)
                         else:  # pageup
-                            new_index = last_visible_approx
+                            # Position at bottom of viewport (or as close as possible)
+                            target_scroll = float(max(0, new_index - visible_height + 1))
                         
-                        # Force the ListView to update by clearing and resetting index
-                        old_index = self.index
-                        self.index = None
-                        self.index = new_index
+                        # Clamp to valid scroll range
+                        max_scroll = float(max(0, len(nodes) - visible_height))
+                        target_scroll = max(0.0, min(target_scroll, max_scroll))
                         
-                        # Also ensure the item is highlighted by removing/adding highlight class
-                        try:
-                            if old_index is not None and old_index < len(nodes):
-                                nodes[old_index].remove_class("-highlight")
-                            if new_index < len(nodes):
-                                nodes[new_index].add_class("-highlight")
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
+                        logger.debug(f"DiffList: {key} - before scroll: scroll_y={self.scroll_y}, setting to {target_scroll}, max_scroll={max_scroll}")
+                        self.scroll_y = target_scroll
+                        logger.debug(f"DiffList: {key} - after scroll: scroll_y={self.scroll_y}")
+                    except Exception as e:
+                        logger.debug(f"DiffList: exception in scroll_to_position: {e}")
+                        import traceback
+                        logger.debug(traceback.format_exc())
                 
-                self.call_after_refresh(update_selection)
-            except Exception:
-                pass
+                self.call_after_refresh(scroll_to_position)
+                
+            except Exception as e:
+                logger.debug(f"DiffList: exception in {key} handler: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
             return
         # let other keys be handled by default (up/down handled by ListView)
 
@@ -1455,6 +1573,11 @@ App {
         self.repo_index_mtime_map: dict[str, float] = {}
         # column state for restoring after help
         self.saved_column_state: Optional[dict] = None
+        # colorization state and current diff info
+        self.colorize_diff = True
+        self.current_commit_sha: Optional[str] = None
+        self.current_prev_sha: Optional[str] = None
+        self.current_diff_file: Optional[str] = None
 
     def build_repo_cache(self) -> None:
         """
