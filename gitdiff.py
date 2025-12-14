@@ -9,6 +9,8 @@ import os
 import subprocess
 import re
 import logging
+import traceback
+import datetime
 from typing import Optional
 from rich.text import Text
 
@@ -59,7 +61,9 @@ class FileList(ListView):
         try:
             if hasattr(self, "app"):
                 self.app.displayed_path = self.path
-        except Exception:
+        except Exception as e:
+            logger.debug(f"FileList.set_path: exception setting displayed_path: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             entries = sorted(os.listdir(path))
@@ -92,7 +96,9 @@ class FileList(ListView):
                         # path relative to repo root
                         try:
                             rel = os.path.relpath(full, app.repo_root)
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"FileList.set_path: exception getting relpath: {e}")
+                            logger.debug(traceback.format_exc())
                             rel = None
                         if rel and not rel.startswith(".."):
                             flags = app.repo_status_map.get(rel, 0)
@@ -133,7 +139,9 @@ class FileList(ListView):
                                     # tracked and clean — display in bright white
                                     style = "white"
                                     repo_status = "tracked_clean"
-                            except Exception:
+                            except Exception as e:
+                                logger.debug(f"FileList.set_path: exception processing pygit2 flags: {e}")
+                                logger.debug(traceback.format_exc())
                                 style = None
                                 repo_status = None
                         else:
@@ -144,7 +152,9 @@ class FileList(ListView):
                         # no repo available -> treat as untracked
                         style = "bold yellow"
                         repo_status = "untracked"
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"FileList.set_path: exception getting repo status: {e}")
+                    logger.debug(traceback.format_exc())
                     style = None
                     repo_status = None
 
@@ -167,22 +177,30 @@ class FileList(ListView):
                     li = ListItem(Label(display))
                 try:
                     li._repo_status = repo_status
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"FileList.set_path: exception setting _repo_status: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
             # attach filename to the ListItem for reliable lookup later
             try:
                 li._filename = name
-            except Exception:
+            except Exception as e:
+                logger.debug(f"FileList.set_path: exception setting _filename: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             self.append(li)
 
         # After populating, ensure the top entry is highlighted.
         try:
             self.call_after_refresh(self._highlight_top)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"FileList.set_path: exception calling _highlight_top: {e}")
+            logger.debug(traceback.format_exc())
             try:
                 self.index = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"FileList.set_path: exception setting index to 0: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
     def on_focus(self, event: events.Focus) -> None:
@@ -194,32 +212,44 @@ class FileList(ListView):
             try:
                 self.app.query_one("#left-column").styles.width = "100%"
                 self.app.query_one("#left-column").styles.flex = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"FileList.on_focus: exception setting left column: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 self.app.query_one("#right1-column").styles.width = "0%"
                 self.app.query_one("#right1-column").styles.flex = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"FileList.on_focus: exception setting right1 column: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 self.app.query_one("#right2-column").styles.width = "0%"
                 self.app.query_one("#right2-column").styles.flex = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"FileList.on_focus: exception setting right2 column: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             # Ensure inner left list fills its column
             self.styles.width = "100%"
             self.styles.flex = 0
-        except Exception:
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception setting column widths: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             right1 = self.app.query_one("#right1", HistoryList)
             right1.styles.display = "none"
-        except Exception:
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception hiding right1: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             right2 = self.app.query_one("#right2", ListView)
             right2.styles.display = "none"
-        except Exception:
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception hiding right2: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
         # show/hide titles for columns: left visible, others hidden
@@ -229,28 +259,36 @@ class FileList(ListView):
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception updating left title: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             lbl = self.query_one("#right1-title", Label)
             lbl.styles.display = "none"
             lbl.styles.height = 0
             lbl.styles.width = 0
-        except Exception:
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception hiding right1 title: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             lbl = self.query_one("#right2-title", Label)
             lbl.styles.display = "none"
             lbl.styles.height = 0
             lbl.styles.width = 0
-        except Exception:
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception hiding right2 title: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
         # Footer: base hints when in Files view
         try:
             footer = self.app.query_one("#footer", Label)
             footer.update(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →", style="bold"))
-        except Exception:
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception updating footer: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
     def on_key(self, event: events.Key) -> None:
@@ -267,10 +305,7 @@ class FileList(ListView):
             # Allow global quit (q/Q) to bubble to the app. Ensure the
             # event.key is normalized to lowercase so the app-level handler
             # which checks for 'q' will receive a lower-case key.
-            try:
-                event.key = key.lower()
-            except Exception:
-                pass
+            event.key = key.lower()
             return
         if key == "up":
             event.stop()
@@ -304,7 +339,9 @@ class FileList(ListView):
                     # Fallback: show the exception message in the modal
                     try:
                         self.app.push_screen(_TBDModal(str(exc)))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"FileList.on_key: exception showing modal fallback: {e}")
+                        logger.debug(traceback.format_exc())
                         # Last-resort fallback
                         self.app.push_screen(_TBDModal())
                     return
@@ -317,12 +354,16 @@ class FileList(ListView):
                     # ensure highlight resets to first item
                     try:
                         self.index = 0
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"FileList.on_key: exception resetting index: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     # update app-level current path as well
                     try:
                         self.app.path = os.path.abspath(full)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"FileList.on_key: exception updating app.path: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     # focus back on this list
                     self.focus()
@@ -353,13 +394,17 @@ class FileList(ListView):
                         try:
                             # clear existing items
                             hist.clear()
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"FileList.on_key: exception clearing history: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
 
                         # remember which file this history is for
                         try:
                             hist._filename = item_name
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"FileList.on_key: exception setting hist._filename: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
 
                         if out:
@@ -371,7 +416,9 @@ class FileList(ListView):
                                 if app and getattr(app, "repo_available", False) and app.repo_root:
                                     try:
                                         rel = os.path.relpath(os.path.join(self.app.path, item_name), app.repo_root)
-                                    except Exception:
+                                    except Exception as e:
+                                        logger.debug(f"FileList.on_key: exception getting relpath for pseudo entries: {e}")
+                                        logger.debug(traceback.format_exc())
                                         rel = None
                                     if rel and not rel.startswith(".."):
                                         flags = app.repo_status_map.get(rel, 0)
@@ -399,7 +446,9 @@ class FileList(ListView):
                                 # fall back to showing MODS when `git diff` would
                                 # have non-empty output vs HEAD. We keep simple
                                 # behavior and only use repo flags when available.
-                            except Exception:
+                            except Exception as e:
+                                logger.debug(f"FileList.on_key: exception building pseudo entries: {e}")
+                                logger.debug(traceback.format_exc())
                                 pseudo_entries = []
 
                             for pseudo in pseudo_entries:
@@ -412,26 +461,32 @@ class FileList(ListView):
                                         if app and getattr(app, "repo_root", None):
                                             try:
                                                 rel = os.path.relpath(os.path.join(self.path, item_name), app.repo_root)
-                                            except Exception:
+                                            except Exception as e:
+                                                logger.debug(f"FileList.on_key: exception getting relpath for STAGED: {e}")
+                                                logger.debug(traceback.format_exc())
                                                 rel = None
                                             mtime = None
                                             if rel:
                                                 try:
                                                     mtime = app.repo_index_mtime_map.get(rel)
-                                                except Exception:
+                                                except Exception as e:
+                                                    logger.debug(f"FileList.on_key: exception getting index mtime: {e}")
+                                                    logger.debug(traceback.format_exc())
                                                     mtime = None
                                             # fallback to index file mtime if per-file not available
                                             if not mtime:
                                                 try:
                                                     index_path = os.path.join(app.repo_root, ".git", "index")
                                                     mtime = os.path.getmtime(index_path)
-                                                except Exception:
+                                                except Exception as e:
+                                                    logger.debug(f"FileList.on_key: exception getting index file mtime: {e}")
+                                                    logger.debug(traceback.format_exc())
                                                     mtime = None
                                             if mtime:
-                                                import datetime
-
                                                 display_pseudo = f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} STAGED"
-                                    except Exception:
+                                    except Exception as e:
+                                        logger.debug(f"FileList.on_key: exception building STAGED display: {e}")
+                                        logger.debug(traceback.format_exc())
                                         display_pseudo = "STAGED"
                                 elif pseudo == "MODS":
                                     try:
@@ -439,25 +494,31 @@ class FileList(ListView):
                                         try:
                                             fp = os.path.join(self.path, item_name)
                                             mtime = os.path.getmtime(fp)
-                                        except Exception:
+                                        except Exception as e:
+                                            logger.debug(f"FileList.on_key: exception getting MODS file mtime: {e}")
+                                            logger.debug(traceback.format_exc())
                                             mtime = None
                                         if mtime:
-                                            import datetime
-
                                             display_pseudo = f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} MODS"
                                         else:
                                             display_pseudo = "MODS"
-                                    except Exception:
+                                    except Exception as e:
+                                        logger.debug(f"FileList.on_key: exception building MODS display: {e}")
+                                        logger.debug(traceback.format_exc())
                                         display_pseudo = "MODS"
 
                                 pli = ListItem(Label(Text(" " + display_pseudo)))
                                 try:
                                     pli._hash = pseudo
-                                except Exception:
+                                except Exception as e:
+                                    logger.debug(f"FileList.on_key: exception setting pli._hash: {e}")
+                                    logger.debug(traceback.format_exc())
                                     pass
                                 try:
                                     pli._raw_text = display_pseudo
-                                except Exception:
+                                except Exception as e:
+                                    logger.debug(f"FileList.on_key: exception setting pli._raw_text: {e}")
+                                    logger.debug(traceback.format_exc())
                                     pass
                                 hist.append(pli)
 
@@ -467,11 +528,15 @@ class FileList(ListView):
                                     m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
                                     if m:
                                         li._hash = m.group(2)
-                                except Exception:
+                                except Exception as e:
+                                    logger.debug(f"FileList.on_key: exception parsing hash from line: {e}")
+                                    logger.debug(traceback.format_exc())
                                     pass
                                 try:
                                     li._raw_text = line
-                                except Exception:
+                                except Exception as e:
+                                    logger.debug(f"FileList.on_key: exception setting li._raw_text: {e}")
+                                    logger.debug(traceback.format_exc())
                                     pass
                                 hist.append(li)
                         else:
@@ -480,23 +545,33 @@ class FileList(ListView):
                         # highlight and focus the top entry
                         try:
                             hist.index = 0
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"FileList.on_key: exception setting hist.index: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
                         try:
                                 hist.focus()
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"FileList.on_key: exception focusing history: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"FileList.on_key: exception updating history view: {e}")
+                        logger.debug(traceback.format_exc())
                         # If unable to update, show modal with output or message
                         msg = out or f"No git history for {item_name}"
                         try:
                             self.app.push_screen(_TBDModal(msg))
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"FileList.on_key: exception showing history error modal: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
                 except Exception as exc:
                     try:
                         self.app.push_screen(_TBDModal(str(exc)))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"FileList.on_key: exception showing outer error modal: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                 return
 
@@ -517,7 +592,9 @@ class FileList(ListView):
                 except Exception as exc:
                     try:
                         self.app.push_screen(_TBDModal(str(exc)))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"FileList.on_key: exception showing left key error modal: {e}")
+                        logger.debug(traceback.format_exc())
                         self.app.push_screen(_TBDModal())
                     return
 
@@ -535,18 +612,24 @@ class FileList(ListView):
                 # After the DOM refresh, highlight the directory we came from.
                 try:
                     self.call_after_refresh(self._highlight_filename, prev_basename)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"FileList.on_key: exception calling _highlight_filename: {e}")
+                    logger.debug(traceback.format_exc())
                     try:
                         # Fallback: set to first item
                         self.index = 0
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"FileList.on_key: exception setting index fallback: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
 
                 # update app-level path info
                 try:
                     self.app.path = os.path.abspath(parent)
                     self.app.displayed_path = self.path
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"FileList.on_key: exception updating app path info: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
 
                 self.focus()
@@ -572,15 +655,21 @@ class FileList(ListView):
                 if getattr(node, "_filename", None) == name:
                     try:
                         self.index = idx
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"FileList._highlight_filename: exception setting index: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     return
             # not found: default to first
             try:
                 self.index = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"FileList._highlight_filename: exception setting index to 0: {e}")
+                logger.debug(traceback.format_exc())
                 pass
-        except Exception:
+        except Exception as e:
+            logger.debug(f"FileList._highlight_filename: exception in outer block: {e}")
+            logger.debug(traceback.format_exc())
             return
 
     def _highlight_top(self) -> None:
@@ -590,7 +679,9 @@ class FileList(ListView):
             nodes = getattr(self, "_nodes", [])
             if nodes:
                 self.index = 0
-        except Exception:
+        except Exception as e:
+            logger.debug(f"FileList._highlight_top: exception: {e}")
+            logger.debug(traceback.format_exc())
             return
 
 
@@ -621,7 +712,9 @@ class HistoryList(ListView):
                     style = None
                     try:
                         style = getattr(lbl.renderable, "style", None)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"HistoryList.toggle_check_current._label_text_and_style: exception getting style: {e}")
+                        logger.debug(traceback.format_exc())
                         style = None
                     # derive visible text from stored raw_text when available
                     raw = getattr(node, "_raw_text", None)
@@ -639,7 +732,9 @@ class HistoryList(ListView):
                         else:
                             text = str(lbl)
                     return text, style, lbl
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.toggle_check_current._label_text_and_style: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     return str(node), None, None
 
             # Find previously checked node and clear it (unless it's the same)
@@ -664,7 +759,9 @@ class HistoryList(ListView):
                         else:
                             lbl.update(Text(new_text))
                     target._checked = False
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.toggle_check_current: exception unchecking target: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return
 
@@ -680,7 +777,9 @@ class HistoryList(ListView):
                         else:
                             lbl.update(Text(new_text))
                     prev_checked._checked = False
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.toggle_check_current: exception clearing previous check: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
 
             # Set check on target
@@ -694,9 +793,13 @@ class HistoryList(ListView):
                     else:
                         lbl.update(Text(new_text))
                 target._checked = True
-            except Exception:
+            except Exception as e:
+                logger.debug(f"HistoryList.toggle_check_current: exception setting check on target: {e}")
+                logger.debug(traceback.format_exc())
                 pass
-        except Exception:
+        except Exception as e:
+            logger.debug(f"HistoryList.toggle_check_current: exception in outer block: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
 
@@ -714,20 +817,30 @@ class HistoryList(ListView):
                     # clear then restore to force watch_index
                     try:
                         self.index = None
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"HistoryList._apply: clearing index: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     try:
                         self.index = target
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"HistoryList._apply: restoring index target: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList._apply: nodes processing: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     return
 
             try:
                 self.call_after_refresh(_apply)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"HistoryList.on_focus: call_after_refresh exception: {e}")
+                logger.debug(traceback.format_exc())
                 _apply()
-        except Exception:
+        except Exception as e:
+            logger.debug(f"HistoryList.on_focus: _apply setup: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
         # When History receives focus, make Files/History split 50/50 and hide Diff
@@ -740,36 +853,50 @@ class HistoryList(ListView):
                 try:
                     self.app.query_one("#left-column").styles.width = "25%"
                     self.app.query_one("#left-column").styles.flex = 0
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_focus: setting left-column width: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 try:
                     self.app.query_one("#right1-column").styles.width = "75%"
                     self.app.query_one("#right1-column").styles.flex = 0
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_focus: setting right1-column width: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 # inner lists should fill their outer column
                 left.styles.width = "100%"
                 left.styles.flex = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"HistoryList.on_focus: setting left list styles: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 self.styles.width = "100%"
                 self.styles.display = None
                 self.styles.flex = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"HistoryList.on_focus: setting history styles: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             # hide diff list and shrink its outer column to zero so the
             # title doesn't consume space
             try:
                 right2.styles.display = "none"
-            except Exception:
+            except Exception as e:
+                logger.debug(f"HistoryList.on_focus: hiding diff list: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 self.app.query_one("#right2-column").styles.width = "0%"
                 self.app.query_one("#right2-column").styles.flex = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"HistoryList.on_focus: setting right2-column width: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
-        except Exception:
+        except Exception as e:
+            logger.debug(f"HistoryList.on_focus: layout adjustment: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         # Titles: show left and history, hide diff
         try:
@@ -778,28 +905,36 @@ class HistoryList(ListView):
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"HistoryList.on_focus: updating left-title label: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             lbl = self.app.query_one("#right1-title", Label)
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"HistoryList.on_focus: updating right1-title label: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             lbl = self.app.query_one("#right2-title", Label)
             lbl.styles.display = "none"
             lbl.styles.height = 0
             lbl.styles.width = 0
-        except Exception:
+        except Exception as e:
+            logger.debug(f"HistoryList.on_focus: updating right2 title: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
         # Footer: add History-specific hint
         try:
             footer = self.app.query_one("#footer", Label)
             footer.update(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →   m (Mark)", style="bold"))
-        except Exception:
+        except Exception as e:
+            logger.debug(f"HistoryList.on_focus: updating footer: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
     def on_key(self, event: events.Key) -> None:
@@ -810,10 +945,7 @@ class HistoryList(ListView):
         """
         key = event.key
         if key and key.lower() == "q":
-            try:
-                event.key = key.lower()
-            except Exception:
-                pass
+            event.key = key.lower()
             return
         # Mark/unmark the file referenced by this history view
         if key and key.lower() == "m":
@@ -821,7 +953,9 @@ class HistoryList(ListView):
             # Toggle checkmark on the current history item (in this column)
             try:
                 self.toggle_check_current()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"HistoryList.on_key: toggle check: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             return
         if key == "left":
@@ -829,7 +963,9 @@ class HistoryList(ListView):
             try:
                 files = self.app.query_one("#left", FileList)
                 files.focus()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"HistoryList.on_key: focusing files on left: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             return
         if key == "right":
@@ -840,7 +976,9 @@ class HistoryList(ListView):
             if idx is None or idx < 0 or not nodes:
                 try:
                     self.app.push_screen(_TBDModal("No commit to diff with"))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_key: showing no commit modal: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return
 
@@ -867,7 +1005,9 @@ class HistoryList(ListView):
                     if renderable is not None:
                         return str(renderable)
                     return str(lbl)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_key._text_of: extracting text: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     return str(node)
 
             # Determine the pair of indices to diff: default is current vs next
@@ -876,7 +1016,9 @@ class HistoryList(ListView):
                 if idx >= len(nodes) - 1:
                     try:
                         self.app.push_screen(_TBDModal("No earlier commit to diff with"))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"HistoryList.on_key: showing no earlier commit modal: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     return
                 i_newer = idx
@@ -911,7 +1053,9 @@ class HistoryList(ListView):
                 except Exception as exc:
                     try:
                         self.app.push_screen(_TBDModal(f"Could not parse hashes: {exc}"))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"HistoryList.on_key: showing hash parse error modal: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     return
 
@@ -920,7 +1064,9 @@ class HistoryList(ListView):
             if not filename:
                 try:
                     self.app.push_screen(_TBDModal("Unknown filename for history"))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_key: showing unknown filename modal: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return
 
@@ -958,7 +1104,9 @@ class HistoryList(ListView):
                     # default: two real commits/hashes
                     if prev and curr:
                         return ["git", "diff", prev, curr, "--", fname]
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_key._build_diff_cmd: building command: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 # ultimate fallback: show working-tree diff
                 return ["git", "diff", "--", fname]
@@ -975,7 +1123,9 @@ class HistoryList(ListView):
             except Exception as exc:
                 try:
                     self.app.push_screen(_TBDModal(str(exc)))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_key: showing subprocess error modal: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return
 
@@ -984,14 +1134,18 @@ class HistoryList(ListView):
                 diff_view = self.app.query_one("#right2", ListView)
                 try:
                     diff_view.clear()
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_key: clearing diff view: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
 
                 # Header indicating which two hashes are being compared
                 try:
                     header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
                     diff_view.append(header)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_key: appending diff header: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
 
                 if diff_out:
@@ -1026,21 +1180,29 @@ class HistoryList(ListView):
                 # make sure Diff column is visible
                 try:
                     diff_view.styles.display = None
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_key: making diff column visible: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
 
                 try:
                     diff_view.index = 0
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_key: setting diff view index: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 try:
                     diff_view.focus()
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_key: focusing diff view: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
             except Exception as exc:
                 try:
                     self.app.push_screen(_TBDModal(str(exc)))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HistoryList.on_key: showing diff error modal: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
             return
 
@@ -1077,8 +1239,6 @@ class DiffList(ListView):
                     saved_index = self.index
                     
                     # Directly re-run the diff command
-                    import subprocess
-                    
                     previous_hash = self.app.current_prev_sha
                     current_hash = self.app.current_commit_sha
                     filename = self.app.current_diff_file
@@ -1096,7 +1256,9 @@ class DiffList(ListView):
                                 return ["git", "diff", "--cached", "--", fname]
                             if curr == "MODS" and prev is None:
                                 return ["git", "diff", "--", fname]
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"[DiffList._build_diff_cmd]: exception: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
                         if prev and curr:
                             return ["git", "diff", prev, curr, "--", fname]
@@ -1110,9 +1272,6 @@ class DiffList(ListView):
                     self.clear()
                     
                     # Header
-                    from rich.text import Text
-                    from textual.widgets import Label
-                    from textual.widgets._list_view import ListItem
                     header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
                     self.append(header)
                     
@@ -1143,7 +1302,9 @@ class DiffList(ListView):
                             self.scroll_y = saved_scroll_y
                             if saved_index is not None:
                                 self.index = saved_index
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"[DiffList.restore_state]: exception: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
                     
                     self.call_after_refresh(restore_state)
@@ -1153,7 +1314,6 @@ class DiffList(ListView):
                         
             except Exception as e:
                 logger.debug(f"DiffList: exception in c/C handler: {e}")
-                import traceback
                 logger.debug(traceback.format_exc())
             return
         
@@ -1162,7 +1322,6 @@ class DiffList(ListView):
                 event.key = key.lower()
             except Exception as e:
                 logger.debug(f"DiffList: exception in q handler: {e}")
-                import traceback
                 logger.debug(traceback.format_exc())
             return
         if key == "left":
@@ -1172,7 +1331,6 @@ class DiffList(ListView):
                 hist.focus()
             except Exception as e:
                 logger.debug(f"DiffList: exception in left arrow handler: {e}")
-                import traceback
                 logger.debug(traceback.format_exc())
             return
         
@@ -1225,14 +1383,12 @@ class DiffList(ListView):
                         logger.debug(f"DiffList: {key} - after scroll: scroll_y={self.scroll_y}")
                     except Exception as e:
                         logger.debug(f"DiffList: exception in scroll_to_position: {e}")
-                        import traceback
                         logger.debug(traceback.format_exc())
                 
                 self.call_after_refresh(scroll_to_position)
                 
             except Exception as e:
                 logger.debug(f"DiffList: exception in {key} handler: {e}")
-                import traceback
                 logger.debug(traceback.format_exc())
             return
         # let other keys be handled by default (up/down handled by ListView)
@@ -1248,20 +1404,30 @@ class DiffList(ListView):
                     target = self.index if self.index is not None else 0
                     try:
                         self.index = None
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"[DiffList._apply.set_index_none]: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     try:
                         self.index = target
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"[DiffList._apply.set_index_target]: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[DiffList._apply]: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     return
 
             try:
                 self.call_after_refresh(_apply)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[DiffList.call_after_refresh]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 _apply()
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[DiffList.on_focus]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
         # When Diff receives focus, show all columns and set widths: Files 5%, History 20%, Diff 75%
@@ -1274,35 +1440,49 @@ class DiffList(ListView):
                 try:
                     self.app.query_one("#left-column").styles.width = "5%"
                     self.app.query_one("#left-column").styles.flex = 0
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[DiffList.on_focus.set_left_column_width]: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 try:
                     self.app.query_one("#right1-column").styles.width = "15%"
                     self.app.query_one("#right1-column").styles.flex = 0
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[DiffList.on_focus.set_right1_column_width]: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 try:
                     self.app.query_one("#right2-column").styles.width = "80%"
                     self.app.query_one("#right2-column").styles.flex = 0
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[DiffList.on_focus.set_right2_column_width]: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 left.styles.width = "100%"
                 left.styles.flex = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[DiffList.on_focus.set_left_styles]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 hist.styles.width = "100%"
                 hist.styles.flex = 0
                 hist.styles.display = None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[DiffList.on_focus.set_hist_styles]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 diff.styles.width = "100%"
                 diff.styles.display = None
                 diff.styles.flex = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[DiffList.on_focus.set_diff_styles]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[DiffList.on_focus.set_widget_styles]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         # Show all titles when diff active
         try:
@@ -1311,28 +1491,36 @@ class DiffList(ListView):
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[DiffList.on_focus.set_left_title]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             lbl = self.app.query_one("#right1-title", Label)
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[DiffList.on_focus.set_right1_title]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             lbl = self.app.query_one("#right2-title", Label)
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[DiffList.on_focus.set_right2_title]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
         # Footer: add Diff-specific hint
         try:
             footer = self.app.query_one("#footer", Label)
             footer.update(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →   PgUp/PgDn", style="bold"))
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[DiffList.on_focus.update_footer]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
 
@@ -1603,7 +1791,9 @@ App {
             try:
                 idx = repo.index
                 self.repo_index_set = {entry.path for entry in idx}
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp.build_repo_cache.index_set]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 self.repo_index_set = set()
             # per-index-entry mtime map (best-effort)
             try:
@@ -1627,14 +1817,20 @@ App {
                             try:
                                 p = os.path.join(self.repo_root, entry.path)
                                 mtime_val = os.path.getmtime(p)
-                            except Exception:
+                            except Exception as e:
+                                logger.debug(f"[GitDiffApp.build_repo_cache.get_mtime]: exception: {e}")
+                                logger.debug(traceback.format_exc())
                                 mtime_val = None
                         if mtime_val:
                             mmap[entry.path] = float(mtime_val)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"[GitDiffApp.build_repo_cache.process_entry_mtime]: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         continue
                 self.repo_index_mtime_map = mmap
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp.build_repo_cache.mtime_map]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 self.repo_index_mtime_map = {}
 
             # status: mapping path -> flags
@@ -1642,11 +1838,15 @@ App {
                 status_map = repo.status()
                 # keys are paths relative to repo root
                 self.repo_status_map = {k: int(v) for k, v in status_map.items()}
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp.build_repo_cache.status_map]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 self.repo_status_map = {}
 
             self.repo_available = True
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.build_repo_cache]: exception: {e}")
+            logger.debug(traceback.format_exc())
             # leave as not available
             self.repo_available = False
 
@@ -1688,41 +1888,57 @@ App {
             root = self.query_one("#root")
             root.styles.height = "100%"
             root.styles.flex = 1
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.set_root_styles]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             main = self.query_one("#main")
             main.styles.flex = 1
             # do not force 100% height here; allow footer to occupy its line
             main.styles.height = None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.set_main_styles]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         # build repository cache (pygit2-based) before populating file list
         try:
             self.build_repo_cache()
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.build_repo_cache]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         # Start with Files column full-width, other columns hidden
         try:
             left.styles.width = "100%"
             left.styles.flex = 0
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.set_left_width]: exception: {e}")
+            logger.debug(traceback.format_exc())
             try:
                 left.styles.flex = 1
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp.on_mount.set_left_flex]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
         try:
             right1.styles.display = "none"
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.hide_right1]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             right2.styles.display = "none"
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.hide_right2]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         try:
             right3.styles.display = "none"
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.hide_right3]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
         left.set_path(self.path)
@@ -1732,9 +1948,13 @@ App {
             if getattr(self, "initial_file", None):
                 try:
                     self._open_history_for_file(self.initial_file)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[GitDiffApp.on_mount.open_history]: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.check_initial_file]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
     def _open_history_for_file(self, item_name: str) -> None:
@@ -1762,12 +1982,16 @@ App {
             hist = self.query_one("#right1", ListView)
             try:
                 hist.clear()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_history_for_file.clear_hist]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
             try:
                 hist._filename = item_name
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_history_for_file.set_filename]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
             if out:
@@ -1777,11 +2001,15 @@ App {
                         m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
                         if m:
                             li._hash = m.group(2)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"[GitDiffApp._open_history_for_file.parse_hash]: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     try:
                         li._raw_text = line
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"[GitDiffApp._open_history_for_file.set_raw_text]: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     hist.append(li)
             else:
@@ -1790,39 +2018,55 @@ App {
             # Make History column visible and try to apply focus/layout
             try:
                 hist.styles.display = None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_history_for_file.show_hist]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             # Highlight the file in the Files column after the DOM refresh
             try:
                 left = self.query_one("#left", FileList)
                 try:
                     left.call_after_refresh(left._highlight_filename, item_name)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[GitDiffApp._open_history_for_file.highlight_filename]: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     try:
                         left.index = 0
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"[GitDiffApp._open_history_for_file.set_left_index]: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_history_for_file.query_left]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 self.query_one("#left-column").styles.width = "25%"
                 self.query_one("#left-column").styles.flex = 0
                 self.query_one("#right1-column").styles.width = "75%"
                 self.query_one("#right1-column").styles.flex = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_history_for_file.set_column_widths]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 hist.index = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_history_for_file.set_hist_index]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 hist.focus()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_history_for_file.focus_hist]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
         except Exception as exc:
             try:
                 self.push_screen(_TBDModal(str(exc)))
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_history_for_file.push_modal]: exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
     def on_key(self, event: events.Key) -> None:
@@ -1841,14 +2085,20 @@ App {
                 # Ensure quitting works for uppercase Q as well.
                 try:
                     event.stop()
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[GitDiffApp.on_key.quit_event_stop]: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 try:
                     self.action_quit()
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[GitDiffApp.on_key.action_quit]: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     try:
                         self.exit()
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"[GitDiffApp.on_key.exit]: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                 return
             # Help: show help column on h / H / ?
@@ -1856,7 +2106,9 @@ App {
                 logger.debug(f"Help key detected: {key}")
                 try:
                     event.stop()
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[GitDiffApp.on_key.help_event_stop]: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 try:
                     # Save current column state (save actual values, not strings)
@@ -1898,10 +2150,14 @@ App {
                     # Update footer
                     footer = self.query_one("#footer", Label)
                     footer.update(Text("q (Quit)  ↑ ↓  Press any key to return", style="bold"))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[GitDiffApp.on_key.show_help]: exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_key]: exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
 
