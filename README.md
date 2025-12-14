@@ -65,10 +65,10 @@ Running
 In this repository's root, activate the Python venv and run:
 
 ```bash
-./venv-3.14/bin/python gitdiff.py [path]
+gitdiff.py [path]
 ```
 
-`[path]` is optional — defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
+`[path]` is optional — it defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
 
 Dependencies
 ------------

@@ -8,6 +8,7 @@ import argparse
 import os
 import subprocess
 import re
+import logging
 from typing import Optional
 from rich.text import Text
 
@@ -25,6 +26,17 @@ from textual.widgets import (
     ListItem,
     Label,
 )
+
+# Set up logging to help debug key event issues (currently disabled)
+# Uncomment the basicConfig line below to enable logging to /tmp/gitdiff_debug.log
+DOLOGGING = True
+if DOLOGGING:
+    logging.basicConfig(
+        filename='tmp/gitdiff_debug.log',
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+logger = logging.getLogger(__name__)
 
 
 class FileList(ListView):
@@ -236,7 +248,7 @@ class FileList(ListView):
         # Footer: base hints when in Files view
         try:
             footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q (Quit)  ← ↑ ↓ →", style="bold"))
+            footer.update(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →", style="bold"))
         except Exception:
             pass
 
@@ -249,6 +261,7 @@ class FileList(ListView):
         - Other keys: ignore
         """
         key = event.key
+        logger.debug(f"FileList.on_key: key={key}")
         if key and key.lower() == "q":
             # Allow global quit (q/Q) to bubble to the app. Ensure the
             # event.key is normalized to lowercase so the app-level handler
@@ -541,8 +554,10 @@ class FileList(ListView):
             # Left on non-parent: ignore (do nothing)
             return
         else:
-            # ignore other keys
-            event.stop()
+            # For keys we don't explicitly handle here, allow them to bubble
+            # to higher-level handlers (e.g. app-level `on_key`) so global
+            # shortcuts like `h` / `?` and `Q` are still processed.
+            return
 
     def _highlight_filename(self, name: str) -> None:
         """Highlight the ListItem whose attached `_filename` equals `name`.
@@ -781,7 +796,7 @@ class HistoryList(ListView):
         # Footer: add History-specific hint
         try:
             footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q (Quit)  ← ↑ ↓ →   m (Mark)", style="bold"))
+            footer.update(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →   m (Mark)", style="bold"))
         except Exception:
             pass
 
@@ -1118,7 +1133,7 @@ class DiffList(ListView):
         # Footer: add Diff-specific hint
         try:
             footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q (Quit)  ← ↑ ↓ →   PgUp/PgDn", style="bold"))
+            footer.update(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →   PgUp/PgDn", style="bold"))
         except Exception:
             pass
 
@@ -1141,6 +1156,149 @@ class _TBDModal(ModalScreen):
         self.app.pop_screen()
 
 
+HELP_TEXT = """
+Git History Navigator (gitdiff)
+================================
+
+Overview
+--------
+The Git History Navigator is a terminal Textual TUI that provides a three-column view for
+
+* browsing a filesystem tree,
+* viewing the git history for a selected file, and
+* exploring the diffs between different versions.
+
+The three columns are titled: Files (left), History (middle), Diff (right).
+
+Type `q` or `Q` to exit the program.
+
+Key features
+------------
+
+Arrow keys move up and down the various columns.
+Left and Right arrow keys perform differently in each column.
+
+- Files column: navigable directory listing; directories highlighted with a blue background.
+  - Status markers & colors: files are prefixed with a short marker and colored by status:
+    - ` ` (space) tracked & clean — bright white
+    - `U` untracked — bold yellow
+    - `M` modified — yellow
+    - `A` staged (index changes) — cyan
+    - `D` deleted in working tree — red
+    - `I` ignored — dim italic
+    - `!` conflicted — magenta
+
+  - A Right Arrow will
+    - (for files) open the History column for the current filename
+    - (for directories) navigates to the current directory name.
+  - A Left Arrow on the directory ".." will navigate to the parent directory.
+
+- History column:
+  - Lines are populated from `git log --follow`.
+  - Pseudo-log entries `STAGED` and `MODS` are inserted at the top when the file has been staged, and when there are uncommitted/unstaged modifications, respectively.
+  - Press `m` (or `M`) to _mark_ the current log row with a leading `✓`.
+    - Only one history row may be checked at a time — toggling a new row clears any prior checkmark.
+  - A Right Arrow will
+    - open the Diff column for the currently highlighted log entry against the checkmarked entry (if there is a checkmarked entry) or the next entry in the list.
+  - A Left Arrow will close the History column.
+
+- Diff column:
+  - Lines are populated using `git diff` between the two hashes (or pseudo-hashes for staged and modified unstaged versions).
+  - A header line indicates the two hashes being compared, e.g.:
+    `Comparing: <old_hash>..<new_hash>`.
+  - The order is always the lower list item vs the higher item, so diffs read `older..newer`.
+  - A Left Arrow will close the Diff column.
+
+Running
+-------
+Run the application as follows:
+
+```bash
+gitdiff.py [path]
+```
+
+`[path]` is optional — it defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
+"""
+
+
+class HelpList(ListView):
+    """Help column showing usage and short docs.
+
+    The contents are a plain listing derived from the README.
+    """
+
+    def on_mount(self) -> None:
+        """Populate help content."""
+        # Split help text into lines and add as list items
+        for line in HELP_TEXT.split("\n"):
+            self.append(ListItem(Label(line)))
+    
+    def on_key(self, event: events.Key) -> None:
+        """Handle keys - go back to files view on any key except arrows/quit."""
+        key = event.key
+        # Allow arrow keys for scrolling, quit for quitting
+        if key in ("up", "down", "pageup", "pagedown", "q", "Q"):
+            return
+        # Any other key: return to previous view
+        try:
+            event.stop()
+            logger.debug(f"Restoring column state: {self.app.saved_column_state}")
+            # Hide help column
+            self.app.query_one("#right3-column").styles.width = "0%"
+            self.app.query_one("#right3-column").styles.flex = 0
+            
+            # Determine which widget to focus based on saved state
+            focus_target = "#left"  # default
+            
+            # Restore saved column state if available
+            if self.app.saved_column_state:
+                state = self.app.saved_column_state
+                # Restore left column
+                self.app.query_one("#left-column").styles.width = state["left"]["width"]
+                self.app.query_one("#left-column").styles.flex = state["left"]["flex"]
+                # Restore right1 column
+                self.app.query_one("#right1-column").styles.width = state["right1"]["width"]
+                self.app.query_one("#right1-column").styles.flex = state["right1"]["flex"]
+                self.app.query_one("#right1").styles.display = state["right1"]["display"]
+                # Restore right2 column
+                self.app.query_one("#right2-column").styles.width = state["right2"]["width"]
+                self.app.query_one("#right2-column").styles.flex = state["right2"]["flex"]
+                self.app.query_one("#right2").styles.display = state["right2"]["display"]
+                
+                # Determine focus target: rightmost visible column
+                if state["right2"]["display"] != "none":
+                    focus_target = "#right2"
+                elif state["right1"]["display"] != "none":
+                    focus_target = "#right1"
+                
+                logger.debug("Column state restored")
+            else:
+                logger.debug("No saved state, showing only files column")
+                # Fallback: just show files column
+                self.app.query_one("#left-column").styles.width = "100%"
+                self.app.query_one("#left-column").styles.flex = 0
+                self.app.query_one("#right1-column").styles.width = "0%"
+                self.app.query_one("#right1-column").styles.flex = 0
+                self.app.query_one("#right2-column").styles.width = "0%"
+                self.app.query_one("#right2-column").styles.flex = 0
+            
+            # Focus on the appropriate widget
+            # Use call_after_refresh to avoid triggering on_focus during layout restore
+            def restore_focus():
+                try:
+                    self.app.query_one(focus_target).focus()
+                except Exception as e:
+                    logger.debug(f"Error focusing {focus_target}: {e}")
+            
+            self.app.call_after_refresh(restore_focus)
+            
+            # Restore footer
+            footer = self.app.query_one("#footer", Label)
+            footer.update(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →", style="bold"))
+        except Exception as e:
+            logger.debug(f"Error restoring state: {e}")
+
+
 class GitHistoryTool(App):
     """Main Textual application providing the three-column git navigator.
 
@@ -1151,6 +1309,11 @@ class GitHistoryTool(App):
     TITLE = "Git History Navigator"
 # CSS: reserve one line for `#title` and let the main Horizontal flex to fill rest
     CSS = """
+/* Disable scrolling on the app itself - only columns should scroll */
+App {
+    overflow: hidden;
+    scrollbar-size: 0 0;
+}
 /* Reserve a one-line title bar for the app name */
 #title {
     height: 1;
@@ -1161,12 +1324,19 @@ class GitHistoryTool(App):
 /* Let the layout determine main area height so footer remains visible */
 #left {
     border: solid white;
+    scrollbar-size-vertical: 1;
 }
 #right1 {
     border: heavy #555555;
+    scrollbar-size-vertical: 1;
 }
 #right2 {
     border: heavy #555555;
+    scrollbar-size-vertical: 1;
+}
+#right3 {
+    border: heavy #555555;
+    scrollbar-size-vertical: 1;
 }
 /* footer area: show quit and navigation hints */
 #footer {
@@ -1203,6 +1373,8 @@ class GitHistoryTool(App):
         self.repo_status_map: dict[str, int] = {}
         # per-file index mtime map (path -> mtime seconds)
         self.repo_index_mtime_map: dict[str, float] = {}
+        # column state for restoring after help
+        self.saved_column_state: Optional[dict] = None
 
     def build_repo_cache(self) -> None:
         """
@@ -1276,7 +1448,7 @@ class GitHistoryTool(App):
             self.repo_available = False
 
     def compose(self) -> ComposeResult:
-        """Compose the app UI: title, three-column layout, and footer hints."""
+        """Compose the app UI: title, four-column layout, and footer hints."""
         with Vertical(id="root"):
             yield Label(Text(self.TITLE, style="bold"), id="title")
             with Horizontal(id="main"):
@@ -1284,14 +1456,17 @@ class GitHistoryTool(App):
                 with Vertical(id="left-column"):
                     yield Label(Text("Files", style="bold"), id="left-title")
                     yield FileList(id="left")
-                # two minimal right columns
+                # three minimal right columns
                 with Vertical(id="right1-column"):
                     yield Label(Text("History", style="bold"), id="right1-title")
                     yield HistoryList(id="right1")
                 with Vertical(id="right2-column"):
                     yield Label(Text("Diff", style="bold"), id="right2-title")
                     yield DiffList(id="right2")
-            yield Label(Text("q (Quit)  ← ↑ ↓ →", style="bold"), id="footer")
+                with Vertical(id="right3-column"):
+                    yield Label(Text("Help", style="bold"), id="right3-title")
+                    yield HelpList(id="right3")
+            yield Label(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →", style="bold"), id="footer")
 
     async def on_mount(self) -> None:
         """Mount-time initialization: build repo cache and populate Files.
@@ -1303,6 +1478,7 @@ class GitHistoryTool(App):
         left = self.query_one("#left", FileList)
         right1 = self.query_one("#right1", HistoryList)
         right2 = self.query_one("#right2", ListView)
+        right3 = self.query_one("#right3", HelpList)
         # Ensure the main horizontal fills remaining space so the title remains visible
         try:
             # ensure root fills the app and main flexes so footer remains visible
@@ -1339,6 +1515,10 @@ class GitHistoryTool(App):
             pass
         try:
             right2.styles.display = "none"
+        except Exception:
+            pass
+        try:
+            right3.styles.display = "none"
         except Exception:
             pass
 
@@ -1448,6 +1628,7 @@ class GitHistoryTool(App):
         - Block the Ctrl+P palette shortcut.
         - Accept uppercase `Q` as a quit key in addition to lowercase `q`.
         """
+        logger.debug(f"GitHistoryTool.on_key: key={event.key}")
         try:
             key = event.key
             if key and key.lower() == "ctrl+p":
@@ -1466,6 +1647,56 @@ class GitHistoryTool(App):
                         self.exit()
                     except Exception:
                         pass
+                return
+            # Help: show help column on h / H / ?
+            if key in ("h", "H", "?", "question_mark"):
+                logger.debug(f"Help key detected: {key}")
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+                try:
+                    # Save current column state (save actual values, not strings)
+                    left_col = self.query_one("#left-column")
+                    right1_col = self.query_one("#right1-column")
+                    right2_col = self.query_one("#right2-column")
+                    right1_widget = self.query_one("#right1")
+                    right2_widget = self.query_one("#right2")
+                    
+                    self.saved_column_state = {
+                        "left": {
+                            "width": left_col.styles.width,
+                            "flex": left_col.styles.flex,
+                        },
+                        "right1": {
+                            "width": right1_col.styles.width,
+                            "flex": right1_col.styles.flex,
+                            "display": right1_widget.styles.display,
+                        },
+                        "right2": {
+                            "width": right2_col.styles.width,
+                            "flex": right2_col.styles.flex,
+                            "display": right2_widget.styles.display,
+                        },
+                    }
+                    logger.debug(f"Saved column state: {self.saved_column_state}")
+                    
+                    # Show only the help column, hide others
+                    self.query_one("#left-column").styles.width = "0%"
+                    self.query_one("#left-column").styles.flex = 0
+                    self.query_one("#right1-column").styles.width = "0%"
+                    self.query_one("#right1-column").styles.flex = 0
+                    self.query_one("#right2-column").styles.width = "0%"
+                    self.query_one("#right2-column").styles.flex = 0
+                    self.query_one("#right3-column").styles.width = "100%"
+                    self.query_one("#right3-column").styles.flex = 0
+                    self.query_one("#right3").styles.display = "block"
+                    self.query_one("#right3").focus()
+                    # Update footer
+                    footer = self.query_one("#footer", Label)
+                    footer.update(Text("q (Quit)  ↑ ↓  Press any key to return", style="bold"))
+                except Exception:
+                    pass
                 return
         except Exception:
             pass
