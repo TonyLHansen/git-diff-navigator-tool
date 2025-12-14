@@ -1374,26 +1374,58 @@ class DiffList(ListView):
                         target_scroll = max(0.0, min(target_scroll, max_scroll))
 
                         logger.debug(f"DiffList: {key} - before scroll: scroll_y={self.scroll_y}, setting to {target_scroll}, max_scroll={max_scroll}")
-                        self.scroll_y = target_scroll
-                        logger.debug(f"DiffList: {key} - after scroll: scroll_y={self.scroll_y}")
-
-                        # After the scroll is applied, set the index so the item is highlighted.
+                        # Try to animate the scroll for smooth movement. If animate
+                        # is supported, schedule the highlight after the animation
+                        # duration. Otherwise fall back to instant set.
+                        anim_duration = 0.12
                         try:
-                            old_index = self.index
-                            # Clear and set to force highlight update
-                            self.index = None
-                            self.index = new_index
-                            # Manage highlight class conservatively
+                            # Some Textual versions support Widget.animate
                             try:
-                                if old_index is not None and old_index < len(nodes):
-                                    nodes[old_index].remove_class("-highlight")
-                                if new_index < len(nodes):
-                                    nodes[new_index].add_class("-highlight")
-                            except Exception as e:
-                                logger.debug(f"DiffList: exception managing highlight classes in scroll callback: {e}")
-                                logger.debug(traceback.format_exc())
+                                self.animate("scroll_y", target_scroll, duration=anim_duration)
+                                logger.debug(f"DiffList: {key} - started animate(scroll_y -> {target_scroll})")
+                                def _finalize_highlight():
+                                    try:
+                                        old_index = self.index
+                                        self.index = None
+                                        self.index = new_index
+                                        try:
+                                            if old_index is not None and old_index < len(nodes):
+                                                nodes[old_index].remove_class("-highlight")
+                                            if new_index < len(nodes):
+                                                nodes[new_index].add_class("-highlight")
+                                        except Exception as e:
+                                            logger.debug(f"DiffList: exception managing highlight classes after animate: {e}")
+                                            logger.debug(traceback.format_exc())
+                                    except Exception as e:
+                                        logger.debug(f"DiffList: exception finalizing highlight after animate: {e}")
+                                        logger.debug(traceback.format_exc())
+                                try:
+                                    # schedule after animation completes
+                                    self.set_timer(anim_duration + 0.02, _finalize_highlight)
+                                except Exception:
+                                    # fallback to call_after_refresh if set_timer not available
+                                    self.call_after_refresh(_finalize_highlight)
+                            except Exception:
+                                # If animate not available, fall back to instant scroll
+                                self.scroll_y = target_scroll
+                                logger.debug(f"DiffList: {key} - after instant scroll: scroll_y={self.scroll_y}")
+                                try:
+                                    old_index = self.index
+                                    self.index = None
+                                    self.index = new_index
+                                    try:
+                                        if old_index is not None and old_index < len(nodes):
+                                            nodes[old_index].remove_class("-highlight")
+                                        if new_index < len(nodes):
+                                            nodes[new_index].add_class("-highlight")
+                                    except Exception as e:
+                                        logger.debug(f"DiffList: exception managing highlight classes after instant scroll: {e}")
+                                        logger.debug(traceback.format_exc())
+                                except Exception as e:
+                                    logger.debug(f"DiffList: exception setting index after instant scroll: {e}")
+                                    logger.debug(traceback.format_exc())
                         except Exception as e:
-                            logger.debug(f"DiffList: exception setting index after scroll: {e}")
+                            logger.debug(f"DiffList: exception in scroll_to_position: {e}")
                             logger.debug(traceback.format_exc())
                     except Exception as e:
                         logger.debug(f"DiffList: exception in scroll_to_position: {e}")
