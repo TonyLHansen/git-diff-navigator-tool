@@ -1357,34 +1357,49 @@ class DiffList(ListView):
                     new_index = max(current_index - page_size, 0)
                 
                 logger.debug(f"DiffList: {key} - moving from index {current_index} to {new_index}")
-                
-                # Set the new index
-                self.index = new_index
-                
-                # Now explicitly scroll to position the selected line
-                # For pagedown: try to put it at the top of the viewport
-                # For pageup: try to put it at the bottom of the viewport
+
+                # We want to change the viewport first, then highlight the new line.
+                # Schedule a scroll callback that sets scroll_y, then set the index
+                # after the scroll has been applied so highlighting is stable.
                 def scroll_to_position():
                     try:
                         # Assume each line is ~1 unit tall, so scroll position ≈ line index
                         if key == "pagedown":
-                            # Position at top of viewport (or as close as possible)
                             target_scroll = float(new_index)
                         else:  # pageup
-                            # Position at bottom of viewport (or as close as possible)
                             target_scroll = float(max(0, new_index - visible_height + 1))
-                        
+
                         # Clamp to valid scroll range
                         max_scroll = float(max(0, len(nodes) - visible_height))
                         target_scroll = max(0.0, min(target_scroll, max_scroll))
-                        
+
                         logger.debug(f"DiffList: {key} - before scroll: scroll_y={self.scroll_y}, setting to {target_scroll}, max_scroll={max_scroll}")
                         self.scroll_y = target_scroll
                         logger.debug(f"DiffList: {key} - after scroll: scroll_y={self.scroll_y}")
+
+                        # After the scroll is applied, set the index so the item is highlighted.
+                        try:
+                            old_index = self.index
+                            # Clear and set to force highlight update
+                            self.index = None
+                            self.index = new_index
+                            # Manage highlight class conservatively
+                            try:
+                                if old_index is not None and old_index < len(nodes):
+                                    nodes[old_index].remove_class("-highlight")
+                                if new_index < len(nodes):
+                                    nodes[new_index].add_class("-highlight")
+                            except Exception as e:
+                                logger.debug(f"DiffList: exception managing highlight classes in scroll callback: {e}")
+                                logger.debug(traceback.format_exc())
+                        except Exception as e:
+                            logger.debug(f"DiffList: exception setting index after scroll: {e}")
+                            logger.debug(traceback.format_exc())
                     except Exception as e:
                         logger.debug(f"DiffList: exception in scroll_to_position: {e}")
                         logger.debug(traceback.format_exc())
-                
+
+                # Schedule the scroll -> highlight sequence
                 self.call_after_refresh(scroll_to_position)
                 
             except Exception as e:
