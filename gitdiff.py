@@ -29,7 +29,7 @@ from textual.widgets import (
 
 # Set up logging to help debug key event issues (currently disabled)
 # Uncomment the basicConfig line below to enable logging to /tmp/gitdiff_debug.log
-DOLOGGING = True
+DOLOGGING = False
 if DOLOGGING:
     logging.basicConfig(
         filename='tmp/gitdiff_debug.log',
@@ -224,7 +224,8 @@ class FileList(ListView):
 
         # show/hide titles for columns: left visible, others hidden
         try:
-            lbl = self.query_one("#left-title", Label)
+            lbl = self.app.query_one("#left-title", Label)
+            lbl.update(Text("Files", style="bold"))  # Restore full name
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
@@ -773,6 +774,7 @@ class HistoryList(ListView):
         # Titles: show left and history, hide diff
         try:
             lbl = self.app.query_one("#left-title", Label)
+            lbl.update(Text("Files", style="bold"))  # Restore full name
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
@@ -989,7 +991,26 @@ class HistoryList(ListView):
 
                 if diff_out:
                     for line in diff_out.splitlines():
-                        diff_view.append(ListItem(Label(Text(line))))
+                        # Colorize diff lines like git does
+                        if line.startswith('+++') or line.startswith('---'):
+                            # File headers in bold white
+                            styled_text = Text(line, style="bold white")
+                        elif line.startswith('+'):
+                            # Additions in green
+                            styled_text = Text(line, style="green")
+                        elif line.startswith('-'):
+                            # Deletions in red
+                            styled_text = Text(line, style="red")
+                        elif line.startswith('@@'):
+                            # Hunk headers in cyan
+                            styled_text = Text(line, style="cyan")
+                        elif line.startswith('diff --git') or line.startswith('index '):
+                            # Diff metadata in bold
+                            styled_text = Text(line, style="bold")
+                        else:
+                            # Context lines in default color
+                            styled_text = Text(line)
+                        diff_view.append(ListItem(Label(styled_text)))
                 else:
                     diff_view.append(ListItem(Label(Text(f"No diff between {previous_hash}..{current_hash}"))))
 
@@ -1022,7 +1043,7 @@ class DiffList(ListView):
     """ListView used for the Diff column. Left arrow moves focus back to History."""
 
     def on_key(self, event: events.Key) -> None:
-        """Handle left key to move focus back to History; pass other keys through."""
+        """Handle left key to move focus back to History; handle PgUp/PgDn with visible selection."""
         key = event.key
         if key and key.lower() == "q":
             try:
@@ -1035,6 +1056,64 @@ class DiffList(ListView):
             try:
                 hist = self.app.query_one("#right1", HistoryList)
                 hist.focus()
+            except Exception:
+                pass
+            return
+        
+        # Handle PageUp/PageDown to keep selection visible
+        if key in ("pageup", "pagedown"):
+            event.stop()
+            try:
+                nodes = getattr(self, "_nodes", [])
+                if not nodes:
+                    return
+                
+                # Perform the scroll
+                if key == "pageup":
+                    self.scroll_page_up()
+                else:
+                    self.scroll_page_down()
+                
+                # After scrolling, move selection to appropriate edge
+                def update_selection():
+                    try:
+                        # Get the scroll position and visible height
+                        scroll_y = self.scroll_y
+                        visible_height = self.scrollable_content_region.height
+                        
+                        # Calculate which items are roughly visible
+                        # Assume items are roughly 1 line tall
+                        first_visible_approx = int(scroll_y)
+                        last_visible_approx = int(scroll_y + visible_height) - 1
+                        
+                        # Clamp to valid range
+                        first_visible_approx = max(0, min(first_visible_approx, len(nodes) - 1))
+                        last_visible_approx = max(0, min(last_visible_approx, len(nodes) - 1))
+                        
+                        # For PgDn: move to first visible item
+                        # For PgUp: move to last visible item
+                        if key == "pagedown":
+                            new_index = first_visible_approx
+                        else:  # pageup
+                            new_index = last_visible_approx
+                        
+                        # Force the ListView to update by clearing and resetting index
+                        old_index = self.index
+                        self.index = None
+                        self.index = new_index
+                        
+                        # Also ensure the item is highlighted by removing/adding highlight class
+                        try:
+                            if old_index is not None and old_index < len(nodes):
+                                nodes[old_index].remove_class("-highlight")
+                            if new_index < len(nodes):
+                                nodes[new_index].add_class("-highlight")
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                
+                self.call_after_refresh(update_selection)
             except Exception:
                 pass
             return
@@ -1110,6 +1189,7 @@ class DiffList(ListView):
         # Show all titles when diff active
         try:
             lbl = self.app.query_one("#left-title", Label)
+            lbl.update(Text("Fi", style="bold"))  # Shorten to save space
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
