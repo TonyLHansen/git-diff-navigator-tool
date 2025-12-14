@@ -285,7 +285,7 @@ class FileList(ListView):
         # Footer: base hints when in Files view
         try:
             footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →", style="bold"))
+            footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →", style="bold"))
         except Exception as e:
             logger.debug(f"FileList.on_focus: exception updating footer: {e}")
             logger.debug(traceback.format_exc())
@@ -931,7 +931,7 @@ class HistoryList(ListView):
         # Footer: add History-specific hint
         try:
             footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →   m (Mark)", style="bold"))
+            footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →   m(ark)", style="bold"))
         except Exception as e:
             logger.debug(f"HistoryList.on_focus: updating footer: exception: {e}")
             logger.debug(traceback.format_exc())
@@ -944,6 +944,7 @@ class HistoryList(ListView):
         the selected history entry pair and populates the Diff column.
         """
         key = event.key
+        logger.debug(f"HistoryList.on_key: key={key}")
         if key and key.lower() == "q":
             event.key = key.lower()
             return
@@ -1564,7 +1565,7 @@ class DiffList(ListView):
         # Footer: add Diff-specific hint
         try:
             footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →   PgUp/PgDn", style="bold"))
+            footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)", style="bold"))
         except Exception as e:
             logger.debug(f"[DiffList.on_focus.update_footer]: exception: {e}")
             logger.debug(traceback.format_exc())
@@ -1669,6 +1670,8 @@ class HelpList(ListView):
     def on_key(self, event: events.Key) -> None:
         """Handle keys - go back to files view on any key except arrows/quit."""
         key = event.key
+        logger.debug(f"HelpList.on_key: key={key}")
+
         # Allow arrow keys for scrolling, quit for quitting
         if key in ("up", "down", "pageup", "pagedown", "q", "Q"):
             return
@@ -1727,7 +1730,7 @@ class HelpList(ListView):
             
             # Restore footer
             footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →", style="bold"))
+            footer.update(Text("q(uit)  ?h/(elp)  ← ↑ ↓ →", style="bold"))
         except Exception as e:
             logger.debug(f"Error restoring state: {e}")
 
@@ -1916,7 +1919,7 @@ App {
                 with Vertical(id="right3-column"):
                     yield Label(Text("Help", style="bold"), id="right3-title")
                     yield HelpList(id="right3")
-            yield Label(Text("q (Quit)  h/? (Help)  ← ↑ ↓ →", style="bold"), id="footer")
+            yield Label(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →", style="bold"), id="footer")
 
     async def on_mount(self) -> None:
         """Mount-time initialization: build repo cache and populate Files.
@@ -2125,6 +2128,7 @@ App {
         logger.debug(f"GitHistoryTool.on_key: key={event.key}")
         try:
             key = event.key
+            logger.debug(f"GitHistoryTool.on_key: key={key}")
             if key and key.lower() == "ctrl+p":
                 event.stop()
                 return
@@ -2196,7 +2200,7 @@ App {
                     self.query_one("#right3").focus()
                     # Update footer
                     footer = self.query_one("#footer", Label)
-                    footer.update(Text("q (Quit)  ↑ ↓  Press any key to return", style="bold"))
+                    footer.update(Text("q(uit)  ↑ ↓  Press any key to return", style="bold"))
                 except Exception as e:
                     logger.debug(f"[GitDiffApp.on_key.show_help]: exception: {e}")
                     logger.debug(traceback.format_exc())

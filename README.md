@@ -49,6 +49,7 @@ Left and Right arrow keys perform differently in each column.
     `Comparing: <old_hash>..<new_hash>`.
   - The order is always the lower list item vs the higher item, so diffs read `older..newer`.
   - A Left Arrow will close the Diff column.
+  - Press `c` (or `C`) to toggle the use of color.
 
 
 Implementation notes
