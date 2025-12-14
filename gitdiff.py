@@ -5,12 +5,12 @@ Git Diff Navigator TUI
 from __future__ import annotations
 
 import argparse
-import os
-import subprocess
-import re
-import logging
-import traceback
 import datetime
+import logging
+import os
+import re
+import subprocess
+import traceback
 from typing import Optional
 from rich.text import Text
 
@@ -282,7 +282,7 @@ class FileList(ListView):
             logger.debug(traceback.format_exc())
             pass
 
-        # Footer: base hints when in Files view
+        # FileList footer
         try:
             footer = self.app.query_one("#footer", Label)
             footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →", style="bold"))
@@ -928,7 +928,7 @@ class HistoryList(ListView):
             logger.debug(traceback.format_exc())
             pass
 
-        # Footer: add History-specific hint
+        # HistoryList footer
         try:
             footer = self.app.query_one("#footer", Label)
             footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →   m(ark)", style="bold"))
@@ -1219,6 +1219,38 @@ class DiffList(ListView):
         key = event.key
         logger.debug(f"DiffList.on_key: key={key}")
 
+        # Handle f/F to toggle fullscreen diff
+        if key and key.lower() == "f":
+            event.stop()
+            try:
+                if getattr(self.app, "diff_fullscreen", False):
+                    self.app.exit_diff_fullscreen()
+                    # keep focus on diff after restoring
+                    try:
+                        self.focus()
+                    except Exception:
+                        pass
+                else:
+                    # Only enter fullscreen when diff is visible (columnated)
+                    try:
+                        # require right2 to be visible
+                        if self.app.query_one("#right2", ListView).styles.display != "none":
+                            self.app.enter_diff_fullscreen()
+                            try:
+                                self.focus()
+                            except Exception:
+                                pass
+                    except Exception:
+                        # best-effort: enter anyway
+                        try:
+                            self.app.enter_diff_fullscreen()
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug(f"DiffList: exception toggling fullscreen f/F: {e}")
+                logger.debug(traceback.format_exc())
+            return
+
         # Handle c/C to toggle colorization
         if key and key.lower() == "c":
             event.stop()
@@ -1328,10 +1360,48 @@ class DiffList(ListView):
         if key == "left":
             event.stop()
             try:
+                # If we're in fullscreen, left arrow exits fullscreen
+                if getattr(self.app, "diff_fullscreen", False):
+                    try:
+                        self.app.exit_diff_fullscreen()
+                    except Exception as e:
+                        logger.debug(f"DiffList: exception exiting fullscreen on left: {e}")
+                        logger.debug(traceback.format_exc())
+                    return
+                # otherwise move focus back to History
                 hist = self.app.query_one("#right1", HistoryList)
                 hist.focus()
             except Exception as e:
                 logger.debug(f"DiffList: exception in left arrow handler: {e}")
+                logger.debug(traceback.format_exc())
+            return
+
+        if key == "right":
+            # In columnated mode, pressing right expands Diff to fullscreen.
+            try:
+                event.stop()
+                if getattr(self.app, "diff_fullscreen", False):
+                    # already fullscreen; right arrow does nothing
+                    return
+                # If diff is visible and not fullscreen, enter fullscreen
+                try:
+                    right1_display = self.app.query_one("#right1").styles.display
+                    right2_display = self.app.query_one("#right2").styles.display
+                    if right1_display != "none" and right2_display != "none":
+                        self.app.enter_diff_fullscreen()
+                        try:
+                            self.focus()
+                        except Exception:
+                            pass
+                        return
+                except Exception:
+                    # best-effort enter
+                    try:
+                        self.app.enter_diff_fullscreen()
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.debug(f"DiffList: exception handling right key: {e}")
                 logger.debug(traceback.format_exc())
             return
         
@@ -1562,10 +1632,14 @@ class DiffList(ListView):
             logger.debug(traceback.format_exc())
             pass
 
-        # Footer: add Diff-specific hint
+        # DiffList footer
         try:
             footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)", style="bold"))
+            # Show fullscreen hint depending on current fullscreen state
+            if getattr(self.app, "diff_fullscreen", False):
+                footer.update(Text("q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)", style="bold"))
+            else:
+                footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)", style="bold"))
         except Exception as e:
             logger.debug(f"[DiffList.on_focus.update_footer]: exception: {e}")
             logger.debug(traceback.format_exc())
@@ -1728,7 +1802,7 @@ class HelpList(ListView):
             
             self.app.call_after_refresh(restore_focus)
             
-            # Restore footer
+            # HelpList footer
             footer = self.app.query_one("#footer", Label)
             footer.update(Text("q(uit)  ?h/(elp)  ← ↑ ↓ →", style="bold"))
         except Exception as e:
@@ -1816,6 +1890,8 @@ App {
         self.current_commit_sha: Optional[str] = None
         self.current_prev_sha: Optional[str] = None
         self.current_diff_file: Optional[str] = None
+        # Diff fullscreen flag: when True, Diff column occupies 100% width
+        self.diff_fullscreen: bool = False
 
     def build_repo_cache(self) -> None:
         """
@@ -1919,6 +1995,8 @@ App {
                 with Vertical(id="right3-column"):
                     yield Label(Text("Help", style="bold"), id="right3-title")
                     yield HelpList(id="right3")
+
+            # GitHistoryTool footer
             yield Label(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →", style="bold"), id="footer")
 
     async def on_mount(self) -> None:
@@ -2111,6 +2189,11 @@ App {
                 logger.debug(f"[GitDiffApp._open_history_for_file.focus_hist]: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
+            # ensure we are not in diff-fullscreen when opening history
+            try:
+                self.diff_fullscreen = False
+            except Exception:
+                pass
         except Exception as exc:
             try:
                 self.push_screen(_TBDModal(str(exc)))
@@ -2206,6 +2289,85 @@ App {
                     logger.debug(traceback.format_exc())
                     pass
                 return
+
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_key]: exception: {e}")
+            logger.debug(traceback.format_exc())
+            pass
+
+    def enter_diff_fullscreen(self) -> None:
+        """Make the Diff column full-screen (hide other columns) and update footer."""
+        try:
+            # save whether we were fullscreen already
+            if getattr(self, "diff_fullscreen", False):
+                return
+            # collapse left and history columns
+            try:
+                self.query_one("#left-column").styles.width = "0%"
+                self.query_one("#left-column").styles.flex = 0
+            except Exception:
+                logger.debug("enter_diff_fullscreen: could not collapse left-column")
+            try:
+                self.query_one("#right1-column").styles.width = "0%"
+                self.query_one("#right1-column").styles.flex = 0
+                self.query_one("#right1").styles.display = "none"
+            except Exception:
+                logger.debug("enter_diff_fullscreen: could not collapse right1-column")
+            try:
+                self.query_one("#right2-column").styles.width = "100%"
+                self.query_one("#right2-column").styles.flex = 0
+                self.query_one("#right2").styles.display = None
+            except Exception:
+                logger.debug("enter_diff_fullscreen: could not expand right2-column")
+            # mark state and update footer
+            try:
+                self.diff_fullscreen = True
+            except Exception:
+                pass
+            try:
+                footer = self.query_one("#footer", Label)
+                footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   ←/f(ull)", style="bold"))
+            except Exception:
+                logger.debug("enter_diff_fullscreen: could not update footer")
+        except Exception as e:
+            logger.debug(f"enter_diff_fullscreen: exception: {e}")
+            logger.debug(traceback.format_exc())
+
+    def exit_diff_fullscreen(self) -> None:
+        """Restore the standard three-column layout (columnated mode)."""
+        try:
+            if not getattr(self, "diff_fullscreen", False):
+                return
+            # restore a sensible columnated layout
+            try:
+                self.query_one("#left-column").styles.width = "5%"
+                self.query_one("#left-column").styles.flex = 0
+            except Exception:
+                logger.debug("exit_diff_fullscreen: could not restore left-column")
+            try:
+                self.query_one("#right1-column").styles.width = "15%"
+                self.query_one("#right1-column").styles.flex = 0
+                self.query_one("#right1").styles.display = None
+            except Exception:
+                logger.debug("exit_diff_fullscreen: could not restore right1-column")
+            try:
+                self.query_one("#right2-column").styles.width = "80%"
+                self.query_one("#right2-column").styles.flex = 0
+                self.query_one("#right2").styles.display = None
+            except Exception:
+                logger.debug("exit_diff_fullscreen: could not restore right2-column")
+            try:
+                self.diff_fullscreen = False
+            except Exception:
+                pass
+            try:
+                footer = self.query_one("#footer", Label)
+                footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)", style="bold"))
+            except Exception:
+                logger.debug("exit_diff_fullscreen: could not update footer")
+        except Exception as e:
+            logger.debug(f"exit_diff_fullscreen: exception: {e}")
+            logger.debug(traceback.format_exc())
         except Exception as e:
             logger.debug(f"[GitDiffApp.on_key]: exception: {e}")
             logger.debug(traceback.format_exc())
