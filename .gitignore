@@ -1,0 +1,5 @@
+tmp/*
+*~
+todo
+venv*
+__pycache__
