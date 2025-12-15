@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Git Diff Navigator TUI
+Git Diff Navigator Tool TUI
 """
 from __future__ import annotations
 
@@ -1726,12 +1726,12 @@ class _TBDModal(ModalScreen):
 
 
 HELP_TEXT = """
-Git History Navigator (gitdiff)
-================================
+Git Diff History Navigator Tool (gitdiff)
+=========================================
 
 Overview
 --------
-The Git History Navigator is a terminal Textual TUI that provides a three-column view for
+The Git Diff History Navigator Tool is a terminal Textual TUI that provides a three-column view for
 
 * browsing a filesystem tree,
 * viewing the git history for a selected file, and
@@ -1787,8 +1787,9 @@ Running
 -------
 Run the application as follows:
 
-`gitdiff.py {path}`
+`gitdiff.py [--no-color] {path}`
 
+If `--no-color` is provided, the diff output will not be colorized.
 `{path}` is optional — it defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
 """
 
@@ -2005,7 +2006,7 @@ class GitHistoryTool(App):
     repository cache (using `pygit2`) and handles keyboard
     navigation and git operations to populate history and diffs.
     """
-    TITLE = "Git History Navigator"
+    TITLE = "Git Diff History Navigator Tool"
 # CSS: reserve one line for `#title` and let the main Horizontal flex to fill rest
     CSS = """
 /* Disable scrolling on the app itself - only columns should scroll */
@@ -2047,7 +2048,7 @@ App {
 
     BINDINGS = [("q", "quit", "Quit")]
 
-    def __init__(self, path: Optional[str] = None, **kwargs) -> None:
+    def __init__(self, path: Optional[str] = None, colorize_diff: bool = True, **kwargs) -> None:
         """Initialize the app state.
 
         If `path` names a file, treat its directory as the working path and
@@ -2075,7 +2076,7 @@ App {
         # column state for restoring after help
         self.saved_column_state: Optional[dict] = None
         # colorization state and current diff info
-        self.colorize_diff = True
+        self.colorize_diff = colorize_diff
         self.current_commit_sha: Optional[str] = None
         self.current_prev_sha: Optional[str] = None
         self.current_diff_file: Optional[str] = None
@@ -2647,9 +2648,10 @@ def main() -> None:
     """Entry point: parse CLI args and run the Textual app."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", nargs="?", help="Directory/file to list", default=os.getcwd())
+    parser.add_argument("-C", "--no-color", dest="no_color", action="store_true", help="Start with diff colorization turned off")
     args = parser.parse_args()
 
-    app = GitHistoryTool(args.path)
+    app = GitHistoryTool(args.path, colorize_diff=(not args.no_color))
     app.run()
 
 

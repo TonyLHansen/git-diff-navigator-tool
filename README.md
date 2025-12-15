@@ -1,9 +1,9 @@
-Git History Navigator (gitdiff)
-================================
+Git Diff History Navigator Tool (gitdiff)
+=========================================
 
 Overview
 --------
-The Git History Navigator is a terminal Textual TUI that provides a three-column view for
+The Git Diff History Navigator Tool is a terminal Textual TUI that provides a three-column view for
 
 * browsing a filesystem tree,
 * viewing the git history for a selected file, and
