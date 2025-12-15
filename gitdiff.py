@@ -1336,7 +1336,9 @@ class DiffList(ListView):
                     v = variants[cur]
                     title_text = "Diff" if not v else f"Diff {v}"
                     title_lbl.update(Text(title_text, style="bold"))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"DiffList.on_key: updating right2 title exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
 
                 # Re-render current diff if available
@@ -1439,15 +1441,20 @@ class DiffList(ListView):
                         self.app.enter_diff_fullscreen()
                         try:
                             self.focus()
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"DiffList.on_key: focus() after enter_diff_fullscreen exception: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
                         return
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"DiffList.on_key: checking displays for fullscreen failed: {e}")
+                    logger.debug(traceback.format_exc())
                     # best-effort enter
                     try:
                         self.app.enter_diff_fullscreen()
                     except Exception as e:
-                        logger.debug(f"[GitDiffApp._open_history_for_file] could not set diff_fullscreen flag: {e}")
+                        logger.debug(f"DiffList.on_key: fallback enter_diff_fullscreen exception: {e}")
+                        logger.debug(traceback.format_exc())
                         logger.debug(traceback.format_exc())
                         pass
             except Exception as e:
@@ -1523,7 +1530,9 @@ class DiffList(ListView):
                                 try:
                                     # schedule after animation completes
                                     self.set_timer(anim_duration + 0.02, _finalize_highlight)
-                                except Exception:
+                                except Exception as e:
+                                    logger.debug(f"DiffList.on_key: set_timer not available, falling back: {e}")
+                                    logger.debug(traceback.format_exc())
                                     # fallback to call_after_refresh if set_timer not available
                                     self.call_after_refresh(_finalize_highlight)
                             except Exception as e:
@@ -2437,7 +2446,9 @@ App {
             # ensure we are not in diff-fullscreen when opening history
             try:
                 self.diff_fullscreen = False
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_history_for_file] could not clear diff_fullscreen flag: {e}")
+                logger.debug(traceback.format_exc())
                 pass
         except Exception as exc:
             try:
@@ -2550,20 +2561,23 @@ App {
             try:
                 self.query_one("#left-column").styles.width = "0%"
                 self.query_one("#left-column").styles.flex = 0
-            except Exception:
-                logger.debug("enter_diff_fullscreen: could not collapse left-column")
+            except Exception as e:
+                logger.debug(f"enter_diff_fullscreen: could not collapse left-column: {e}")
+                logger.debug(traceback.format_exc())
             try:
                 self.query_one("#right1-column").styles.width = "0%"
                 self.query_one("#right1-column").styles.flex = 0
                 self.query_one("#right1").styles.display = "none"
-            except Exception:
-                logger.debug("enter_diff_fullscreen: could not collapse right1-column")
+            except Exception as e:
+                logger.debug(f"enter_diff_fullscreen: could not collapse right1-column: {e}")
+                logger.debug(traceback.format_exc())
             try:
                 self.query_one("#right2-column").styles.width = "100%"
                 self.query_one("#right2-column").styles.flex = 0
                 self.query_one("#right2").styles.display = None
-            except Exception:
-                logger.debug("enter_diff_fullscreen: could not expand right2-column")
+            except Exception as e:
+                logger.debug(f"enter_diff_fullscreen: could not expand right2-column: {e}")
+                logger.debug(traceback.format_exc())
             # mark state and update footer
             try:
                 self.diff_fullscreen = True
@@ -2590,20 +2604,23 @@ App {
             try:
                 self.query_one("#left-column").styles.width = "5%"
                 self.query_one("#left-column").styles.flex = 0
-            except Exception:
-                logger.debug("exit_diff_fullscreen: could not restore left-column")
+            except Exception as e:
+                logger.debug(f"exit_diff_fullscreen: could not restore left-column: {e}")
+                logger.debug(traceback.format_exc())
             try:
                 self.query_one("#right1-column").styles.width = "15%"
                 self.query_one("#right1-column").styles.flex = 0
                 self.query_one("#right1").styles.display = None
-            except Exception:
-                logger.debug("exit_diff_fullscreen: could not restore right1-column")
+            except Exception as e:
+                logger.debug(f"exit_diff_fullscreen: could not restore right1-column: {e}")
+                logger.debug(traceback.format_exc())
             try:
                 self.query_one("#right2-column").styles.width = "80%"
                 self.query_one("#right2-column").styles.flex = 0
                 self.query_one("#right2").styles.display = None
-            except Exception:
-                logger.debug("exit_diff_fullscreen: could not restore right2-column")
+            except Exception as e:
+                logger.debug(f"exit_diff_fullscreen: could not restore right2-column: {e}")
+                logger.debug(traceback.format_exc())
             try:
                 self.diff_fullscreen = False
             except Exception as e:
