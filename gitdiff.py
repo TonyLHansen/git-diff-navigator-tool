@@ -13,6 +13,7 @@ import subprocess
 import traceback
 from typing import Optional
 from rich.text import Text
+from rich.align import Align
 
 import pygit2
 
@@ -1685,6 +1686,7 @@ Key features
 
 Arrow keys move up and down the various columns.
 Left and Right arrow keys perform differently in each column.
+Other keys have specific functions as described below.
 
 - Files column: navigable directory listing; directories highlighted with a blue background.
   - Status markers & colors: files are prefixed with a short marker and colored by status:
@@ -1721,11 +1723,9 @@ Running
 -------
 Run the application as follows:
 
-```bash
-gitdiff.py [path]
-```
+`gitdiff.py {path}`
 
-`[path]` is optional — it defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
+`{path}` is optional — it defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
 """
 
 
@@ -1738,9 +1738,134 @@ class HelpList(ListView):
     def on_mount(self) -> None:
         """Populate help content."""
         # Split help text into lines and add as list items
-        for line in HELP_TEXT.split("\n"):
-            self.append(ListItem(Label(line)))
-    
+        lines = HELP_TEXT.split("\n")
+        linelen = len(lines)
+        for i, line in enumerate(lines):
+            if i < linelen-1:
+                if lines[i+1].startswith("=="):
+                    lines[i] = "<title>" + lines[i].strip()
+                    lines[i+1] = ""
+                if lines[i+1].startswith("--"):
+                    lines[i] = "<heading>" + lines[i].strip()
+                    lines[i+1] = ""
+            lline = line.lstrip()
+            if lline.startswith("-") or lline.startswith("*"):
+                n = len(line) - len(lline)
+                lines[i] = f"<bullet{n//2}>" + lline[1:].strip()
+            elif line and line[0].isspace():
+                n = len(line) - len(lline)
+                lines[i] = f"<indent{n}>" + lline
+
+        # change two ore more consecutive blank lines to a single blank line
+        newlines = []
+        prev_blank = False
+        for line in lines:
+            if line.strip() == "":
+                if not prev_blank:
+                    newlines.append(line)
+                    prev_blank = True
+            else:
+                newlines.append(line)
+                prev_blank = False
+
+        lines = newlines
+
+        # various bullet styles
+        bullets = ["◉","○","♦","◊","—"]
+        
+        for i, line in enumerate(lines):
+            indent = 0
+            al = "left"
+            style = ""
+            if line.startswith("<title>"):
+                # present as a centered bold string; append and skip parsing
+                line = line[7:]
+                style = "bold"
+                lbl = Label(Align(Text(line, style=style), align="center"))
+                lbl.styles.width = "100%"
+                self.append(ListItem(lbl))
+                continue
+            elif line.startswith("<heading>"):
+                line = line[9:]
+                # present as a left-justified underlined bold string
+                style = "bold underline"
+            elif line.startswith("<bullet"):
+                # determine the number following "<bullet"
+                # present as an indentation of 2*n spaces followed by bullets[n]
+                m = re.match(r"<bullet(\d+)>(.*)", line)
+                if m:
+                    n = int(m.group(1))
+                    indent = 2 * n
+                    line = (" " * indent) + bullets[n % len(bullets)] + " " + m.group(2).lstrip()
+            elif line.startswith("<indent"):
+                # determine the number following "<indent"
+                # present as an indentation of 2*n spaces
+                m = re.match(r"<indent(\d+)>(.*)", line)
+                if m:
+                    n = int(m.group(1))
+                    indent = 2 * n
+                    line = (" " * indent) + m.group(2).lstrip()
+                
+            # create a fresh Text for this line so styles never carry over
+            text = Text()
+            inFixed = False
+            inBold = False
+            inItalics = False
+            modes = ["", "", ""]
+            # instead of using split(), cycle through the string one
+            # character at a time and look for both "`", "*" and "_".
+            # When we see a "`", toggle inFixed state.
+            # When we see "*" or "_", toggle bold/italic state.
+            nline = ""
+            for c in line:
+                modeChanged = False
+                # capture previous modes so we flush preceding text with
+                # the styles that were active before the toggle.
+                prev_modes = list(modes)
+                if c == "`":
+                    inFixed = not inFixed
+                    modeChanged = True
+                    if inFixed:
+                        modes[0] = "white on bright_blue"
+                    else:
+                        modes[0] = ""
+                elif c == "*":
+                    inBold = not inBold
+                    modeChanged = True
+                    if inBold:
+                        modes[1] = "bold"
+                    else:
+                        modes[1] = ""
+                elif c == "_":
+                    inItalics = not inItalics
+                    modeChanged = True
+                    if inItalics:
+                        modes[2] = "italic"
+                    else:
+                        modes[2] = ""
+                if modeChanged:
+                    # flush nline with the previous modes (pre-toggle)
+                    if nline != "":
+                        parts = [style] + [m for m in prev_modes if m]
+                        nstyle = " ".join([p for p in parts if p]) or None
+                        text.append(nline, style=nstyle)
+                        nline = ""
+                else:
+                    nline += c
+
+            # flush any remaining nline
+            if nline != "":
+                parts = [style] + [m for m in modes if m]
+                nstyle = " ".join([p for p in parts if p]) or None
+                text.append(nline, style=nstyle)
+
+            if al == "center":
+                lbl = Label(Align(text, align="center"))
+                lbl.styles.width = "100%"
+                self.append(ListItem(lbl))
+            else:
+                self.append(ListItem(Label(text)))
+
     def on_key(self, event: events.Key) -> None:
         """Handle keys - go back to files view on any key except arrows/quit."""
         key = event.key
@@ -2367,9 +2492,6 @@ App {
                 logger.debug("exit_diff_fullscreen: could not update footer")
         except Exception as e:
             logger.debug(f"exit_diff_fullscreen: exception: {e}")
-            logger.debug(traceback.format_exc())
-        except Exception as e:
-            logger.debug(f"[GitDiffApp.on_key]: exception: {e}")
             logger.debug(traceback.format_exc())
             pass
 
