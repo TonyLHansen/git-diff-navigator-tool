@@ -72,10 +72,12 @@ Running
 Run the application as follows:
 
 ```bash
-gitdiff.py [path]
+gitdiff.py [--no-color] [path]
 ```
 
-`[path]` is optional — it defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
+If `--no-color` is provided, the diff output will not be colorized.
+
+`path` is optional — it defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
 
 Dependencies
 ------------
