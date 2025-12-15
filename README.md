@@ -49,7 +49,13 @@ Left and Right arrow keys perform differently in each column.
     `Comparing: <old_hash>..<new_hash>`.
   - The order is always the lower list item vs the higher item, so diffs read `older..newer`.
   - A Left Arrow will close the Diff column.
-  - Press `c` (or `C`) to toggle the use of color.
+  - Commands while focused in the Diff column:
+    - `d` / `D`: rotate the diff command variant. The variants cycle through: 
+      - the default `git diff`, 
+      - `git diff --ignore-space-change`, and 
+      - `git diff --diff-algorithm=patience`.
+    - `c` / `C`: toggle the use of color.
+    - `f` / `F`: toggle fullscreen mode (hide other columns).
 
 
 Implementation notes
@@ -63,7 +69,7 @@ Implementation notes
 
 Running
 -------
-In this repository's root, activate the Python venv and run:
+Run the application as follows:
 
 ```bash
 gitdiff.py [path]
@@ -73,7 +79,7 @@ gitdiff.py [path]
 
 Dependencies
 ------------
-- Required: `textual`, `rich`, `pygit2`.
+- Required python libraries: `textual`, `rich`, `pygit2`.
 
 Troubleshooting
 ---------------

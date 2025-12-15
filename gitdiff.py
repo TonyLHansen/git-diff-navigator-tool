@@ -1778,6 +1778,10 @@ Other keys have specific functions as described below.
     `Comparing: <old_hash>..<new_hash>`.
   - The order is always the lower list item vs the higher item, so diffs read `older..newer`.
   - A Left Arrow will close the Diff column.
+  - Press `d` (or `D`) while focused in the Diff column to rotate the diff command variant. The variants cycle through:
+    - `git diff` (default),
+    - `git diff --ignore-space-change`, and
+    - `git diff --diff-algorithm=patience`.
 
 Running
 -------
