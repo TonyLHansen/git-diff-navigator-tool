@@ -1072,46 +1072,7 @@ class HistoryList(ListView):
                     pass
                 return
 
-            # run git diff for a variety of hash/pseudo-hash combinations
-            def _is_pseudo(h: str | None) -> bool:
-                return h in ("STAGED", "MODS")
-
-            def _build_diff_cmd(prev: str | None, curr: str | None, fname: str) -> list[str]:
-                # prev = older, curr = newer
-                # MODS = working tree; STAGED = index
-                try:
-                    if _is_pseudo(prev) or _is_pseudo(curr):
-                        # working vs staged
-                        if (prev == "STAGED" and curr == "MODS") or (prev == "MODS" and curr == "STAGED"):
-                            return ["git", "diff", "--", fname]
-
-                        # working vs commit: use `git diff <commit> -- <file>`
-                        if curr == "MODS" and prev and not _is_pseudo(prev):
-                            return ["git", "diff", prev, "--", fname]
-                        if prev == "MODS" and curr and not _is_pseudo(curr):
-                            return ["git", "diff", curr, "--", fname]
-
-                        # staged vs commit: use --cached <commit>
-                        if curr == "STAGED" and prev and not _is_pseudo(prev):
-                            return ["git", "diff", "--cached", prev, "--", fname]
-                        if prev == "STAGED" and curr and not _is_pseudo(curr):
-                            return ["git", "diff", "--cached", curr, "--", fname]
-
-                        # fallback: if one side is STAGED or MODS with no commit on the other
-                        if curr == "STAGED" and prev is None:
-                            return ["git", "diff", "--cached", "--", fname]
-                        if curr == "MODS" and prev is None:
-                            return ["git", "diff", "--", fname]
-
-                    # default: two real commits/hashes
-                    if prev and curr:
-                        return ["git", "diff", prev, curr, "--", fname]
-                except Exception as e:
-                    logger.debug(f"HistoryList.on_key._build_diff_cmd: building command: exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-                # ultimate fallback: show working-tree diff
-                return ["git", "diff", "--", fname]
+            # Use centralized diff command builder on the app (handles variants)
 
             # Store current diff info for potential re-render
             self.app.current_commit_sha = current_hash
@@ -1119,7 +1080,7 @@ class HistoryList(ListView):
             self.app.current_diff_file = filename
 
             try:
-                cmd = _build_diff_cmd(previous_hash, current_hash, filename)
+                cmd = self.app.build_diff_cmd(previous_hash, current_hash, filename)
                 proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
                 diff_out = proc.stdout or proc.stderr or ""
             except Exception as exc:
@@ -1181,6 +1142,13 @@ class HistoryList(ListView):
 
                 # make sure Diff column is visible
                 try:
+                    # Update the Diff column title to reflect selected variant
+                    try:
+                        v = getattr(self.app, 'diff_variants', [None])[getattr(self.app, 'diff_cmd_index', 0)]
+                        title_lbl = self.app.query_one("#right2-title", Label)
+                        title_lbl.update(Text("Diff" if not v else f"Diff {v}", style="bold"))
+                    except Exception:
+                        pass
                     diff_view.styles.display = None
                 except Exception as e:
                     logger.debug(f"HistoryList.on_key: making diff column visible: exception: {e}")
@@ -1277,28 +1245,8 @@ class DiffList(ListView):
                     current_hash = self.app.current_commit_sha
                     filename = self.app.current_diff_file
                     
-                    # Same diff command building logic
-                    def _build_diff_cmd(prev, curr, fname):
-                        try:
-                            if prev == "STAGED" and curr == "MODS":
-                                return ["git", "diff", "HEAD", "--", fname]
-                            if curr == "MODS" and prev is not None:
-                                return ["git", "diff", prev, "--", fname]
-                            if curr == "STAGED" and prev is not None:
-                                return ["git", "diff", "--cached", prev, "--", fname]
-                            if curr == "STAGED" and prev is None:
-                                return ["git", "diff", "--cached", "--", fname]
-                            if curr == "MODS" and prev is None:
-                                return ["git", "diff", "--", fname]
-                        except Exception as e:
-                            logger.debug(f"[DiffList._build_diff_cmd]: exception: {e}")
-                            logger.debug(traceback.format_exc())
-                            pass
-                        if prev and curr:
-                            return ["git", "diff", prev, curr, "--", fname]
-                        return ["git", "diff", "--", fname]
-                    
-                    cmd = _build_diff_cmd(previous_hash, current_hash, filename)
+                    # Use app-level builder so the selected diff variant is applied
+                    cmd = self.app.build_diff_cmd(previous_hash, current_hash, filename)
                     proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
                     diff_out = proc.stdout or proc.stderr or ""
                     
@@ -1348,6 +1296,93 @@ class DiffList(ListView):
                         
             except Exception as e:
                 logger.debug(f"DiffList: exception in c/C handler: {e}")
+                logger.debug(traceback.format_exc())
+            return
+        # Handle d/D to rotate diff command variant
+        if key and key.lower() == "d":
+            event.stop()
+            try:
+                variants = getattr(self.app, 'diff_variants', [None, "--ignore-space-change", "--diff-algorithm=patience"])
+                cur = getattr(self.app, 'diff_cmd_index', 0)
+                cur = (cur + 1) % max(1, len(variants))
+                self.app.diff_cmd_index = cur
+                logger.debug(f"DiffList: rotated diff_cmd_index to {cur}, variant={variants[cur]}")
+                # Update footer to show current variant briefly
+                try:
+                    footer = self.app.query_one("#footer", Label)
+                    v = variants[cur]
+                    vlabel = v if v else "default"
+                    if getattr(self.app, "diff_fullscreen", False):
+                        footer.update(Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold"))
+                    else:
+                        footer.update(Text(f"q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)  d:{vlabel}", style="bold"))
+                except Exception:
+                    pass
+                # Update Diff column title to show current variant
+                try:
+                    title_lbl = self.app.query_one("#right2-title", Label)
+                    v = variants[cur]
+                    title_text = "Diff" if not v else f"Diff {v}"
+                    title_lbl.update(Text(title_text, style="bold"))
+                except Exception:
+                    pass
+
+                # Re-render current diff if available
+                if (getattr(self.app, 'current_commit_sha', None) and
+                    getattr(self.app, 'current_prev_sha', None) and
+                    getattr(self.app, 'current_diff_file', None)):
+
+                    previous_hash = self.app.current_prev_sha
+                    current_hash = self.app.current_commit_sha
+                    filename = self.app.current_diff_file
+
+                    saved_scroll_y = self.scroll_y
+                    saved_index = self.index
+
+                    cmd = self.app.build_diff_cmd(previous_hash, current_hash, filename)
+                    proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
+                    diff_out = proc.stdout or proc.stderr or ""
+
+                    # Clear and repopulate
+                    self.clear()
+                    header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
+                    self.append(header)
+
+                    if diff_out:
+                        for line in diff_out.splitlines():
+                            if self.app.colorize_diff:
+                                if line.startswith('+++') or line.startswith('---'):
+                                    styled_text = Text(line, style="bold white")
+                                elif line.startswith('+'):
+                                    styled_text = Text(line, style="green")
+                                elif line.startswith('-'):
+                                    styled_text = Text(line, style="red")
+                                elif line.startswith('@@'):
+                                    styled_text = Text(line, style="cyan")
+                                elif line.startswith('diff --git') or line.startswith('index '):
+                                    styled_text = Text(line, style="bold")
+                                else:
+                                    styled_text = Text(line)
+                            else:
+                                styled_text = Text(line)
+                            self.append(ListItem(Label(styled_text)))
+                    else:
+                        self.append(ListItem(Label(Text(f"No diff between {previous_hash}..{current_hash}"))))
+
+                    def restore_state():
+                        try:
+                            self.scroll_y = saved_scroll_y
+                            if saved_index is not None:
+                                self.index = saved_index
+                        except Exception as e:
+                            logger.debug(f"[DiffList.restore_state after d]: exception: {e}")
+                            logger.debug(traceback.format_exc())
+                            pass
+
+                    self.call_after_refresh(restore_state)
+                    logger.debug("DiffList: diff re-rendered after rotating variant")
+            except Exception as e:
+                logger.debug(f"DiffList: exception rotating diff variant: {e}")
                 logger.debug(traceback.format_exc())
             return
         
@@ -2017,6 +2052,75 @@ App {
         self.current_diff_file: Optional[str] = None
         # Diff fullscreen flag: when True, Diff column occupies 100% width
         self.diff_fullscreen: bool = False
+        # Diff command variants and current selection index
+        # None = default `git diff`; other entries are flags inserted after `git diff`
+        self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
+        self.diff_cmd_index: int = 0
+
+    def build_diff_cmd(self, prev: str | None, curr: str | None, fname: str) -> list[str]:
+        """Construct the git diff command honoring the currently selected variant.
+
+        The variant (if not None) is inserted right after `git diff` so that
+        options like `--ignore-space-change` and `--diff-algorithm=patience`
+        are applied to the invoked command.
+        """
+        def _is_pseudo(h: str | None) -> bool:
+            return h in ("STAGED", "MODS")
+
+        try:
+            flag = self.diff_variants[self.diff_cmd_index] if self.diff_variants else None
+            # Handle staged/modified pseudo-entries first
+            if _is_pseudo(prev) or _is_pseudo(curr):
+                if (prev == "STAGED" and curr == "MODS") or (prev == "MODS" and curr == "STAGED"):
+                    cmd = ["git", "diff", "--", fname]
+                    if flag:
+                        cmd.insert(2, flag)
+                    return cmd
+
+                if curr == "MODS" and prev and not _is_pseudo(prev):
+                    cmd = ["git", "diff", prev, "--", fname]
+                    if flag:
+                        cmd.insert(2, flag)
+                    return cmd
+                if prev == "MODS" and curr and not _is_pseudo(curr):
+                    cmd = ["git", "diff", curr, "--", fname]
+                    if flag:
+                        cmd.insert(2, flag)
+                    return cmd
+
+                if curr == "STAGED" and prev and not _is_pseudo(prev):
+                    cmd = ["git", "diff", "--cached", prev, "--", fname]
+                    if flag:
+                        cmd.insert(2, flag)
+                    return cmd
+                if prev == "STAGED" and curr and not _is_pseudo(curr):
+                    cmd = ["git", "diff", "--cached", curr, "--", fname]
+                    if flag:
+                        cmd.insert(2, flag)
+                    return cmd
+
+                if curr == "STAGED" and prev is None:
+                    cmd = ["git", "diff", "--cached", "--", fname]
+                    if flag:
+                        cmd.insert(2, flag)
+                    return cmd
+                if curr == "MODS" and prev is None:
+                    cmd = ["git", "diff", "--", fname]
+                    if flag:
+                        cmd.insert(2, flag)
+                    return cmd
+
+            # Default: two real commits/hashes
+            if prev and curr:
+                cmd = ["git", "diff", prev, curr, "--", fname]
+                if flag:
+                    cmd.insert(2, flag)
+                return cmd
+        except Exception as e:
+            logger.debug(f"build_diff_cmd: exception building command: {e}")
+            logger.debug(traceback.format_exc())
+        # Fallback
+        return ["git", "diff", "--", fname]
 
     def build_repo_cache(self) -> None:
         """
