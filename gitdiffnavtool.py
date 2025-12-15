@@ -35,9 +35,9 @@ from textual.widgets import (
 DOLOGGING = False
 if DOLOGGING:
     logging.basicConfig(
-        filename='tmp/gitdiff_debug.log',
+        filename="tmp/gitdiff_debug.log",
         level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 logger = logging.getLogger(__name__)
 
@@ -432,7 +432,9 @@ class FileList(ListView):
                                     try:
                                         rel = os.path.relpath(os.path.join(self.app.path, item_name), app.repo_root)
                                     except Exception as e:
-                                        logger.debug(f"FileList.on_key: exception getting relpath for pseudo entries: {e}")
+                                        logger.debug(
+                                            f"FileList.on_key: exception getting relpath for pseudo entries: {e}"
+                                        )
                                         logger.debug(traceback.format_exc())
                                         rel = None
                                     if rel and not rel.startswith(".."):
@@ -477,7 +479,9 @@ class FileList(ListView):
                                             try:
                                                 rel = os.path.relpath(os.path.join(self.path, item_name), app.repo_root)
                                             except Exception as e:
-                                                logger.debug(f"FileList.on_key: exception getting relpath for STAGED: {e}")
+                                                logger.debug(
+                                                    f"FileList.on_key: exception getting relpath for STAGED: {e}"
+                                                )
                                                 logger.debug(traceback.format_exc())
                                                 rel = None
                                             mtime = None
@@ -494,7 +498,9 @@ class FileList(ListView):
                                                     index_path = os.path.join(app.repo_root, ".git", "index")
                                                     mtime = os.path.getmtime(index_path)
                                                 except Exception as e:
-                                                    logger.debug(f"FileList.on_key: exception getting index file mtime: {e}")
+                                                    logger.debug(
+                                                        f"FileList.on_key: exception getting index file mtime: {e}"
+                                                    )
                                                     logger.debug(traceback.format_exc())
                                                     mtime = None
                                             if mtime:
@@ -565,7 +571,7 @@ class FileList(ListView):
                             logger.debug(traceback.format_exc())
                             pass
                         try:
-                                hist.focus()
+                            hist.focus()
                         except Exception as e:
                             logger.debug(f"FileList.on_key: exception focusing history: {e}")
                             logger.debug(traceback.format_exc())
@@ -700,7 +706,6 @@ class FileList(ListView):
             return
 
 
-
 class HistoryList(ListView):
     """ListView used for the History column. Left arrow moves focus back to Files."""
 
@@ -728,7 +733,9 @@ class HistoryList(ListView):
                     try:
                         style = getattr(lbl.renderable, "style", None)
                     except Exception as e:
-                        logger.debug(f"HistoryList.toggle_check_current._label_text_and_style: exception getting style: {e}")
+                        logger.debug(
+                            f"HistoryList.toggle_check_current._label_text_and_style: exception getting style: {e}"
+                        )
                         logger.debug(traceback.format_exc())
                         style = None
                     # derive visible text from stored raw_text when available
@@ -816,7 +823,6 @@ class HistoryList(ListView):
             logger.debug(f"HistoryList.toggle_check_current: exception in outer block: {e}")
             logger.debug(traceback.format_exc())
             pass
-
 
     def on_focus(self, event: events.Focus) -> None:
         """When the HistoryList receives focus, ensure the first item is highlighted."""
@@ -1061,9 +1067,7 @@ class HistoryList(ListView):
                     m1 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", current_line)
                     m2 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", previous_line)
                     if not m1 or not m2:
-                        raise ValueError(
-                            f"Lines not in expected format:\n{current_line!r}\n{previous_line!r}"
-                        )
+                        raise ValueError(f"Lines not in expected format:\n{current_line!r}\n{previous_line!r}")
                     current_hash = m1.group(2)
                     previous_hash = m2.group(2)
                 except Exception as exc:
@@ -1129,19 +1133,19 @@ class HistoryList(ListView):
                     for line in diff_out.splitlines():
                         # Colorize diff lines like git does (if enabled)
                         if self.app.colorize_diff:
-                            if line.startswith('+++') or line.startswith('---'):
+                            if line.startswith("+++") or line.startswith("---"):
                                 # File headers in bold white
                                 styled_text = Text(line, style="bold white")
-                            elif line.startswith('+'):
+                            elif line.startswith("+"):
                                 # Additions in green
                                 styled_text = Text(line, style="green")
-                            elif line.startswith('-'):
+                            elif line.startswith("-"):
                                 # Deletions in red
                                 styled_text = Text(line, style="red")
-                            elif line.startswith('@@'):
+                            elif line.startswith("@@"):
                                 # Hunk headers in cyan
                                 styled_text = Text(line, style="cyan")
-                            elif line.startswith('diff --git') or line.startswith('index '):
+                            elif line.startswith("diff --git") or line.startswith("index "):
                                 # Diff metadata in bold
                                 styled_text = Text(line, style="bold")
                             else:
@@ -1158,7 +1162,7 @@ class HistoryList(ListView):
                 try:
                     # Update the Diff column title to reflect selected variant
                     try:
-                        v = getattr(self.app, 'diff_variants', [None])[getattr(self.app, 'diff_cmd_index', 0)]
+                        v = getattr(self.app, "diff_variants", [None])[getattr(self.app, "diff_cmd_index", 0)]
                         title_lbl = self.app.query_one("#right2-title", Label)
                         title_lbl.update(Text("Diff" if not v else f"Diff {v}", style="bold"))
                     except Exception as e:
@@ -1252,47 +1256,51 @@ class DiffList(ListView):
                 # Toggle the colorization flag
                 self.app.colorize_diff = not self.app.colorize_diff
                 logger.debug(f"DiffList: toggled to colorize_diff={self.app.colorize_diff}")
-                
+
                 # Re-render the diff if we have current diff info
-                logger.debug(f"DiffList: current_commit_sha={getattr(self.app, 'current_commit_sha', None)}, current_prev_sha={getattr(self.app, 'current_prev_sha', None)}, current_diff_file={getattr(self.app, 'current_diff_file', None)}")
-                if (getattr(self.app, 'current_commit_sha', None) and 
-                    getattr(self.app, 'current_prev_sha', None) and 
-                    getattr(self.app, 'current_diff_file', None)):
-                    
+                logger.debug(
+                    f"DiffList: current_commit_sha={getattr(self.app, 'current_commit_sha', None)}, current_prev_sha={getattr(self.app, 'current_prev_sha', None)}, current_diff_file={getattr(self.app, 'current_diff_file', None)}"
+                )
+                if (
+                    getattr(self.app, "current_commit_sha", None)
+                    and getattr(self.app, "current_prev_sha", None)
+                    and getattr(self.app, "current_diff_file", None)
+                ):
+
                     logger.debug("DiffList: re-rendering diff with new colorization")
                     # Save current scroll position and selection
                     saved_scroll_y = self.scroll_y
                     saved_index = self.index
-                    
+
                     # Directly re-run the diff command
                     previous_hash = self.app.current_prev_sha
                     current_hash = self.app.current_commit_sha
                     filename = self.app.current_diff_file
-                    
+
                     # Use app-level builder so the selected diff variant is applied
                     cmd = self.app.build_diff_cmd(previous_hash, current_hash, filename)
                     proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
                     diff_out = proc.stdout or proc.stderr or ""
-                    
+
                     # Clear and repopulate
                     self.clear()
-                    
+
                     # Header
                     header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
                     self.append(header)
-                    
+
                     if diff_out:
                         for line in diff_out.splitlines():
                             if self.app.colorize_diff:
-                                if line.startswith('+++') or line.startswith('---'):
+                                if line.startswith("+++") or line.startswith("---"):
                                     styled_text = Text(line, style="bold white")
-                                elif line.startswith('+'):
+                                elif line.startswith("+"):
                                     styled_text = Text(line, style="green")
-                                elif line.startswith('-'):
+                                elif line.startswith("-"):
                                     styled_text = Text(line, style="red")
-                                elif line.startswith('@@'):
+                                elif line.startswith("@@"):
                                     styled_text = Text(line, style="cyan")
-                                elif line.startswith('diff --git') or line.startswith('index '):
+                                elif line.startswith("diff --git") or line.startswith("index "):
                                     styled_text = Text(line, style="bold")
                                 else:
                                     styled_text = Text(line)
@@ -1301,7 +1309,7 @@ class DiffList(ListView):
                             self.append(ListItem(Label(styled_text)))
                     else:
                         self.append(ListItem(Label(Text(f"No diff between {previous_hash}..{current_hash}"))))
-                    
+
                     # Restore scroll position and selection
                     def restore_state():
                         try:
@@ -1312,12 +1320,12 @@ class DiffList(ListView):
                             logger.debug(f"[DiffList.restore_state]: exception: {e}")
                             logger.debug(traceback.format_exc())
                             pass
-                    
+
                     self.call_after_refresh(restore_state)
                     logger.debug("DiffList: diff re-rendered successfully")
                 else:
                     logger.debug("DiffList: no current diff info available")
-                        
+
             except Exception as e:
                 logger.debug(f"DiffList: exception in c/C handler: {e}")
                 logger.debug(traceback.format_exc())
@@ -1326,8 +1334,10 @@ class DiffList(ListView):
         if key and key.lower() == "d":
             event.stop()
             try:
-                variants = getattr(self.app, 'diff_variants', [None, "--ignore-space-change", "--diff-algorithm=patience"])
-                cur = getattr(self.app, 'diff_cmd_index', 0)
+                variants = getattr(
+                    self.app, "diff_variants", [None, "--ignore-space-change", "--diff-algorithm=patience"]
+                )
+                cur = getattr(self.app, "diff_cmd_index", 0)
                 cur = (cur + 1) % max(1, len(variants))
                 self.app.diff_cmd_index = cur
                 logger.debug(f"DiffList: rotated diff_cmd_index to {cur}, variant={variants[cur]}")
@@ -1339,7 +1349,9 @@ class DiffList(ListView):
                     if getattr(self.app, "diff_fullscreen", False):
                         footer.update(Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold"))
                     else:
-                        footer.update(Text(f"q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)  d:{vlabel}", style="bold"))
+                        footer.update(
+                            Text(f"q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)  d:{vlabel}", style="bold")
+                        )
                 except Exception as e:
                     logger.debug(f"DiffList.on_key: could not schedule timer or call_after_refresh: {e}")
                     logger.debug(traceback.format_exc())
@@ -1356,9 +1368,11 @@ class DiffList(ListView):
                     pass
 
                 # Re-render current diff if available
-                if (getattr(self.app, 'current_commit_sha', None) and
-                    getattr(self.app, 'current_prev_sha', None) and
-                    getattr(self.app, 'current_diff_file', None)):
+                if (
+                    getattr(self.app, "current_commit_sha", None)
+                    and getattr(self.app, "current_prev_sha", None)
+                    and getattr(self.app, "current_diff_file", None)
+                ):
 
                     previous_hash = self.app.current_prev_sha
                     current_hash = self.app.current_commit_sha
@@ -1379,15 +1393,15 @@ class DiffList(ListView):
                     if diff_out:
                         for line in diff_out.splitlines():
                             if self.app.colorize_diff:
-                                if line.startswith('+++') or line.startswith('---'):
+                                if line.startswith("+++") or line.startswith("---"):
                                     styled_text = Text(line, style="bold white")
-                                elif line.startswith('+'):
+                                elif line.startswith("+"):
                                     styled_text = Text(line, style="green")
-                                elif line.startswith('-'):
+                                elif line.startswith("-"):
                                     styled_text = Text(line, style="red")
-                                elif line.startswith('@@'):
+                                elif line.startswith("@@"):
                                     styled_text = Text(line, style="cyan")
-                                elif line.startswith('diff --git') or line.startswith('index '):
+                                elif line.startswith("diff --git") or line.startswith("index "):
                                     styled_text = Text(line, style="bold")
                                 else:
                                     styled_text = Text(line)
@@ -1413,7 +1427,7 @@ class DiffList(ListView):
                 logger.debug(f"DiffList: exception rotating diff variant: {e}")
                 logger.debug(traceback.format_exc())
             return
-        
+
         if key and key.lower() == "q":
             try:
                 event.key = key.lower()
@@ -1475,7 +1489,7 @@ class DiffList(ListView):
                 logger.debug(f"DiffList: exception handling right key: {e}")
                 logger.debug(traceback.format_exc())
             return
-        
+
         # Handle PageUp/PageDown - move selection by page and scroll to position it appropriately
         if key in ("pageup", "pagedown"):
             logger.debug(f"DiffList: {key} pressed")
@@ -1485,19 +1499,21 @@ class DiffList(ListView):
                 if not nodes:
                     logger.debug(f"DiffList: WARNING - _nodes is empty for {key}")
                     return
-                
+
                 current_index = self.index if self.index is not None else 0
                 visible_height = self.scrollable_content_region.height
                 page_size = max(1, visible_height // 2)  # Half screen at a time like built-in behavior
-                
-                logger.debug(f"DiffList: {key} - current_index={current_index}, page_size={page_size}, visible_height={visible_height}, nodes={len(nodes)}")
-                
+
+                logger.debug(
+                    f"DiffList: {key} - current_index={current_index}, page_size={page_size}, visible_height={visible_height}, nodes={len(nodes)}"
+                )
+
                 # Calculate new index
                 if key == "pagedown":
                     new_index = min(current_index + page_size, len(nodes) - 1)
                 else:  # pageup
                     new_index = max(current_index - page_size, 0)
-                
+
                 logger.debug(f"DiffList: {key} - moving from index {current_index} to {new_index}")
 
                 # We want to change the viewport first, then highlight the new line.
@@ -1515,7 +1531,9 @@ class DiffList(ListView):
                         max_scroll = float(max(0, len(nodes) - visible_height))
                         target_scroll = max(0.0, min(target_scroll, max_scroll))
 
-                        logger.debug(f"DiffList: {key} - before scroll: scroll_y={self.scroll_y}, setting to {target_scroll}, max_scroll={max_scroll}")
+                        logger.debug(
+                            f"DiffList: {key} - before scroll: scroll_y={self.scroll_y}, setting to {target_scroll}, max_scroll={max_scroll}"
+                        )
                         # Try to animate the scroll for smooth movement. If animate
                         # is supported, schedule the highlight after the animation
                         # duration. Otherwise fall back to instant set.
@@ -1525,6 +1543,7 @@ class DiffList(ListView):
                             try:
                                 self.animate("scroll_y", target_scroll, duration=anim_duration)
                                 logger.debug(f"DiffList: {key} - started animate(scroll_y -> {target_scroll})")
+
                                 def _finalize_highlight():
                                     try:
                                         old_index = self.index
@@ -1536,11 +1555,14 @@ class DiffList(ListView):
                                             if new_index < len(nodes):
                                                 nodes[new_index].add_class("-highlight")
                                         except Exception as e:
-                                            logger.debug(f"DiffList: exception managing highlight classes after animate: {e}")
+                                            logger.debug(
+                                                f"DiffList: exception managing highlight classes after animate: {e}"
+                                            )
                                             logger.debug(traceback.format_exc())
                                     except Exception as e:
                                         logger.debug(f"DiffList: exception finalizing highlight after animate: {e}")
                                         logger.debug(traceback.format_exc())
+
                                 try:
                                     # schedule after animation completes
                                     self.set_timer(anim_duration + 0.02, _finalize_highlight)
@@ -1565,7 +1587,9 @@ class DiffList(ListView):
                                         if new_index < len(nodes):
                                             nodes[new_index].add_class("-highlight")
                                     except Exception as e:
-                                        logger.debug(f"DiffList: exception managing highlight classes after instant scroll: {e}")
+                                        logger.debug(
+                                            f"DiffList: exception managing highlight classes after instant scroll: {e}"
+                                        )
                                         logger.debug(traceback.format_exc())
                                 except Exception as e:
                                     logger.debug(f"DiffList: exception setting index after instant scroll: {e}")
@@ -1579,7 +1603,7 @@ class DiffList(ListView):
 
                 # Schedule the scroll -> highlight sequence
                 self.call_after_refresh(scroll_to_position)
-                
+
             except Exception as e:
                 logger.debug(f"DiffList: exception in {key} handler: {e}")
                 logger.debug(traceback.format_exc())
@@ -1589,6 +1613,7 @@ class DiffList(ListView):
     def on_focus(self, event: events.Focus) -> None:
         """When the DiffList receives focus, ensure the first item is highlighted."""
         try:
+
             def _apply() -> None:
                 try:
                     nodes = getattr(self, "_nodes", [])
@@ -1852,13 +1877,13 @@ class HelpList(ListView):
         lines = HELP_TEXT.split("\n")
         linelen = len(lines)
         for i, line in enumerate(lines):
-            if i < linelen-1:
-                if lines[i+1].startswith("=="):
+            if i < linelen - 1:
+                if lines[i + 1].startswith("=="):
                     lines[i] = "<title>" + lines[i].strip()
-                    lines[i+1] = ""
-                if lines[i+1].startswith("--"):
+                    lines[i + 1] = ""
+                if lines[i + 1].startswith("--"):
                     lines[i] = "<heading>" + lines[i].strip()
-                    lines[i+1] = ""
+                    lines[i + 1] = ""
             lline = line.lstrip()
             if lline.startswith("-") or lline.startswith("*"):
                 n = len(line) - len(lline)
@@ -1882,8 +1907,8 @@ class HelpList(ListView):
         lines = newlines
 
         # various bullet styles
-        bullets = ["◉","○","♦","◊","—"]
-        
+        bullets = ["◉", "○", "♦", "◊", "—"]
+
         for i, line in enumerate(lines):
             indent = 0
             al = "left"
@@ -1916,7 +1941,7 @@ class HelpList(ListView):
                     n = int(m.group(1))
                     indent = 2 * n
                     line = (" " * indent) + m.group(2).lstrip()
-                
+
             # create a fresh Text for this line so styles never carry over
             text = Text()
             inFixed = False
@@ -1992,10 +2017,10 @@ class HelpList(ListView):
             # Hide help column
             self.app.query_one("#right3-column").styles.width = "0%"
             self.app.query_one("#right3-column").styles.flex = 0
-            
+
             # Determine which widget to focus based on saved state
             focus_target = "#left"  # default
-            
+
             # Restore saved column state if available
             if self.app.saved_column_state:
                 state = self.app.saved_column_state
@@ -2010,13 +2035,13 @@ class HelpList(ListView):
                 self.app.query_one("#right2-column").styles.width = state["right2"]["width"]
                 self.app.query_one("#right2-column").styles.flex = state["right2"]["flex"]
                 self.app.query_one("#right2").styles.display = state["right2"]["display"]
-                
+
                 # Determine focus target: rightmost visible column
                 if state["right2"]["display"] != "none":
                     focus_target = "#right2"
                 elif state["right1"]["display"] != "none":
                     focus_target = "#right1"
-                
+
                 logger.debug("Column state restored")
             else:
                 logger.debug("No saved state, showing only files column")
@@ -2027,7 +2052,7 @@ class HelpList(ListView):
                 self.app.query_one("#right1-column").styles.flex = 0
                 self.app.query_one("#right2-column").styles.width = "0%"
                 self.app.query_one("#right2-column").styles.flex = 0
-            
+
             # Focus on the appropriate widget
             # Use call_after_refresh to avoid triggering on_focus during layout restore
             def restore_focus():
@@ -2035,9 +2060,9 @@ class HelpList(ListView):
                     self.app.query_one(focus_target).focus()
                 except Exception as e:
                     logger.debug(f"Error focusing {focus_target}: {e}")
-            
+
             self.app.call_after_refresh(restore_focus)
-            
+
             # HelpList footer
             footer = self.app.query_one("#footer", Label)
             footer.update(Text("q(uit)  ?h/(elp)  ← ↑ ↓ →", style="bold"))
@@ -2052,8 +2077,9 @@ class GitHistoryTool(App):
     repository cache (using `pygit2`) and handles keyboard
     navigation and git operations to populate history and diffs.
     """
+
     TITLE = "Git Diff History Navigator Tool"
-# CSS: reserve one line for `#title` and let the main Horizontal flex to fill rest
+    # CSS: reserve one line for `#title` and let the main Horizontal flex to fill rest
     CSS = """
 /* Disable scrolling on the app itself - only columns should scroll */
 App {
@@ -2140,6 +2166,7 @@ App {
         options like `--ignore-space-change` and `--diff-algorithm=patience`
         are applied to the invoked command.
         """
+
         def _is_pseudo(h: str | None) -> bool:
             return h in ("STAGED", "MODS")
 
@@ -2558,7 +2585,7 @@ App {
                     right2_col = self.query_one("#right2-column")
                     right1_widget = self.query_one("#right1")
                     right2_widget = self.query_one("#right2")
-                    
+
                     self.saved_column_state = {
                         "left": {
                             "width": left_col.styles.width,
@@ -2576,7 +2603,7 @@ App {
                         },
                     }
                     logger.debug(f"Saved column state: {self.saved_column_state}")
-                    
+
                     # Show only the help column, hide others
                     self.query_one("#left-column").styles.width = "0%"
                     self.query_one("#left-column").styles.flex = 0
@@ -2694,7 +2721,9 @@ def main() -> None:
     """Entry point: parse CLI args and run the Textual app."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", nargs="?", help="Directory/file to list", default=os.getcwd())
-    parser.add_argument("-C", "--no-color", dest="no_color", action="store_true", help="Start with diff colorization turned off")
+    parser.add_argument(
+        "-C", "--no-color", dest="no_color", action="store_true", help="Start with diff colorization turned off"
+    )
     args = parser.parse_args()
 
     app = GitHistoryTool(args.path, colorize_diff=(not args.no_color))
