@@ -32,7 +32,7 @@ from textual.widgets import (
 
 # Set up logging to help debug key event issues (currently disabled)
 # Uncomment the basicConfig line below to enable logging to /tmp/gitdiff_debug.log
-DOLOGGING = True
+DOLOGGING = False
 if DOLOGGING:
     logging.basicConfig(
         filename='tmp/gitdiff_debug.log',
@@ -265,7 +265,7 @@ class FileList(ListView):
             logger.debug(traceback.format_exc())
             pass
         try:
-            lbl = self.query_one("#right1-title", Label)
+            lbl = self.app.query_one("#right1-title", Label)
             lbl.styles.display = "none"
             lbl.styles.height = 0
             lbl.styles.width = 0
@@ -274,7 +274,7 @@ class FileList(ListView):
             logger.debug(traceback.format_exc())
             pass
         try:
-            lbl = self.query_one("#right2-title", Label)
+            lbl = self.app.query_one("#right2-title", Label)
             lbl.styles.display = "none"
             lbl.styles.height = 0
             lbl.styles.width = 0
@@ -1666,7 +1666,32 @@ class DiffList(ListView):
         # Show all titles when diff active
         try:
             lbl = self.app.query_one("#left-title", Label)
-            lbl.update(Text("Fi", style="bold"))  # Shorten to save space
+            # Prefer to show full "Files" when there's enough room; otherwise shorten
+            try:
+                left = self.app.query_one("#left")
+                width = None
+                # prefer computed region if available
+                if hasattr(left, "region") and left.region is not None:
+                    width = left.region.width
+                elif hasattr(left, "size") and left.size is not None:
+                    width = left.size.width
+                else:
+                    # fallback to container percent width if set
+                    col = self.app.query_one("#left-column")
+                    s = getattr(col.styles, "width", None)
+                    if isinstance(s, str) and s.endswith("%") and getattr(self, "size", None):
+                        try:
+                            percent = float(s[:-1]) / 100.0
+                            width = int(self.size.width * percent)
+                        except Exception:
+                            width = None
+                if width is not None and width >= 8:
+                    lbl.update(Text("Files", style="bold"))
+                else:
+                    lbl.update(Text("Fi", style="bold"))
+            except Exception:
+                # If any lookup fails, use the shortened title to be safe
+                lbl.update(Text("Fi", style="bold"))
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
@@ -2592,7 +2617,7 @@ App {
                 pass
             try:
                 footer = self.query_one("#footer", Label)
-                footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   ←/f(ull)", style="bold"))
+                footer.update(Text("q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)", style="bold"))
             except Exception as e:
                 logger.debug(f"enter_diff_fullscreen: could not update footer: {e}")
                 logger.debug(traceback.format_exc())
