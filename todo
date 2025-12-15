@@ -1,0 +1,56 @@
+POSSIBLE ADDITIONS
+==================
+
+Feature ideas:
+- Search/Filter History: incremental search (/term), author/date filter, regex.
+- Open File at Commit: `o` to open file content at selected commit in pane or external editor.
+- Stage/Unstage Hunks: select hunk in Diff and stage/unstage (interactive).
+- Apply/Export Patch: `s` save current diff to file; `p` copy patch path/contents.
+- Side-by-side Diff Rendering: toggle unified <-> side-by-side.
+- Adjustable Context Lines: `-U/--context` runtime control via `+`/`-` keys.
+- Blame Integration: show `git blame` for selected line/commit (`b`).
+- Rename/Copy Detection Toggle: enable `--find-renames`/`--find-copies`.
+- History Jump / Copy Hash: jump to commit by hash/index; `y` to copy hash.
+- Export/External Tool: `e` open current diff in external pager or `git difftool`.
+
+Diff variant ideas:
+- --ignore-all-space : ignore all whitespace changes
+- --ignore-space-at-eol : ignore end-of-line whitespace
+- --ignore-blank-lines : ignore added/removed blank lines
+- --word-diff=color : inline word-level diffs colored
+- --color-words : compact colored word-level changes
+- --diff-algorithm=histogram : alternative algorithm for moved blocks
+- --diff-algorithm=minimal : minimize changes
+- --diff-algorithm=myers : explicit myers algorithm option
+- --find-renames / --find-copies : detect renames/copies
+- --name-only / --name-status : filenames (and status) only
+- --stat : summary stats instead of full patch
+- -U<N> / --unified=<N> : change context lines
+- --color-moved[=<mode>] : highlight moved code blocks
+- --no-index : diff arbitrary paths (non-repo)
+
+Implementation notes (quick):
+- Add variants to `diff_variants` in `gitdiff.py` and update title/footer rendering when rotated.
+- Add UI bindings: `d/D` rotate variants, `c/C` toggle color, `+`/`-` adjust -U, `o` open file, `s` save patch, `b` blame.
+- Ensure `build_diff_cmd` handles pseudo-entries (STAGED/MODS) consistently when inserting flags.
+
+Acceptance criteria:
+- Each feature should have a keyboard binding and visible UI affordance (title/footer).
+- Variants render correctly and re-run diffs without losing scroll/selection.
+
+Side-by-side implementation notes:
+- Toggle/key: add `side_by_side` boolean on the app and bind `v` in `DiffList.on_key` to toggle it and re-render.
+- Parsing: parse unified diff into hunks (parse `@@ -a,b +c,d @@` headers) and produce aligned rows where deletions and additions are paired; optionally use `difflib.SequenceMatcher` to better pair similar lines in a hunk.
+- Rendering approaches:
+	- Two ListViews: `#diff-left` and `#diff-right` inside a Horizontal container; append paired rows to both and keep scroll/selection synched.
+	- Single fixed-width combined Text: pad left column to fixed width and render left+right in one ListView (simpler scroll/selection logic but requires monospace width calculation).
+- Styles: show line numbers, markers (`-`/`+`), and color (deleted red, added green, context default). For inline word-diff, parse `--word-diff` markers and apply Rich spans.
+- Scrolling/sync: when either column scrolls or selection changes, programmatically set the other column's `scroll_y`/index to match (use `call_after_refresh` to avoid race conditions).
+- Fallbacks: if terminal width is too small, revert to unified view; for huge diffs, limit rows and offer external pager/difftool option.
+- Integration: reuse `build_diff_cmd` for raw diff text; add `render_diff_side_by_side(diff_text)` helper and call it from existing re-render paths (variant rotate, color toggle, initial diff render).
+
+Small acceptance tests:
+- Toggle side-by-side with `v` when diff is visible and see two aligned panes.
+- Up/Down/PgUp/PgDn move selection and both panes remain aligned and highlighted.
+- Toggle back to unified view without losing current file/hash selection.
+
