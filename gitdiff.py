@@ -1147,7 +1147,9 @@ class HistoryList(ListView):
                         v = getattr(self.app, 'diff_variants', [None])[getattr(self.app, 'diff_cmd_index', 0)]
                         title_lbl = self.app.query_one("#right2-title", Label)
                         title_lbl.update(Text("Diff" if not v else f"Diff {v}", style="bold"))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"HistoryList.on_key: updating right2 title: exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     diff_view.styles.display = None
                 except Exception as e:
@@ -1197,7 +1199,9 @@ class DiffList(ListView):
                     # keep focus on diff after restoring
                     try:
                         self.focus()
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"DiffList.on_key: focus() exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                 else:
                     # Only enter fullscreen when diff is visible (columnated)
@@ -1207,13 +1211,19 @@ class DiffList(ListView):
                             self.app.enter_diff_fullscreen()
                             try:
                                 self.focus()
-                            except Exception:
+                            except Exception as e:
+                                logger.debug(f"DiffList.on_key: focus() after enter_diff_fullscreen exception: {e}")
+                                logger.debug(traceback.format_exc())
                                 pass
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"DiffList.on_key: enter fullscreen check exception: {e}")
+                        logger.debug(traceback.format_exc())
                         # best-effort: enter anyway
                         try:
                             self.app.enter_diff_fullscreen()
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"DiffList.on_key: fallback enter_diff_fullscreen exception: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
             except Exception as e:
                 logger.debug(f"DiffList: exception toggling fullscreen f/F: {e}")
@@ -1316,7 +1326,9 @@ class DiffList(ListView):
                         footer.update(Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold"))
                     else:
                         footer.update(Text(f"q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)  d:{vlabel}", style="bold"))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"DiffList.on_key: could not schedule timer or call_after_refresh: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 # Update Diff column title to show current variant
                 try:
@@ -1434,7 +1446,9 @@ class DiffList(ListView):
                     # best-effort enter
                     try:
                         self.app.enter_diff_fullscreen()
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"[GitDiffApp._open_history_for_file] could not set diff_fullscreen flag: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
             except Exception as e:
                 logger.debug(f"DiffList: exception handling right key: {e}")
@@ -1512,8 +1526,10 @@ class DiffList(ListView):
                                 except Exception:
                                     # fallback to call_after_refresh if set_timer not available
                                     self.call_after_refresh(_finalize_highlight)
-                            except Exception:
+                            except Exception as e:
                                 # If animate not available, fall back to instant scroll
+                                logger.debug(f"DiffList: animate not available, falling back: {e}")
+                                logger.debug(traceback.format_exc())
                                 self.scroll_y = target_scroll
                                 logger.debug(f"DiffList: {key} - after instant scroll: scroll_y={self.scroll_y}")
                                 try:
@@ -2551,13 +2567,16 @@ App {
             # mark state and update footer
             try:
                 self.diff_fullscreen = True
-            except Exception:
+            except Exception as e:
+                logger.debug(f"enter_diff_fullscreen: could not set diff_fullscreen flag: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 footer = self.query_one("#footer", Label)
                 footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   ←/f(ull)", style="bold"))
-            except Exception:
-                logger.debug("enter_diff_fullscreen: could not update footer")
+            except Exception as e:
+                logger.debug(f"enter_diff_fullscreen: could not update footer: {e}")
+                logger.debug(traceback.format_exc())
         except Exception as e:
             logger.debug(f"enter_diff_fullscreen: exception: {e}")
             logger.debug(traceback.format_exc())
@@ -2587,13 +2606,16 @@ App {
                 logger.debug("exit_diff_fullscreen: could not restore right2-column")
             try:
                 self.diff_fullscreen = False
-            except Exception:
+            except Exception as e:
+                logger.debug(f"exit_diff_fullscreen: could not clear diff_fullscreen flag: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 footer = self.query_one("#footer", Label)
                 footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)", style="bold"))
-            except Exception:
-                logger.debug("exit_diff_fullscreen: could not update footer")
+            except Exception as e:
+                logger.debug(f"exit_diff_fullscreen: could not update footer: {e}")
+                logger.debug(traceback.format_exc())
         except Exception as e:
             logger.debug(f"exit_diff_fullscreen: exception: {e}")
             logger.debug(traceback.format_exc())
