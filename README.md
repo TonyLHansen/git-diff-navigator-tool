@@ -1,5 +1,5 @@
-Git Diff History Navigator Tool (gitdiff)
-=========================================
+Git Diff History Navigator Tool (gitdiffnavtool)
+================================================
 
 History
 -------
@@ -84,7 +84,7 @@ Running
 Run the application as follows:
 
 ```bash
-gitdiff.py [--no-color] [path]
+gitdiffnavtool.py [--no-color] [path]
 ```
 
 If `--no-color` is provided, the diff output will not be colorized.
@@ -101,7 +101,7 @@ Troubleshooting
 
 Source
 ------
-Main program: `gitdiff.py`
+Main program: `gitdiffnavtool.py`
 
 License
 -------

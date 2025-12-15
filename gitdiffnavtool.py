@@ -31,7 +31,7 @@ from textual.widgets import (
 )
 
 # Set up logging to help debug key event issues (currently disabled)
-# Uncomment the basicConfig line below to enable logging to /tmp/gitdiff_debug.log
+# Uncomment the basicConfig line below to enable logging to tmp/gitdiff_debug.log
 DOLOGGING = False
 if DOLOGGING:
     logging.basicConfig(
@@ -1751,8 +1751,8 @@ class _TBDModal(ModalScreen):
 
 
 HELP_TEXT = """
-Git Diff History Navigator Tool (gitdiff)
-=========================================
+Git Diff History Navigator Tool (gitdiffnavtool)
+================================================
 
 History
 -------
@@ -1819,7 +1819,7 @@ Running
 -------
 Run the application as follows:
 
-`gitdiff.py [--no-color] {path}`
+`gitdiffnavtool.py [--no-color] [{path}]`
 
 If `--no-color` is provided, the diff output will not be colorized.
 `{path}` is optional — it defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.

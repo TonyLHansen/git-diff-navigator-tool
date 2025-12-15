@@ -30,7 +30,7 @@ Diff variant ideas:
 - --no-index : diff arbitrary paths (non-repo)
 
 Implementation notes (quick):
-- Add variants to `diff_variants` in `gitdiff.py` and update title/footer rendering when rotated.
+- Add variants to `diff_variants` in `gitdiffnavtool.py` and update title/footer rendering when rotated.
 - Add UI bindings: `d/D` rotate variants, `c/C` toggle color, `+`/`-` adjust -U, `o` open file, `s` save patch, `b` blame.
 - Ensure `build_diff_cmd` handles pseudo-entries (STAGED/MODS) consistently when inserting flags.
 
