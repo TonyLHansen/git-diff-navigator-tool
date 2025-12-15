@@ -1,1 +1,0 @@
-git log --follow --date=short --pretty=format:'%ad %h %s' -- src/gitdiff/gitdiff.py

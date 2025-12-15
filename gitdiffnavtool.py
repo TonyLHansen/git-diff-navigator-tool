@@ -66,6 +66,20 @@ class FileList(ListView):
             logger.debug(f"FileList.set_path: exception setting displayed_path: {e}")
             logger.debug(traceback.format_exc())
             pass
+        # Refresh repository cache when changing path so status markers
+        # (e.g. untracked WT_NEW -> 'U') stay up-to-date even if files
+        # were created/removed since the app mounted.
+        try:
+            app = getattr(self, "app", None)
+            if app:
+                try:
+                    app.build_repo_cache()
+                except Exception as e:
+                    logger.debug(f"FileList.set_path: exception refreshing repo cache: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+        except Exception:
+            pass
         try:
             entries = sorted(os.listdir(path))
         except Exception as exc:
