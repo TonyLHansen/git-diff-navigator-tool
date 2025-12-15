@@ -1754,6 +1754,13 @@ HELP_TEXT = """
 Git Diff History Navigator Tool (gitdiff)
 =========================================
 
+History
+-------
+
+I was doing a lot of "software archeology" on a repository to see what had changed
+in various different commits into the code base. This tool was designed to help
+in doing that.
+
 Overview
 --------
 The Git Diff History Navigator Tool is a terminal Textual TUI that provides a three-column view for

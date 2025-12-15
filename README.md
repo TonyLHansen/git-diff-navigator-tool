@@ -1,6 +1,18 @@
 Git Diff History Navigator Tool (gitdiff)
 =========================================
 
+History
+-------
+
+I was doing a lot of "software archeology" on a repository to see what had changed
+in various different commits into the code base. I looked around for a tool that would help
+me do that, but didn't find one that did things in a way I found useful. So I wrote one.
+It's a "Textual User Interface", meaning that it's designed to be run in a terminal window.
+For now, you'll have to run `pip install` the libraries that are needed and run it in
+whatever python environment you need.
+
+I hope it helps you. 
+
 Overview
 --------
 The Git Diff History Navigator Tool is a terminal Textual TUI that provides a three-column view for
@@ -93,4 +105,4 @@ Main program: `gitdiff.py`
 
 License
 -------
-Unspecified — modify as needed.
+Apache Version 2.0
