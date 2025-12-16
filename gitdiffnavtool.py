@@ -1190,7 +1190,121 @@ class HistoryRepoList(HistoryListBase):
     compatibility subclass; functionality will be implemented next.
     """
 
-    pass
+    def populate_repo_log(self, repo_path: Optional[str] = None) -> None:
+        """Populate this History list with a repository-wide commit log using pygit2.
+
+        This method walks commits (by time) and appends ListItem entries with
+        the format: "YYYY-MM-DD <short-hash> <subject>".
+        """
+        try:
+            repo_path = repo_path or getattr(self.app, "path", None)
+            if not repo_path:
+                return
+            gitdir = pygit2.discover_repository(repo_path)
+            if not gitdir:
+                return
+            repo = pygit2.Repository(gitdir)
+
+            # clear existing items
+            try:
+                self.clear()
+            except Exception:
+                pass
+
+            seen: set[str] = set()
+            commits: list[pygit2.Commit] = []
+
+            # Prefer HEAD if available
+            try:
+                if repo.head_is_unborn:
+                    start_oids = []
+                else:
+                    try:
+                        start_oids = [repo.head.target]
+                    except Exception:
+                        start_oids = []
+            except Exception:
+                start_oids = []
+
+            # If no HEAD, fall back to all branch refs
+            if not start_oids:
+                try:
+                    for ref_name in repo.references:
+                        if ref_name.startswith("refs/heads/") or ref_name.startswith("refs/tags/"):
+                            try:
+                                ref = repo.lookup_reference(ref_name)
+                                if ref and getattr(ref, "target", None):
+                                    start_oids.append(ref.target)
+                            except Exception:
+                                continue
+                except Exception:
+                    pass
+
+            # Walk commits from each start oid, collect unique commits
+            for oid in start_oids:
+                try:
+                    walker = repo.walk(oid, pygit2.GIT_SORT_TIME)
+                    for c in walker:
+                        cid = str(c.id)
+                        if cid in seen:
+                            continue
+                        seen.add(cid)
+                        commits.append(c)
+                except Exception:
+                    continue
+
+            # If still no commits (empty repo), bail out
+            if not commits:
+                try:
+                    self.append(ListItem(Label(Text(" " + "No git history for repository"))))
+                except Exception:
+                    pass
+                return
+
+            # Append commits in order (walker yields by time desc)
+            for c in commits:
+                try:
+                    when = datetime.datetime.fromtimestamp(int(c.author.time)).strftime("%Y-%m-%d")
+                except Exception:
+                    when = "????-??-??"
+                try:
+                    short = str(c.id)[:7]
+                except Exception:
+                    short = "???????"
+                try:
+                    subj = (c.message or "").splitlines()[0]
+                except Exception:
+                    subj = "(no message)"
+                line = f"{when} {short} {subj}"
+                try:
+                    li = ListItem(Label(Text(" " + line)))
+                    li._hash = short
+                    li._raw_text = line
+                    self.append(li)
+                except Exception:
+                    continue
+
+            try:
+                self.styles.display = None
+            except Exception:
+                pass
+
+            try:
+                self.index = 0
+            except Exception:
+                pass
+            try:
+                self.focus()
+            except Exception:
+                pass
+
+        except Exception as exc:
+            logger.debug(f"HistoryRepoList.populate_repo_log: exception: {exc}")
+            logger.debug(traceback.format_exc())
+            try:
+                self.app.push_screen(_TBDModal(str(exc)))
+            except Exception:
+                pass
 
 
 class DiffListBase(ListView):
@@ -2181,7 +2295,7 @@ App {
 
     BINDINGS = [("q", "quit", "Quit")]
 
-    def __init__(self, path: Optional[str] = None, colorize_diff: bool = True, **kwargs) -> None:
+    def __init__(self, path: Optional[str] = None, colorize_diff: bool = True, log_first: bool = False, **kwargs) -> None:
         """Initialize the app state.
 
         If `path` names a file, treat its directory as the working path and
@@ -2219,6 +2333,8 @@ App {
         # None = default `git diff`; other entries are flags inserted after `git diff`
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
         self.diff_cmd_index: int = 0
+        # start the app showing repository-wide commit log first when True
+        self.log_first: bool = bool(log_first)
 
     def build_diff_cmd(self, prev: str | None, curr: str | None, fname: str) -> list[str]:
         """Construct the git diff command honoring the currently selected variant.
@@ -2464,6 +2580,19 @@ App {
 
         left.set_path(self.path)
 
+        # If started in log-first (repo-first) mode, populate repo-wide history
+        try:
+            if getattr(self, "log_first", False):
+                try:
+                    self._open_repo_history()
+                except Exception as e:
+                    logger.debug(f"[GitDiffApp.on_mount.open_repo_history]: exception: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.check_log_first]: exception: {e}")
+            logger.debug(traceback.format_exc())
+            pass
         # If launched with a filename, populate and focus its history immediately
         try:
             if getattr(self, "initial_file", None):
@@ -2595,6 +2724,106 @@ App {
             except Exception as e:
                 logger.debug(f"[GitDiffApp._open_history_for_file.push_modal]: exception: {e}")
                 logger.debug(traceback.format_exc())
+                pass
+
+    def _open_repo_history(self) -> None:
+        """Populate the History column with repository-wide commits and focus it."""
+        try:
+            proc = subprocess.run(
+                ["git", "log", "--date=short", "--pretty=format:%ad %h %s"],
+                cwd=self.path,
+                capture_output=True,
+                text=True,
+            )
+            out = proc.stdout.strip()
+
+            hist = self.query_one("#right1", ListView)
+            # If the History widget implements a pygit2-backed population method, use it
+            try:
+                if hasattr(hist, "populate_repo_log") and callable(getattr(hist, "populate_repo_log")):
+                    try:
+                        hist.populate_repo_log(self.path)
+                        return
+                    except Exception as e:
+                        logger.debug(f"[GitDiffApp._open_repo_history.populate_repo_log]: exception: {e}")
+                        logger.debug(traceback.format_exc())
+                        pass
+            except Exception:
+                pass
+
+            try:
+                hist.clear()
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_repo_history.clear_hist]: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+
+            try:
+                hist._filename = None
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_repo_history.set_filename]: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+
+            if out:
+                for line in out.splitlines():
+                    li = ListItem(Label(Text(" " + line)))
+                    try:
+                        m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
+                        if m:
+                            li._hash = m.group(2)
+                    except Exception as e:
+                        logger.debug(f"[GitDiffApp._open_repo_history.parse_hash]: exception: {e}")
+                        logger.debug(traceback.format_exc())
+                        pass
+                    try:
+                        li._raw_text = line
+                    except Exception as e:
+                        logger.debug(f"[GitDiffApp._open_repo_history.set_raw_text]: exception: {e}")
+                        logger.debug(traceback.format_exc())
+                        pass
+                    hist.append(li)
+            else:
+                hist.append(ListItem(Label(Text(" " + "No git history for repository"))))
+
+            try:
+                hist.styles.display = None
+            except Exception:
+                pass
+
+            try:
+                # Hide files column and maximize history column
+                self.query_one("#left-column").styles.width = "0%"
+                self.query_one("#left-column").styles.flex = 0
+                self.query_one("#right1-column").styles.width = "100%"
+                self.query_one("#right1-column").styles.flex = 0
+                self.query_one("#right2-column").styles.width = "0%"
+                self.query_one("#right2-column").styles.flex = 0
+                self.query_one("#right3-column").styles.width = "0%"
+                self.query_one("#right3-column").styles.flex = 0
+            except Exception as e:
+                logger.debug(f"[GitDiffApp._open_repo_history.set_column_widths]: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+
+            try:
+                hist.index = 0
+            except Exception:
+                pass
+            try:
+                hist.focus()
+            except Exception:
+                pass
+
+            try:
+                self.diff_fullscreen = False
+            except Exception:
+                pass
+
+        except Exception as exc:
+            try:
+                self.push_screen(_TBDModal(str(exc)))
+            except Exception:
                 pass
 
     def on_key(self, event: events.Key) -> None:
@@ -2785,9 +3014,16 @@ def main() -> None:
     parser.add_argument(
         "-C", "--no-color", dest="no_color", action="store_true", help="Start with diff colorization turned off"
     )
+    parser.add_argument(
+        "-l",
+        "--log-first",
+        dest="log_first",
+        action="store_true",
+        help="Start with repository commit log (history) shown first",
+    )
     args = parser.parse_args()
 
-    app = GitHistoryTool(args.path, colorize_diff=(not args.no_color))
+    app = GitHistoryTool(args.path, colorize_diff=(not args.no_color), log_first=args.log_first)
     app.run()
 
 
