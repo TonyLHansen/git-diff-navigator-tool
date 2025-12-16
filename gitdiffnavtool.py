@@ -738,6 +738,7 @@ class FileListBase(ListView):
             pass
         return True
 
+
     def _highlight_top(self) -> None:
         """Highlight the first entry in the list after a refresh."""
         try:
@@ -1510,38 +1511,12 @@ class DiffListBase(ListView):
             return
 
         if key == "right":
-            # In columnated mode, pressing right expands Diff to fullscreen.
+            event.stop()
             try:
-                event.stop()
-                if getattr(self.app, "diff_fullscreen", False):
-                    # already fullscreen; right arrow does nothing
+                if self.key_right():
                     return
-                # If diff is visible and not fullscreen, enter fullscreen
-                try:
-                    right1_display = self.app.query_one("#right1").styles.display
-                    right2_display = self.app.query_one("#right2").styles.display
-                    if right1_display != "none" and right2_display != "none":
-                        self.app.enter_diff_fullscreen()
-                        try:
-                            self.focus()
-                        except Exception as e:
-                            logger.debug(f"DiffList.on_key: focus() after enter_diff_fullscreen exception: {e}")
-                            logger.debug(traceback.format_exc())
-                            pass
-                        return
-                except Exception as e:
-                    logger.debug(f"DiffList.on_key: checking displays for fullscreen failed: {e}")
-                    logger.debug(traceback.format_exc())
-                    # best-effort enter
-                    try:
-                        self.app.enter_diff_fullscreen()
-                    except Exception as e:
-                        logger.debug(f"DiffList.on_key: fallback enter_diff_fullscreen exception: {e}")
-                        logger.debug(traceback.format_exc())
-                        logger.debug(traceback.format_exc())
-                        pass
             except Exception as e:
-                logger.debug(f"DiffList: exception handling right key: {e}")
+                logger.debug(f"DiffList.on_key: key_right exception: {e}")
                 logger.debug(traceback.format_exc())
             return
 
@@ -1690,6 +1665,49 @@ class DiffListBase(ListView):
             logger.debug(f"DiffList.key_left: unexpected exception: {e}")
             logger.debug(traceback.format_exc())
             return True
+        return True
+
+    def key_right(self) -> bool:
+        """Handle right key behavior for DiffListBase.
+
+        Returns True when the key was handled/consumed.
+        """
+        try:
+            # In columnated mode, pressing right expands Diff to fullscreen.
+            if getattr(self.app, "diff_fullscreen", False):
+                # already fullscreen; right arrow does nothing
+                return True
+            # If diff is visible and not fullscreen, enter fullscreen
+            try:
+                right1_display = self.app.query_one("#right1").styles.display
+                right2_display = self.app.query_one("#right2").styles.display
+                if right1_display != "none" and right2_display != "none":
+                    try:
+                        self.app.enter_diff_fullscreen()
+                    except Exception as e:
+                        logger.debug(f"DiffList.key_right: enter_diff_fullscreen exception: {e}")
+                        logger.debug(traceback.format_exc())
+                    try:
+                        self.focus()
+                    except Exception:
+                        pass
+                    return True
+            except Exception as e:
+                logger.debug(f"DiffList.key_right: checking displays for fullscreen failed: {e}")
+                logger.debug(traceback.format_exc())
+                # best-effort enter
+                try:
+                    self.app.enter_diff_fullscreen()
+                except Exception as e:
+                    logger.debug(f"DiffList.key_right: fallback enter_diff_fullscreen exception: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+            return True
+        except Exception as e:
+            logger.debug(f"DiffList.key_right: unexpected exception: {e}")
+            logger.debug(traceback.format_exc())
+            return True
+        return True
 
     # let other keys be handled by default (up/down handled by ListView)
 
