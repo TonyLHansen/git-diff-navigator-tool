@@ -59,11 +59,14 @@ Small acceptance tests:
 refactor the code for the left and right arrows so that the code is in methods() that can be overridden. Do this for all of the
 
 
-the file was totally messed up. I've restored it to the way it was before we
+
 
 we are going to create a new mode entered with the argparse "-l"/"--log-first" option. 
 It will use three columns also, where the first column will be History and act exactly like the current History column, but will be populated with the commit history for the repository. 
-I don't know if it would be easier to create three new columns named HistoryRepo, FileRepo and DiffRepo, or it may be easier to re-use the current columns. But the up-down arrows and m/M commands will act the same as they do in the current History column. (The actions of left and right arrows will be different.) For the functionality, it may be worth creating a class that both HistoryList and HistoryRepoList are derived from, and which will use overridden methods to implement the sizing and the functionality of the left and right arrows
+I don't know if it would be easier to create three new columns named HistoryRepo, FileRepo and DiffRepo, or it may be easier to re-use the current columns.
+But the up-down arrows and m/M commands will act the same as they do in the current History column.
+(The actions of left and right arrows will be different.)
+For the functionality, it may be worth creating a class that both HistoryList and HistoryRepoList are derived from, and which will use overridden methods to implement the sizing and the functionality of the left and right arrows
 
 do the refactors. As part of the refactor, with log-first, the program should start with HistoryRepo showing and covering 100% of the screen
 

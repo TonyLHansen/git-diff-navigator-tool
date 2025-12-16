@@ -255,8 +255,97 @@ class FileListBase(ListView):
         """
         return False
 
+    def _highlight_top(self) -> None:
+        """Highlight the first entry in the list after a refresh."""
+        try:
+            # If there are nodes, set index to 0; otherwise leave unset.
+            nodes = getattr(self, "_nodes", [])
+            if nodes:
+                self.index = 0
+        except Exception as e:
+            logger.debug(f"FileList._highlight_top: exception: {e}")
+            logger.debug(traceback.format_exc())
+            return
+
+
+class FileList(FileListBase):
+    """Compatibility subclass; use `FileListBase` for shared logic."""
+
+    def key_left(self) -> bool:
+        """Handle left key behavior for FileList compatibility subclass.
+
+        Returns True when the key was handled/consumed.
+        """
+        # If left pressed on the parent entry, go up a directory and
+        # highlight the directory we came from.
+        child = self.highlighted_child
+        if child is None:
+            return True
+        item_name = getattr(child, "_filename", None)
+        if item_name is None:
+            try:
+                label = child.query_one(Label)
+                item_name = label.text if hasattr(label, "text") else str(label)
+            except Exception as exc:
+                try:
+                    self.app.push_screen(_TBDModal(str(exc)))
+                except Exception as e:
+                    logger.debug(f"FileList.key_left: exception showing left key error modal: {e}")
+                    logger.debug(traceback.format_exc())
+                    try:
+                        self.app.push_screen(_TBDModal())
+                    except Exception:
+                        pass
+                return True
+
+        if item_name == "..":
+            prev_basename = os.path.basename(self.path)
+            parent = os.path.dirname(self.path)
+            if parent == self.path or not parent:
+                # already at filesystem root
+                try:
+                    self.app.push_screen(_TBDModal("Already at root"))
+                except Exception:
+                    pass
+                return True
+
+            # change to parent directory
+            self.set_path(parent)
+
+            # After the DOM refresh, highlight the directory we came from.
+            try:
+                self.call_after_refresh(self._highlight_filename, prev_basename)
+            except Exception as e:
+                logger.debug(f"FileList.key_left: exception calling _highlight_filename: {e}")
+                logger.debug(traceback.format_exc())
+                try:
+                    # Fallback: set to first item
+                    self.index = 0
+                except Exception as e:
+                    logger.debug(f"FileList.on_key: exception setting index fallback: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+
+            # update app-level path info
+            try:
+                self.app.path = os.path.abspath(parent)
+                self.app.displayed_path = self.path
+            except Exception as e:
+                logger.debug(f"FileList.key_left: exception updating app path info: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+
+            try:
+                self.focus()
+            except Exception:
+                pass
+            return True
+
+        # Left on non-parent: ignore (do nothing)
+        return True
+
     def key_right(self) -> bool:
-        """Handle right key behavior for FileListBase.
+        """Handle right key behavior for FileList compatibility subclass.
 
         Returns True when the key was handled/consumed.
         """
@@ -541,377 +630,14 @@ class FileListBase(ListView):
             pass
         return True
 
-    def _highlight_top(self) -> None:
-        """Highlight the first entry in the list after a refresh."""
-        try:
-            # If there are nodes, set index to 0; otherwise leave unset.
-            nodes = getattr(self, "_nodes", [])
-            if nodes:
-                self.index = 0
-        except Exception as e:
-            logger.debug(f"FileList._highlight_top: exception: {e}")
-            logger.debug(traceback.format_exc())
-            return
 
+class FileRepoList(FileListBase):
+    """Placeholder File list for repo-first / log-first mode.
 
-class FileList(FileListBase):
-    """Compatibility subclass; use `FileListBase` for shared logic."""
-    def key_left(self) -> bool:
-        """Handle left key behavior for FileList compatibility subclass.
+    Currently a no-op subclass; behavior will be added in follow-up edits.
+    """
 
-        Returns True when the key was handled/consumed.
-        """
-        # If left pressed on the parent entry, go up a directory and
-        # highlight the directory we came from.
-        child = self.highlighted_child
-        if child is None:
-            return True
-        item_name = getattr(child, "_filename", None)
-        if item_name is None:
-            try:
-                label = child.query_one(Label)
-                item_name = label.text if hasattr(label, "text") else str(label)
-            except Exception as exc:
-                try:
-                    self.app.push_screen(_TBDModal(str(exc)))
-                except Exception as e:
-                    logger.debug(f"FileList.key_left: exception showing left key error modal: {e}")
-                    logger.debug(traceback.format_exc())
-                    try:
-                        self.app.push_screen(_TBDModal())
-                    except Exception:
-                        pass
-                return True
-
-        if item_name == "..":
-            prev_basename = os.path.basename(self.path)
-            parent = os.path.dirname(self.path)
-            if parent == self.path or not parent:
-                # already at filesystem root
-                try:
-                    self.app.push_screen(_TBDModal("Already at root"))
-                except Exception:
-                    pass
-                return True
-
-            # change to parent directory
-            self.set_path(parent)
-
-            # After the DOM refresh, highlight the directory we came from.
-            try:
-                self.call_after_refresh(self._highlight_filename, prev_basename)
-            except Exception as e:
-                logger.debug(f"FileList.key_left: exception calling _highlight_filename: {e}")
-                logger.debug(traceback.format_exc())
-                try:
-                    # Fallback: set to first item
-                    self.index = 0
-                except Exception as e:
-                    logger.debug(f"FileList.on_key: exception setting index fallback: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-
-            # update app-level path info
-            try:
-                self.app.path = os.path.abspath(parent)
-                self.app.displayed_path = self.path
-            except Exception as e:
-                logger.debug(f"FileList.key_left: exception updating app path info: {e}")
-                logger.debug(traceback.format_exc())
-                pass
-
-            try:
-                self.focus()
-            except Exception:
-                pass
-            return True
-
-        # Left on non-parent: ignore (do nothing)
-        return True
-
-    def key_right(self) -> bool:
-        """Handle right key behavior for FileList compatibility subclass.
-
-        Returns True when the key was handled/consumed.
-        """
-        # If the highlighted entry is a directory (and not ".."), enter it.
-        child = self.highlighted_child
-        if child is None:
-            return True
-        # Prefer filename attached to the ListItem (set in set_path)
-        item_name = getattr(child, "_filename", None)
-        if item_name is None:
-            try:
-                label = child.query_one(Label)
-                # Label implementations vary: prefer `text`, then `renderable`.
-                if hasattr(label, "text"):
-                    item_name = label.text
-                else:
-                    renderable = getattr(label, "renderable", None)
-                    if isinstance(renderable, Text):
-                        item_name = renderable.plain
-                    elif renderable is not None:
-                        item_name = str(renderable)
-                    else:
-                        item_name = str(label)
-            except Exception as exc:
-                # Fallback: show the exception message in the modal
-                try:
-                    self.app.push_screen(_TBDModal(str(exc)))
-                except Exception as e:
-                    logger.debug(f"FileList.key_right: exception showing modal fallback: {e}")
-                    logger.debug(traceback.format_exc())
-                    try:
-                        # Last-resort fallback
-                        self.app.push_screen(_TBDModal())
-                    except Exception:
-                        pass
-                return True
-
-        if item_name != "..":
-            full = os.path.join(self.path, item_name)
-            if os.path.isdir(full):
-                # switch the listing to the selected directory
-                self.set_path(full)
-                # ensure highlight resets to first item
-                try:
-                    self.index = 0
-                except Exception as e:
-                    logger.debug(f"FileList.key_right: exception resetting index: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-                # update app-level current path as well
-                try:
-                    self.app.path = os.path.abspath(full)
-                except Exception as e:
-                    logger.debug(f"FileList.key_right: exception updating app.path: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-                # focus back on this list
-                try:
-                    self.focus()
-                except Exception:
-                    pass
-                return True
-
-            # If it's a file, run `git log` and show output in History column
-            try:
-                # Run git log in the current directory for the filename
-                proc = subprocess.run(
-                    [
-                        "git",
-                        "log",
-                        "--follow",
-                        "--date=short",
-                        "--pretty=format:%ad %h %s",
-                        "--",
-                        item_name,
-                    ],
-                    cwd=self.path,
-                    capture_output=True,
-                    text=True,
-                )
-                out = proc.stdout.strip()
-                # update the History column (right1)
-                try:
-                    hist = self.app.query_one("#right1", ListView)
-                    # populate the history ListView with lines from git output
-                    try:
-                        # clear existing items
-                        hist.clear()
-                    except Exception as e:
-                        logger.debug(f"FileList.key_right: exception clearing history: {e}")
-                        logger.debug(traceback.format_exc())
-                        pass
-
-                    # remember which file this history is for
-                    try:
-                        hist._filename = item_name
-                    except Exception as e:
-                        logger.debug(f"FileList.key_right: exception setting hist._filename: {e}")
-                        logger.debug(traceback.format_exc())
-                        pass
-
-                    if out:
-                        # Before appending real commits, optionally insert
-                        # pseudo-log lines for staged/modified working tree.
-                        try:
-                            app = getattr(self, "app", None)
-                            pseudo_entries: list[str] = []
-                            if app and getattr(app, "repo_available", False) and app.repo_root:
-                                try:
-                                    rel = os.path.relpath(os.path.join(self.app.path, item_name), app.repo_root)
-                                except Exception as e:
-                                    logger.debug(
-                                        f"FileList.key_right: exception getting relpath for pseudo entries: {e}"
-                                    )
-                                    logger.debug(traceback.format_exc())
-                                    rel = None
-                                if rel and not rel.startswith(".."):
-                                    flags = app.repo_status_map.get(rel, 0)
-                                    idx_flags = (
-                                        getattr(pygit2, "GIT_STATUS_INDEX_NEW", 0)
-                                        | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
-                                        | getattr(pygit2, "GIT_STATUS_INDEX_DELETED", 0)
-                                    )
-                                    wt_flags = (
-                                        getattr(pygit2, "GIT_STATUS_WT_NEW", 0)
-                                        | getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0)
-                                        | getattr(pygit2, "GIT_STATUS_WT_DELETED", 0)
-                                    )
-                                    has_index = bool(flags & idx_flags)
-                                    has_wt = bool(flags & wt_flags)
-                                    # If both staged and further modifications exist,
-                                    # show MODS (working) first, then STAGED.
-                                    if has_wt and has_index:
-                                        pseudo_entries = ["MODS", "STAGED"]
-                                    elif has_index:
-                                        pseudo_entries = ["STAGED"]
-                                    elif has_wt:
-                                        pseudo_entries = ["MODS"]
-                            # If no repo available but file looks modified in FS,
-                            # fall back to showing MODS when `git diff` would
-                            # have non-empty output vs HEAD. We keep simple
-                            # behavior and only use repo flags when available.
-                        except Exception as e:
-                            logger.debug(f"FileList.key_right: exception building pseudo entries: {e}")
-                            logger.debug(traceback.format_exc())
-                            pseudo_entries = []
-
-                        for pseudo in pseudo_entries:
-                            # Attach a best-effort timestamp for STAGED entries.
-                            display_pseudo = pseudo
-                            if pseudo == "STAGED":
-                                try:
-                                    app = getattr(self, "app", None)
-                                    display_pseudo = "STAGED"
-                                    if app and getattr(app, "repo_root", None):
-                                        try:
-                                            rel = os.path.relpath(os.path.join(self.path, item_name), app.repo_root)
-                                        except Exception as e:
-                                            logger.debug(
-                                                f"FileList.key_right: exception getting relpath for STAGED: {e}"
-                                            )
-                                            logger.debug(traceback.format_exc())
-                                            rel = None
-                                        mtime = None
-                                        if rel:
-                                            try:
-                                                mtime = app.repo_index_mtime_map.get(rel)
-                                            except Exception as e:
-                                                logger.debug(f"FileList.key_right: exception getting index mtime: {e}")
-                                                logger.debug(traceback.format_exc())
-                                                mtime = None
-                                        # fallback to index file mtime if per-file not available
-                                        if not mtime:
-                                            try:
-                                                index_path = os.path.join(app.repo_root, ".git", "index")
-                                                mtime = os.path.getmtime(index_path)
-                                            except Exception as e:
-                                                logger.debug(
-                                                    f"FileList.key_right: exception getting index file mtime: {e}"
-                                                )
-                                                logger.debug(traceback.format_exc())
-                                                mtime = None
-                                        if mtime:
-                                            display_pseudo = f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} STAGED"
-                                except Exception as e:
-                                    logger.debug(f"FileList.key_right: exception building STAGED display: {e}")
-                                    logger.debug(traceback.format_exc())
-                                    display_pseudo = "STAGED"
-                            elif pseudo == "MODS":
-                                try:
-                                    # use working-tree file mtime for MODS
-                                    try:
-                                        fp = os.path.join(self.path, item_name)
-                                        mtime = os.path.getmtime(fp)
-                                    except Exception as e:
-                                        logger.debug(f"FileList.key_right: exception getting MODS file mtime: {e}")
-                                        logger.debug(traceback.format_exc())
-                                        mtime = None
-                                    if mtime:
-                                        display_pseudo = f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} MODS"
-                                    else:
-                                        display_pseudo = "MODS"
-                                except Exception as e:
-                                    logger.debug(f"FileList.key_right: exception building MODS display: {e}")
-                                    logger.debug(traceback.format_exc())
-                                    display_pseudo = "MODS"
-
-                            pli = ListItem(Label(Text(" " + display_pseudo)))
-                            try:
-                                pli._hash = pseudo
-                            except Exception as e:
-                                logger.debug(f"FileList.key_right: exception setting pli._hash: {e}")
-                                logger.debug(traceback.format_exc())
-                                pass
-                            try:
-                                pli._raw_text = display_pseudo
-                            except Exception as e:
-                                logger.debug(f"FileList.key_right: exception setting pli._raw_text: {e}")
-                                logger.debug(traceback.format_exc())
-                                pass
-                            hist.append(pli)
-
-                        for line in out.splitlines():
-                            li = ListItem(Label(Text(" " + line)))
-                            try:
-                                m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
-                                if m:
-                                    li._hash = m.group(2)
-                            except Exception as e:
-                                logger.debug(f"FileList.key_right: exception parsing hash from line: {e}")
-                                logger.debug(traceback.format_exc())
-                                pass
-                            try:
-                                li._raw_text = line
-                            except Exception as e:
-                                logger.debug(f"FileList.key_right: exception setting li._raw_text: {e}")
-                                logger.debug(traceback.format_exc())
-                                pass
-                            hist.append(li)
-                    else:
-                        hist.append(ListItem(Label(Text(" " + f"No git history for {item_name}"))))
-
-                    # highlight and focus the top entry
-                    try:
-                        hist.index = 0
-                    except Exception as e:
-                        logger.debug(f"FileList.key_right: exception setting hist.index: {e}")
-                        logger.debug(traceback.format_exc())
-                        pass
-                    try:
-                        hist.focus()
-                    except Exception as e:
-                        logger.debug(f"FileList.key_right: exception focusing history: {e}")
-                        logger.debug(traceback.format_exc())
-                        pass
-                except Exception as e:
-                    logger.debug(f"FileList.key_right: exception updating history view: {e}")
-                    logger.debug(traceback.format_exc())
-                    # If unable to update, show modal with output or message
-                    msg = out or f"No git history for {item_name}"
-                    try:
-                        self.app.push_screen(_TBDModal(msg))
-                    except Exception as e:
-                        logger.debug(f"FileList.key_right: exception showing history error modal: {e}")
-                        logger.debug(traceback.format_exc())
-                        pass
-            except Exception as exc:
-                try:
-                    self.app.push_screen(_TBDModal(str(exc)))
-                except Exception as e:
-                    logger.debug(f"FileList.key_right: exception showing outer error modal: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-            return True
-
-        # Not a directory we can enter — show TBD for now
-        try:
-            self.app.push_screen(_TBDModal())
-        except Exception:
-            pass
-        return True
+    pass
 
 
 class HistoryListBase(ListView):
@@ -1232,6 +958,7 @@ class HistoryListBase(ListView):
 
 class HistoryList(HistoryListBase):
     """Compatibility subclass; use `HistoryListBase` for shared logic."""
+
     def key_left(self) -> bool:
         """Handle left key behavior for HistoryList.
 
@@ -1454,6 +1181,16 @@ class HistoryList(HistoryListBase):
                 logger.debug(traceback.format_exc())
                 pass
         return True
+
+
+class HistoryRepoList(HistoryListBase):
+    """Placeholder History list for repo-first / log-first mode.
+
+    This will be used when `-l/--log-first` is active. Currently a no-op
+    compatibility subclass; functionality will be implemented next.
+    """
+
+    pass
 
 
 class DiffListBase(ListView):
@@ -1833,6 +1570,7 @@ class DiffListBase(ListView):
                 logger.debug(f"DiffList: exception in {key} handler: {e}")
                 logger.debug(traceback.format_exc())
             return
+
     # let other keys be handled by default (up/down handled by ListView)
 
     def key_left(self) -> bool:
@@ -2083,6 +1821,15 @@ class DiffList(DiffListBase):
             logger.debug(traceback.format_exc())
             return True
         return True
+
+
+class DiffRepoList(DiffListBase):
+    """Placeholder Diff list for repo-first / log-first mode.
+
+    Currently a no-op subclass; behavior will be added in follow-up edits.
+    """
+
+    pass
 
 
 class _TBDModal(ModalScreen):
