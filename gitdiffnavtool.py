@@ -1047,209 +1047,16 @@ class HistoryListBase(ListView):
             return
         if key == "right":
             event.stop()
-            # need at least one other item to diff against (either checked or next)
-            idx = getattr(self, "index", None)
-            nodes = getattr(self, "_nodes", [])
-            if idx is None or idx < 0 or not nodes:
-                try:
-                    self.app.push_screen(_TBDModal("No commit to diff with"))
-                except Exception as e:
-                    logger.debug(f"HistoryList.on_key: showing no commit modal: exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-                return
-
-            # Find any checked item in the history
-            checked_idx = None
-            for i, node in enumerate(nodes):
-                if getattr(node, "_checked", False):
-                    checked_idx = i
-                    break
-
-            # helper to extract the text of a ListItem label
-            def _text_of(node) -> str:
-                try:
-                    # prefer stored raw text
-                    raw = getattr(node, "_raw_text", None)
-                    if raw is not None:
-                        return raw
-                    lbl = node.query_one(Label)
-                    if hasattr(lbl, "text"):
-                        return lbl.text
-                    renderable = getattr(lbl, "renderable", None)
-                    if isinstance(renderable, Text):
-                        return renderable.plain
-                    if renderable is not None:
-                        return str(renderable)
-                    return str(lbl)
-                except Exception as e:
-                    logger.debug(f"HistoryList.on_key._text_of: extracting text: exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    return str(node)
-
-            # Determine the pair of indices to diff: default is current vs next
-            if checked_idx is None or checked_idx == idx:
-                # behave as before: need a next item
-                if idx >= len(nodes) - 1:
-                    try:
-                        self.app.push_screen(_TBDModal("No earlier commit to diff with"))
-                    except Exception as e:
-                        logger.debug(f"HistoryList.on_key: showing no earlier commit modal: exception: {e}")
-                        logger.debug(traceback.format_exc())
-                        pass
-                    return
-                i_newer = idx
-                i_older = idx + 1
-            else:
-                # If there is a checked item and it's not the current one,
-                # diff between the current item and the checked item.
-                # Order: lower item in the list (larger index) is prev, higher (smaller index) is curr.
-                i1 = idx
-                i2 = checked_idx
-                if i1 == i2:
-                    return
-                i_older = max(i1, i2)
-                i_newer = min(i1, i2)
-
-            current_line = _text_of(nodes[i_newer])
-            previous_line = _text_of(nodes[i_older])
-
-            # Prefer attached _hash on ListItems; fallback to regex parsing
-            current_hash = getattr(nodes[i_newer], "_hash", None)
-            previous_hash = getattr(nodes[i_older], "_hash", None)
-            if not current_hash or not previous_hash:
-                try:
-                    m1 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", current_line)
-                    m2 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", previous_line)
-                    if not m1 or not m2:
-                        raise ValueError(f"Lines not in expected format:\n{current_line!r}\n{previous_line!r}")
-                    current_hash = m1.group(2)
-                    previous_hash = m2.group(2)
-                except Exception as exc:
-                    try:
-                        self.app.push_screen(_TBDModal(f"Could not parse hashes: {exc}"))
-                    except Exception as e:
-                        logger.debug(f"HistoryList.on_key: showing hash parse error modal: exception: {e}")
-                        logger.debug(traceback.format_exc())
-                        pass
-                    return
-
-            # determine filename for the history (attached when populated)
-            filename = getattr(self, "_filename", None)
-            if not filename:
-                try:
-                    self.app.push_screen(_TBDModal("Unknown filename for history"))
-                except Exception as e:
-                    logger.debug(f"HistoryList.on_key: showing unknown filename modal: exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-                return
-
-            # Use centralized diff command builder on the app (handles variants)
-
-            # Store current diff info for potential re-render
-            self.app.current_commit_sha = current_hash
-            self.app.current_prev_sha = previous_hash
-            self.app.current_diff_file = filename
-
             try:
-                cmd = self.app.build_diff_cmd(previous_hash, current_hash, filename)
-                proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
-                diff_out = proc.stdout or proc.stderr or ""
-            except Exception as exc:
-                try:
-                    self.app.push_screen(_TBDModal(str(exc)))
-                except Exception as e:
-                    logger.debug(f"HistoryList.on_key: showing subprocess error modal: exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-                return
-
-            # show the Diff column and populate it
-            try:
-                diff_view = self.app.query_one("#right2", ListView)
-                try:
-                    diff_view.clear()
-                except Exception as e:
-                    logger.debug(f"HistoryList.on_key: clearing diff view: exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-
-                # Header indicating which two hashes are being compared
-                try:
-                    header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
-                    diff_view.append(header)
-                except Exception as e:
-                    logger.debug(f"HistoryList.on_key: appending diff header: exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-
-                if diff_out:
-                    for line in diff_out.splitlines():
-                        # Colorize diff lines like git does (if enabled)
-                        if self.app.colorize_diff:
-                            if line.startswith("+++") or line.startswith("---"):
-                                # File headers in bold white
-                                styled_text = Text(line, style="bold white")
-                            elif line.startswith("+"):
-                                # Additions in green
-                                styled_text = Text(line, style="green")
-                            elif line.startswith("-"):
-                                # Deletions in red
-                                styled_text = Text(line, style="red")
-                            elif line.startswith("@@"):
-                                # Hunk headers in cyan
-                                styled_text = Text(line, style="cyan")
-                            elif line.startswith("diff --git") or line.startswith("index "):
-                                # Diff metadata in bold
-                                styled_text = Text(line, style="bold")
-                            else:
-                                # Context lines in default color
-                                styled_text = Text(line)
-                        else:
-                            # No colorization
-                            styled_text = Text(line)
-                        diff_view.append(ListItem(Label(styled_text)))
-                else:
-                    diff_view.append(ListItem(Label(Text(f"No diff between {previous_hash}..{current_hash}"))))
-
-                # make sure Diff column is visible
-                try:
-                    # Update the Diff column title to reflect selected variant
-                    try:
-                        v = getattr(self.app, "diff_variants", [None])[getattr(self.app, "diff_cmd_index", 0)]
-                        title_lbl = self.app.query_one("#right2-title", Label)
-                        title_lbl.update(Text("Diff" if not v else f"Diff {v}", style="bold"))
-                    except Exception as e:
-                        logger.debug(f"HistoryList.on_key: updating right2 title: exception: {e}")
-                        logger.debug(traceback.format_exc())
-                        pass
-                    diff_view.styles.display = None
-                except Exception as e:
-                    logger.debug(f"HistoryList.on_key: making diff column visible: exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-
-                try:
-                    diff_view.index = 0
-                except Exception as e:
-                    logger.debug(f"HistoryList.on_key: setting diff view index: exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-                try:
-                    diff_view.focus()
-                except Exception as e:
-                    logger.debug(f"HistoryList.on_key: focusing diff view: exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-            except Exception as exc:
-                try:
-                    self.app.push_screen(_TBDModal(str(exc)))
-                except Exception as e:
-                    logger.debug(f"HistoryList.on_key: showing diff error modal: exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
+                if self.key_right():
+                    return
+            except Exception as e:
+                logger.debug(f"HistoryList.on_key: key_right exception: {e}")
+                logger.debug(traceback.format_exc())
             return
+
+        # Other keys: let default handling run by not stopping the event.
+        return
 
     def key_left(self) -> bool:
         """Handle left key behavior for HistoryListBase.
@@ -1265,8 +1072,215 @@ class HistoryListBase(ListView):
             return True
         return True
 
-        # Other keys: let default handling run by not stopping the event.
-        return
+    def key_right(self) -> bool:
+        """Handle right key behavior for HistoryListBase.
+
+        Returns True when the key was handled/consumed.
+        """
+        # need at least one other item to diff against (either checked or next)
+        idx = getattr(self, "index", None)
+        nodes = getattr(self, "_nodes", [])
+        if idx is None or idx < 0 or not nodes:
+            try:
+                self.app.push_screen(_TBDModal("No commit to diff with"))
+            except Exception as e:
+                logger.debug(f"HistoryList.key_right: showing no commit modal: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+            return True
+
+        # Find any checked item in the history
+        checked_idx = None
+        for i, node in enumerate(nodes):
+            if getattr(node, "_checked", False):
+                checked_idx = i
+                break
+
+        # helper to extract the text of a ListItem label
+        def _text_of(node) -> str:
+            try:
+                # prefer stored raw text
+                raw = getattr(node, "_raw_text", None)
+                if raw is not None:
+                    return raw
+                lbl = node.query_one(Label)
+                if hasattr(lbl, "text"):
+                    return lbl.text
+                renderable = getattr(lbl, "renderable", None)
+                if isinstance(renderable, Text):
+                    return renderable.plain
+                if renderable is not None:
+                    return str(renderable)
+                return str(lbl)
+            except Exception as e:
+                logger.debug(f"HistoryList.key_right._text_of: extracting text: exception: {e}")
+                logger.debug(traceback.format_exc())
+                return str(node)
+
+        # Determine the pair of indices to diff: default is current vs next
+        if checked_idx is None or checked_idx == idx:
+            # behave as before: need a next item
+            if idx >= len(nodes) - 1:
+                try:
+                    self.app.push_screen(_TBDModal("No earlier commit to diff with"))
+                except Exception as e:
+                    logger.debug(f"HistoryList.key_right: showing no earlier commit modal: exception: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+                return True
+            i_newer = idx
+            i_older = idx + 1
+        else:
+            # If there is a checked item and it's not the current one,
+            # diff between the current item and the checked item.
+            # Order: lower item in the list (larger index) is prev, higher (smaller index) is curr.
+            i1 = idx
+            i2 = checked_idx
+            if i1 == i2:
+                return True
+            i_older = max(i1, i2)
+            i_newer = min(i1, i2)
+
+        current_line = _text_of(nodes[i_newer])
+        previous_line = _text_of(nodes[i_older])
+
+        # Prefer attached _hash on ListItems; fallback to regex parsing
+        current_hash = getattr(nodes[i_newer], "_hash", None)
+        previous_hash = getattr(nodes[i_older], "_hash", None)
+        if not current_hash or not previous_hash:
+            try:
+                m1 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", current_line)
+                m2 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", previous_line)
+                if not m1 or not m2:
+                    raise ValueError(f"Lines not in expected format:\n{current_line!r}\n{previous_line!r}")
+                current_hash = m1.group(2)
+                previous_hash = m2.group(2)
+            except Exception as exc:
+                try:
+                    self.app.push_screen(_TBDModal(f"Could not parse hashes: {exc}"))
+                except Exception as e:
+                    logger.debug(f"HistoryList.key_right: showing hash parse error modal: exception: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+                return True
+
+        # determine filename for the history (attached when populated)
+        filename = getattr(self, "_filename", None)
+        if not filename:
+            try:
+                self.app.push_screen(_TBDModal("Unknown filename for history"))
+            except Exception as e:
+                logger.debug(f"HistoryList.key_right: showing unknown filename modal: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+            return True
+
+        # Use centralized diff command builder on the app (handles variants)
+
+        # Store current diff info for potential re-render
+        self.app.current_commit_sha = current_hash
+        self.app.current_prev_sha = previous_hash
+        self.app.current_diff_file = filename
+
+        try:
+            cmd = self.app.build_diff_cmd(previous_hash, current_hash, filename)
+            proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
+            diff_out = proc.stdout or proc.stderr or ""
+        except Exception as exc:
+            try:
+                self.app.push_screen(_TBDModal(str(exc)))
+            except Exception as e:
+                logger.debug(f"HistoryList.key_right: showing subprocess error modal: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+            return True
+
+        # show the Diff column and populate it
+        try:
+            diff_view = self.app.query_one("#right2", ListView)
+            try:
+                diff_view.clear()
+            except Exception as e:
+                logger.debug(f"HistoryList.key_right: clearing diff view: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+
+            # Header indicating which two hashes are being compared
+            try:
+                header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
+                diff_view.append(header)
+            except Exception as e:
+                logger.debug(f"HistoryList.key_right: appending diff header: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+
+            if diff_out:
+                for line in diff_out.splitlines():
+                    # Colorize diff lines like git does (if enabled)
+                    if self.app.colorize_diff:
+                        if line.startswith("+++") or line.startswith("---"):
+                            # File headers in bold white
+                            styled_text = Text(line, style="bold white")
+                        elif line.startswith("+"):
+                            # Additions in green
+                            styled_text = Text(line, style="green")
+                        elif line.startswith("-"):
+                            # Deletions in red
+                            styled_text = Text(line, style="red")
+                        elif line.startswith("@@"):
+                            # Hunk headers in cyan
+                            styled_text = Text(line, style="cyan")
+                        elif line.startswith("diff --git") or line.startswith("index "):
+                            # Diff metadata in bold
+                            styled_text = Text(line, style="bold")
+                        else:
+                            # Context lines in default color
+                            styled_text = Text(line)
+                    else:
+                        # No colorization
+                        styled_text = Text(line)
+                    diff_view.append(ListItem(Label(styled_text)))
+            else:
+                diff_view.append(ListItem(Label(Text(f"No diff between {previous_hash}..{current_hash}"))))
+
+            # make sure Diff column is visible
+            try:
+                # Update the Diff column title to reflect selected variant
+                try:
+                    v = getattr(self.app, "diff_variants", [None])[getattr(self.app, "diff_cmd_index", 0)]
+                    title_lbl = self.app.query_one("#right2-title", Label)
+                    title_lbl.update(Text("Diff" if not v else f"Diff {v}", style="bold"))
+                except Exception as e:
+                    logger.debug(f"HistoryList.key_right: updating right2 title: exception: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+                diff_view.styles.display = None
+            except Exception as e:
+                logger.debug(f"HistoryList.key_right: making diff column visible: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+
+            try:
+                diff_view.index = 0
+            except Exception as e:
+                logger.debug(f"HistoryList.key_right: setting diff view index: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+            try:
+                diff_view.focus()
+            except Exception as e:
+                logger.debug(f"HistoryList.key_right: focusing diff view: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+        except Exception as exc:
+            try:
+                self.app.push_screen(_TBDModal(str(exc)))
+            except Exception as e:
+                logger.debug(f"HistoryList.key_right: showing diff error modal: exception: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+        return True
+
 
 
 class HistoryList(HistoryListBase):
