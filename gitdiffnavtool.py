@@ -1502,19 +1502,10 @@ class DiffListBase(ListView):
         if key == "left":
             event.stop()
             try:
-                # If we're in fullscreen, left arrow exits fullscreen
-                if getattr(self.app, "diff_fullscreen", False):
-                    try:
-                        self.app.exit_diff_fullscreen()
-                    except Exception as e:
-                        logger.debug(f"DiffList: exception exiting fullscreen on left: {e}")
-                        logger.debug(traceback.format_exc())
+                if self.key_left():
                     return
-                # otherwise move focus back to History
-                hist = self.app.query_one("#right1", HistoryList)
-                hist.focus()
             except Exception as e:
-                logger.debug(f"DiffList: exception in left arrow handler: {e}")
+                logger.debug(f"DiffList.on_key: key_left exception: {e}")
                 logger.debug(traceback.format_exc())
             return
 
@@ -1672,7 +1663,35 @@ class DiffListBase(ListView):
                 logger.debug(f"DiffList: exception in {key} handler: {e}")
                 logger.debug(traceback.format_exc())
             return
-        # let other keys be handled by default (up/down handled by ListView)
+    def key_left(self) -> bool:
+        """Handle left key behavior for DiffListBase.
+
+        Returns True when the key was handled/consumed.
+        """
+        try:
+            # If we're in fullscreen, left arrow exits fullscreen
+            if getattr(self.app, "diff_fullscreen", False):
+                try:
+                    self.app.exit_diff_fullscreen()
+                except Exception as e:
+                    logger.debug(f"DiffList.key_left: exception exiting fullscreen on left: {e}")
+                    logger.debug(traceback.format_exc())
+                return True
+            # otherwise move focus back to History
+            try:
+                hist = self.app.query_one("#right1", HistoryList)
+                hist.focus()
+            except Exception as e:
+                logger.debug(f"DiffList.key_left: exception focusing history: {e}")
+                logger.debug(traceback.format_exc())
+                return True
+            return True
+        except Exception as e:
+            logger.debug(f"DiffList.key_left: unexpected exception: {e}")
+            logger.debug(traceback.format_exc())
+            return True
+
+    # let other keys be handled by default (up/down handled by ListView)
 
     def on_focus(self, event: events.Focus) -> None:
         """When the DiffList receives focus, ensure the first item is highlighted."""
