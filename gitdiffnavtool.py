@@ -706,8 +706,13 @@ class FileList(ListView):
             return
 
 
-class HistoryList(ListView):
-    """ListView used for the History column. Left arrow moves focus back to Files."""
+class HistoryListBase(ListView):
+    """ListView used for the History column. Left arrow moves focus back to Files.
+
+    Renamed to `HistoryListBase` so a thin `HistoryList` subclass can be
+    provided for compatibility while allowing future refactors to share
+    history-specific logic via the base class.
+    """
 
     def toggle_check_current(self) -> None:
         """Toggle a single checkmark on the currently selected history item.
@@ -1198,6 +1203,11 @@ class HistoryList(ListView):
 
         # Other keys: let default handling run by not stopping the event.
         return
+
+
+class HistoryList(HistoryListBase):
+    """Compatibility subclass; use `HistoryListBase` for shared logic."""
+    pass
 
 
 class DiffListBase(ListView):
