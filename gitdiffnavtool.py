@@ -32,7 +32,7 @@ from textual.widgets import (
 
 # Set up logging to help debug key event issues (currently disabled)
 # Uncomment the basicConfig line below to enable logging to tmp/gitdiff_debug.log
-DOLOGGING = False
+DOLOGGING = True
 if DOLOGGING:
     logging.basicConfig(
         filename="tmp/gitdiff_debug.log",
@@ -706,7 +706,102 @@ class FileList(ListView):
             return
 
 
-class HistoryList(ListView):
+class HistoryBase(ListView):
+    """Shared functionality for history-like ListViews.
+
+    Provides `toggle_check_current` that was previously duplicated in
+    `HistoryList` so both repo-wide and file-specific history views can
+    inherit identical marking behaviour.
+    """
+
+    def toggle_check_current(self) -> None:
+        try:
+            nodes = getattr(self, "_nodes", [])
+            if not nodes:
+                return
+            idx = getattr(self, "index", 0) or 0
+            if idx < 0 or idx >= len(nodes):
+                return
+
+            def _label_text_and_style(node):
+                try:
+                    lbl = node.query_one(Label)
+                    style = None
+                    try:
+                        style = getattr(lbl.renderable, "style", None)
+                    except Exception:
+                        style = None
+                    raw = getattr(node, "_raw_text", None)
+                    if raw is not None:
+                        return raw, style, lbl
+                    if hasattr(lbl, "text"):
+                        text = lbl.text
+                    else:
+                        renderable = getattr(lbl, "renderable", None)
+                        if isinstance(renderable, Text):
+                            text = renderable.plain
+                        elif renderable is not None:
+                            text = str(renderable)
+                        else:
+                            text = str(lbl)
+                    return text, style, lbl
+                except Exception:
+                    return str(node), None, None
+
+            prev_checked = None
+            for node in nodes:
+                if getattr(node, "_checked", False):
+                    prev_checked = node
+                    break
+
+            target = nodes[idx]
+
+            if prev_checked is target:
+                try:
+                    text, style, lbl = _label_text_and_style(target)
+                    stripped = text.lstrip("✓ ").lstrip()
+                    new_text = " " + stripped
+                    if lbl is not None:
+                        if style:
+                            lbl.update(Text(new_text, style=style))
+                        else:
+                            lbl.update(Text(new_text))
+                    target._checked = False
+                except Exception:
+                    pass
+                return
+
+            if prev_checked is not None and prev_checked is not target:
+                try:
+                    text, style, lbl = _label_text_and_style(prev_checked)
+                    stripped = text.lstrip("✓ ").lstrip()
+                    new_text = " " + stripped
+                    if lbl is not None:
+                        if style:
+                            lbl.update(Text(new_text, style=style))
+                        else:
+                            lbl.update(Text(new_text))
+                    prev_checked._checked = False
+                except Exception:
+                    pass
+
+            try:
+                text, style, lbl = _label_text_and_style(target)
+                stripped = text.lstrip("✓").lstrip()
+                new_text = "✓" + stripped
+                if lbl is not None:
+                    if style:
+                        lbl.update(Text(new_text, style=style))
+                    else:
+                        lbl.update(Text(new_text))
+                target._checked = True
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+
+class HistoryList(HistoryBase):
     """ListView used for the History column. Left arrow moves focus back to Files."""
 
     def toggle_check_current(self) -> None:
@@ -1202,6 +1297,191 @@ class HistoryList(ListView):
 
 class DiffList(ListView):
     """ListView used for the Diff column. Left arrow moves focus back to History."""
+
+
+class HistoryRepoList(HistoryBase):
+    """Repository-wide history view used when `--log-first` is enabled.
+
+    Left/Right behavior differs from `HistoryList`:
+    - `right` populates the middle FileRepo list with files changed in the
+      selected commit and shifts focus there.
+    - `left` will restore the standard three-column layout.
+    """
+
+    def on_focus(self, event: events.Focus) -> None:
+        try:
+            # Make this left column occupy full width and hide others
+            try:
+                self.app.query_one("#left-column").styles.width = "100%"
+                self.app.query_one("#left-column").styles.flex = 0
+            except Exception:
+                pass
+            try:
+                self.app.query_one("#right1-column").styles.width = "0%"
+                self.app.query_one("#right1-column").styles.flex = 0
+                self.app.query_one("#right1").styles.display = "none"
+            except Exception:
+                pass
+            try:
+                self.app.query_one("#right2-column").styles.width = "0%"
+                self.app.query_one("#right2-column").styles.flex = 0
+                self.app.query_one("#right2").styles.display = "none"
+            except Exception:
+                pass
+            # Title adjustments
+            try:
+                lbl = self.app.query_one("#left-title", Label)
+                lbl.update(Text("History (repo)", style="bold"))
+                lbl.styles.display = None
+            except Exception:
+                pass
+            try:
+                footer = self.app.query_one("#footer", Label)
+                footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →  m(ark)", style="bold"))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def on_key(self, event: events.Key) -> None:
+        key = event.key
+        logger.debug(f"HistoryRepoList.on_key: key={key}")
+        if key and key.lower() == "q":
+            event.key = key.lower()
+            return
+        if key and key.lower() == "m":
+            event.stop()
+            try:
+                self.toggle_check_current()
+            except Exception:
+                pass
+            return
+        if key == "right":
+            event.stop()
+            idx = getattr(self, "index", None)
+            nodes = getattr(self, "_nodes", [])
+            if idx is None or not nodes or idx < 0 or idx >= len(nodes):
+                try:
+                    self.app.push_screen(_TBDModal("No commit selected"))
+                except Exception:
+                    pass
+                return
+            commit_hash = getattr(nodes[idx], "_hash", None)
+            if not commit_hash:
+                # try to parse
+                raw = getattr(nodes[idx], "_raw_text", "")
+                m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", raw)
+                if m:
+                    commit_hash = m.group(2)
+            if not commit_hash:
+                try:
+                    self.app.push_screen(_TBDModal("Could not determine commit hash"))
+                except Exception:
+                    pass
+                return
+            # Populate middle column with files changed in this commit
+            try:
+                self.app.populate_commit_files(commit_hash)
+            except Exception as e:
+                logger.debug(f"HistoryRepoList.on_key.populate_commit_files: {e}")
+                logger.debug(traceback.format_exc())
+            # show middle column and focus it
+            try:
+                mid = self.app.query_one("#right1")
+                mid.styles.display = None
+                self.app.query_one("#left-column").styles.width = "25%"
+                self.app.query_one("#left-column").styles.flex = 0
+                self.app.query_one("#right1-column").styles.width = "75%"
+                self.app.query_one("#right1-column").styles.flex = 0
+                mid.focus()
+            except Exception:
+                pass
+            return
+        if key == "left":
+            event.stop()
+            # restore standard columns
+            try:
+                self.app.query_one("#left-column").styles.width = "33%"
+                self.app.query_one("#left-column").styles.flex = 0
+                self.app.query_one("#right1-column").styles.width = "34%"
+                self.app.query_one("#right1-column").styles.flex = 0
+                self.app.query_one("#right2-column").styles.width = "33%"
+                self.app.query_one("#right2-column").styles.flex = 0
+            except Exception:
+                pass
+            return
+
+
+class FileRepoList(ListView):
+    """Middle column in repo-log mode: shows files changed in selected commit."""
+
+    def on_key(self, event: events.Key) -> None:
+        key = event.key
+        logger.debug(f"FileRepoList.on_key: key={key}")
+        if key and key.lower() == "q":
+            event.key = key.lower()
+            return
+        if key == "left":
+            event.stop()
+            try:
+                self.app.query_one("#left", HistoryRepoList).focus()
+            except Exception:
+                pass
+            return
+        if key == "right":
+            event.stop()
+            idx = getattr(self, "index", None)
+            nodes = getattr(self, "_nodes", [])
+            if idx is None or not nodes or idx < 0 or idx >= len(nodes):
+                try:
+                    self.app.push_screen(_TBDModal("No file selected"))
+                except Exception:
+                    pass
+                return
+            filename = getattr(nodes[idx], "_filename", None) or getattr(nodes[idx], "_path", None)
+            commit = getattr(self, "_commit_hash", None)
+            parent = getattr(self, "_commit_parent", None)
+            if not commit:
+                try:
+                    self.app.push_screen(_TBDModal("Unknown commit for file list"))
+                except Exception:
+                    pass
+                return
+            # Store app diff info and run diff between parent and commit for filename
+            try:
+                self.app.current_commit_sha = commit
+                self.app.current_prev_sha = parent
+                self.app.current_diff_file = filename
+                cmd = self.app.build_diff_cmd(parent, commit, filename)
+                proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
+                out = proc.stdout or proc.stderr or ""
+                # populate rightmost diff view
+                diff_view = self.app.query_one("#right2", ListView)
+                try:
+                    diff_view.clear()
+                except Exception:
+                    pass
+                header = ListItem(Label(Text(f"Comparing: {parent}..{commit}", style="bold")))
+                diff_view.append(header)
+                if out:
+                    for line in out.splitlines():
+                        styled = Text(line)
+                        diff_view.append(ListItem(Label(styled)))
+                else:
+                    diff_view.append(ListItem(Label(Text(f"No diff for {filename}"))))
+                try:
+                    diff_view.styles.display = None
+                    diff_view.focus()
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.debug(f"FileRepoList.on_key.diff: {e}")
+                logger.debug(traceback.format_exc())
+            return
+
+
+class DiffRepoList(DiffList):
+    pass
 
     def on_key(self, event: events.Key) -> None:
         """Handle left key to move focus back to History; handle PgUp/PgDn with visible selection; handle c/C to toggle colorization."""
@@ -2120,7 +2400,7 @@ App {
 
     BINDINGS = [("q", "quit", "Quit")]
 
-    def __init__(self, path: Optional[str] = None, colorize_diff: bool = True, **kwargs) -> None:
+    def __init__(self, path: Optional[str] = None, colorize_diff: bool = True, log_first: bool = False, **kwargs) -> None:
         """Initialize the app state.
 
         If `path` names a file, treat its directory as the working path and
@@ -2145,6 +2425,9 @@ App {
         self.repo_status_map: dict[str, int] = {}
         # per-file index mtime map (path -> mtime seconds)
         self.repo_index_mtime_map: dict[str, float] = {}
+        # If True, populate the History column with repository-wide commits
+        # on mount instead of file-specific history.
+        self.log_first: bool = bool(log_first)
         # column state for restoring after help
         self.saved_column_state: Optional[dict] = None
         # colorization state and current diff info
@@ -2313,17 +2596,34 @@ App {
         with Vertical(id="root"):
             yield Label(Text(self.TITLE, style="bold"), id="title")
             with Horizontal(id="main"):
-                # left column: flex so it takes remaining space
+                # left column: in normal mode this is Files, in log-first
+                # mode this becomes HistoryRepo (repo-wide commits).
                 with Vertical(id="left-column"):
-                    yield Label(Text("Files", style="bold"), id="left-title")
-                    yield FileList(id="left")
-                # three minimal right columns
+                    if getattr(self, "log_first", False):
+                        yield Label(Text("History (repo)", style="bold"), id="left-title")
+                        yield HistoryRepoList(id="left")
+                    else:
+                        yield Label(Text("Files", style="bold"), id="left-title")
+                        yield FileList(id="left")
+
+                # middle column: in normal mode this is History, in log-first
+                # mode this becomes FileRepo (files changed in selected commit)
                 with Vertical(id="right1-column"):
-                    yield Label(Text("History", style="bold"), id="right1-title")
-                    yield HistoryList(id="right1")
+                    if getattr(self, "log_first", False):
+                        yield Label(Text("Files", style="bold"), id="right1-title")
+                        yield FileRepoList(id="right1")
+                    else:
+                        yield Label(Text("History", style="bold"), id="right1-title")
+                        yield HistoryList(id="right1")
+
+                # right column: Diff (either file diffs or commit diffs)
                 with Vertical(id="right2-column"):
                     yield Label(Text("Diff", style="bold"), id="right2-title")
-                    yield DiffList(id="right2")
+                    if getattr(self, "log_first", False):
+                        yield DiffRepoList(id="right2")
+                    else:
+                        yield DiffList(id="right2")
+
                 with Vertical(id="right3-column"):
                     yield Label(Text("Help", style="bold"), id="right3-title")
                     yield HelpList(id="right3")
@@ -2338,10 +2638,11 @@ App {
         cache, and sets the initial path listing. If the app was launched with
         a filename, it will also open that file's history.
         """
-        left = self.query_one("#left", FileList)
-        right1 = self.query_one("#right1", HistoryList)
-        right2 = self.query_one("#right2", ListView)
-        right3 = self.query_one("#right3", HelpList)
+        # Query widgets generically; types differ when log-first mode is enabled
+        left = self.query_one("#left")
+        right1 = self.query_one("#right1")
+        right2 = self.query_one("#right2")
+        right3 = self.query_one("#right3")
         # Ensure the main horizontal fills remaining space so the title remains visible
         try:
             # ensure root fills the app and main flexes so footer remains visible
@@ -2366,6 +2667,22 @@ App {
             self.build_repo_cache()
         except Exception as e:
             logger.debug(f"[GitDiffApp.on_mount.build_repo_cache]: exception: {e}")
+            logger.debug(traceback.format_exc())
+            pass
+
+        # If launched with --log-first, populate the History column with
+        # repository commits so the History view shows repo log instead of
+        # file-specific history.
+        try:
+            if getattr(self, "log_first", False):
+                try:
+                    self.populate_repo_history()
+                except Exception as e:
+                    logger.debug(f"[GitDiffApp.on_mount.populate_repo_history]: exception: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.check_log_first]: exception: {e}")
             logger.debug(traceback.format_exc())
             pass
         # Start with Files column full-width, other columns hidden
@@ -2401,7 +2718,30 @@ App {
             logger.debug(traceback.format_exc())
             pass
 
-        left.set_path(self.path)
+        # Populate left column depending on mode
+        try:
+            if getattr(self, "log_first", False):
+                # Ensure HistoryRepo covers full screen and focus it. The
+                # repo history was already populated earlier in on_mount.
+                try:
+                    # left column should already be full-width from earlier
+                    left.focus()
+                except Exception:
+                    pass
+            else:
+                # Normal mode: left is FileList and should be populated
+                try:
+                    # left may be a FileList instance
+                    if hasattr(left, "set_path"):
+                        left.set_path(self.path)
+                except Exception as e:
+                    logger.debug(f"[GitDiffApp.on_mount.left.set_path]: exception: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.populate_left]: exception: {e}")
+            logger.debug(traceback.format_exc())
+            pass
 
         # If launched with a filename, populate and focus its history immediately
         try:
@@ -2439,7 +2779,10 @@ App {
             )
             out = proc.stdout.strip()
 
-            hist = self.query_one("#right1", ListView)
+            # In normal mode history lives in #right1; in log-first mode the
+            # repo-wide history should populate the left column (#left).
+            target_id = "#left" if getattr(self, "log_first", False) else "#right1"
+            hist = self.query_one(target_id, ListView)
             try:
                 hist.clear()
             except Exception as e:
@@ -2535,6 +2878,175 @@ App {
                 logger.debug(f"[GitDiffApp._open_history_for_file.push_modal]: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
+
+    def populate_repo_history(self, max_count: Optional[int] = 500) -> None:
+        """Populate the History column with repository commits (repo-wide log).
+
+        This mirrors the format used for file history: `date shortsha summary`.
+        """
+        try:
+            # require repo available
+            if not getattr(self, "repo_available", False) or not getattr(self, "repo_root", None):
+                return
+            try:
+                gitdir = pygit2.discover_repository(self.path)
+                repo = pygit2.Repository(gitdir)
+            except Exception as e:
+                logger.debug(f"populate_repo_history: cannot open repo: {e}")
+                logger.debug(traceback.format_exc())
+                return
+
+            target_id = "#left" if getattr(self, "log_first", False) else "#right1"
+            hist = self.query_one(target_id, ListView)
+            try:
+                hist.clear()
+            except Exception:
+                pass
+
+            # Walk commits from HEAD
+            try:
+                head = repo.head
+                head_oid = head.target
+            except Exception:
+                # no HEAD (empty repo)
+                head_oid = None
+
+            if not head_oid:
+                hist.append(ListItem(Label(Text(" No commits in repository"))))
+                return
+
+            walker = repo.walk(head_oid, pygit2.GIT_SORT_TIME)
+            count = 0
+            for commit in walker:
+                if max_count is not None and count >= int(max_count):
+                    break
+                try:
+                    when = datetime.datetime.fromtimestamp(float(commit.commit_time)).strftime("%Y-%m-%d")
+                except Exception:
+                    when = "1970-01-01"
+                try:
+                    short = str(commit.id)[:8]
+                except Exception:
+                    short = getattr(commit, "hex", None) or getattr(commit, "id", "")[:8]
+                subj = (commit.message or "").splitlines()[0]
+                line = f" {when} {short} {subj}"
+                li = ListItem(Label(Text(line)))
+                try:
+                    li._hash = short
+                except Exception:
+                    pass
+                try:
+                    li._raw_text = line
+                except Exception:
+                    pass
+                hist.append(li)
+                count += 1
+
+            # make sure History column is visible
+            try:
+                hist.styles.display = None
+            except Exception:
+                pass
+            try:
+                # Ensure first entry is highlighted after render
+                try:
+                    hist.call_after_refresh(lambda: setattr(hist, "index", 0))
+                except Exception:
+                    try:
+                        hist.index = 0
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug(f"populate_repo_history: exception: {e}")
+            logger.debug(traceback.format_exc())
+
+    def populate_commit_files(self, commit_hash: str) -> None:
+        """Populate the middle (files) column with files changed in `commit_hash`.
+
+        Stores `_commit_hash` and `_commit_parent` on the middle widget so
+        subsequent actions (like showing diffs) can reference them.
+        """
+        try:
+            if not getattr(self, "repo_available", False):
+                return
+            gitdir = pygit2.discover_repository(self.path)
+            repo = pygit2.Repository(gitdir)
+            try:
+                commit = repo.get(commit_hash)
+            except Exception:
+                # try by oid
+                commit = repo.revparse_single(commit_hash)
+            parents = commit.parents
+            parent = parents[0] if parents else None
+            parent_tree = parent.tree if parent else None
+            tree = commit.tree
+
+            # Diff between parent tree and this commit tree
+            if parent_tree is None:
+                diff = repo.diff(None, tree)
+            else:
+                diff = repo.diff(parent_tree, tree)
+
+            mid = self.query_one("#right1", ListView)
+            try:
+                mid.clear()
+            except Exception:
+                pass
+
+            # Attach commit context to the mid widget
+                try:
+                    mid._commit_hash = str(commit.id)[:8]
+                    mid._commit_parent = str(parent.id)[:8] if parent else None
+                except Exception:
+                    try:
+                        mid._commit_hash = getattr(commit, "hex", None)[:8]
+                    except Exception:
+                        mid._commit_hash = None
+                    try:
+                        mid._commit_parent = getattr(parent, "hex", None)[:8] if parent else None
+                    except Exception:
+                        mid._commit_parent = None
+
+            for delta in diff:
+                try:
+                    st = delta.status
+                    if st == pygit2.GIT_DELTA_ADDED:
+                        letter = "A"
+                        path = delta.new_file.path
+                    elif st == pygit2.GIT_DELTA_MODIFIED:
+                        letter = "M"
+                        path = delta.new_file.path
+                    elif st == pygit2.GIT_DELTA_DELETED:
+                        letter = "D"
+                        path = delta.old_file.path
+                    elif st == pygit2.GIT_DELTA_RENAMED:
+                        letter = f"R{getattr(delta, 'similarity', 0):03d}"
+                        path = f"{delta.old_file.path} -> {delta.new_file.path}"
+                    elif st == pygit2.GIT_DELTA_COPIED:
+                        letter = f"C{getattr(delta, 'similarity', 0):03d}"
+                        path = f"{delta.old_file.path} -> {delta.new_file.path}"
+                    else:
+                        letter = "?"
+                        path = delta.new_file.path or delta.old_file.path
+                except Exception:
+                    letter = "?"
+                    path = getattr(delta.new_file, 'path', None) or getattr(delta.old_file, 'path', None) or str(delta)
+                li = ListItem(Label(Text(f"{letter} {path}")))
+                try:
+                    li._filename = getattr(delta.new_file, 'path', None) or getattr(delta.old_file, 'path', None)
+                except Exception:
+                    pass
+                mid.append(li)
+
+            try:
+                mid.styles.display = None
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug(f"populate_commit_files: exception: {e}")
+            logger.debug(traceback.format_exc())
 
     def on_key(self, event: events.Key) -> None:
         """Global key handler.
@@ -2724,9 +3236,10 @@ def main() -> None:
     parser.add_argument(
         "-C", "--no-color", dest="no_color", action="store_true", help="Start with diff colorization turned off"
     )
+    parser.add_argument("-l", "--log-first", dest="log_first", action="store_true", help="Populate History column with repo log on startup")
     args = parser.parse_args()
 
-    app = GitHistoryTool(args.path, colorize_diff=(not args.no_color))
+    app = GitHistoryTool(args.path, colorize_diff=(not args.no_color), log_first=args.log_first)
     app.run()
 
 
