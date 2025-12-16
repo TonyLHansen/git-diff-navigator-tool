@@ -1200,8 +1200,12 @@ class HistoryList(ListView):
         return
 
 
-class DiffList(ListView):
-    """ListView used for the Diff column. Left arrow moves focus back to History."""
+class DiffListBase(ListView):
+    """ListView used for the Diff column. Left arrow moves focus back to History.
+
+    Renamed to `DiffListBase` to allow a thin `DiffList` subclass for
+    backwards compatibility and easier future refactors.
+    """
 
     def on_key(self, event: events.Key) -> None:
         """Handle left key to move focus back to History; handle PgUp/PgDn with visible selection; handle c/C to toggle colorization."""
@@ -1769,6 +1773,11 @@ class DiffList(ListView):
             logger.debug(f"[DiffList.on_focus.update_footer]: exception: {e}")
             logger.debug(traceback.format_exc())
             pass
+
+
+class DiffList(DiffListBase):
+    """Compatibility subclass; use `DiffListBase` for shared logic."""
+    pass
 
 
 class _TBDModal(ModalScreen):

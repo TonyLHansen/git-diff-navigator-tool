@@ -54,3 +54,27 @@ Small acceptance tests:
 - Up/Down/PgUp/PgDn move selection and both panes remain aligned and highlighted.
 - Toggle back to unified view without losing current file/hash selection.
 
+
+
+refactor the code for the left and right arrows so that the code is in methods() that can be overridden. Do this for all of the
+
+
+the file was totally messed up. I've restored it to the way it was before we
+
+we are going to create a new mode entered with the argparse "-l"/"--log-first" option. 
+It will use three columns also, where the first column will be History and act exactly like the current History column, but will be populated with the commit history for the repository. 
+I don't know if it would be easier to create three new columns named HistoryRepo, FileRepo and DiffRepo, or it may be easier to re-use the current columns. But the up-down arrows and m/M commands will act the same as they do in the current History column. (The actions of left and right arrows will be different.) For the functionality, it may be worth creating a class that both HistoryList and HistoryRepoList are derived from, and which will use overridden methods to implement the sizing and the functionality of the left and right arrows
+
+do the refactors. As part of the refactor, with log-first, the program should start with HistoryRepo showing and covering 100% of the screen
+
+
+1) refactor DiffList and DiffRepoList to be derived from DiffBase. 
+2) Similarly for FileList and FileRepoList to be derived from FileBase. 
+3) Make certain that the basic key processing is in FileBase, HistoryBase and DiffBase. 
+4) Refactor the key processing so that each key press invokes a function such as keypress_left(), keypress_right(), keypress_up() and keypress_down(). These functions should return True if on_key should return, False otherwise. 
+5) Move the functionality to process "left" and "right" into the derived classes in functions that override the keypress_left() and keypress_right() in the Base classes. 
+6) The Base class versions of those keys should return False and do nothing else.
+
+
+
+ok, we're going to do this one step at a time. Rename DiffList to be DiffListBase and derive DiffList from DiffListBase
