@@ -42,7 +42,7 @@ if DOLOGGING:
 logger = logging.getLogger(__name__)
 
 
-class FileList(ListView):
+class FileListBase(ListView):
     """A ListView showing directory contents. Directories have a blue background.
 
     Navigation: arrow keys (up/down) move selection automatically because ListView
@@ -704,6 +704,11 @@ class FileList(ListView):
             logger.debug(f"FileList._highlight_top: exception: {e}")
             logger.debug(traceback.format_exc())
             return
+
+
+class FileList(FileListBase):
+    """Compatibility subclass; use `FileListBase` for shared logic."""
+    pass
 
 
 class HistoryListBase(ListView):

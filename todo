@@ -80,3 +80,5 @@ do the refactors. As part of the refactor, with log-first, the program should st
 ok, we're going to do this one step at a time. Rename DiffList to be DiffListBase and derive DiffList from DiffListBase
 
 ok, we're going to do this one step at a time. Rename HistoryList to be HistoryListBase and derive HistoryList from HistoryListBase
+
+Rename FileList to be FileListBase and derive FileList from FileListBase
