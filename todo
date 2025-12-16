@@ -109,3 +109,9 @@ ok, now let's start filling in the --log-start functionality. With log-start mod
 
 do both `Use pygit2 instead of subprocess for the repo walk, or
 Also implement a dedicated HistoryRepoList population method (rather than populating the existing HistoryList)?`
+
+now to add in the functionality for right arrow from HistoryRepoList.
+It needs to open a FileRepoList column, initialized with the information from a filename difference between the two commits,
+It should cover the cases of files being changed, added, deleted and renamed.
+The old and new commit hashes need to be passed in to the FileRepoList for
+later use in the Diff window.

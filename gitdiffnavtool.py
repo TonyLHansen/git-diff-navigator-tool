@@ -219,7 +219,141 @@ class FileListBase(ListView):
                 logger.debug(traceback.format_exc())
                 pass
 
-    def _highlight_filename(self, name: str) -> None:
+    def on_focus(self, event: events.Focus) -> None:
+        """When Files column receives focus, make it full-width and hide others."""
+        try:
+            # Make the left column (the whole left vertical) full width,
+            # and collapse the two right columns so titles/later columns
+            # don't reserve space.
+            try:
+                self.app.query_one("#left-column").styles.width = "100%"
+                self.app.query_one("#left-column").styles.flex = 0
+            except Exception as e:
+                logger.debug(f"FileList.on_focus: exception setting left column: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+            try:
+                self.app.query_one("#right1-column").styles.width = "0%"
+                self.app.query_one("#right1-column").styles.flex = 0
+            except Exception as e:
+                logger.debug(f"FileList.on_focus: exception setting right1 column: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+            try:
+                self.app.query_one("#right2-column").styles.width = "0%"
+                self.app.query_one("#right2-column").styles.flex = 0
+            except Exception as e:
+                logger.debug(f"FileList.on_focus: exception setting right2 column: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+            # Ensure inner left list fills its column
+            self.styles.width = "100%"
+            self.styles.flex = 0
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception setting column widths: {e}")
+            logger.debug(traceback.format_exc())
+            pass
+        try:
+            right1 = self.app.query_one("#right1", HistoryList)
+            right1.styles.display = "none"
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception hiding right1: {e}")
+            logger.debug(traceback.format_exc())
+            pass
+        try:
+            right2 = self.app.query_one("#right2", ListView)
+            right2.styles.display = "none"
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception hiding right2: {e}")
+            logger.debug(traceback.format_exc())
+            pass
+
+        # show/hide titles for columns: left visible, others hidden
+        try:
+            lbl = self.app.query_one("#left-title", Label)
+            lbl.update(Text("Files", style="bold"))  # Restore full name
+            lbl.styles.display = None
+            lbl.styles.height = None
+            lbl.styles.width = None
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception updating left title: {e}")
+            logger.debug(traceback.format_exc())
+            pass
+        try:
+            lbl = self.app.query_one("#right1-title", Label)
+            lbl.styles.display = "none"
+            lbl.styles.height = 0
+            lbl.styles.width = 0
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception hiding right1 title: {e}")
+            logger.debug(traceback.format_exc())
+            pass
+        try:
+            lbl = self.app.query_one("#right2-title", Label)
+            lbl.styles.display = "none"
+            lbl.styles.height = 0
+            lbl.styles.width = 0
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception hiding right2 title: {e}")
+            logger.debug(traceback.format_exc())
+            pass
+
+        # FileList footer
+        try:
+            footer = self.app.query_one("#footer", Label)
+            footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →", style="bold"))
+        except Exception as e:
+            logger.debug(f"FileList.on_focus: exception updating footer: {e}")
+            logger.debug(traceback.format_exc())
+            pass
+
+    def on_key(self, event: events.Key) -> None: # FileListBase
+        """Only allow up/down/left/right in this column.
+
+        - Up: move to previous entry
+        - Down: move to next entry
+        - Left/Right: show a temporary "TBD" modal
+        - Other keys: ignore
+        """
+        key = event.key
+        logger.debug(f"FileList.on_key: key={key}")
+        if key and key.lower() == "q":
+            # Allow global quit (q/Q) to bubble to the app. Ensure the
+            # event.key is normalized to lowercase so the app-level handler
+            # which checks for 'q' will receive a lower-case key.
+            event.key = key.lower()
+            return
+        if key == "up":
+            event.stop()
+            self.action_cursor_up()
+        elif key == "down":
+            event.stop()
+            self.action_cursor_down()
+        elif key == "right":
+            event.stop()
+            try:
+                if self.key_right():
+                    return
+            except Exception as e:
+                logger.debug(f"FileList.on_key: key_right exception: {e}")
+                logger.debug(traceback.format_exc())
+            return
+        elif key == "left":
+            event.stop()
+            try:
+                if self.key_left():
+                    return
+            except Exception as e:
+                logger.debug(f"FileList.on_key: key_left exception: {e}")
+                logger.debug(traceback.format_exc())
+            return
+        else:
+            # For keys we don't explicitly handle here, allow them to bubble
+            # to higher-level handlers (e.g. app-level `on_key`) so global
+            # shortcuts like `h` / `?` and `Q` are still processed.
+            return
+
+    def _highlight_filename(self, name: str) -> None: # FileListBase
         """Highlight the ListItem whose attached `_filename` equals `name`.
 
         This is intended to be called via `call_after_refresh` after the
@@ -248,14 +382,14 @@ class FileListBase(ListView):
             logger.debug(traceback.format_exc())
             return
 
-    def key_left(self) -> bool:
+    def key_left(self) -> bool: # FileListBase
         """Handle left key behavior for FileListBase.
 
         Returns True when the key was handled/consumed.
         """
         return False
 
-    def _highlight_top(self) -> None:
+    def _highlight_top(self) -> None: # FileListBase
         """Highlight the first entry in the list after a refresh."""
         try:
             # If there are nodes, set index to 0; otherwise leave unset.
@@ -268,11 +402,11 @@ class FileListBase(ListView):
             return
 
 
-class FileList(FileListBase):
+class FileModeFileList(FileListBase):
     """Compatibility subclass; use `FileListBase` for shared logic."""
 
-    def key_left(self) -> bool:
-        """Handle left key behavior for FileList compatibility subclass.
+    def key_left(self) -> bool: # FileModeFileList
+        """Handle left key behavior for FileModeFileList
 
         Returns True when the key was handled/consumed.
         """
@@ -290,7 +424,7 @@ class FileList(FileListBase):
                 try:
                     self.app.push_screen(_TBDModal(str(exc)))
                 except Exception as e:
-                    logger.debug(f"FileList.key_left: exception showing left key error modal: {e}")
+                    logger.debug(f"FileModeFileList.key_left: exception showing left key error modal: {e}")
                     logger.debug(traceback.format_exc())
                     try:
                         self.app.push_screen(_TBDModal())
@@ -316,13 +450,13 @@ class FileList(FileListBase):
             try:
                 self.call_after_refresh(self._highlight_filename, prev_basename)
             except Exception as e:
-                logger.debug(f"FileList.key_left: exception calling _highlight_filename: {e}")
+                logger.debug(f"FileModeFileList.key_left: exception calling _highlight_filename: {e}")
                 logger.debug(traceback.format_exc())
                 try:
                     # Fallback: set to first item
                     self.index = 0
                 except Exception as e:
-                    logger.debug(f"FileList.on_key: exception setting index fallback: {e}")
+                    logger.debug(f"FileModeFileList.on_key: exception setting index fallback: {e}")
                     logger.debug(traceback.format_exc())
                     pass
 
@@ -331,7 +465,7 @@ class FileList(FileListBase):
                 self.app.path = os.path.abspath(parent)
                 self.app.displayed_path = self.path
             except Exception as e:
-                logger.debug(f"FileList.key_left: exception updating app path info: {e}")
+                logger.debug(f"FileModeFileList.key_left: exception updating app path info: {e}")
                 logger.debug(traceback.format_exc())
                 pass
 
@@ -344,8 +478,8 @@ class FileList(FileListBase):
         # Left on non-parent: ignore (do nothing)
         return True
 
-    def key_right(self) -> bool:
-        """Handle right key behavior for FileList compatibility subclass.
+    def key_right(self) -> bool: # FileModeFileList
+        """Handle right key behavior for FileModeFileList
 
         Returns True when the key was handled/consumed.
         """
@@ -374,7 +508,7 @@ class FileList(FileListBase):
                 try:
                     self.app.push_screen(_TBDModal(str(exc)))
                 except Exception as e:
-                    logger.debug(f"FileList.key_right: exception showing modal fallback: {e}")
+                    logger.debug(f"FileModeFileList.key_right: exception showing modal fallback: {e}")
                     logger.debug(traceback.format_exc())
                     try:
                         # Last-resort fallback
@@ -392,14 +526,14 @@ class FileList(FileListBase):
                 try:
                     self.index = 0
                 except Exception as e:
-                    logger.debug(f"FileList.key_right: exception resetting index: {e}")
+                    logger.debug(f"FileModeFileList.key_right: exception resetting index: {e}")
                     logger.debug(traceback.format_exc())
                     pass
                 # update app-level current path as well
                 try:
                     self.app.path = os.path.abspath(full)
                 except Exception as e:
-                    logger.debug(f"FileList.key_right: exception updating app.path: {e}")
+                    logger.debug(f"FileModeFileList.key_right: exception updating app.path: {e}")
                     logger.debug(traceback.format_exc())
                     pass
                 # focus back on this list
@@ -435,7 +569,7 @@ class FileList(FileListBase):
                         # clear existing items
                         hist.clear()
                     except Exception as e:
-                        logger.debug(f"FileList.key_right: exception clearing history: {e}")
+                        logger.debug(f"FileModeFileList.key_right: exception clearing history: {e}")
                         logger.debug(traceback.format_exc())
                         pass
 
@@ -443,7 +577,7 @@ class FileList(FileListBase):
                     try:
                         hist._filename = item_name
                     except Exception as e:
-                        logger.debug(f"FileList.key_right: exception setting hist._filename: {e}")
+                        logger.debug(f"FileModeFileList.key_right: exception setting hist._filename: {e}")
                         logger.debug(traceback.format_exc())
                         pass
 
@@ -458,7 +592,7 @@ class FileList(FileListBase):
                                     rel = os.path.relpath(os.path.join(self.app.path, item_name), app.repo_root)
                                 except Exception as e:
                                     logger.debug(
-                                        f"FileList.key_right: exception getting relpath for pseudo entries: {e}"
+                                        f"FileModeFileList.key_right: exception getting relpath for pseudo entries: {e}"
                                     )
                                     logger.debug(traceback.format_exc())
                                     rel = None
@@ -489,7 +623,7 @@ class FileList(FileListBase):
                             # have non-empty output vs HEAD. We keep simple
                             # behavior and only use repo flags when available.
                         except Exception as e:
-                            logger.debug(f"FileList.key_right: exception building pseudo entries: {e}")
+                            logger.debug(f"FileModeFileList.key_right: exception building pseudo entries: {e}")
                             logger.debug(traceback.format_exc())
                             pseudo_entries = []
 
@@ -505,7 +639,7 @@ class FileList(FileListBase):
                                             rel = os.path.relpath(os.path.join(self.path, item_name), app.repo_root)
                                         except Exception as e:
                                             logger.debug(
-                                                f"FileList.key_right: exception getting relpath for STAGED: {e}"
+                                                f"FileModeFileList.key_right: exception getting relpath for STAGED: {e}"
                                             )
                                             logger.debug(traceback.format_exc())
                                             rel = None
@@ -514,7 +648,7 @@ class FileList(FileListBase):
                                             try:
                                                 mtime = app.repo_index_mtime_map.get(rel)
                                             except Exception as e:
-                                                logger.debug(f"FileList.key_right: exception getting index mtime: {e}")
+                                                logger.debug(f"FileModeFileList.key_right: exception getting index mtime: {e}")
                                                 logger.debug(traceback.format_exc())
                                                 mtime = None
                                         # fallback to index file mtime if per-file not available
@@ -524,14 +658,14 @@ class FileList(FileListBase):
                                                 mtime = os.path.getmtime(index_path)
                                             except Exception as e:
                                                 logger.debug(
-                                                    f"FileList.key_right: exception getting index file mtime: {e}"
+                                                    f"FileModeFileList.key_right: exception getting index file mtime: {e}"
                                                 )
                                                 logger.debug(traceback.format_exc())
                                                 mtime = None
                                         if mtime:
                                             display_pseudo = f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} STAGED"
                                 except Exception as e:
-                                    logger.debug(f"FileList.key_right: exception building STAGED display: {e}")
+                                    logger.debug(f"FileModeFileList.key_right: exception building STAGED display: {e}")
                                     logger.debug(traceback.format_exc())
                                     display_pseudo = "STAGED"
                             elif pseudo == "MODS":
@@ -541,7 +675,7 @@ class FileList(FileListBase):
                                         fp = os.path.join(self.path, item_name)
                                         mtime = os.path.getmtime(fp)
                                     except Exception as e:
-                                        logger.debug(f"FileList.key_right: exception getting MODS file mtime: {e}")
+                                        logger.debug(f"FileModeFileList.key_right: exception getting MODS file mtime: {e}")
                                         logger.debug(traceback.format_exc())
                                         mtime = None
                                     if mtime:
@@ -551,7 +685,7 @@ class FileList(FileListBase):
                                     else:
                                         display_pseudo = "MODS"
                                 except Exception as e:
-                                    logger.debug(f"FileList.key_right: exception building MODS display: {e}")
+                                    logger.debug(f"FileModeFileList.key_right: exception building MODS display: {e}")
                                     logger.debug(traceback.format_exc())
                                     display_pseudo = "MODS"
 
@@ -559,13 +693,13 @@ class FileList(FileListBase):
                             try:
                                 pli._hash = pseudo
                             except Exception as e:
-                                logger.debug(f"FileList.key_right: exception setting pli._hash: {e}")
+                                logger.debug(f"FileModeFileList.key_right: exception setting pli._hash: {e}")
                                 logger.debug(traceback.format_exc())
                                 pass
                             try:
                                 pli._raw_text = display_pseudo
                             except Exception as e:
-                                logger.debug(f"FileList.key_right: exception setting pli._raw_text: {e}")
+                                logger.debug(f"FileModeFileList.key_right: exception setting pli._raw_text: {e}")
                                 logger.debug(traceback.format_exc())
                                 pass
                             hist.append(pli)
@@ -577,13 +711,13 @@ class FileList(FileListBase):
                                 if m:
                                     li._hash = m.group(2)
                             except Exception as e:
-                                logger.debug(f"FileList.key_right: exception parsing hash from line: {e}")
+                                logger.debug(f"FileModeFileList.key_right: exception parsing hash from line: {e}")
                                 logger.debug(traceback.format_exc())
                                 pass
                             try:
                                 li._raw_text = line
                             except Exception as e:
-                                logger.debug(f"FileList.key_right: exception setting li._raw_text: {e}")
+                                logger.debug(f"FileModeFileList.key_right: exception setting li._raw_text: {e}")
                                 logger.debug(traceback.format_exc())
                                 pass
                             hist.append(li)
@@ -594,31 +728,31 @@ class FileList(FileListBase):
                     try:
                         hist.index = 0
                     except Exception as e:
-                        logger.debug(f"FileList.key_right: exception setting hist.index: {e}")
+                        logger.debug(f"FileModeFileList.key_right: exception setting hist.index: {e}")
                         logger.debug(traceback.format_exc())
                         pass
                     try:
                         hist.focus()
                     except Exception as e:
-                        logger.debug(f"FileList.key_right: exception focusing history: {e}")
+                        logger.debug(f"FileModeFileList.key_right: exception focusing history: {e}")
                         logger.debug(traceback.format_exc())
                         pass
                 except Exception as e:
-                    logger.debug(f"FileList.key_right: exception updating history view: {e}")
+                    logger.debug(f"FileModeFileList.key_right: exception updating history view: {e}")
                     logger.debug(traceback.format_exc())
                     # If unable to update, show modal with output or message
                     msg = out or f"No git history for {item_name}"
                     try:
                         self.app.push_screen(_TBDModal(msg))
                     except Exception as e:
-                        logger.debug(f"FileList.key_right: exception showing history error modal: {e}")
+                        logger.debug(f"FileModeFileList.key_right: exception showing history error modal: {e}")
                         logger.debug(traceback.format_exc())
                         pass
             except Exception as exc:
                 try:
                     self.app.push_screen(_TBDModal(str(exc)))
                 except Exception as e:
-                    logger.debug(f"FileList.key_right: exception showing outer error modal: {e}")
+                    logger.debug(f"FileModeFileList.key_right: exception showing outer error modal: {e}")
                     logger.debug(traceback.format_exc())
                     pass
             return True
@@ -631,7 +765,7 @@ class FileList(FileListBase):
         return True
 
 
-class FileRepoList(FileListBase):
+class RepoModeFileList(FileListBase):
     """Placeholder File list for repo-first / log-first mode.
 
     Currently a no-op subclass; behavior will be added in follow-up edits.
@@ -641,14 +775,10 @@ class FileRepoList(FileListBase):
 
 
 class HistoryListBase(ListView):
-    """ListView used for the History column. Left arrow moves focus back to Files.
-
-    Renamed to `HistoryListBase` so a thin `HistoryList` subclass can be
-    provided for compatibility while allowing future refactors to share
-    history-specific logic via the base class.
+    """ListView used for the History column.
     """
 
-    def toggle_check_current(self) -> None:
+    def toggle_check_current(self) -> None: # HistoryListBase
         """Toggle a single checkmark on the currently selected history item.
 
         Only one history ListItem may be checked at a time. The checkmark is
@@ -673,7 +803,7 @@ class HistoryListBase(ListView):
                         style = getattr(lbl.renderable, "style", None)
                     except Exception as e:
                         logger.debug(
-                            f"HistoryList.toggle_check_current._label_text_and_style: exception getting style: {e}"
+                            f"HistoryListBase.toggle_check_current._label_text_and_style: exception getting style: {e}"
                         )
                         logger.debug(traceback.format_exc())
                         style = None
@@ -694,7 +824,7 @@ class HistoryListBase(ListView):
                             text = str(lbl)
                     return text, style, lbl
                 except Exception as e:
-                    logger.debug(f"HistoryList.toggle_check_current._label_text_and_style: exception: {e}")
+                    logger.debug(f"HistoryListBase.toggle_check_current._label_text_and_style: exception: {e}")
                     logger.debug(traceback.format_exc())
                     return str(node), None, None
 
@@ -721,7 +851,7 @@ class HistoryListBase(ListView):
                             lbl.update(Text(new_text))
                     target._checked = False
                 except Exception as e:
-                    logger.debug(f"HistoryList.toggle_check_current: exception unchecking target: {e}")
+                    logger.debug(f"HistoryListBase.toggle_check_current: exception unchecking target: {e}")
                     logger.debug(traceback.format_exc())
                     pass
                 return
@@ -739,7 +869,7 @@ class HistoryListBase(ListView):
                             lbl.update(Text(new_text))
                     prev_checked._checked = False
                 except Exception as e:
-                    logger.debug(f"HistoryList.toggle_check_current: exception clearing previous check: {e}")
+                    logger.debug(f"HistoryListBase.toggle_check_current: exception clearing previous check: {e}")
                     logger.debug(traceback.format_exc())
                     pass
 
@@ -755,16 +885,16 @@ class HistoryListBase(ListView):
                         lbl.update(Text(new_text))
                 target._checked = True
             except Exception as e:
-                logger.debug(f"HistoryList.toggle_check_current: exception setting check on target: {e}")
+                logger.debug(f"HistoryListBase.toggle_check_current: exception setting check on target: {e}")
                 logger.debug(traceback.format_exc())
                 pass
         except Exception as e:
-            logger.debug(f"HistoryList.toggle_check_current: exception in outer block: {e}")
+            logger.debug(f"HistoryListBase.toggle_check_current: exception in outer block: {e}")
             logger.debug(traceback.format_exc())
             pass
 
-    def on_focus(self, event: events.Focus) -> None:
-        """When the HistoryList receives focus, ensure the first item is highlighted."""
+    def on_focus(self, event: events.Focus) -> None: # HistoryListBase
+        """When the HistoryListBase receives focus, ensure the first item is highlighted."""
         try:
             # Force a re-apply of the highlight after focus; sometimes the
             # ListView won't re-highlight if the index hasn't changed.
@@ -778,28 +908,28 @@ class HistoryListBase(ListView):
                     try:
                         self.index = None
                     except Exception as e:
-                        logger.debug(f"HistoryList._apply: clearing index: exception: {e}")
+                        logger.debug(f"HistoryListBase._apply: clearing index: exception: {e}")
                         logger.debug(traceback.format_exc())
                         pass
                     try:
                         self.index = target
                     except Exception as e:
-                        logger.debug(f"HistoryList._apply: restoring index target: exception: {e}")
+                        logger.debug(f"HistoryListBase._apply: restoring index target: exception: {e}")
                         logger.debug(traceback.format_exc())
                         pass
                 except Exception as e:
-                    logger.debug(f"HistoryList._apply: nodes processing: exception: {e}")
+                    logger.debug(f"HistoryListBase._apply: nodes processing: exception: {e}")
                     logger.debug(traceback.format_exc())
                     return
 
             try:
                 self.call_after_refresh(_apply)
             except Exception as e:
-                logger.debug(f"HistoryList.on_focus: call_after_refresh exception: {e}")
+                logger.debug(f"HistoryListBase.on_focus: call_after_refresh exception: {e}")
                 logger.debug(traceback.format_exc())
                 _apply()
         except Exception as e:
-            logger.debug(f"HistoryList.on_focus: _apply setup: exception: {e}")
+            logger.debug(f"HistoryListBase.on_focus: _apply setup: exception: {e}")
             logger.debug(traceback.format_exc())
             pass
 
@@ -808,7 +938,7 @@ class HistoryListBase(ListView):
             # In log-first mode the Files widget may be at #right1 instead of #left
             try:
                 left = self.app.query_one("#left")
-                if not isinstance(left, FileList):
+                if not isinstance(left, FileModeFileList):
                     try:
                         left = self.app.query_one("#right1")
                     except Exception:
@@ -826,21 +956,21 @@ class HistoryListBase(ListView):
                     self.app.query_one("#left-column").styles.width = "25%"
                     self.app.query_one("#left-column").styles.flex = 0
                 except Exception as e:
-                    logger.debug(f"HistoryList.on_focus: setting left-column width: exception: {e}")
+                    logger.debug(f"HistoryListBase.on_focus: setting left-column width: exception: {e}")
                     logger.debug(traceback.format_exc())
                     pass
                 try:
                     self.app.query_one("#right1-column").styles.width = "75%"
                     self.app.query_one("#right1-column").styles.flex = 0
                 except Exception as e:
-                    logger.debug(f"HistoryList.on_focus: setting right1-column width: exception: {e}")
+                    logger.debug(f"HistoryListBaseBase.on_focus: setting right1-column width: exception: {e}")
                     logger.debug(traceback.format_exc())
                     pass
                 # inner lists should fill their outer column
                 left.styles.width = "100%"
                 left.styles.flex = 0
             except Exception as e:
-                logger.debug(f"HistoryList.on_focus: setting left list styles: exception: {e}")
+                logger.debug(f"HistoryListBaseBase.on_focus: setting left list styles: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
             try:
@@ -848,7 +978,7 @@ class HistoryListBase(ListView):
                 self.styles.display = None
                 self.styles.flex = 0
             except Exception as e:
-                logger.debug(f"HistoryList.on_focus: setting history styles: exception: {e}")
+                logger.debug(f"HistoryListBaseBase.on_focus: setting history styles: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
             # hide diff list and shrink its outer column to zero so the
@@ -856,18 +986,18 @@ class HistoryListBase(ListView):
             try:
                 right2.styles.display = "none"
             except Exception as e:
-                logger.debug(f"HistoryList.on_focus: hiding diff list: exception: {e}")
+                logger.debug(f"HistoryListBaseBase.on_focus: hiding diff list: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
             try:
                 self.app.query_one("#right2-column").styles.width = "0%"
                 self.app.query_one("#right2-column").styles.flex = 0
             except Exception as e:
-                logger.debug(f"HistoryList.on_focus: setting right2-column width: exception: {e}")
+                logger.debug(f"HistoryListBaseBase.on_focus: setting right2-column width: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
         except Exception as e:
-            logger.debug(f"HistoryList.on_focus: layout adjustment: exception: {e}")
+            logger.debug(f"HistoryListBaseBase.on_focus: layout adjustment: exception: {e}")
             logger.debug(traceback.format_exc())
             pass
         # Titles: show left and history, hide diff
@@ -878,7 +1008,7 @@ class HistoryListBase(ListView):
             lbl.styles.height = None
             lbl.styles.width = None
         except Exception as e:
-            logger.debug(f"HistoryList.on_focus: updating left-title label: exception: {e}")
+            logger.debug(f"HistoryListBaseBase.on_focus: updating left-title label: exception: {e}")
             logger.debug(traceback.format_exc())
             pass
         try:
@@ -887,7 +1017,7 @@ class HistoryListBase(ListView):
             lbl.styles.height = None
             lbl.styles.width = None
         except Exception as e:
-            logger.debug(f"HistoryList.on_focus: updating right1-title label: exception: {e}")
+            logger.debug(f"HistoryListBaseBase.on_focus: updating right1-title label: exception: {e}")
             logger.debug(traceback.format_exc())
             pass
         try:
@@ -896,27 +1026,27 @@ class HistoryListBase(ListView):
             lbl.styles.height = 0
             lbl.styles.width = 0
         except Exception as e:
-            logger.debug(f"HistoryList.on_focus: updating right2 title: exception: {e}")
+            logger.debug(f"HistoryListBaseBase.on_focus: updating right2 title: exception: {e}")
             logger.debug(traceback.format_exc())
             pass
 
-        # HistoryList footer
+        # istBaseBase footer
         try:
             footer = self.app.query_one("#footer", Label)
             footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →   m(ark)", style="bold"))
         except Exception as e:
-            logger.debug(f"HistoryList.on_focus: updating footer: exception: {e}")
+            logger.debug(f"HistoryListBaseBase.on_focus: updating footer: exception: {e}")
             logger.debug(traceback.format_exc())
             pass
 
-    def on_key(self, event: events.Key) -> None:
+    def on_key(self, event: events.Key) -> None: # HistoryListBase
         """Handle left/right keys to move between columns or show diffs.
 
         Left moves focus back to the Files column. Right computes hashes for
         the selected history entry pair and populates the Diff column.
         """
         key = event.key
-        logger.debug(f"HistoryList.on_key: key={key}")
+        logger.debug(f"HistoryListBaseBase.on_key: key={key}")
         if key and key.lower() == "q":
             event.key = key.lower()
             return
@@ -927,7 +1057,7 @@ class HistoryListBase(ListView):
             try:
                 self.toggle_check_current()
             except Exception as e:
-                logger.debug(f"HistoryList.on_key: toggle check: exception: {e}")
+                logger.debug(f"HistoryListBaseBase.on_key: toggle check: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
             return
@@ -937,7 +1067,7 @@ class HistoryListBase(ListView):
                 if self.key_left():
                     return
             except Exception as e:
-                logger.debug(f"HistoryList.on_key: key_left exception: {e}")
+                logger.debug(f"HistoryListBaseBase.on_key: key_left exception: {e}")
                 logger.debug(traceback.format_exc())
             return
         if key == "right":
@@ -946,21 +1076,21 @@ class HistoryListBase(ListView):
                 if self.key_right():
                     return
             except Exception as e:
-                logger.debug(f"HistoryList.on_key: key_right exception: {e}")
+                logger.debug(f"HistoryListBase.on_key: key_right exception: {e}")
                 logger.debug(traceback.format_exc())
             return
 
         # Other keys: let default handling run by not stopping the event.
         return
 
-    def key_left(self) -> bool:
+    def key_left(self) -> bool: # HistoryListBase
         """Handle left key behavior for HistoryListBase.
 
         Returns True when the key was handled/consumed.
         """
         return False
 
-    def key_right(self) -> bool:
+    def key_right(self) -> bool: # HistoryListBase
         """Handle right key behavior for HistoryListBase.
 
         Returns True when the key was handled/consumed.
@@ -968,14 +1098,14 @@ class HistoryListBase(ListView):
         return False
 
 
-class HistoryList(HistoryListBase):
-    """Compatibility subclass; use `HistoryListBase` for shared logic."""
+class FileModeHistoryList(HistoryListBase):
+    """subclass for FileMode HistoryList functionality; see `HistoryListBase` for shared logic."""
 
-    def populate_repo_log(self, repo_path: Optional[str] = None) -> None:
+    def populate_repo_log(self, repo_path: Optional[str] = None) -> None: # FileModeHistoryList
         """Populate this History list with a repository-wide commit log using pygit2.
 
         This mirrors `HistoryRepoList.populate_repo_log` to provide compatibility
-        when the app uses the standard `HistoryList` widget.
+        when the app uses the standard `FileModeHistoryList` widget.
         """
         try:
             # Delegate to HistoryRepoList implementation to avoid duplicating logic
@@ -1013,7 +1143,7 @@ class HistoryList(HistoryListBase):
             except Exception:
                 pass
         except Exception as exc:
-            logger.debug(f"HistoryList.populate_repo_log: exception: {exc}")
+            logger.debug(f"FileModeHistoryList.populate_repo_log: exception: {exc}")
             logger.debug(traceback.format_exc())
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
@@ -1021,8 +1151,8 @@ class HistoryList(HistoryListBase):
                 pass
 
 
-    def key_left(self) -> bool:
-        """Handle left key behavior for HistoryList.
+    def key_left(self) -> bool: # FileModeHistoryList
+        """Handle left key behavior for FileModeHistoryList.
 
         Returns True when the key was handled/consumed.
         """
@@ -1030,7 +1160,7 @@ class HistoryList(HistoryListBase):
             # Find the Files widget whether it's at #left or #right1 (log-first layout)
             try:
                 files = self.app.query_one("#left")
-                if not isinstance(files, FileList):
+                if not isinstance(files, FileModeFileList):
                     try:
                         files = self.app.query_one("#right1")
                     except Exception:
@@ -1042,13 +1172,13 @@ class HistoryList(HistoryListBase):
                     files = None
             files.focus()
         except Exception as e:
-            logger.debug(f"HistoryList.key_left: focusing files on left: exception: {e}")
+            logger.debug(f"FileModeHistoryList.key_left: focusing files on left: exception: {e}")
             logger.debug(traceback.format_exc())
             return True
         return True
 
-    def key_right(self) -> bool:
-        """Handle right key behavior for HistoryList.
+    def key_right(self) -> bool: # FileModeHistoryList
+        """Handle right key behavior for FileModeHistoryList.
 
         Returns True when the key was handled/consumed.
         """
@@ -1059,7 +1189,7 @@ class HistoryList(HistoryListBase):
             try:
                 self.app.push_screen(_TBDModal("No commit to diff with"))
             except Exception as e:
-                logger.debug(f"HistoryList.key_right: showing no commit modal: exception: {e}")
+                logger.debug(f"FileModeHistoryList.key_right: showing no commit modal: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
             return True
@@ -1088,7 +1218,7 @@ class HistoryList(HistoryListBase):
                     return str(renderable)
                 return str(lbl)
             except Exception as e:
-                logger.debug(f"HistoryList.key_right._text_of: extracting text: exception: {e}")
+                logger.debug(f"FileModeHistoryList.key_right._text_of: extracting text: exception: {e}")
                 logger.debug(traceback.format_exc())
                 return str(node)
 
@@ -1099,7 +1229,7 @@ class HistoryList(HistoryListBase):
                 try:
                     self.app.push_screen(_TBDModal("No earlier commit to diff with"))
                 except Exception as e:
-                    logger.debug(f"HistoryList.key_right: showing no earlier commit modal: exception: {e}")
+                    logger.debug(f"FileModeHistoryList.key_right: showing no earlier commit modal: exception: {e}")
                     logger.debug(traceback.format_exc())
                     pass
                 return True
@@ -1134,7 +1264,7 @@ class HistoryList(HistoryListBase):
                 try:
                     self.app.push_screen(_TBDModal(f"Could not parse hashes: {exc}"))
                 except Exception as e:
-                    logger.debug(f"HistoryList.key_right: showing hash parse error modal: exception: {e}")
+                    logger.debug(f"FileModeHistoryList.key_right: showing hash parse error modal: exception: {e}")
                     logger.debug(traceback.format_exc())
                     pass
                 return True
@@ -1145,7 +1275,7 @@ class HistoryList(HistoryListBase):
             try:
                 self.app.push_screen(_TBDModal("Unknown filename for history"))
             except Exception as e:
-                logger.debug(f"HistoryList.key_right: showing unknown filename modal: exception: {e}")
+                logger.debug(f"FileModeHistoryList.key_right: showing unknown filename modal: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
             return True
@@ -1165,7 +1295,7 @@ class HistoryList(HistoryListBase):
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
             except Exception as e:
-                logger.debug(f"HistoryList.key_right: showing subprocess error modal: exception: {e}")
+                logger.debug(f"FileModeHistoryList.key_right: showing subprocess error modal: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
             return True
@@ -1176,7 +1306,7 @@ class HistoryList(HistoryListBase):
             try:
                 diff_view.clear()
             except Exception as e:
-                logger.debug(f"HistoryList.key_right: clearing diff view: exception: {e}")
+                logger.debug(f"FileModeHistoryList.key_right: clearing diff view: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
 
@@ -1185,7 +1315,7 @@ class HistoryList(HistoryListBase):
                 header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
                 diff_view.append(header)
             except Exception as e:
-                logger.debug(f"HistoryList.key_right: appending diff header: exception: {e}")
+                logger.debug(f"FileModeHistoryList.key_right: appending diff header: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
 
@@ -1226,45 +1356,42 @@ class HistoryList(HistoryListBase):
                     title_lbl = self.app.query_one("#right2-title", Label)
                     title_lbl.update(Text("Diff" if not v else f"Diff {v}", style="bold"))
                 except Exception as e:
-                    logger.debug(f"HistoryList.key_right: updating right2 title: exception: {e}")
+                    logger.debug(f"FileModeHistoryList.key_right: updating right2 title: exception: {e}")
                     logger.debug(traceback.format_exc())
                     pass
                 diff_view.styles.display = None
             except Exception as e:
-                logger.debug(f"HistoryList.key_right: making diff column visible: exception: {e}")
+                logger.debug(f"FileModeHistoryList.key_right: making diff column visible: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
 
             try:
                 diff_view.index = 0
             except Exception as e:
-                logger.debug(f"HistoryList.key_right: setting diff view index: exception: {e}")
+                logger.debug(f"FileModeHistoryList.key_right: setting diff view index: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
             try:
                 diff_view.focus()
             except Exception as e:
-                logger.debug(f"HistoryList.key_right: focusing diff view: exception: {e}")
+                logger.debug(f"FileModeHistoryList.key_right: focusing diff view: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
         except Exception as exc:
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
             except Exception as e:
-                logger.debug(f"HistoryList.key_right: showing diff error modal: exception: {e}")
+                logger.debug(f"FileModeHistoryList.key_right: showing diff error modal: exception: {e}")
                 logger.debug(traceback.format_exc())
                 pass
         return True
 
 
-class HistoryRepoList(HistoryListBase):
-    """Placeholder History list for repo-first / log-first mode.
-
-    This will be used when `-l/--log-first` is active. Currently a no-op
-    compatibility subclass; functionality will be implemented next.
+class RepoModeHistoryList(HistoryListBase):
+    """RepoMode History list used when `-l/--log-first`
     """
 
-    def populate_repo_log(self, repo_path: Optional[str] = None) -> None:
+    def populate_repo_log(self, repo_path: Optional[str] = None) -> None: # RepoModeHistoryList
         """Populate this History list with a repository-wide commit log using pygit2.
 
         This method walks commits (by time) and appends ListItem entries with
@@ -1373,12 +1500,248 @@ class HistoryRepoList(HistoryListBase):
                 pass
 
         except Exception as exc:
-            logger.debug(f"HistoryRepoList.populate_repo_log: exception: {exc}")
+            logger.debug(f"RepoModeHistoryList.populate_repo_log: exception: {exc}")
             logger.debug(traceback.format_exc())
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
             except Exception:
                 pass
+
+    def key_right(self) -> bool: # RepoModeHistoryList
+        """Handle Right key: open a `RepoModeFileList` populated with changes between two commits.
+
+        Determines the current and comparison commit (checked item or next item),
+        computes the tree diff via pygit2, mounts a `RepoModeFileList` at the files
+        column, and records the old/new commit hashes on that widget for later
+        diff rendering.
+        """
+        try:
+            nodes = getattr(self, "_nodes", [])
+            if not nodes:
+                try:
+                    self.app.push_screen(_TBDModal("No commit selected"))
+                except Exception:
+                    pass
+                return True
+            idx = getattr(self, "index", None)
+            if idx is None or idx < 0 or idx >= len(nodes):
+                try:
+                    self.app.push_screen(_TBDModal("No commit selected"))
+                except Exception:
+                    pass
+                return True
+
+            # Find checked item to diff against, if any
+            checked_idx = None
+            for i, node in enumerate(nodes):
+                if getattr(node, "_checked", False):
+                    checked_idx = i
+                    break
+
+            if checked_idx is None or checked_idx == idx:
+                # default to current vs next (older)
+                if idx >= len(nodes) - 1:
+                    try:
+                        self.app.push_screen(_TBDModal("No earlier commit to diff with"))
+                    except Exception:
+                        pass
+                    return True
+                i_newer = idx
+                i_older = idx + 1
+            else:
+                i1 = idx
+                i2 = checked_idx
+                if i1 == i2:
+                    try:
+                        self.app.push_screen(_TBDModal("No commit to diff with"))
+                    except Exception:
+                        pass
+                    return True
+                if i1 < i2:
+                    i_newer, i_older = i1, i2
+                else:
+                    i_newer, i_older = i2, i1
+
+            def _text_of(node) -> str:
+                try:
+                    raw = getattr(node, "_raw_text", None)
+                    if raw is not None:
+                        return raw
+                    lbl = node.query_one(Label)
+                    if hasattr(lbl, "text"):
+                        return lbl.text
+                    renderable = getattr(lbl, "renderable", None)
+                    if isinstance(renderable, Text):
+                        return renderable.plain
+                    if renderable is not None:
+                        return str(renderable)
+                    return str(lbl)
+                except Exception:
+                    return str(node)
+
+            current_line = _text_of(nodes[i_newer])
+            previous_line = _text_of(nodes[i_older])
+
+            current_hash = getattr(nodes[i_newer], "_hash", None)
+            previous_hash = getattr(nodes[i_older], "_hash", None)
+            if not current_hash or not previous_hash:
+                try:
+                    m1 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", current_line)
+                    m2 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", previous_line)
+                    if not m1 or not m2:
+                        raise ValueError("Could not parse commit lines for hashes")
+                    current_hash = m1.group(2)
+                    previous_hash = m2.group(2)
+                except Exception as exc:
+                    try:
+                        self.app.push_screen(_TBDModal(f"Could not parse hashes: {exc}"))
+                    except Exception:
+                        pass
+                    return True
+
+            # Compute diff between trees using pygit2
+            try:
+                repo_path = getattr(self.app, "path", None)
+                gitdir = pygit2.discover_repository(repo_path)
+                if not gitdir:
+                    raise RuntimeError("Repository not found")
+                repo = pygit2.Repository(gitdir)
+
+                try:
+                    curr_obj = repo.get(current_hash)
+                except Exception:
+                    curr_obj = None
+                try:
+                    prev_obj = repo.get(previous_hash)
+                except Exception:
+                    prev_obj = None
+
+                curr_tree = getattr(curr_obj, "tree", None)
+                prev_tree = getattr(prev_obj, "tree", None)
+
+                if prev_tree is None and curr_tree is not None:
+                    diff = repo.diff(None, curr_tree)
+                elif curr_tree is None and prev_tree is not None:
+                    diff = repo.diff(prev_tree, None)
+                else:
+                    diff = repo.diff(prev_tree, curr_tree)
+            except Exception as exc:
+                try:
+                    self.app.push_screen(_TBDModal(str(exc)))
+                except Exception:
+                    pass
+                return True
+
+            # Mount RepoModeFileList in middle column (#right1)
+            try:
+                parent = self.app.query_one("#right1-column")
+            except Exception:
+                parent = None
+
+            try:
+                # remove old widget if present
+                try:
+                    old = self.app.query_one("#right1")
+                    try:
+                        old.remove()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+                file_list = RepoModeFileList(id="right1")
+                if parent is not None:
+                    parent.mount(file_list)
+                else:
+                    try:
+                        self.app.mount(file_list)
+                    except Exception:
+                        pass
+            except Exception as exc:
+                logger.debug(f"RepoModeHistoryList.key_right: mount error: {exc}")
+                try:
+                    self.app.push_screen(_TBDModal("Could not show files for commit diff"))
+                except Exception:
+                    pass
+                return True
+
+            # store commit hashes for later diff rendering
+            try:
+                file_list.current_commit_sha = current_hash
+                file_list.current_prev_sha = previous_hash
+            except Exception:
+                pass
+
+            # Populate file_list from diff deltas
+            try:
+                delta_map = {
+                    getattr(pygit2, "GIT_DELTA_ADDED", 0): "A",
+                    getattr(pygit2, "GIT_DELTA_MODIFIED", 0): "M",
+                    getattr(pygit2, "GIT_DELTA_DELETED", 0): "D",
+                    getattr(pygit2, "GIT_DELTA_RENAMED", 0): "R",
+                    getattr(pygit2, "GIT_DELTA_TYPECHANGE", 0): "T",
+                }
+                appended = 0
+                for d in getattr(diff, "deltas", lambda: diff)():
+                    try:
+                        status = getattr(d, "status", None)
+                        marker = delta_map.get(status, " ")
+                        old_path = getattr(getattr(d, "old_file", None), "path", None)
+                        new_path = getattr(getattr(d, "new_file", None), "path", None)
+                        display_path = new_path or old_path or ""
+                        text = f"{marker} {display_path}"
+                        li = ListItem(Label(Text(" " + text)))
+                        li._change_type = marker
+                        li._filename = display_path
+                        li._old_filename = old_path
+                        li._new_filename = new_path
+                        li._hash_prev = previous_hash
+                        li._hash_curr = current_hash
+                        try:
+                            file_list.append(li)
+                            appended += 1
+                        except Exception:
+                            continue
+                    except Exception:
+                        continue
+
+                if appended == 0:
+                    try:
+                        file_list.append(ListItem(Label(Text(" No changed files between selected commits"))))
+                    except Exception:
+                        pass
+            except Exception as exc:
+                logger.debug(f"RepoModeHistoryList.key_right: error populating file list: {exc}")
+                logger.debug(traceback.format_exc())
+
+            try:
+                file_list.styles.display = None
+            except Exception:
+                pass
+            try:
+                file_list.index = 0
+            except Exception:
+                pass
+            try:
+                file_list.focus()
+            except Exception:
+                pass
+
+            try:
+                self.app.current_commit_sha = current_hash
+                self.app.current_prev_sha = previous_hash
+            except Exception:
+                pass
+
+        except Exception as exc:
+            logger.debug(f"RepoModeHistoryList.key_right: unexpected exception: {exc}")
+            logger.debug(traceback.format_exc())
+            try:
+                self.app.push_screen(_TBDModal(str(exc)))
+            except Exception:
+                pass
+        return True
+
 
 
 class DiffListBase(ListView):
@@ -1388,7 +1751,7 @@ class DiffListBase(ListView):
     backwards compatibility and easier future refactors.
     """
 
-    def on_key(self, event: events.Key) -> None:
+    def on_key(self, event: events.Key) -> None: # DiffListBase
         """Handle left key to move focus back to History; handle PgUp/PgDn with visible selection; handle c/C to toggle colorization."""
         key = event.key
         logger.debug(f"DiffList.on_key: key={key}")
@@ -1761,21 +2124,21 @@ class DiffListBase(ListView):
 
     # let other keys be handled by default (up/down handled by ListView)
 
-    def key_left(self) -> bool:
+    def key_left(self) -> bool: # DiffListBase
         """Handle left key behavior for DiffListBase.
 
         Returns True when the key was handled/consumed.
         """
         return False
 
-    def key_right(self) -> bool:
+    def key_right(self) -> bool: # DiffListBase
         """Handle right key behavior for DiffListBase.
 
         Returns True when the key was handled/consumed.
         """
         return False
 
-    def on_focus(self, event: events.Focus) -> None:
+    def on_focus(self, event: events.Focus) -> None: # DiffListBase
         """When the DiffList receives focus, ensure the first item is highlighted."""
         try:
 
@@ -1817,7 +2180,7 @@ class DiffListBase(ListView):
         try:
             try:
                 left = self.app.query_one("#left")
-                if not isinstance(left, FileList):
+                if not isinstance(left, FileModeFileList):
                     try:
                         left = self.app.query_one("#right1")
                     except Exception:
@@ -1827,7 +2190,7 @@ class DiffListBase(ListView):
                     left = self.app.query_one("#right1")
                 except Exception:
                     left = None
-            hist = self.app.query_one("#right1", HistoryList)
+            hist = self.app.query_one("#right1", FileModeHistoryList)
             diff = self.app.query_one("#right2", ListView)
             try:
                 # adjust outer columns to the target proportions
@@ -1947,10 +2310,11 @@ class DiffListBase(ListView):
             pass
 
 
-class DiffList(DiffListBase):
-    """Compatibility subclass; use `DiffListBase` for shared logic."""
+class FileModeDiffList(DiffListBase):
+    """FileMode DiffList subclass; see `DiffListBase` for shared logic.
+    """
 
-    def key_left(self) -> bool:
+    def key_left(self) -> bool: # FileModeDiffList
         """Handle left key behavior
 
         Returns True when the key was handled/consumed.
@@ -1961,25 +2325,25 @@ class DiffList(DiffListBase):
                 try:
                     self.app.exit_diff_fullscreen()
                 except Exception as e:
-                    logger.debug(f"DiffList.key_left: exception exiting fullscreen on left: {e}")
+                    logger.debug(f"FileModeDiffList.key_left: exception exiting fullscreen on left: {e}")
                     logger.debug(traceback.format_exc())
                 return True
             # otherwise move focus back to History
             try:
-                hist = self.app.query_one("#right1", HistoryList)
+                hist = self.app.query_one("#right1", FileModeHistoryList)
                 hist.focus()
             except Exception as e:
-                logger.debug(f"DiffList.key_left: exception focusing history: {e}")
+                logger.debug(f"FileModeDiffList.key_left: exception focusing history: {e}")
                 logger.debug(traceback.format_exc())
                 return True
             return True
         except Exception as e:
-            logger.debug(f"DiffList.key_left: unexpected exception: {e}")
+            logger.debug(f"FileModeDiffList.key_left: unexpected exception: {e}")
             logger.debug(traceback.format_exc())
             return True
         return True
 
-    def key_right(self) -> bool:
+    def key_right(self) -> bool: # FileModeDiffList
         """Handle right key behavior
 
         Returns True when the key was handled/consumed.
@@ -1997,7 +2361,7 @@ class DiffList(DiffListBase):
                     try:
                         self.app.enter_diff_fullscreen()
                     except Exception as e:
-                        logger.debug(f"DiffList.key_right: enter_diff_fullscreen exception: {e}")
+                        logger.debug(f"FileModeDiffList.key_right: enter_diff_fullscreen exception: {e}")
                         logger.debug(traceback.format_exc())
                     try:
                         self.focus()
@@ -2005,24 +2369,24 @@ class DiffList(DiffListBase):
                         pass
                     return True
             except Exception as e:
-                logger.debug(f"DiffList.key_right: checking displays for fullscreen failed: {e}")
+                logger.debug(f"FileModeDiffList.key_right: checking displays for fullscreen failed: {e}")
                 logger.debug(traceback.format_exc())
                 # best-effort enter
                 try:
                     self.app.enter_diff_fullscreen()
                 except Exception as e:
-                    logger.debug(f"DiffList.key_right: fallback enter_diff_fullscreen exception: {e}")
+                    logger.debug(f"FileModeDiffList.key_right: fallback enter_diff_fullscreen exception: {e}")
                     logger.debug(traceback.format_exc())
                     pass
             return True
         except Exception as e:
-            logger.debug(f"DiffList.key_right: unexpected exception: {e}")
+            logger.debug(f"FileModeDiffList.key_right: unexpected exception: {e}")
             logger.debug(traceback.format_exc())
             return True
         return True
 
 
-class DiffRepoList(DiffListBase):
+class RepoModeDiffList(DiffListBase):
     """Placeholder Diff list for repo-first / log-first mode.
 
     Currently a no-op subclass; behavior will be added in follow-up edits.
@@ -2580,13 +2944,13 @@ App {
                     # History on the left, Files in the middle, Diff on the right
                     with Vertical(id="left-column"):
                         yield Label(Text("History", style="bold"), id="left-title")
-                        yield HistoryRepoList(id="left")
+                        yield RepoModeHistoryList(id="left")
                     with Vertical(id="right1-column"):
                         yield Label(Text("Files", style="bold"), id="right1-title")
-                        yield FileList(id="right1")
+                        yield FileModeFileList(id="right1")
                     with Vertical(id="right2-column"):
                         yield Label(Text("Diff", style="bold"), id="right2-title")
-                        yield DiffList(id="right2")
+                        yield FileModeDiffList(id="right2")
                     with Vertical(id="right3-column"):
                         yield Label(Text("Help", style="bold"), id="right3-title")
                         yield HelpList(id="right3")
@@ -2594,14 +2958,14 @@ App {
                     # default: Files on the left, History middle, Diff right
                     with Vertical(id="left-column"):
                         yield Label(Text("Files", style="bold"), id="left-title")
-                        yield FileList(id="left")
+                        yield FileModeFileList(id="left")
                     # three minimal right columns
                     with Vertical(id="right1-column"):
                         yield Label(Text("History", style="bold"), id="right1-title")
-                        yield HistoryList(id="right1")
+                        yield FileModeHistoryList(id="right1")
                     with Vertical(id="right2-column"):
                         yield Label(Text("Diff", style="bold"), id="right2-title")
-                        yield DiffList(id="right2")
+                        yield FileModeDiffList(id="right2")
                     with Vertical(id="right3-column"):
                         yield Label(Text("Help", style="bold"), id="right3-title")
                         yield HelpList(id="right3")
@@ -2798,7 +3162,7 @@ App {
             try:
                 try:
                     left = self.query_one("#left")
-                    if not isinstance(left, FileList):
+                    if not isinstance(left, FileModeFileList):
                         try:
                             left = self.query_one("#right1")
                         except Exception:
@@ -2863,7 +3227,7 @@ App {
         """Populate the History column with repository-wide commits and focus it."""
         try:
             # If we started in log-first mode, the left column already hosts
-            # a `HistoryRepoList`; populate it rather than mounting a new widget.
+            # a `RepoModeHistoryList`; populate it rather than mounting a new widget.
             if getattr(self, "log_first", False):
                 try:
                     hist = self.query_one("#left")
@@ -2905,7 +3269,7 @@ App {
                         pass
                     return
 
-            # Replace the existing History widget with a dedicated HistoryRepoList
+            # Replace the existing History widget with a dedicated RepoModeHistoryList
             try:
                 parent = self.query_one("#right1-column")
                 try:
@@ -2919,7 +3283,7 @@ App {
 
                 # Mount a repository-backed history list with the same id
                 try:
-                    repo_hist = HistoryRepoList(id="right1")
+                    repo_hist = RepoModeHistoryList(id="right1")
                     parent.mount(repo_hist)
                 except Exception as e:
                     logger.debug(f"[GitDiffApp._open_repo_history.mount_repo_hist]: exception: {e}")
