@@ -32,7 +32,7 @@ from textual.widgets import (
 
 # Set up logging to help debug key event issues (currently disabled)
 # Uncomment the basicConfig line below to enable logging to tmp/gitdiff_debug.log
-DOLOGGING = False
+DOLOGGING = True
 if DOLOGGING:
     logging.basicConfig(
         filename="tmp/gitdiff_debug.log",
@@ -805,7 +805,19 @@ class HistoryListBase(ListView):
 
         # When History receives focus, make Files/History split 50/50 and hide Diff
         try:
-            left = self.app.query_one("#left", FileList)
+            # In log-first mode the Files widget may be at #right1 instead of #left
+            try:
+                left = self.app.query_one("#left")
+                if not isinstance(left, FileList):
+                    try:
+                        left = self.app.query_one("#right1")
+                    except Exception:
+                        left = None
+            except Exception:
+                try:
+                    left = self.app.query_one("#right1")
+                except Exception:
+                    left = None
             right2 = self.app.query_one("#right2", ListView)
             # set widths to 50/50
             try:
@@ -959,13 +971,75 @@ class HistoryListBase(ListView):
 class HistoryList(HistoryListBase):
     """Compatibility subclass; use `HistoryListBase` for shared logic."""
 
+    def populate_repo_log(self, repo_path: Optional[str] = None) -> None:
+        """Populate this History list with a repository-wide commit log using pygit2.
+
+        This mirrors `HistoryRepoList.populate_repo_log` to provide compatibility
+        when the app uses the standard `HistoryList` widget.
+        """
+        try:
+            # Delegate to HistoryRepoList implementation to avoid duplicating logic
+            helper = HistoryRepoList()
+            # attach to same app context so helper can call self.app methods if needed
+            try:
+                helper.app = getattr(self, "app", None)
+            except Exception:
+                pass
+            helper.populate_repo_log(repo_path)
+            # After helper populated its internal list, copy items into self
+            try:
+                # clear existing
+                self.clear()
+            except Exception:
+                pass
+            try:
+                for item in helper._nodes if hasattr(helper, "_nodes") else []:
+                    try:
+                        self.append(item)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            try:
+                self.styles.display = None
+            except Exception:
+                pass
+            try:
+                self.index = 0
+            except Exception:
+                pass
+            try:
+                self.focus()
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.debug(f"HistoryList.populate_repo_log: exception: {exc}")
+            logger.debug(traceback.format_exc())
+            try:
+                self.app.push_screen(_TBDModal(str(exc)))
+            except Exception:
+                pass
+
+
     def key_left(self) -> bool:
         """Handle left key behavior for HistoryList.
 
         Returns True when the key was handled/consumed.
         """
         try:
-            files = self.app.query_one("#left", FileList)
+            # Find the Files widget whether it's at #left or #right1 (log-first layout)
+            try:
+                files = self.app.query_one("#left")
+                if not isinstance(files, FileList):
+                    try:
+                        files = self.app.query_one("#right1")
+                    except Exception:
+                        files = None
+            except Exception:
+                try:
+                    files = self.app.query_one("#right1")
+                except Exception:
+                    files = None
             files.focus()
         except Exception as e:
             logger.debug(f"HistoryList.key_left: focusing files on left: exception: {e}")
@@ -1741,7 +1815,18 @@ class DiffListBase(ListView):
 
         # When Diff receives focus, show all columns and set widths: Files 5%, History 20%, Diff 75%
         try:
-            left = self.app.query_one("#left", FileList)
+            try:
+                left = self.app.query_one("#left")
+                if not isinstance(left, FileList):
+                    try:
+                        left = self.app.query_one("#right1")
+                    except Exception:
+                        left = None
+            except Exception:
+                try:
+                    left = self.app.query_one("#right1")
+                except Exception:
+                    left = None
             hist = self.app.query_one("#right1", HistoryList)
             diff = self.app.query_one("#right2", ListView)
             try:
@@ -2490,20 +2575,36 @@ App {
         with Vertical(id="root"):
             yield Label(Text(self.TITLE, style="bold"), id="title")
             with Horizontal(id="main"):
-                # left column: flex so it takes remaining space
-                with Vertical(id="left-column"):
-                    yield Label(Text("Files", style="bold"), id="left-title")
-                    yield FileList(id="left")
-                # three minimal right columns
-                with Vertical(id="right1-column"):
-                    yield Label(Text("History", style="bold"), id="right1-title")
-                    yield HistoryList(id="right1")
-                with Vertical(id="right2-column"):
-                    yield Label(Text("Diff", style="bold"), id="right2-title")
-                    yield DiffList(id="right2")
-                with Vertical(id="right3-column"):
-                    yield Label(Text("Help", style="bold"), id="right3-title")
-                    yield HelpList(id="right3")
+                # allow alternate column ordering when starting in log-first mode
+                if getattr(self, "log_first", False):
+                    # History on the left, Files in the middle, Diff on the right
+                    with Vertical(id="left-column"):
+                        yield Label(Text("History", style="bold"), id="left-title")
+                        yield HistoryRepoList(id="left")
+                    with Vertical(id="right1-column"):
+                        yield Label(Text("Files", style="bold"), id="right1-title")
+                        yield FileList(id="right1")
+                    with Vertical(id="right2-column"):
+                        yield Label(Text("Diff", style="bold"), id="right2-title")
+                        yield DiffList(id="right2")
+                    with Vertical(id="right3-column"):
+                        yield Label(Text("Help", style="bold"), id="right3-title")
+                        yield HelpList(id="right3")
+                else:
+                    # default: Files on the left, History middle, Diff right
+                    with Vertical(id="left-column"):
+                        yield Label(Text("Files", style="bold"), id="left-title")
+                        yield FileList(id="left")
+                    # three minimal right columns
+                    with Vertical(id="right1-column"):
+                        yield Label(Text("History", style="bold"), id="right1-title")
+                        yield HistoryList(id="right1")
+                    with Vertical(id="right2-column"):
+                        yield Label(Text("Diff", style="bold"), id="right2-title")
+                        yield DiffList(id="right2")
+                    with Vertical(id="right3-column"):
+                        yield Label(Text("Help", style="bold"), id="right3-title")
+                        yield HelpList(id="right3")
 
             # GitHistoryTool footer
             yield Label(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →", style="bold"), id="footer")
@@ -2515,10 +2616,23 @@ App {
         cache, and sets the initial path listing. If the app was launched with
         a filename, it will also open that file's history.
         """
-        left = self.query_one("#left", FileList)
-        right1 = self.query_one("#right1", HistoryList)
-        right2 = self.query_one("#right2", ListView)
-        right3 = self.query_one("#right3", HelpList)
+        # Query columns generically — types differ when `log_first` is active
+        try:
+            left = self.query_one("#left")
+        except Exception:
+            left = None
+        try:
+            right1 = self.query_one("#right1")
+        except Exception:
+            right1 = None
+        try:
+            right2 = self.query_one("#right2")
+        except Exception:
+            right2 = None
+        try:
+            right3 = self.query_one("#right3")
+        except Exception:
+            right3 = None
         # Ensure the main horizontal fills remaining space so the title remains visible
         try:
             # ensure root fills the app and main flexes so footer remains visible
@@ -2578,7 +2692,15 @@ App {
             logger.debug(traceback.format_exc())
             pass
 
-        left.set_path(self.path)
+        # Populate the Files column only when present and not in log-first startup
+        try:
+            if left is not None and not getattr(self, "log_first", False):
+                if hasattr(left, "set_path") and callable(getattr(left, "set_path")):
+                    left.set_path(self.path)
+        except Exception as e:
+            logger.debug(f"[GitDiffApp.on_mount.set_path]: exception: {e}")
+            logger.debug(traceback.format_exc())
+            pass
 
         # If started in log-first (repo-first) mode, populate repo-wide history
         try:
@@ -2674,7 +2796,18 @@ App {
                 pass
             # Highlight the file in the Files column after the DOM refresh
             try:
-                left = self.query_one("#left", FileList)
+                try:
+                    left = self.query_one("#left")
+                    if not isinstance(left, FileList):
+                        try:
+                            left = self.query_one("#right1")
+                        except Exception:
+                            left = None
+                except Exception:
+                    try:
+                        left = self.query_one("#right1")
+                    except Exception:
+                        left = None
                 try:
                     left.call_after_refresh(left._highlight_filename, item_name)
                 except Exception as e:
@@ -2729,97 +2862,173 @@ App {
     def _open_repo_history(self) -> None:
         """Populate the History column with repository-wide commits and focus it."""
         try:
-            proc = subprocess.run(
-                ["git", "log", "--date=short", "--pretty=format:%ad %h %s"],
-                cwd=self.path,
-                capture_output=True,
-                text=True,
-            )
-            out = proc.stdout.strip()
+            # If we started in log-first mode, the left column already hosts
+            # a `HistoryRepoList`; populate it rather than mounting a new widget.
+            if getattr(self, "log_first", False):
+                try:
+                    hist = self.query_one("#left")
+                except Exception:
+                    hist = None
 
-            hist = self.query_one("#right1", ListView)
-            # If the History widget implements a pygit2-backed population method, use it
-            try:
-                if hasattr(hist, "populate_repo_log") and callable(getattr(hist, "populate_repo_log")):
+                if hist is not None and hasattr(hist, "populate_repo_log"):
                     try:
                         hist.populate_repo_log(self.path)
-                        return
+                    except Exception as e:
+                        logger.debug(f"[GitDiffApp._open_repo_history.left.populate]: exception: {e}")
+                        logger.debug(traceback.format_exc())
+                        pass
+
+                    try:
+                        # Make left column full-width and hide others
+                        self.query_one("#left-column").styles.width = "100%"
+                        self.query_one("#left-column").styles.flex = 0
+                        self.query_one("#right1-column").styles.width = "0%"
+                        self.query_one("#right1-column").styles.flex = 0
+                        self.query_one("#right2-column").styles.width = "0%"
+                        self.query_one("#right2-column").styles.flex = 0
+                        self.query_one("#right3-column").styles.width = "0%"
+                        self.query_one("#right3-column").styles.flex = 0
+                    except Exception:
+                        pass
+
+                    try:
+                        hist.index = 0
+                    except Exception:
+                        pass
+                    try:
+                        hist.focus()
+                    except Exception:
+                        pass
+                    try:
+                        self.diff_fullscreen = False
+                    except Exception:
+                        pass
+                    return
+
+            # Replace the existing History widget with a dedicated HistoryRepoList
+            try:
+                parent = self.query_one("#right1-column")
+                try:
+                    old = self.query_one("#right1")
+                    try:
+                        old.remove()
+                    except Exception:
+                        pass
+                except Exception:
+                    old = None
+
+                # Mount a repository-backed history list with the same id
+                try:
+                    repo_hist = HistoryRepoList(id="right1")
+                    parent.mount(repo_hist)
+                except Exception as e:
+                    logger.debug(f"[GitDiffApp._open_repo_history.mount_repo_hist]: exception: {e}")
+                    logger.debug(traceback.format_exc())
+                    repo_hist = None
+
+                if repo_hist:
+                    try:
+                        repo_hist.populate_repo_log(self.path)
                     except Exception as e:
                         logger.debug(f"[GitDiffApp._open_repo_history.populate_repo_log]: exception: {e}")
                         logger.debug(traceback.format_exc())
-                        pass
-            except Exception:
-                pass
 
-            try:
-                hist.clear()
-            except Exception as e:
-                logger.debug(f"[GitDiffApp._open_repo_history.clear_hist]: exception: {e}")
-                logger.debug(traceback.format_exc())
-                pass
-
-            try:
-                hist._filename = None
-            except Exception as e:
-                logger.debug(f"[GitDiffApp._open_repo_history.set_filename]: exception: {e}")
-                logger.debug(traceback.format_exc())
-                pass
-
-            if out:
-                for line in out.splitlines():
-                    li = ListItem(Label(Text(" " + line)))
+                    # Adjust layout: hide files and other right columns, show history full-width
                     try:
-                        m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
-                        if m:
-                            li._hash = m.group(2)
-                    except Exception as e:
-                        logger.debug(f"[GitDiffApp._open_repo_history.parse_hash]: exception: {e}")
-                        logger.debug(traceback.format_exc())
+                        self.query_one("#left-column").styles.width = "0%"
+                        self.query_one("#left-column").styles.flex = 0
+                        self.query_one("#right1-column").styles.width = "100%"
+                        self.query_one("#right1-column").styles.flex = 0
+                        self.query_one("#right2-column").styles.width = "0%"
+                        self.query_one("#right2-column").styles.flex = 0
+                        self.query_one("#right3-column").styles.width = "0%"
+                        self.query_one("#right3-column").styles.flex = 0
+                    except Exception:
+                        pass
+
+                    try:
+                        repo_hist.index = 0
+                    except Exception:
                         pass
                     try:
-                        li._raw_text = line
-                    except Exception as e:
-                        logger.debug(f"[GitDiffApp._open_repo_history.set_raw_text]: exception: {e}")
-                        logger.debug(traceback.format_exc())
+                        repo_hist.focus()
+                    except Exception:
                         pass
-                    hist.append(li)
-            else:
-                hist.append(ListItem(Label(Text(" " + "No git history for repository"))))
-
-            try:
-                hist.styles.display = None
+                    try:
+                        self.diff_fullscreen = False
+                    except Exception:
+                        pass
+                    return
             except Exception:
-                pass
+                logger.debug("_open_repo_history: failed to replace History widget; falling back")
 
+            # Fallback to subprocess-based behavior if replacement fails
             try:
-                # Hide files column and maximize history column
-                self.query_one("#left-column").styles.width = "0%"
-                self.query_one("#left-column").styles.flex = 0
-                self.query_one("#right1-column").styles.width = "100%"
-                self.query_one("#right1-column").styles.flex = 0
-                self.query_one("#right2-column").styles.width = "0%"
-                self.query_one("#right2-column").styles.flex = 0
-                self.query_one("#right3-column").styles.width = "0%"
-                self.query_one("#right3-column").styles.flex = 0
+                proc = subprocess.run(
+                    ["git", "log", "--date=short", "--pretty=format:%ad %h %s"],
+                    cwd=self.path,
+                    capture_output=True,
+                    text=True,
+                )
+                out = proc.stdout.strip()
             except Exception as e:
-                logger.debug(f"[GitDiffApp._open_repo_history.set_column_widths]: exception: {e}")
+                logger.debug(f"[GitDiffApp._open_repo_history.fallback_git]: exception: {e}")
                 logger.debug(traceback.format_exc())
-                pass
+                out = ""
 
             try:
-                hist.index = 0
+                hist = self.query_one("#right1", ListView)
             except Exception:
-                pass
-            try:
-                hist.focus()
-            except Exception:
-                pass
+                hist = None
 
-            try:
-                self.diff_fullscreen = False
-            except Exception:
-                pass
+            if hist:
+                try:
+                    hist.clear()
+                except Exception:
+                    pass
+                try:
+                    hist._filename = None
+                except Exception:
+                    pass
 
+                if out:
+                    for line in out.splitlines():
+                        li = ListItem(Label(Text(" " + line)))
+                        try:
+                            m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
+                            if m:
+                                li._hash = m.group(2)
+                        except Exception:
+                            pass
+                        try:
+                            li._raw_text = line
+                        except Exception:
+                            pass
+                        try:
+                            hist.append(li)
+                        except Exception:
+                            pass
+                else:
+                    try:
+                        hist.append(ListItem(Label(Text(" " + "No git history for repository"))))
+                    except Exception:
+                        pass
+
+                try:
+                    hist.styles.display = None
+                except Exception:
+                    pass
+
+                try:
+                    hist.index = 0
+                except Exception:
+                    pass
+                try:
+                    hist.focus()
+                except Exception:
+                    pass
+
+            return
         except Exception as exc:
             try:
                 self.push_screen(_TBDModal(str(exc)))
