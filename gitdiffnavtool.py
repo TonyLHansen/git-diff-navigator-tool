@@ -1039,12 +1039,11 @@ class HistoryListBase(ListView):
         if key == "left":
             event.stop()
             try:
-                files = self.app.query_one("#left", FileList)
-                files.focus()
+                if self.key_left():
+                    return
             except Exception as e:
-                logger.debug(f"HistoryList.on_key: focusing files on left: exception: {e}")
+                logger.debug(f"HistoryList.on_key: key_left exception: {e}")
                 logger.debug(traceback.format_exc())
-                pass
             return
         if key == "right":
             event.stop()
@@ -1251,6 +1250,20 @@ class HistoryListBase(ListView):
                     logger.debug(traceback.format_exc())
                     pass
             return
+
+    def key_left(self) -> bool:
+        """Handle left key behavior for HistoryListBase.
+
+        Returns True when the key was handled/consumed.
+        """
+        try:
+            files = self.app.query_one("#left", FileList)
+            files.focus()
+        except Exception as e:
+            logger.debug(f"HistoryList.key_left: focusing files on left: exception: {e}")
+            logger.debug(traceback.format_exc())
+            return True
+        return True
 
         # Other keys: let default handling run by not stopping the event.
         return
