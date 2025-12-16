@@ -600,63 +600,12 @@ class FileListBase(ListView):
             self.app.push_screen(_TBDModal())
         elif key == "left":
             event.stop()
-            # If left pressed on the parent entry, go up a directory and
-            # highlight the directory we came from.
-            child = self.highlighted_child
-            if child is None:
-                return
-            item_name = getattr(child, "_filename", None)
-            if item_name is None:
-                try:
-                    label = child.query_one(Label)
-                    item_name = label.text if hasattr(label, "text") else str(label)
-                except Exception as exc:
-                    try:
-                        self.app.push_screen(_TBDModal(str(exc)))
-                    except Exception as e:
-                        logger.debug(f"FileList.on_key: exception showing left key error modal: {e}")
-                        logger.debug(traceback.format_exc())
-                        self.app.push_screen(_TBDModal())
+            try:
+                if self.key_left():
                     return
-
-            if item_name == "..":
-                prev_basename = os.path.basename(self.path)
-                parent = os.path.dirname(self.path)
-                if parent == self.path or not parent:
-                    # already at filesystem root
-                    self.app.push_screen(_TBDModal("Already at root"))
-                    return
-
-                # change to parent directory
-                self.set_path(parent)
-
-                # After the DOM refresh, highlight the directory we came from.
-                try:
-                    self.call_after_refresh(self._highlight_filename, prev_basename)
-                except Exception as e:
-                    logger.debug(f"FileList.on_key: exception calling _highlight_filename: {e}")
-                    logger.debug(traceback.format_exc())
-                    try:
-                        # Fallback: set to first item
-                        self.index = 0
-                    except Exception as e:
-                        logger.debug(f"FileList.on_key: exception setting index fallback: {e}")
-                        logger.debug(traceback.format_exc())
-                        pass
-
-                # update app-level path info
-                try:
-                    self.app.path = os.path.abspath(parent)
-                    self.app.displayed_path = self.path
-                except Exception as e:
-                    logger.debug(f"FileList.on_key: exception updating app path info: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-
-                self.focus()
-                return
-
-            # Left on non-parent: ignore (do nothing)
+            except Exception as e:
+                logger.debug(f"FileList.on_key: key_left exception: {e}")
+                logger.debug(traceback.format_exc())
             return
         else:
             # For keys we don't explicitly handle here, allow them to bubble
@@ -692,6 +641,79 @@ class FileListBase(ListView):
             logger.debug(f"FileList._highlight_filename: exception in outer block: {e}")
             logger.debug(traceback.format_exc())
             return
+
+    def key_left(self) -> bool:
+        """Handle left key behavior for FileListBase.
+
+        Returns True when the key was handled/consumed.
+        """
+        # If left pressed on the parent entry, go up a directory and
+        # highlight the directory we came from.
+        child = self.highlighted_child
+        if child is None:
+            return True
+        item_name = getattr(child, "_filename", None)
+        if item_name is None:
+            try:
+                label = child.query_one(Label)
+                item_name = label.text if hasattr(label, "text") else str(label)
+            except Exception as exc:
+                try:
+                    self.app.push_screen(_TBDModal(str(exc)))
+                except Exception as e:
+                    logger.debug(f"FileList.key_left: exception showing left key error modal: {e}")
+                    logger.debug(traceback.format_exc())
+                    try:
+                        self.app.push_screen(_TBDModal())
+                    except Exception:
+                        pass
+                return True
+
+        if item_name == "..":
+            prev_basename = os.path.basename(self.path)
+            parent = os.path.dirname(self.path)
+            if parent == self.path or not parent:
+                # already at filesystem root
+                try:
+                    self.app.push_screen(_TBDModal("Already at root"))
+                except Exception:
+                    pass
+                return True
+
+            # change to parent directory
+            self.set_path(parent)
+
+            # After the DOM refresh, highlight the directory we came from.
+            try:
+                self.call_after_refresh(self._highlight_filename, prev_basename)
+            except Exception as e:
+                logger.debug(f"FileList.key_left: exception calling _highlight_filename: {e}")
+                logger.debug(traceback.format_exc())
+                try:
+                    # Fallback: set to first item
+                    self.index = 0
+                except Exception as e:
+                    logger.debug(f"FileList.on_key: exception setting index fallback: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+
+            # update app-level path info
+            try:
+                self.app.path = os.path.abspath(parent)
+                self.app.displayed_path = self.path
+            except Exception as e:
+                logger.debug(f"FileList.key_left: exception updating app path info: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+
+            try:
+                self.focus()
+            except Exception:
+                pass
+            return True
+
+        # Left on non-parent: ignore (do nothing)
+        return True
 
     def _highlight_top(self) -> None:
         """Highlight the first entry in the list after a refresh."""
