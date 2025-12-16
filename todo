@@ -91,3 +91,10 @@ in DiffListBase, move the functionality executed by "right" into a method "key_r
 
 in HistoryListBase, move the functionality executed by "left" into a method "key_left()" that returns True. In the current on_key(), change the code that checks `elif key == "left":` to execute `if key_left(): return`
 in HistoryListBase, move the functionality executed by "right" into a method "key_right()" that returns True. In the current on_key(), change the code that checks `elif key == "right":` to execute `if key_right(): return`
+
+now move key_left() and key_right() from DiffListBase to DiffList and replace key_left() and key_right() in DiffListBase with empty methods that do a `return False`
+
+now move key_left() and key_right() from FileListBase to FileList and replace key_left() and key_right() in FileListBase with empty methods that do a `return False`
+
+now move key_left() and key_right() from HistoryListBase to HistoryList and replace key_left() and key_right() in HistoryListBase with empty methods that do a `return False`
+

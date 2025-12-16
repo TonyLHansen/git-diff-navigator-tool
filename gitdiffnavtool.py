@@ -80,6 +80,7 @@ class FileListBase(ListView):
                     pass
         except Exception:
             pass
+
         try:
             entries = sorted(os.listdir(path))
         except Exception as exc:
@@ -218,140 +219,6 @@ class FileListBase(ListView):
                 logger.debug(traceback.format_exc())
                 pass
 
-    def on_focus(self, event: events.Focus) -> None:
-        """When Files column receives focus, make it full-width and hide others."""
-        try:
-            # Make the left column (the whole left vertical) full width,
-            # and collapse the two right columns so titles/later columns
-            # don't reserve space.
-            try:
-                self.app.query_one("#left-column").styles.width = "100%"
-                self.app.query_one("#left-column").styles.flex = 0
-            except Exception as e:
-                logger.debug(f"FileList.on_focus: exception setting left column: {e}")
-                logger.debug(traceback.format_exc())
-                pass
-            try:
-                self.app.query_one("#right1-column").styles.width = "0%"
-                self.app.query_one("#right1-column").styles.flex = 0
-            except Exception as e:
-                logger.debug(f"FileList.on_focus: exception setting right1 column: {e}")
-                logger.debug(traceback.format_exc())
-                pass
-            try:
-                self.app.query_one("#right2-column").styles.width = "0%"
-                self.app.query_one("#right2-column").styles.flex = 0
-            except Exception as e:
-                logger.debug(f"FileList.on_focus: exception setting right2 column: {e}")
-                logger.debug(traceback.format_exc())
-                pass
-            # Ensure inner left list fills its column
-            self.styles.width = "100%"
-            self.styles.flex = 0
-        except Exception as e:
-            logger.debug(f"FileList.on_focus: exception setting column widths: {e}")
-            logger.debug(traceback.format_exc())
-            pass
-        try:
-            right1 = self.app.query_one("#right1", HistoryList)
-            right1.styles.display = "none"
-        except Exception as e:
-            logger.debug(f"FileList.on_focus: exception hiding right1: {e}")
-            logger.debug(traceback.format_exc())
-            pass
-        try:
-            right2 = self.app.query_one("#right2", ListView)
-            right2.styles.display = "none"
-        except Exception as e:
-            logger.debug(f"FileList.on_focus: exception hiding right2: {e}")
-            logger.debug(traceback.format_exc())
-            pass
-
-        # show/hide titles for columns: left visible, others hidden
-        try:
-            lbl = self.app.query_one("#left-title", Label)
-            lbl.update(Text("Files", style="bold"))  # Restore full name
-            lbl.styles.display = None
-            lbl.styles.height = None
-            lbl.styles.width = None
-        except Exception as e:
-            logger.debug(f"FileList.on_focus: exception updating left title: {e}")
-            logger.debug(traceback.format_exc())
-            pass
-        try:
-            lbl = self.app.query_one("#right1-title", Label)
-            lbl.styles.display = "none"
-            lbl.styles.height = 0
-            lbl.styles.width = 0
-        except Exception as e:
-            logger.debug(f"FileList.on_focus: exception hiding right1 title: {e}")
-            logger.debug(traceback.format_exc())
-            pass
-        try:
-            lbl = self.app.query_one("#right2-title", Label)
-            lbl.styles.display = "none"
-            lbl.styles.height = 0
-            lbl.styles.width = 0
-        except Exception as e:
-            logger.debug(f"FileList.on_focus: exception hiding right2 title: {e}")
-            logger.debug(traceback.format_exc())
-            pass
-
-        # FileList footer
-        try:
-            footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →", style="bold"))
-        except Exception as e:
-            logger.debug(f"FileList.on_focus: exception updating footer: {e}")
-            logger.debug(traceback.format_exc())
-            pass
-
-    def on_key(self, event: events.Key) -> None:
-        """Only allow up/down/left/right in this column.
-
-        - Up: move to previous entry
-        - Down: move to next entry
-        - Left/Right: show a temporary "TBD" modal
-        - Other keys: ignore
-        """
-        key = event.key
-        logger.debug(f"FileList.on_key: key={key}")
-        if key and key.lower() == "q":
-            # Allow global quit (q/Q) to bubble to the app. Ensure the
-            # event.key is normalized to lowercase so the app-level handler
-            # which checks for 'q' will receive a lower-case key.
-            event.key = key.lower()
-            return
-        if key == "up":
-            event.stop()
-            self.action_cursor_up()
-        elif key == "down":
-            event.stop()
-            self.action_cursor_down()
-        elif key == "right":
-            event.stop()
-            try:
-                if self.key_right():
-                    return
-            except Exception as e:
-                logger.debug(f"FileList.on_key: key_right exception: {e}")
-                logger.debug(traceback.format_exc())
-            return
-        elif key == "left":
-            event.stop()
-            try:
-                if self.key_left():
-                    return
-            except Exception as e:
-                logger.debug(f"FileList.on_key: key_left exception: {e}")
-                logger.debug(traceback.format_exc())
-            return
-        else:
-            # For keys we don't explicitly handle here, allow them to bubble
-            # to higher-level handlers (e.g. app-level `on_key`) so global
-            # shortcuts like `h` / `?` and `Q` are still processed.
-            return
-
     def _highlight_filename(self, name: str) -> None:
         """Highlight the ListItem whose attached `_filename` equals `name`.
 
@@ -386,73 +253,7 @@ class FileListBase(ListView):
 
         Returns True when the key was handled/consumed.
         """
-        # If left pressed on the parent entry, go up a directory and
-        # highlight the directory we came from.
-        child = self.highlighted_child
-        if child is None:
-            return True
-        item_name = getattr(child, "_filename", None)
-        if item_name is None:
-            try:
-                label = child.query_one(Label)
-                item_name = label.text if hasattr(label, "text") else str(label)
-            except Exception as exc:
-                try:
-                    self.app.push_screen(_TBDModal(str(exc)))
-                except Exception as e:
-                    logger.debug(f"FileList.key_left: exception showing left key error modal: {e}")
-                    logger.debug(traceback.format_exc())
-                    try:
-                        self.app.push_screen(_TBDModal())
-                    except Exception:
-                        pass
-                return True
-
-        if item_name == "..":
-            prev_basename = os.path.basename(self.path)
-            parent = os.path.dirname(self.path)
-            if parent == self.path or not parent:
-                # already at filesystem root
-                try:
-                    self.app.push_screen(_TBDModal("Already at root"))
-                except Exception:
-                    pass
-                return True
-
-            # change to parent directory
-            self.set_path(parent)
-
-            # After the DOM refresh, highlight the directory we came from.
-            try:
-                self.call_after_refresh(self._highlight_filename, prev_basename)
-            except Exception as e:
-                logger.debug(f"FileList.key_left: exception calling _highlight_filename: {e}")
-                logger.debug(traceback.format_exc())
-                try:
-                    # Fallback: set to first item
-                    self.index = 0
-                except Exception as e:
-                    logger.debug(f"FileList.on_key: exception setting index fallback: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-
-            # update app-level path info
-            try:
-                self.app.path = os.path.abspath(parent)
-                self.app.displayed_path = self.path
-            except Exception as e:
-                logger.debug(f"FileList.key_left: exception updating app path info: {e}")
-                logger.debug(traceback.format_exc())
-                pass
-
-            try:
-                self.focus()
-            except Exception:
-                pass
-            return True
-
-        # Left on non-parent: ignore (do nothing)
-        return True
+        return False
 
     def key_right(self) -> bool:
         """Handle right key behavior for FileListBase.
@@ -755,8 +556,362 @@ class FileListBase(ListView):
 
 class FileList(FileListBase):
     """Compatibility subclass; use `FileListBase` for shared logic."""
+    def key_left(self) -> bool:
+        """Handle left key behavior for FileList compatibility subclass.
 
-    pass
+        Returns True when the key was handled/consumed.
+        """
+        # If left pressed on the parent entry, go up a directory and
+        # highlight the directory we came from.
+        child = self.highlighted_child
+        if child is None:
+            return True
+        item_name = getattr(child, "_filename", None)
+        if item_name is None:
+            try:
+                label = child.query_one(Label)
+                item_name = label.text if hasattr(label, "text") else str(label)
+            except Exception as exc:
+                try:
+                    self.app.push_screen(_TBDModal(str(exc)))
+                except Exception as e:
+                    logger.debug(f"FileList.key_left: exception showing left key error modal: {e}")
+                    logger.debug(traceback.format_exc())
+                    try:
+                        self.app.push_screen(_TBDModal())
+                    except Exception:
+                        pass
+                return True
+
+        if item_name == "..":
+            prev_basename = os.path.basename(self.path)
+            parent = os.path.dirname(self.path)
+            if parent == self.path or not parent:
+                # already at filesystem root
+                try:
+                    self.app.push_screen(_TBDModal("Already at root"))
+                except Exception:
+                    pass
+                return True
+
+            # change to parent directory
+            self.set_path(parent)
+
+            # After the DOM refresh, highlight the directory we came from.
+            try:
+                self.call_after_refresh(self._highlight_filename, prev_basename)
+            except Exception as e:
+                logger.debug(f"FileList.key_left: exception calling _highlight_filename: {e}")
+                logger.debug(traceback.format_exc())
+                try:
+                    # Fallback: set to first item
+                    self.index = 0
+                except Exception as e:
+                    logger.debug(f"FileList.on_key: exception setting index fallback: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+
+            # update app-level path info
+            try:
+                self.app.path = os.path.abspath(parent)
+                self.app.displayed_path = self.path
+            except Exception as e:
+                logger.debug(f"FileList.key_left: exception updating app path info: {e}")
+                logger.debug(traceback.format_exc())
+                pass
+
+            try:
+                self.focus()
+            except Exception:
+                pass
+            return True
+
+        # Left on non-parent: ignore (do nothing)
+        return True
+
+    def key_right(self) -> bool:
+        """Handle right key behavior for FileList compatibility subclass.
+
+        Returns True when the key was handled/consumed.
+        """
+        # If the highlighted entry is a directory (and not ".."), enter it.
+        child = self.highlighted_child
+        if child is None:
+            return True
+        # Prefer filename attached to the ListItem (set in set_path)
+        item_name = getattr(child, "_filename", None)
+        if item_name is None:
+            try:
+                label = child.query_one(Label)
+                # Label implementations vary: prefer `text`, then `renderable`.
+                if hasattr(label, "text"):
+                    item_name = label.text
+                else:
+                    renderable = getattr(label, "renderable", None)
+                    if isinstance(renderable, Text):
+                        item_name = renderable.plain
+                    elif renderable is not None:
+                        item_name = str(renderable)
+                    else:
+                        item_name = str(label)
+            except Exception as exc:
+                # Fallback: show the exception message in the modal
+                try:
+                    self.app.push_screen(_TBDModal(str(exc)))
+                except Exception as e:
+                    logger.debug(f"FileList.key_right: exception showing modal fallback: {e}")
+                    logger.debug(traceback.format_exc())
+                    try:
+                        # Last-resort fallback
+                        self.app.push_screen(_TBDModal())
+                    except Exception:
+                        pass
+                return True
+
+        if item_name != "..":
+            full = os.path.join(self.path, item_name)
+            if os.path.isdir(full):
+                # switch the listing to the selected directory
+                self.set_path(full)
+                # ensure highlight resets to first item
+                try:
+                    self.index = 0
+                except Exception as e:
+                    logger.debug(f"FileList.key_right: exception resetting index: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+                # update app-level current path as well
+                try:
+                    self.app.path = os.path.abspath(full)
+                except Exception as e:
+                    logger.debug(f"FileList.key_right: exception updating app.path: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+                # focus back on this list
+                try:
+                    self.focus()
+                except Exception:
+                    pass
+                return True
+
+            # If it's a file, run `git log` and show output in History column
+            try:
+                # Run git log in the current directory for the filename
+                proc = subprocess.run(
+                    [
+                        "git",
+                        "log",
+                        "--follow",
+                        "--date=short",
+                        "--pretty=format:%ad %h %s",
+                        "--",
+                        item_name,
+                    ],
+                    cwd=self.path,
+                    capture_output=True,
+                    text=True,
+                )
+                out = proc.stdout.strip()
+                # update the History column (right1)
+                try:
+                    hist = self.app.query_one("#right1", ListView)
+                    # populate the history ListView with lines from git output
+                    try:
+                        # clear existing items
+                        hist.clear()
+                    except Exception as e:
+                        logger.debug(f"FileList.key_right: exception clearing history: {e}")
+                        logger.debug(traceback.format_exc())
+                        pass
+
+                    # remember which file this history is for
+                    try:
+                        hist._filename = item_name
+                    except Exception as e:
+                        logger.debug(f"FileList.key_right: exception setting hist._filename: {e}")
+                        logger.debug(traceback.format_exc())
+                        pass
+
+                    if out:
+                        # Before appending real commits, optionally insert
+                        # pseudo-log lines for staged/modified working tree.
+                        try:
+                            app = getattr(self, "app", None)
+                            pseudo_entries: list[str] = []
+                            if app and getattr(app, "repo_available", False) and app.repo_root:
+                                try:
+                                    rel = os.path.relpath(os.path.join(self.app.path, item_name), app.repo_root)
+                                except Exception as e:
+                                    logger.debug(
+                                        f"FileList.key_right: exception getting relpath for pseudo entries: {e}"
+                                    )
+                                    logger.debug(traceback.format_exc())
+                                    rel = None
+                                if rel and not rel.startswith(".."):
+                                    flags = app.repo_status_map.get(rel, 0)
+                                    idx_flags = (
+                                        getattr(pygit2, "GIT_STATUS_INDEX_NEW", 0)
+                                        | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
+                                        | getattr(pygit2, "GIT_STATUS_INDEX_DELETED", 0)
+                                    )
+                                    wt_flags = (
+                                        getattr(pygit2, "GIT_STATUS_WT_NEW", 0)
+                                        | getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0)
+                                        | getattr(pygit2, "GIT_STATUS_WT_DELETED", 0)
+                                    )
+                                    has_index = bool(flags & idx_flags)
+                                    has_wt = bool(flags & wt_flags)
+                                    # If both staged and further modifications exist,
+                                    # show MODS (working) first, then STAGED.
+                                    if has_wt and has_index:
+                                        pseudo_entries = ["MODS", "STAGED"]
+                                    elif has_index:
+                                        pseudo_entries = ["STAGED"]
+                                    elif has_wt:
+                                        pseudo_entries = ["MODS"]
+                            # If no repo available but file looks modified in FS,
+                            # fall back to showing MODS when `git diff` would
+                            # have non-empty output vs HEAD. We keep simple
+                            # behavior and only use repo flags when available.
+                        except Exception as e:
+                            logger.debug(f"FileList.key_right: exception building pseudo entries: {e}")
+                            logger.debug(traceback.format_exc())
+                            pseudo_entries = []
+
+                        for pseudo in pseudo_entries:
+                            # Attach a best-effort timestamp for STAGED entries.
+                            display_pseudo = pseudo
+                            if pseudo == "STAGED":
+                                try:
+                                    app = getattr(self, "app", None)
+                                    display_pseudo = "STAGED"
+                                    if app and getattr(app, "repo_root", None):
+                                        try:
+                                            rel = os.path.relpath(os.path.join(self.path, item_name), app.repo_root)
+                                        except Exception as e:
+                                            logger.debug(
+                                                f"FileList.key_right: exception getting relpath for STAGED: {e}"
+                                            )
+                                            logger.debug(traceback.format_exc())
+                                            rel = None
+                                        mtime = None
+                                        if rel:
+                                            try:
+                                                mtime = app.repo_index_mtime_map.get(rel)
+                                            except Exception as e:
+                                                logger.debug(f"FileList.key_right: exception getting index mtime: {e}")
+                                                logger.debug(traceback.format_exc())
+                                                mtime = None
+                                        # fallback to index file mtime if per-file not available
+                                        if not mtime:
+                                            try:
+                                                index_path = os.path.join(app.repo_root, ".git", "index")
+                                                mtime = os.path.getmtime(index_path)
+                                            except Exception as e:
+                                                logger.debug(
+                                                    f"FileList.key_right: exception getting index file mtime: {e}"
+                                                )
+                                                logger.debug(traceback.format_exc())
+                                                mtime = None
+                                        if mtime:
+                                            display_pseudo = f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} STAGED"
+                                except Exception as e:
+                                    logger.debug(f"FileList.key_right: exception building STAGED display: {e}")
+                                    logger.debug(traceback.format_exc())
+                                    display_pseudo = "STAGED"
+                            elif pseudo == "MODS":
+                                try:
+                                    # use working-tree file mtime for MODS
+                                    try:
+                                        fp = os.path.join(self.path, item_name)
+                                        mtime = os.path.getmtime(fp)
+                                    except Exception as e:
+                                        logger.debug(f"FileList.key_right: exception getting MODS file mtime: {e}")
+                                        logger.debug(traceback.format_exc())
+                                        mtime = None
+                                    if mtime:
+                                        display_pseudo = f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} MODS"
+                                    else:
+                                        display_pseudo = "MODS"
+                                except Exception as e:
+                                    logger.debug(f"FileList.key_right: exception building MODS display: {e}")
+                                    logger.debug(traceback.format_exc())
+                                    display_pseudo = "MODS"
+
+                            pli = ListItem(Label(Text(" " + display_pseudo)))
+                            try:
+                                pli._hash = pseudo
+                            except Exception as e:
+                                logger.debug(f"FileList.key_right: exception setting pli._hash: {e}")
+                                logger.debug(traceback.format_exc())
+                                pass
+                            try:
+                                pli._raw_text = display_pseudo
+                            except Exception as e:
+                                logger.debug(f"FileList.key_right: exception setting pli._raw_text: {e}")
+                                logger.debug(traceback.format_exc())
+                                pass
+                            hist.append(pli)
+
+                        for line in out.splitlines():
+                            li = ListItem(Label(Text(" " + line)))
+                            try:
+                                m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
+                                if m:
+                                    li._hash = m.group(2)
+                            except Exception as e:
+                                logger.debug(f"FileList.key_right: exception parsing hash from line: {e}")
+                                logger.debug(traceback.format_exc())
+                                pass
+                            try:
+                                li._raw_text = line
+                            except Exception as e:
+                                logger.debug(f"FileList.key_right: exception setting li._raw_text: {e}")
+                                logger.debug(traceback.format_exc())
+                                pass
+                            hist.append(li)
+                    else:
+                        hist.append(ListItem(Label(Text(" " + f"No git history for {item_name}"))))
+
+                    # highlight and focus the top entry
+                    try:
+                        hist.index = 0
+                    except Exception as e:
+                        logger.debug(f"FileList.key_right: exception setting hist.index: {e}")
+                        logger.debug(traceback.format_exc())
+                        pass
+                    try:
+                        hist.focus()
+                    except Exception as e:
+                        logger.debug(f"FileList.key_right: exception focusing history: {e}")
+                        logger.debug(traceback.format_exc())
+                        pass
+                except Exception as e:
+                    logger.debug(f"FileList.key_right: exception updating history view: {e}")
+                    logger.debug(traceback.format_exc())
+                    # If unable to update, show modal with output or message
+                    msg = out or f"No git history for {item_name}"
+                    try:
+                        self.app.push_screen(_TBDModal(msg))
+                    except Exception as e:
+                        logger.debug(f"FileList.key_right: exception showing history error modal: {e}")
+                        logger.debug(traceback.format_exc())
+                        pass
+            except Exception as exc:
+                try:
+                    self.app.push_screen(_TBDModal(str(exc)))
+                except Exception as e:
+                    logger.debug(f"FileList.key_right: exception showing outer error modal: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+            return True
+
+        # Not a directory we can enter — show TBD for now
+        try:
+            self.app.push_screen(_TBDModal())
+        except Exception:
+            pass
+        return True
 
 
 class HistoryListBase(ListView):
@@ -1065,6 +1220,23 @@ class HistoryListBase(ListView):
 
         Returns True when the key was handled/consumed.
         """
+        return False
+
+    def key_right(self) -> bool:
+        """Handle right key behavior for HistoryListBase.
+
+        Returns True when the key was handled/consumed.
+        """
+        return False
+
+
+class HistoryList(HistoryListBase):
+    """Compatibility subclass; use `HistoryListBase` for shared logic."""
+    def key_left(self) -> bool:
+        """Handle left key behavior for HistoryList.
+
+        Returns True when the key was handled/consumed.
+        """
         try:
             files = self.app.query_one("#left", FileList)
             files.focus()
@@ -1075,7 +1247,7 @@ class HistoryListBase(ListView):
         return True
 
     def key_right(self) -> bool:
-        """Handle right key behavior for HistoryListBase.
+        """Handle right key behavior for HistoryList.
 
         Returns True when the key was handled/consumed.
         """
@@ -1282,12 +1454,6 @@ class HistoryListBase(ListView):
                 logger.debug(traceback.format_exc())
                 pass
         return True
-
-
-class HistoryList(HistoryListBase):
-    """Compatibility subclass; use `HistoryListBase` for shared logic."""
-
-    pass
 
 
 class DiffListBase(ListView):
@@ -1667,79 +1833,21 @@ class DiffListBase(ListView):
                 logger.debug(f"DiffList: exception in {key} handler: {e}")
                 logger.debug(traceback.format_exc())
             return
+    # let other keys be handled by default (up/down handled by ListView)
 
     def key_left(self) -> bool:
         """Handle left key behavior for DiffListBase.
 
         Returns True when the key was handled/consumed.
         """
-        try:
-            # If we're in fullscreen, left arrow exits fullscreen
-            if getattr(self.app, "diff_fullscreen", False):
-                try:
-                    self.app.exit_diff_fullscreen()
-                except Exception as e:
-                    logger.debug(f"DiffList.key_left: exception exiting fullscreen on left: {e}")
-                    logger.debug(traceback.format_exc())
-                return True
-            # otherwise move focus back to History
-            try:
-                hist = self.app.query_one("#right1", HistoryList)
-                hist.focus()
-            except Exception as e:
-                logger.debug(f"DiffList.key_left: exception focusing history: {e}")
-                logger.debug(traceback.format_exc())
-                return True
-            return True
-        except Exception as e:
-            logger.debug(f"DiffList.key_left: unexpected exception: {e}")
-            logger.debug(traceback.format_exc())
-            return True
-        return True
+        return False
 
     def key_right(self) -> bool:
         """Handle right key behavior for DiffListBase.
 
         Returns True when the key was handled/consumed.
         """
-        try:
-            # In columnated mode, pressing right expands Diff to fullscreen.
-            if getattr(self.app, "diff_fullscreen", False):
-                # already fullscreen; right arrow does nothing
-                return True
-            # If diff is visible and not fullscreen, enter fullscreen
-            try:
-                right1_display = self.app.query_one("#right1").styles.display
-                right2_display = self.app.query_one("#right2").styles.display
-                if right1_display != "none" and right2_display != "none":
-                    try:
-                        self.app.enter_diff_fullscreen()
-                    except Exception as e:
-                        logger.debug(f"DiffList.key_right: enter_diff_fullscreen exception: {e}")
-                        logger.debug(traceback.format_exc())
-                    try:
-                        self.focus()
-                    except Exception:
-                        pass
-                    return True
-            except Exception as e:
-                logger.debug(f"DiffList.key_right: checking displays for fullscreen failed: {e}")
-                logger.debug(traceback.format_exc())
-                # best-effort enter
-                try:
-                    self.app.enter_diff_fullscreen()
-                except Exception as e:
-                    logger.debug(f"DiffList.key_right: fallback enter_diff_fullscreen exception: {e}")
-                    logger.debug(traceback.format_exc())
-                    pass
-            return True
-        except Exception as e:
-            logger.debug(f"DiffList.key_right: unexpected exception: {e}")
-            logger.debug(traceback.format_exc())
-            return True
-        return True
-
-    # let other keys be handled by default (up/down handled by ListView)
+        return False
 
     def on_focus(self, event: events.Focus) -> None:
         """When the DiffList receives focus, ensure the first item is highlighted."""
@@ -1905,7 +2013,76 @@ class DiffListBase(ListView):
 class DiffList(DiffListBase):
     """Compatibility subclass; use `DiffListBase` for shared logic."""
 
-    pass
+    def key_left(self) -> bool:
+        """Handle left key behavior
+
+        Returns True when the key was handled/consumed.
+        """
+        try:
+            # If we're in fullscreen, left arrow exits fullscreen
+            if getattr(self.app, "diff_fullscreen", False):
+                try:
+                    self.app.exit_diff_fullscreen()
+                except Exception as e:
+                    logger.debug(f"DiffList.key_left: exception exiting fullscreen on left: {e}")
+                    logger.debug(traceback.format_exc())
+                return True
+            # otherwise move focus back to History
+            try:
+                hist = self.app.query_one("#right1", HistoryList)
+                hist.focus()
+            except Exception as e:
+                logger.debug(f"DiffList.key_left: exception focusing history: {e}")
+                logger.debug(traceback.format_exc())
+                return True
+            return True
+        except Exception as e:
+            logger.debug(f"DiffList.key_left: unexpected exception: {e}")
+            logger.debug(traceback.format_exc())
+            return True
+        return True
+
+    def key_right(self) -> bool:
+        """Handle right key behavior
+
+        Returns True when the key was handled/consumed.
+        """
+        try:
+            # In columnated mode, pressing right expands Diff to fullscreen.
+            if getattr(self.app, "diff_fullscreen", False):
+                # already fullscreen; right arrow does nothing
+                return True
+            # If diff is visible and not fullscreen, enter fullscreen
+            try:
+                right1_display = self.app.query_one("#right1").styles.display
+                right2_display = self.app.query_one("#right2").styles.display
+                if right1_display != "none" and right2_display != "none":
+                    try:
+                        self.app.enter_diff_fullscreen()
+                    except Exception as e:
+                        logger.debug(f"DiffList.key_right: enter_diff_fullscreen exception: {e}")
+                        logger.debug(traceback.format_exc())
+                    try:
+                        self.focus()
+                    except Exception:
+                        pass
+                    return True
+            except Exception as e:
+                logger.debug(f"DiffList.key_right: checking displays for fullscreen failed: {e}")
+                logger.debug(traceback.format_exc())
+                # best-effort enter
+                try:
+                    self.app.enter_diff_fullscreen()
+                except Exception as e:
+                    logger.debug(f"DiffList.key_right: fallback enter_diff_fullscreen exception: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+            return True
+        except Exception as e:
+            logger.debug(f"DiffList.key_right: unexpected exception: {e}")
+            logger.debug(traceback.format_exc())
+            return True
+        return True
 
 
 class _TBDModal(ModalScreen):
