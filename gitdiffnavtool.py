@@ -78,7 +78,9 @@ class FileListBase(ListView):
                     logger.debug(f"FileList.set_path: exception refreshing repo cache: {e}")
                     logger.debug(traceback.format_exc())
                     pass
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
 
         try:
@@ -254,7 +256,7 @@ class FileListBase(ListView):
             logger.debug(traceback.format_exc())
             pass
         try:
-            right1 = self.app.query_one("#right1", HistoryList)
+            right1 = self.app.query_one("#right1", HistoryListBase)
             right1.styles.display = "none"
         except Exception as e:
             logger.debug(f"FileList.on_focus: exception hiding right1: {e}")
@@ -428,7 +430,9 @@ class FileModeFileList(FileListBase):
                     logger.debug(traceback.format_exc())
                     try:
                         self.app.push_screen(_TBDModal())
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                 return True
 
@@ -439,7 +443,9 @@ class FileModeFileList(FileListBase):
                 # already at filesystem root
                 try:
                     self.app.push_screen(_TBDModal("Already at root"))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return True
 
@@ -471,7 +477,9 @@ class FileModeFileList(FileListBase):
 
             try:
                 self.focus()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             return True
 
@@ -513,7 +521,9 @@ class FileModeFileList(FileListBase):
                     try:
                         # Last-resort fallback
                         self.app.push_screen(_TBDModal())
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                 return True
 
@@ -539,7 +549,9 @@ class FileModeFileList(FileListBase):
                 # focus back on this list
                 try:
                     self.focus()
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return True
 
@@ -760,7 +772,9 @@ class FileModeFileList(FileListBase):
         # Not a directory we can enter — show TBD for now
         try:
             self.app.push_screen(_TBDModal())
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Exception: {e}")
+            logger.debug(traceback.format_exc())
             pass
         return True
 
@@ -941,12 +955,18 @@ class HistoryListBase(ListView):
                 if not isinstance(left, FileModeFileList):
                     try:
                         left = self.app.query_one("#right1")
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         left = None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 try:
                     left = self.app.query_one("#right1")
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     left = None
             right2 = self.app.query_one("#right2", ListView)
             # set widths to 50/50
@@ -1101,53 +1121,98 @@ class HistoryListBase(ListView):
 class FileModeHistoryList(HistoryListBase):
     """subclass for FileMode HistoryList functionality; see `HistoryListBase` for shared logic."""
 
-    def populate_repo_log(self, repo_path: Optional[str] = None) -> None: # FileModeHistoryList
+    def populate(self, repo_path: Optional[str] = None) -> None: # FileModeHistoryList
         """Populate this History list with a repository-wide commit log using pygit2.
 
         This mirrors `HistoryRepoList.populate_repo_log` to provide compatibility
         when the app uses the standard `FileModeHistoryList` widget.
         """
         try:
-            # Delegate to HistoryRepoList implementation to avoid duplicating logic
-            helper = HistoryRepoList()
-            # attach to same app context so helper can call self.app methods if needed
+            # File-mode history should show commits for a specific file.
+            # Determine filename: prefer attached `_filename` on the widget,
+            # otherwise accept the `repo_path` parameter as the filename.
+            filename = getattr(self, "_filename", None) or repo_path
+            if not filename:
+                # Nothing to populate
+                return
+
+            proc = subprocess.run(
+                [
+                    "git",
+                    "log",
+                    "--follow",
+                    "--date=short",
+                    "--pretty=format:%ad %h %s",
+                    "--",
+                    filename,
+                ],
+                cwd=getattr(self.app, "path", None),
+                capture_output=True,
+                text=True,
+            )
+            out = proc.stdout.strip()
+
             try:
-                helper.app = getattr(self, "app", None)
-            except Exception:
-                pass
-            helper.populate_repo_log(repo_path)
-            # After helper populated its internal list, copy items into self
-            try:
-                # clear existing
                 self.clear()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
+
             try:
-                for item in helper._nodes if hasattr(helper, "_nodes") else []:
-                    try:
-                        self.append(item)
-                    except Exception:
-                        continue
-            except Exception:
+                self._filename = filename
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
+
+            if out:
+                for line in out.splitlines():
+                    try:
+                        li = ListItem(Label(Text(" " + line)))
+                        m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
+                        if m:
+                            li._hash = m.group(2)
+                        li._raw_text = line
+                        self.append(li)
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
+                        continue
+            else:
+                try:
+                    self.append(ListItem(Label(Text(" " + f"No git history for {filename}"))))
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
+                    pass
+
             try:
                 self.styles.display = None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 self.index = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 self.focus()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
         except Exception as exc:
-            logger.debug(f"FileModeHistoryList.populate_repo_log: exception: {exc}")
+            logger.debug(f"FileModeHistoryList.populate: exception: {exc}")
             logger.debug(traceback.format_exc())
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
 
@@ -1163,12 +1228,18 @@ class FileModeHistoryList(HistoryListBase):
                 if not isinstance(files, FileModeFileList):
                     try:
                         files = self.app.query_one("#right1")
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         files = None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 try:
                     files = self.app.query_one("#right1")
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     files = None
             files.focus()
         except Exception as e:
@@ -1391,7 +1462,7 @@ class RepoModeHistoryList(HistoryListBase):
     """RepoMode History list used when `-l/--log-first`
     """
 
-    def populate_repo_log(self, repo_path: Optional[str] = None) -> None: # RepoModeHistoryList
+    def populate(self, repo_path: Optional[str] = None) -> None: # RepoModeHistoryList
         """Populate this History list with a repository-wide commit log using pygit2.
 
         This method walks commits (by time) and appends ListItem entries with
@@ -1409,7 +1480,9 @@ class RepoModeHistoryList(HistoryListBase):
             # clear existing items
             try:
                 self.clear()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
             seen: set[str] = set()
@@ -1422,9 +1495,13 @@ class RepoModeHistoryList(HistoryListBase):
                 else:
                     try:
                         start_oids = [repo.head.target]
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         start_oids = []
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 start_oids = []
 
             # If no HEAD, fall back to all branch refs
@@ -1436,9 +1513,13 @@ class RepoModeHistoryList(HistoryListBase):
                                 ref = repo.lookup_reference(ref_name)
                                 if ref and getattr(ref, "target", None):
                                     start_oids.append(ref.target)
-                            except Exception:
+                            except Exception as e:
+                                logger.debug(f"Exception: {e}")
+                                logger.debug(traceback.format_exc())
                                 continue
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
 
             # Walk commits from each start oid, collect unique commits
@@ -1451,14 +1532,18 @@ class RepoModeHistoryList(HistoryListBase):
                             continue
                         seen.add(cid)
                         commits.append(c)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     continue
 
             # If still no commits (empty repo), bail out
             if not commits:
                 try:
                     self.append(ListItem(Label(Text(" " + "No git history for repository"))))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return
 
@@ -1466,15 +1551,21 @@ class RepoModeHistoryList(HistoryListBase):
             for c in commits:
                 try:
                     when = datetime.datetime.fromtimestamp(int(c.author.time)).strftime("%Y-%m-%d")
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     when = "????-??-??"
                 try:
                     short = str(c.id)[:7]
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     short = "???????"
                 try:
                     subj = (c.message or "").splitlines()[0]
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     subj = "(no message)"
                 line = f"{when} {short} {subj}"
                 try:
@@ -1482,29 +1573,39 @@ class RepoModeHistoryList(HistoryListBase):
                     li._hash = short
                     li._raw_text = line
                     self.append(li)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     continue
 
             try:
                 self.styles.display = None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
             try:
                 self.index = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 self.focus()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
         except Exception as exc:
-            logger.debug(f"RepoModeHistoryList.populate_repo_log: exception: {exc}")
+            logger.debug(f"RepoModeHistoryList.populate: exception: {exc}")
             logger.debug(traceback.format_exc())
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
     def key_right(self) -> bool: # RepoModeHistoryList
@@ -1520,14 +1621,18 @@ class RepoModeHistoryList(HistoryListBase):
             if not nodes:
                 try:
                     self.app.push_screen(_TBDModal("No commit selected"))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return True
             idx = getattr(self, "index", None)
             if idx is None or idx < 0 or idx >= len(nodes):
                 try:
                     self.app.push_screen(_TBDModal("No commit selected"))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return True
 
@@ -1543,7 +1648,9 @@ class RepoModeHistoryList(HistoryListBase):
                 if idx >= len(nodes) - 1:
                     try:
                         self.app.push_screen(_TBDModal("No earlier commit to diff with"))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     return True
                 i_newer = idx
@@ -1554,7 +1661,9 @@ class RepoModeHistoryList(HistoryListBase):
                 if i1 == i2:
                     try:
                         self.app.push_screen(_TBDModal("No commit to diff with"))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     return True
                 if i1 < i2:
@@ -1576,7 +1685,9 @@ class RepoModeHistoryList(HistoryListBase):
                     if renderable is not None:
                         return str(renderable)
                     return str(lbl)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     return str(node)
 
             current_line = _text_of(nodes[i_newer])
@@ -1595,7 +1706,9 @@ class RepoModeHistoryList(HistoryListBase):
                 except Exception as exc:
                     try:
                         self.app.push_screen(_TBDModal(f"Could not parse hashes: {exc}"))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     return True
 
@@ -1609,11 +1722,15 @@ class RepoModeHistoryList(HistoryListBase):
 
                 try:
                     curr_obj = repo.get(current_hash)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     curr_obj = None
                 try:
                     prev_obj = repo.get(previous_hash)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     prev_obj = None
 
                 curr_tree = getattr(curr_obj, "tree", None)
@@ -1628,14 +1745,18 @@ class RepoModeHistoryList(HistoryListBase):
             except Exception as exc:
                 try:
                     self.app.push_screen(_TBDModal(str(exc)))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return True
 
             # Mount RepoModeFileList in middle column (#right1)
             try:
                 parent = self.app.query_one("#right1-column")
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 parent = None
 
             try:
@@ -1644,9 +1765,13 @@ class RepoModeHistoryList(HistoryListBase):
                     old = self.app.query_one("#right1")
                     try:
                         old.remove()
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
 
                 file_list = RepoModeFileList(id="right1")
@@ -1655,13 +1780,17 @@ class RepoModeHistoryList(HistoryListBase):
                 else:
                     try:
                         self.app.mount(file_list)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
             except Exception as exc:
                 logger.debug(f"RepoModeHistoryList.key_right: mount error: {exc}")
                 try:
                     self.app.push_screen(_TBDModal("Could not show files for commit diff"))
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 return True
 
@@ -1669,7 +1798,9 @@ class RepoModeHistoryList(HistoryListBase):
             try:
                 file_list.current_commit_sha = current_hash
                 file_list.current_prev_sha = previous_hash
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
             # Populate file_list from diff deltas
@@ -1700,15 +1831,21 @@ class RepoModeHistoryList(HistoryListBase):
                         try:
                             file_list.append(li)
                             appended += 1
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"Exception: {e}")
+                            logger.debug(traceback.format_exc())
                             continue
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         continue
 
                 if appended == 0:
                     try:
                         file_list.append(ListItem(Label(Text(" No changed files between selected commits"))))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
             except Exception as exc:
                 logger.debug(f"RepoModeHistoryList.key_right: error populating file list: {exc}")
@@ -1716,21 +1853,29 @@ class RepoModeHistoryList(HistoryListBase):
 
             try:
                 file_list.styles.display = None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 file_list.index = 0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
             try:
                 file_list.focus()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
             try:
                 self.app.current_commit_sha = current_hash
                 self.app.current_prev_sha = previous_hash
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
         except Exception as exc:
@@ -1738,7 +1883,9 @@ class RepoModeHistoryList(HistoryListBase):
             logger.debug(traceback.format_exc())
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
         return True
 
@@ -2183,12 +2330,18 @@ class DiffListBase(ListView):
                 if not isinstance(left, FileModeFileList):
                     try:
                         left = self.app.query_one("#right1")
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         left = None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 try:
                     left = self.app.query_one("#right1")
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     left = None
             hist = self.app.query_one("#right1", FileModeHistoryList)
             diff = self.app.query_one("#right2", ListView)
@@ -2261,13 +2414,17 @@ class DiffListBase(ListView):
                         try:
                             percent = float(s[:-1]) / 100.0
                             width = int(self.size.width * percent)
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"Exception: {e}")
+                            logger.debug(traceback.format_exc())
                             width = None
                 if width is not None and width >= 8:
                     lbl.update(Text("Files", style="bold"))
                 else:
                     lbl.update(Text("Fi", style="bold"))
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 # If any lookup fails, use the shortened title to be safe
                 lbl.update(Text("Fi", style="bold"))
             lbl.styles.display = None
@@ -2365,7 +2522,9 @@ class FileModeDiffList(DiffListBase):
                         logger.debug(traceback.format_exc())
                     try:
                         self.focus()
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     return True
             except Exception as e:
@@ -2983,19 +3142,27 @@ App {
         # Query columns generically — types differ when `log_first` is active
         try:
             left = self.query_one("#left")
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Exception: {e}")
+            logger.debug(traceback.format_exc())
             left = None
         try:
             right1 = self.query_one("#right1")
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Exception: {e}")
+            logger.debug(traceback.format_exc())
             right1 = None
         try:
             right2 = self.query_one("#right2")
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Exception: {e}")
+            logger.debug(traceback.format_exc())
             right2 = None
         try:
             right3 = self.query_one("#right3")
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Exception: {e}")
+            logger.debug(traceback.format_exc())
             right3 = None
         # Ensure the main horizontal fills remaining space so the title remains visible
         try:
@@ -3165,12 +3332,18 @@ App {
                     if not isinstance(left, FileModeFileList):
                         try:
                             left = self.query_one("#right1")
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"Exception: {e}")
+                            logger.debug(traceback.format_exc())
                             left = None
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     try:
                         left = self.query_one("#right1")
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         left = None
                 try:
                     left.call_after_refresh(left._highlight_filename, item_name)
@@ -3231,12 +3404,14 @@ App {
             if getattr(self, "log_first", False):
                 try:
                     hist = self.query_one("#left")
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     hist = None
 
-                if hist is not None and hasattr(hist, "populate_repo_log"):
+                if hist is not None and hasattr(hist, "populate"):
                     try:
-                        hist.populate_repo_log(self.path)
+                        hist.populate(self.path)
                     except Exception as e:
                         logger.debug(f"[GitDiffApp._open_repo_history.left.populate]: exception: {e}")
                         logger.debug(traceback.format_exc())
@@ -3252,20 +3427,28 @@ App {
                         self.query_one("#right2-column").styles.flex = 0
                         self.query_one("#right3-column").styles.width = "0%"
                         self.query_one("#right3-column").styles.flex = 0
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
 
                     try:
                         hist.index = 0
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     try:
                         hist.focus()
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     try:
                         self.diff_fullscreen = False
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     return
 
@@ -3276,9 +3459,13 @@ App {
                     old = self.query_one("#right1")
                     try:
                         old.remove()
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     old = None
 
                 # Mount a repository-backed history list with the same id
@@ -3292,9 +3479,9 @@ App {
 
                 if repo_hist:
                     try:
-                        repo_hist.populate_repo_log(self.path)
+                        repo_hist.populate(self.path)
                     except Exception as e:
-                        logger.debug(f"[GitDiffApp._open_repo_history.populate_repo_log]: exception: {e}")
+                        logger.debug(f"[GitDiffApp._open_repo_history.populate]: exception: {e}")
                         logger.debug(traceback.format_exc())
 
                     # Adjust layout: hide files and other right columns, show history full-width
@@ -3307,23 +3494,33 @@ App {
                         self.query_one("#right2-column").styles.flex = 0
                         self.query_one("#right3-column").styles.width = "0%"
                         self.query_one("#right3-column").styles.flex = 0
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
 
                     try:
                         repo_hist.index = 0
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     try:
                         repo_hist.focus()
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     try:
                         self.diff_fullscreen = False
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
                     return
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 logger.debug("_open_repo_history: failed to replace History widget; falling back")
 
             # Fallback to subprocess-based behavior if replacement fails
@@ -3342,17 +3539,23 @@ App {
 
             try:
                 hist = self.query_one("#right1", ListView)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 hist = None
 
             if hist:
                 try:
                     hist.clear()
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 try:
                     hist._filename = None
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
 
                 if out:
@@ -3362,41 +3565,57 @@ App {
                             m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
                             if m:
                                 li._hash = m.group(2)
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"Exception: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
                         try:
                             li._raw_text = line
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"Exception: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
                         try:
                             hist.append(li)
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"Exception: {e}")
+                            logger.debug(traceback.format_exc())
                             pass
                 else:
                     try:
                         hist.append(ListItem(Label(Text(" " + "No git history for repository"))))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Exception: {e}")
+                        logger.debug(traceback.format_exc())
                         pass
 
                 try:
                     hist.styles.display = None
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
 
                 try:
                     hist.index = 0
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
                 try:
                     hist.focus()
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Exception: {e}")
+                    logger.debug(traceback.format_exc())
                     pass
 
             return
         except Exception as exc:
             try:
                 self.push_screen(_TBDModal(str(exc)))
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Exception: {e}")
+                logger.debug(traceback.format_exc())
                 pass
 
     def on_key(self, event: events.Key) -> None:
