@@ -655,7 +655,9 @@ class FileListBase(ListView):
                                         logger.debug(traceback.format_exc())
                                         mtime = None
                                     if mtime:
-                                        display_pseudo = f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} MODS"
+                                        display_pseudo = (
+                                            f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} MODS"
+                                        )
                                     else:
                                         display_pseudo = "MODS"
                                 except Exception as e:
@@ -738,7 +740,6 @@ class FileListBase(ListView):
             pass
         return True
 
-
     def _highlight_top(self) -> None:
         """Highlight the first entry in the list after a refresh."""
         try:
@@ -754,6 +755,7 @@ class FileListBase(ListView):
 
 class FileList(FileListBase):
     """Compatibility subclass; use `FileListBase` for shared logic."""
+
     pass
 
 
@@ -1282,9 +1284,9 @@ class HistoryListBase(ListView):
         return True
 
 
-
 class HistoryList(HistoryListBase):
     """Compatibility subclass; use `HistoryListBase` for shared logic."""
+
     pass
 
 
@@ -1665,6 +1667,7 @@ class DiffListBase(ListView):
                 logger.debug(f"DiffList: exception in {key} handler: {e}")
                 logger.debug(traceback.format_exc())
             return
+
     def key_left(self) -> bool:
         """Handle left key behavior for DiffListBase.
 
@@ -1901,6 +1904,7 @@ class DiffListBase(ListView):
 
 class DiffList(DiffListBase):
     """Compatibility subclass; use `DiffListBase` for shared logic."""
+
     pass
 
 

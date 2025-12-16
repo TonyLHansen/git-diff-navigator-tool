@@ -82,3 +82,12 @@ ok, we're going to do this one step at a time. Rename DiffList to be DiffListBas
 ok, we're going to do this one step at a time. Rename HistoryList to be HistoryListBase and derive HistoryList from HistoryListBase
 
 Rename FileList to be FileListBase and derive FileList from FileListBase
+
+in FileListBase, move the functionality executed by "left" into a method "key_left()" that returns True. In the current on_key(), change the code that checks `elif key == "left":` to execute `if key_left(): return`
+in FileListBase, move the functionality executed by "right" into a method "key_right()" that returns True. In the current on_key(), change the code that checks `elif key == "right":` to execute `if key_right(): return`
+
+in DiffListBase, move the functionality executed by "left" into a method "key_left()" that returns True. In the current on_key(), change the code that checks `elif key == "left":` to execute `if key_left(): return`
+in DiffListBase, move the functionality executed by "right" into a method "key_right()" that returns True. In the current on_key(), change the code that checks `elif key == "right":` to execute `if key_right(): return`
+
+in HistoryListBase, move the functionality executed by "left" into a method "key_left()" that returns True. In the current on_key(), change the code that checks `elif key == "left":` to execute `if key_left(): return`
+in HistoryListBase, move the functionality executed by "right" into a method "key_right()" that returns True. In the current on_key(), change the code that checks `elif key == "right":` to execute `if key_right(): return`
