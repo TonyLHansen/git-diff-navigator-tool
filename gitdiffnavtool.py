@@ -105,6 +105,20 @@ class FileListBase(AppBase):
             return
 
         self.clear()
+        # Insert a short key/legend explaining the repo-status markers shown
+        try:
+            key_text = Text("Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted", style="bold")
+            self.append(ListItem(Label(key_text)))
+            try:
+                # Prevent cursor from moving into the legend row
+                self._min_index = 1
+            except Exception as e:
+                self.printException(e)
+                pass
+        except Exception as e:
+            logger.debug(f"FileList.set_path: exception adding key legend: {e}")
+            logger.debug(traceback.format_exc())
+            pass
         # Parent entry — omit when this directory contains a .git subdirectory
         if not os.path.isdir(os.path.join(path, ".git")):
             parent_item = ListItem(Label(Text("..", style="white on blue")))
@@ -223,7 +237,10 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, f"exception calling _highlight_top")
             try:
-                self.index = 0
+                # If setting via _highlight_top fails, fall back to the
+                # configured minimum selectable index so the legend row
+                # isn't selected on initial focus.
+                self.index = getattr(self, "_min_index", 0) or 0
             except Exception as e:
                 self.printException(e, f"exception setting index to 0")
                 pass
@@ -231,37 +248,61 @@ class FileListBase(AppBase):
     def on_focus(self, event: events.Focus) -> None:
         """When Files column receives focus, make it full-width and hide others."""
         try:
-            # Make the left column (the whole left vertical) full width,
-            # and collapse the two right columns so titles/later columns
-            # don't reserve space.
-            try:
-                self.app.query_one("#left-column").styles.width = "100%"
-                self.app.query_one("#left-column").styles.flex = 0
-            except Exception as e:
-                self.printException(e, f"exception setting left column")
-                pass
-            try:
-                self.app.query_one("#right1-column").styles.width = "0%"
-                self.app.query_one("#right1-column").styles.flex = 0
-            except Exception as e:
-                self.printException(e, f"exception setting right1 column")
-                pass
-            try:
-                self.app.query_one("#right2-column").styles.width = "0%"
-                self.app.query_one("#right2-column").styles.flex = 0
-            except Exception as e:
-                self.printException(e, f"exception setting right2 column")
-                pass
-            # Ensure inner left list fills its column
-            self.styles.width = "100%"
-            self.styles.flex = 0
+            # Adjust columns depending on which FileList got focus. If the
+            # left files column is focused, make it full-width and hide the
+            # right columns. If the right1 files column is focused (common
+            # when starting in log-first mode), show left/history at 25%
+            # and right1/files at 75% so the files view remains visible.
+            fid = getattr(self, "id", "left")
+            if fid == "left":
+                try:
+                    self.app.query_one("#left-column").styles.width = "100%"
+                    self.app.query_one("#left-column").styles.flex = 0
+                except Exception as e:
+                    self.printException(e, f"exception setting left column")
+                    pass
+                try:
+                    self.app.query_one("#right1-column").styles.width = "0%"
+                    self.app.query_one("#right1-column").styles.flex = 0
+                except Exception as e:
+                    self.printException(e, f"exception setting right1 column")
+                    pass
+                try:
+                    self.app.query_one("#right2-column").styles.width = "0%"
+                    self.app.query_one("#right2-column").styles.flex = 0
+                except Exception as e:
+                    self.printException(e, f"exception setting right2 column")
+                    pass
+                # Ensure inner left list fills its column
+                self.styles.width = "100%"
+                self.styles.flex = 0
+            else:
+                try:
+                    self.app.query_one("#left-column").styles.width = "25%"
+                    self.app.query_one("#left-column").styles.flex = 0
+                except Exception as e:
+                    self.printException(e, f"exception setting left column for right1 focus")
+                    pass
+                try:
+                    self.app.query_one("#right1-column").styles.width = "75%"
+                    self.app.query_one("#right1-column").styles.flex = 0
+                except Exception as e:
+                    self.printException(e, f"exception setting right1 column for right1 focus")
+                    pass
+                # Ensure inner right1 list fills its column
+                self.styles.width = "100%"
+                self.styles.flex = 0
         except Exception as e:
             self.printException(e, f"exception setting column widths")
             pass
         try:
-            # Accept any widget at `#right1` (HistoryListBase or FileList)
+            # Accept any widget at `#right1` (HistoryListBase or FileList).
+            # If this FileList instance *is* the widget at `#right1`, do
+            # not hide it — avoid toggling off the very list that just
+            # received focus (this was hiding appended items).
             right1 = self.app.query_one("#right1")
-            right1.styles.display = "none"
+            if right1 is not self:
+                right1.styles.display = "none"
         except Exception as e:
             self.printException(e, f"exception hiding right1")
             pass
@@ -270,6 +311,26 @@ class FileListBase(AppBase):
             right2.styles.display = "none"
         except Exception as e:
             self.printException(e, f"exception hiding right2")
+            pass
+
+        # Ensure selection is at or below the minimum selectable index
+        # (e.g. skip the Key legend row). Use call_after_refresh so the
+        # DOM is stable before mutating the selection.
+        try:
+            min_idx = getattr(self, "_min_index", 0) or 0
+            cur = getattr(self, "index", None)
+            if cur is None or cur < min_idx:
+                try:
+                    # Prefer to set after refresh to avoid race with mount
+                    self.call_after_refresh(lambda: setattr(self, "index", min_idx))
+                except Exception:
+                    try:
+                        self.index = min_idx
+                    except Exception as e:
+                        self.printException(e, "exception enforcing min index on focus")
+                        pass
+        except Exception as e:
+            self.printException(e, "exception checking/enforcing _min_index on focus")
             pass
 
         # show/hide titles for columns: left visible, others hidden
@@ -339,6 +400,27 @@ class FileListBase(AppBase):
             return
         if key == "up":
             event.stop()
+            try:
+                min_idx = getattr(self, "_min_index", 0) or 0
+            except Exception as e:
+                self.printException(e)
+                min_idx = 0
+            cur = getattr(self, "index", None)
+            # If index is unset, initialize to min_idx
+            if cur is None:
+                try:
+                    self.index = min_idx
+                except Exception as e:
+                    self.printException(e)
+                    pass
+                return
+            # If already at or above minimum, do not move up past it
+            try:
+                if cur <= min_idx:
+                    return
+            except Exception as e:
+                self.printException(e)
+                pass
             self.action_cursor_up()
         elif key == "down":
             event.stop()
@@ -381,9 +463,9 @@ class FileListBase(AppBase):
                         self.printException(e, f"exception setting index")
                         pass
                     return
-            # not found: default to first
+            # not found: default to minimum selectable index (skip legend)
             try:
-                self.index = 0
+                self.index = getattr(self, "_min_index", 0) or 0
             except Exception as e:
                 self.printException(e, f"exception setting index to 0")
                 pass
@@ -404,7 +486,13 @@ class FileListBase(AppBase):
             # If there are nodes, set index to 0; otherwise leave unset.
             nodes = getattr(self, "_nodes", [])
             if nodes:
-                self.index = 0
+                # Respect a minimum selectable index (e.g. skip Key legend)
+                min_idx = getattr(self, "_min_index", 0) or 0
+                try:
+                    self.index = min_idx if min_idx < len(nodes) else 0
+                except Exception as e:
+                    self.printException(e)
+                    self.index = 0
         except Exception as e:
             self.printException(e, f"exception")
             return
@@ -461,8 +549,8 @@ class FileModeFileList(FileListBase):
             except Exception as e:
                 self.printException(e, "exception calling _highlight_filename")
                 try:
-                    # Fallback: set to first item
-                    self.index = 0
+                    # Fallback: set to minimum selectable index (skip legend)
+                    self.index = getattr(self, "_min_index", 0) or 0
                 except Exception as e:
                     self.printException(e, "exception setting index fallback")
                     pass
@@ -529,9 +617,9 @@ class FileModeFileList(FileListBase):
             if os.path.isdir(full):
                 # switch the listing to the selected directory
                 self.set_path(full)
-                # ensure highlight resets to first item
+                # ensure highlight resets to the minimum selectable item
                 try:
-                    self.index = 0
+                    self.index = getattr(self, "_min_index", 0) or 0
                 except Exception as e:
                     self.printException(e, "exception resetting index")
                     pass
@@ -1660,6 +1748,43 @@ class RepoModeHistoryList(HistoryListBase):
                     pass
                 return True
 
+            # Pre-build ListItem buffer from diff deltas so we can mount
+            # the desired widget later and append items atomically. This
+            # avoids mount-time races when replacing widgets with the
+            # same id.
+            try:
+                delta_map = {
+                    getattr(pygit2, "GIT_DELTA_ADDED", 0): "A",
+                    getattr(pygit2, "GIT_DELTA_MODIFIED", 0): "M",
+                    getattr(pygit2, "GIT_DELTA_DELETED", 0): "D",
+                    getattr(pygit2, "GIT_DELTA_RENAMED", 0): "R",
+                    getattr(pygit2, "GIT_DELTA_TYPECHANGE", 0): "T",
+                }
+                items_buffer: list = []
+                for d in getattr(diff, "deltas", diff):
+                    try:
+                        status = getattr(d, "status", None)
+                        marker = delta_map.get(status, " ")
+                        old_path = getattr(getattr(d, "old_file", None), "path", None)
+                        new_path = getattr(getattr(d, "new_file", None), "path", None)
+                        display_path = new_path or old_path or ""
+                        text = f"{marker} {display_path}"
+                        li = ListItem(Label(Text(" " + text)))
+                        li._change_type = marker
+                        li._filename = display_path
+                        li._old_filename = old_path
+                        li._new_filename = new_path
+                        li._hash_prev = previous_hash
+                        li._hash_curr = current_hash
+                        items_buffer.append(li)
+                    except Exception as e:
+                        self.printException(e)
+                        continue
+                if not items_buffer:
+                    items_buffer.append(ListItem(Label(Text(" No changed files between selected commits"))))
+            except Exception as exc:
+                self.printException(exc, "error building items buffer")
+
             # Mount RepoModeFileList in middle column (#right1)
             try:
                 parent = self.app.query_one("#right1-column")
@@ -1675,7 +1800,8 @@ class RepoModeHistoryList(HistoryListBase):
                     file_list = None
                     try:
                         matches = list(self.app.query("#right1"))
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e)
                         matches = []
 
                     if matches:
@@ -1689,9 +1815,10 @@ class RepoModeHistoryList(HistoryListBase):
                                     self.printException(e, "removing duplicate right1")
 
                         existing = matches[0]
-                        # Reuse the existing widget to avoid mount races that
-                        # can raise DuplicateIds. Clear and repurpose it as the
-                        # file list for repo-mode; this keeps the DOM stable.
+                        # Always reuse the existing widget to avoid mount races
+                        # and DuplicateIds. Clearing the existing widget and
+                        # repopulating it is safer than trying to remove and
+                        # re-mount a new widget while the app is running.
                         file_list = existing
                         try:
                             file_list.clear()
@@ -1730,14 +1857,16 @@ class RepoModeHistoryList(HistoryListBase):
             # none is mounted, abort gracefully.
             try:
                 mounted_ok = bool(getattr(file_list, "app", None))
-            except Exception:
+            except Exception as e:
+                self.printException(e)
                 mounted_ok = False
             if not mounted_ok:
                 try:
                     existing_mounted = None
                     try:
                         existing_mounted = self.app.query_one("#right1")
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e)
                         existing_mounted = None
                     if existing_mounted is not None and getattr(existing_mounted, "app", None):
                         file_list = existing_mounted
@@ -1769,6 +1898,18 @@ class RepoModeHistoryList(HistoryListBase):
                     getattr(pygit2, "GIT_DELTA_TYPECHANGE", 0): "T",
                 }
                 appended = 0
+                items_buffer: list = []
+                try:
+                    # Attempting to set `styles.border` at runtime can raise
+                    # a StyleValueError depending on Textual version; avoid
+                    # setting it here and rely on CSS instead. Log for
+                    # diagnostics so we know the widget we're populating.
+                    logger.debug(
+                        f"RepoModeHistoryList.key_right: populating file_list={file_list!r} mounted={bool(getattr(file_list,'app',None))}"
+                    )
+                except Exception as e:
+                    self.printException(e)
+                    pass
                 # `diff.deltas` is an iterable; don't call it. If not present,
                 # iterate `diff` directly which is also iterable in pygit2.
                 for d in getattr(diff, "deltas", diff):
@@ -1787,8 +1928,9 @@ class RepoModeHistoryList(HistoryListBase):
                         li._hash_prev = previous_hash
                         li._hash_curr = current_hash
                         try:
-                            file_list.append(li)
+                            items_buffer.append(li)
                             appended += 1
+                            logger.debug(f"RepoModeHistoryList.key_right: buffered: {li._filename!r}")
                         except Exception as e:
                             self.printException(e)
                             continue
@@ -1796,14 +1938,131 @@ class RepoModeHistoryList(HistoryListBase):
                         self.printException(e)
                         continue
 
+                logger.debug(f"RepoModeHistoryList.key_right: total appended={appended}")
                 if appended == 0:
                     try:
-                        file_list.append(ListItem(Label(Text(" No changed files between selected commits"))))
+                        items_buffer.append(ListItem(Label(Text(" No changed files between selected commits"))))
                     except Exception as e:
                         self.printException(e)
                         pass
+                # Append buffered items after the next refresh so mounts succeed
+                try:
+                    def _append_buffer():
+                        try:
+                            # Prevent double-appending if this callback runs more than once
+                            if getattr(file_list, "_populated", False):
+                                logger.debug("RepoModeHistoryList._append_buffer: already populated, skipping")
+                                return
+                            # Insert legend at top for repo-populated file lists
+                            try:
+                                key_li = ListItem(Label(Text("Key: ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted", style="bold")))
+                                try:
+                                    file_list.append(key_li)
+                                    try:
+                                        file_list._min_index = 1
+                                    except Exception as e:
+                                        self.printException(e)
+                                        pass
+                                except Exception as e:
+                                    self.printException(e)
+                                    pass
+                            except Exception as e:
+                                self.printException(e)
+                                pass
+
+                            for it in items_buffer:
+                                try:
+                                    file_list.append(it)
+                                    logger.debug(f"RepoModeHistoryList._append_buffer: appended item to file_list: {getattr(it,'_filename',None)!r}")
+                                except Exception as e:
+                                    self.printException(e)
+                                    continue
+                            try:
+                                file_list.index = getattr(file_list, "_min_index", 0) or 0
+                            except Exception as e:
+                                self.printException(e)
+                                pass
+                            try:
+                                file_list.focus()
+                            except Exception as e:
+                                self.printException(e)
+                                pass
+                            try:
+                                # Ensure the widget is refreshed so appended
+                                # items are rendered immediately.
+                                try:
+                                    file_list.refresh()
+                                except Exception as e:
+                                    self.printException(e)
+                                    pass
+                                try:
+                                    # After refresh and any focus side-effects,
+                                    # enforce the minimum selectable index so
+                                    # the legend row isn't selected.
+                                    try:
+                                        file_list.call_after_refresh(
+                                            lambda: setattr(file_list, "index", getattr(file_list, "_min_index", 0) or 0)
+                                        )
+                                    except Exception:
+                                        try:
+                                            file_list.index = getattr(file_list, "_min_index", 0) or 0
+                                        except Exception as e:
+                                            self.printException(e, "exception enforcing min index after refresh")
+                                            pass
+                                except Exception as e:
+                                    self.printException(e)
+                                    pass
+                                # Diagnostic: log node filenames and display/style state
+                                try:
+                                    nodes = getattr(file_list, "_nodes", [])
+                                    names = [getattr(n, "_filename", None) for n in nodes]
+                                    logger.debug(
+                                        f"RepoModeHistoryList._append_buffer: file_list._nodes length={len(nodes)} names={names} display={getattr(file_list.styles, 'display', None)}"
+                                    )
+                                except Exception as e:
+                                    self.printException(e)
+                            except Exception as e:
+                                self.printException(e)
+                                pass
+                            # Mark as populated and clear buffer so retries are harmless
+                            try:
+                                file_list._populated = True
+                            except Exception as e:
+                                self.printException(e)
+                                pass
+                            try:
+                                items_buffer.clear()
+                            except Exception as e:
+                                self.printException(e)
+                                pass
+                        except Exception as e:
+                            self.printException(e, "error appending buffer")
+                            return
+
+                    try:
+                        # Prefer to schedule appends after refresh to ensure
+                        # the ListView is ready to mount items. Use the
+                        # widget's `call_after_refresh` when available; if
+                        # not, fall back to the app's `call_after_refresh`.
+                        try:
+                            file_list.call_after_refresh(_append_buffer)
+                        except Exception as e:
+                            self.printException(e, "file_list.call_after_refresh failed")
+                            try:
+                                # Fallback to app-level scheduling
+                                self.app.call_after_refresh(_append_buffer)
+                            except Exception as e:
+                                self.printException(e, "app.call_after_refresh failed")
+                                # Last resort: immediate append
+                                _append_buffer()
+                    except Exception as e:
+                        self.printException(e, "scheduling append buffer")
+                except Exception as e:
+                    self.printException(e, "scheduling append buffer")
             except Exception as exc:
                 self.printException(exc, "error populating file list")
+
+            logger.debug(f"RepoModeHistoryList.key_right: finished populating file_list mounted={bool(getattr(file_list,'app',None))} nodes={len(getattr(file_list,'_nodes',[]))}")
 
             try:
                 file_list.styles.display = None
@@ -1811,12 +2070,57 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e)
                 pass
             try:
-                file_list.index = 0
+                file_list.index = getattr(file_list, "_min_index", 0) or 0
             except Exception as e:
                 self.printException(e)
                 pass
             try:
+                # Make the Files column visible and adjust column widths so
+                # History (left) and Files (right1) split the screen.
+                try:
+                    self.app.query_one("#left-column").styles.width = "25%"
+                    self.app.query_one("#left-column").styles.flex = 0
+                except Exception as e:
+                    self.printException(e, "setting left-column width for files view")
+                try:
+                    self.app.query_one("#right1-column").styles.width = "75%"
+                    self.app.query_one("#right1-column").styles.flex = 0
+                except Exception as e:
+                    self.printException(e, "setting right1-column width for files view")
+                try:
+                    # Update titles for log-first layout: left remains History
+                    lbl = self.app.query_one("#left-title", Label)
+                    lbl.update(Text("History", style="bold"))
+                except Exception as e:
+                    self.printException(e, "updating left-title for files view")
+                try:
+                    lbl = self.app.query_one("#right1-title", Label)
+                    lbl.update(Text("Files", style="bold"))
+                except Exception as e:
+                    self.printException(e, "updating right1-title for files view")
+
                 file_list.focus()
+            except Exception as e:
+                self.printException(e)
+                pass
+            try:
+                # Diagnostic: log the column styles and file_list state
+                try:
+                    left_col = self.app.query_one("#left-column")
+                    right1_col = self.app.query_one("#right1-column")
+                    logger.debug(
+                        f"RepoModeHistoryList.key_right: columns left={getattr(left_col.styles,'width',None)} right1={getattr(right1_col.styles,'width',None)}"
+                    )
+                except Exception as e:
+                    self.printException(e)
+                    pass
+                try:
+                    logger.debug(
+                        f"RepoModeHistoryList.key_right: file_list.display={getattr(file_list.styles,'display',None)} nodes={len(getattr(file_list,'_nodes',[]))}"
+                    )
+                except Exception as e:
+                    self.printException(e)
+                    pass
             except Exception as e:
                 self.printException(e)
                 pass
@@ -3218,7 +3522,7 @@ App {
                 except Exception as e:
                     self.printException(e)
                     try:
-                        left.index = 0
+                        left.index = getattr(left, "_min_index", 0) or 0
                     except Exception as e:
                         self.printException(e)
                         pass
