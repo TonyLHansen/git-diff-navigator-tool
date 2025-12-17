@@ -132,7 +132,8 @@ class FileListBase(AppBase):
         # Insert a short key/legend explaining the repo-status markers shown
         try:
             key_text = Text(
-                "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted", style="bold"
+                "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted",
+                style="bold white on blue",
             )
             self.append(ListItem(Label(key_text)))
             try:
@@ -2173,7 +2174,7 @@ class RepoModeHistoryList(HistoryListBase):
                                     Label(
                                         Text(
                                             "Key: ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted",
-                                            style="bold",
+                                            style="bold white on blue",
                                         )
                                     )
                                 )
