@@ -248,6 +248,11 @@ class FileListBase(AppBase):
     def on_focus(self, event: events.Focus) -> None:
         """When Files column receives focus, make it full-width and hide others."""
         try:
+            # Allow callers to temporarily suppress automatic layout changes
+            if getattr(self.app, "_suppress_focus_layout", False):
+                logger.debug(f"FileList.on_focus: suppressed layout change for {getattr(self,'id',None)}")
+                return
+
             # Adjust columns depending on which FileList got focus. If the
             # left files column is focused, make it full-width and hide the
             # right columns. If the right1 files column is focused (common
@@ -301,8 +306,9 @@ class FileListBase(AppBase):
             # not hide it — avoid toggling off the very list that just
             # received focus (this was hiding appended items).
             right1 = self.app.query_one("#right1")
-            if right1 is not self:
-                right1.styles.display = "none"
+            if not getattr(self.app, "_suppress_focus_layout", False):
+                if right1 is not self:
+                    right1.styles.display = "none"
         except Exception as e:
             self.printException(e, f"exception hiding right1")
             pass
@@ -2910,6 +2916,21 @@ class FileModeDiffList(DiffListBase):
                     self.app.exit_diff_fullscreen()
                 except Exception as e:
                     self.printException(e, "exception exiting fullscreen on left")
+                try:
+                    # Enforce expected column sizes after exiting fullscreen
+                    try:
+                        self.app.query_one("#right2-column").styles.width = "80%"
+                        self.app.query_one("#right2-column").styles.flex = 0
+                    except Exception:
+                        pass
+                    try:
+                        self.app.query_one("#right1-column").styles.width = "15%"
+                        self.app.query_one("#right1-column").styles.flex = 0
+                    except Exception:
+                        pass
+                    logger.debug("FileModeDiffList.key_left: enforced right2=80% right1=15% after exit")
+                except Exception as e:
+                    self.printException(e, "could not enforce columns after exit fullscreen")
                 return True
             # otherwise move focus back to History
             try:
@@ -2920,8 +2941,41 @@ class FileModeDiffList(DiffListBase):
                         hist = self.app.query_one("#right1")
                     except Exception:
                         hist = None
-                if hist is not None:
-                    hist.focus()
+                # Ensure the Files/History split is restored to 25/75 before focusing
+                try:
+                    self.app.query_one("#left-column").styles.width = "25%"
+                    self.app.query_one("#left-column").styles.flex = 0
+                except Exception as e:
+                    self.printException(e, "could not restore left-column width before focus")
+                try:
+                    self.app.query_one("#right1-column").styles.width = "75%"
+                    self.app.query_one("#right1-column").styles.flex = 0
+                except Exception as e:
+                    self.printException(e, "could not restore right1-column width before focus")
+                try:
+                    if hist is not None:
+                        hist.focus()
+                        # After focus, enforce the desired 25/75 split again
+                        def _enforce_25_75():
+                            try:
+                                self.app.query_one("#left-column").styles.width = "25%"
+                                self.app.query_one("#left-column").styles.flex = 0
+                                self.app.query_one("#right1-column").styles.width = "75%"
+                                self.app.query_one("#right1-column").styles.flex = 0
+                                try:
+                                    r1 = self.app.query_one("#right1")
+                                    r1.styles.display = None
+                                except Exception:
+                                    pass
+                            except Exception as e:
+                                self.printException(e, "post-focus enforce 25/75")
+
+                        try:
+                            self.app.call_after_refresh(_enforce_25_75)
+                        except Exception:
+                            _enforce_25_75()
+                except Exception as e:
+                    self.printException(e, "exception focusing history")
             except Exception as e:
                 self.printException(e, "exception focusing history")
                 return True
@@ -3374,6 +3428,13 @@ App {
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
         self.diff_cmd_index: int = 0
         # start the app showing repository-wide commit log first when True
+    def printException(self, e, msg=None):
+        """Log an exception from the app context (mirrors AppBase.printException)."""
+        className = type(self).__name__
+        funcName = sys._getframe(1).f_code.co_name
+        msg = msg if msg else "???"
+        logger.warning(f"WARNING: {className}.{funcName}: {msg}")
+        logger.warning(traceback.format_exc())
 
     def build_diff_cmd(self, prev: str | None, curr: str | None, fname: str) -> list[str]:
         """Construct the git diff command honoring the currently selected variant.
@@ -4021,7 +4082,26 @@ App {
                     self.printException(e)
                     pass
                 try:
-                    # Save current column state (save actual values, not strings)
+                    # Save current column state, normalizing widths to percent strings
+                    def _norm_width(w):
+                        try:
+                            if w is None:
+                                return None
+                            # Textual may store a Scalar-like object with a `value` attr
+                            if hasattr(w, "value"):
+                                val = int(getattr(w, "value", 0))
+                                return f"{val}%"
+                            # If it's already a string that accidentally contains Unit names,
+                            # extract leading number and use percent.
+                            if isinstance(w, str) and "Unit.WIDTH" in w:
+                                m = re.match(r"^(\d+)", w)
+                                if m:
+                                    return f"{m.group(1)}%"
+                            # Already a usable string/number
+                            return str(w)
+                        except Exception:
+                            return str(w)
+
                     left_col = self.query_one("#left-column")
                     right1_col = self.query_one("#right1-column")
                     right2_col = self.query_one("#right2-column")
@@ -4029,20 +4109,9 @@ App {
                     right2_widget = self.query_one("#right2")
 
                     self.saved_column_state = {
-                        "left": {
-                            "width": left_col.styles.width,
-                            "flex": left_col.styles.flex,
-                        },
-                        "right1": {
-                            "width": right1_col.styles.width,
-                            "flex": right1_col.styles.flex,
-                            "display": right1_widget.styles.display,
-                        },
-                        "right2": {
-                            "width": right2_col.styles.width,
-                            "flex": right2_col.styles.flex,
-                            "display": right2_widget.styles.display,
-                        },
+                        "left": {"width": _norm_width(left_col.styles.width), "flex": left_col.styles.flex, "display": getattr(self.query_one("#left"), "styles", None) and getattr(self.query_one("#left"), "styles").display},
+                        "right1": {"width": _norm_width(right1_col.styles.width), "flex": right1_col.styles.flex, "display": right1_widget.styles.display},
+                        "right2": {"width": _norm_width(right2_col.styles.width), "flex": right2_col.styles.flex, "display": right2_widget.styles.display},
                     }
                     logger.debug(f"Saved column state: {self.saved_column_state}")
 
@@ -4075,6 +4144,38 @@ App {
             # save whether we were fullscreen already
             if getattr(self, "diff_fullscreen", False):
                 return
+            # Save current column state so we can restore it on exit.
+            try:
+                # Normalize saved widths to percent strings so restoring applies expected values
+                def _norm_width(w):
+                    try:
+                        if w is None:
+                            return None
+                        if hasattr(w, "value"):
+                            val = int(getattr(w, "value", 0))
+                            return f"{val}%"
+                        if isinstance(w, str) and "Unit.WIDTH" in w:
+                            m = re.match(r"^(\d+)", w)
+                            if m:
+                                return f"{m.group(1)}%"
+                        return str(w)
+                    except Exception:
+                        return str(w)
+
+                left_col = self.query_one("#left-column")
+                right1_col = self.query_one("#right1-column")
+                right2_col = self.query_one("#right2-column")
+                left_widget = self.query_one("#left")
+                right1_widget = self.query_one("#right1")
+                right2_widget = self.query_one("#right2")
+                self.saved_column_state = {
+                    "left": {"width": _norm_width(left_col.styles.width), "flex": left_col.styles.flex, "display": getattr(left_widget.styles, "display", None)},
+                    "right1": {"width": _norm_width(right1_col.styles.width), "flex": right1_col.styles.flex, "display": getattr(right1_widget.styles, "display", None)},
+                    "right2": {"width": _norm_width(right2_col.styles.width), "flex": right2_col.styles.flex, "display": getattr(right2_widget.styles, "display", None)},
+                }
+                logger.debug(f"enter_diff_fullscreen: saved_column_state={self.saved_column_state}")
+            except Exception as e:
+                self.printException(e, "could not save column state before fullscreen")
             # collapse left and history columns
             try:
                 self.query_one("#left-column").styles.width = "0%"
@@ -4112,29 +4213,162 @@ App {
         try:
             if not getattr(self, "diff_fullscreen", False):
                 return
-            # restore a sensible columnated layout
+            # If we previously saved a column state, restore it; otherwise
+            # fall back to the default 5/15/80 layout. This ensures that
+            # entering/exiting fullscreen preserves the layout active when
+            # fullscreen was requested (e.g. log-first 25/75 vs default 5/15).
             try:
-                self.query_one("#left-column").styles.width = "5%"
-                self.query_one("#left-column").styles.flex = 0
+                if getattr(self, "saved_column_state", None):
+                    s = self.saved_column_state
+                    logger.debug(f"exit_diff_fullscreen: restoring saved_column_state={s}")
+
+                    def _apply_saved(col_id, saved, default_width):
+                        try:
+                            col = self.query_one(col_id)
+                            width = saved.get("width", default_width)
+                            # If width is a scalar-like object stored earlier, convert to string
+                            try:
+                                if hasattr(width, "value"):
+                                    width = f"{int(getattr(width, 'value', 0))}%"
+                            except Exception:
+                                pass
+                            col.styles.width = width
+                            col.styles.flex = saved.get("flex", 0)
+                        except Exception as e:
+                            self.printException(e, f"could not restore {col_id} from saved state")
+
+                    _apply_saved("#left-column", s.get("left", {}), "5%")
+                    try:
+                        left_widget = self.query_one("#left")
+                        left_widget.styles.display = s.get("left", {}).get("display", None)
+                    except Exception as e:
+                        self.printException(e, "could not restore left widget display")
+
+                    _apply_saved("#right1-column", s.get("right1", {}), "15%")
+                    try:
+                        right1_widget = self.query_one("#right1")
+                        right1_widget.styles.display = s.get("right1", {}).get("display", None)
+                    except Exception as e:
+                        self.printException(e, "could not restore right1 widget display")
+
+                    _apply_saved("#right2-column", s.get("right2", {}), "80%")
+                    try:
+                        right2_widget = self.query_one("#right2")
+                        right2_widget.styles.display = s.get("right2", {}).get("display", None)
+                    except Exception as e:
+                        self.printException(e, "could not restore right2 widget display")
+
+                    # While we restore, suppress file-list focus handlers from
+                    # overriding the applied column sizes.
+                    try:
+                        self._suppress_focus_layout = True
+                        logger.debug("exit_diff_fullscreen: set _suppress_focus_layout flag")
+                    except Exception:
+                        pass
+
+                    # Force a layout refresh and log actual computed sizes after restore
+                    def _post_restore():
+                        try:
+                            lc = self.query_one("#left-column")
+                            r1c = self.query_one("#right1-column")
+                            r2c = self.query_one("#right2-column")
+                            logger.debug(
+                                "post_restore columns styles: left=%s right1=%s right2=%s",
+                                (lc.styles.width, lc.styles.flex),
+                                (r1c.styles.width, r1c.styles.flex),
+                                (r2c.styles.width, r2c.styles.flex),
+                            )
+                            try:
+                                lreg = getattr(lc, "region", None)
+                                r1reg = getattr(r1c, "region", None)
+                                r2reg = getattr(r2c, "region", None)
+                                logger.debug(
+                                    "post_restore regions (width,height): left=%s right1=%s right2=%s",
+                                    (getattr(lreg, "width", None), getattr(lreg, "height", None)),
+                                    (getattr(r1reg, "width", None), getattr(r1reg, "height", None)),
+                                    (getattr(r2reg, "width", None), getattr(r2reg, "height", None)),
+                                )
+                            except Exception as e:
+                                self.printException(e, "could not read column regions")
+                            try:
+                                # Force a refresh to ensure layout is reflowed
+                                try:
+                                    self.refresh()
+                                except Exception:
+                                    pass
+                            except Exception as e:
+                                self.printException(e, "could not refresh after restore")
+                        except Exception as e:
+                            self.printException(e, "post_restore diagnostics failed")
+
+                    self.call_after_refresh(_post_restore)
+
+                    # clear the suppress flag after post-restore completes
+                    def _clear_suppress():
+                        try:
+                            if getattr(self, "_suppress_focus_layout", False):
+                                self._suppress_focus_layout = False
+                                logger.debug("exit_diff_fullscreen: cleared _suppress_focus_layout flag")
+                        except Exception as e:
+                            self.printException(e, "could not clear suppress flag")
+
+                    self.call_after_refresh(_clear_suppress)
+
+                    # Clear saved state after restoring
+                    try:
+                        self.saved_column_state = None
+                    except Exception:
+                        pass
+                    logger.debug("exit_diff_fullscreen: restored from saved state")
+                else:
+                    # restore a sensible columnated layout
+                    try:
+                        self.query_one("#left-column").styles.width = "5%"
+                        self.query_one("#left-column").styles.flex = 0
+                    except Exception as e:
+                        self.printException(e, "could not restore left-column")
+                    try:
+                        self.query_one("#right1-column").styles.width = "15%"
+                        self.query_one("#right1-column").styles.flex = 0
+                        self.query_one("#right1").styles.display = None
+                    except Exception as e:
+                        self.printException(e, "could not restore right1-column")
+                    try:
+                        self.query_one("#right2-column").styles.width = "80%"
+                        self.query_one("#right2-column").styles.flex = 0
+                        self.query_one("#right2").styles.display = None
+                    except Exception as e:
+                        self.printException(e, "could not restore right2-column")
             except Exception as e:
-                self.printException(e, "could not restore left-column")
-            try:
-                self.query_one("#right1-column").styles.width = "15%"
-                self.query_one("#right1-column").styles.flex = 0
-                self.query_one("#right1").styles.display = None
-            except Exception as e:
-                self.printException(e, "could not restore right1-column")
-            try:
-                self.query_one("#right2-column").styles.width = "80%"
-                self.query_one("#right2-column").styles.flex = 0
-                self.query_one("#right2").styles.display = None
-            except Exception as e:
-                self.printException(e, "could not restore right2-column")
+                self.printException(e)
+                pass
             try:
                 self.diff_fullscreen = False
+                logger.debug("exit_diff_fullscreen: diff_fullscreen flag cleared")
             except Exception as e:
                 self.printException(e, "could not clear diff_fullscreen flag")
                 pass
+            # Ensure Diff column is visible and focused after restoring layout
+            try:
+                try:
+                    right2 = self.query_one("#right2")
+                    right2.styles.display = None
+                except Exception:
+                    right2 = None
+                def _focus_diff():
+                    try:
+                        if right2 is not None:
+                            right2.focus()
+                            logger.debug("exit_diff_fullscreen: focused #right2 (diff)")
+                    except Exception as e:
+                        self.printException(e, "could not focus right2 after restore")
+
+                try:
+                    self.call_after_refresh(_focus_diff)
+                except Exception:
+                    _focus_diff()
+            except Exception as e:
+                self.printException(e, "exception ensuring diff visibility after restore")
             try:
                 footer = self.query_one("#footer", Label)
                 footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)", style="bold"))
