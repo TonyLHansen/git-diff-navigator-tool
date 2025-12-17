@@ -259,7 +259,8 @@ class FileListBase(AppBase):
             self.printException(e, f"exception setting column widths")
             pass
         try:
-            right1 = self.app.query_one("#right1", HistoryListBase)
+            # Accept any widget at `#right1` (HistoryListBase or FileList)
+            right1 = self.app.query_one("#right1")
             right1.styles.display = "none"
         except Exception as e:
             self.printException(e, f"exception hiding right1")
@@ -1047,10 +1048,18 @@ class FileModeHistoryList(HistoryListBase):
     """subclass for FileMode HistoryList functionality; see `HistoryListBase` for shared logic."""
 
     def populate(self, repo_path: Optional[str] = None) -> None:  # FileModeHistoryList
-        """Populate this History list with a repository-wide commit log using pygit2.
+        """Populate this History list with the commit history for a single file.
 
-        This mirrors `HistoryRepoList.populate_repo_log` to provide compatibility
-        when the app uses the standard `FileModeHistoryList` widget.
+        This method populates the `ListView` with commits for a single file by
+        running `git log --follow` (via `subprocess`) in `self.app.path`. The
+        widget prefers an attached `_filename` attribute; if not present it will
+        use the optional `repo_path` argument as the filename. Each appended
+        `ListItem` will have `_raw_text` set to the visible log line and, when
+        possible, `_hash` set to the commit short-hash parsed from the line.
+
+        After populating the list the method makes the widget visible, sets
+        the selection to the first item, and focuses the widget so the user can
+        immediately navigate the history.
         """
         try:
             # File-mode history should show commits for a specific file.
@@ -1633,37 +1642,43 @@ class RepoModeHistoryList(HistoryListBase):
             try:
                 # Reuse existing widget if present to avoid DuplicateIds
                 try:
-                    existing = None
+                    # Find any existing widgets with id 'right1'. Use `query` to
+                    # tolerate multiple matches (which can throw otherwise).
+                    file_list = None
                     try:
-                        existing = self.app.query_one("#right1")
+                        matches = list(self.app.query("#right1"))
                     except Exception:
-                        existing = None
+                        matches = []
 
-                    if existing is not None:
-                        # If it's already the desired type, reuse it; otherwise remove and recreate
-                        if isinstance(existing, RepoModeFileList):
-                            file_list = existing
-                            try:
-                                file_list.clear()
-                            except Exception as e:
-                                self.printException(e, "clearing existing file_list")
-                        else:
-                            # Reuse the existing widget even if it's a different
-                            # subclass (e.g. FileModeFileList) to avoid DuplicateIds.
-                            file_list = existing
-                            try:
-                                file_list.clear()
-                            except Exception as e:
-                                self.printException(e, "clearing existing non-matching right1")
+                    if matches:
+                        # If there are multiple, remove all but the first to
+                        # restore a sane state.
+                        if len(matches) > 1:
+                            for dup in matches[1:]:
+                                try:
+                                    dup.remove()
+                                except Exception as e:
+                                    self.printException(e, "removing duplicate right1")
+
+                        existing = matches[0]
+                        # Reuse the existing widget to avoid mount races that
+                        # can raise DuplicateIds. Clear and repurpose it as the
+                        # file list for repo-mode; this keeps the DOM stable.
+                        file_list = existing
+                        try:
+                            file_list.clear()
+                        except Exception as e:
+                            self.printException(e, "clearing existing right1")
                     else:
+                        # No existing widget: create and mount one.
                         file_list = RepoModeFileList(id="right1")
-                        if parent is not None:
-                            parent.mount(file_list)
-                        else:
-                            try:
+                        try:
+                            if parent is not None:
+                                parent.mount(file_list)
+                            else:
                                 self.app.mount(file_list)
-                            except Exception as e:
-                                self.printException(e, "mounting right1")
+                        except Exception as e:
+                            self.printException(e, "mounting right1")
                 except Exception as e:
                     self.printException(e, "mount/create error")
                     try:
@@ -1680,6 +1695,33 @@ class RepoModeHistoryList(HistoryListBase):
                     self.printException(e)
                     pass
                 return True
+
+            # Ensure the file_list is actually mounted. If our attempt to
+            # create/mount a new widget failed (e.g. DuplicateIds), try to
+            # locate the mounted `#right1` widget and use that instead. If
+            # none is mounted, abort gracefully.
+            try:
+                mounted_ok = bool(getattr(file_list, "app", None))
+            except Exception:
+                mounted_ok = False
+            if not mounted_ok:
+                try:
+                    existing_mounted = None
+                    try:
+                        existing_mounted = self.app.query_one("#right1")
+                    except Exception:
+                        existing_mounted = None
+                    if existing_mounted is not None and getattr(existing_mounted, "app", None):
+                        file_list = existing_mounted
+                    else:
+                        try:
+                            self.app.push_screen(_TBDModal("Could not mount file list for commit diff"))
+                        except Exception as e:
+                            self.printException(e)
+                        return True
+                except Exception as e:
+                    self.printException(e, "verifying mounted right1")
+                    return True
 
             # store commit hashes for later diff rendering
             try:
@@ -1699,7 +1741,9 @@ class RepoModeHistoryList(HistoryListBase):
                     getattr(pygit2, "GIT_DELTA_TYPECHANGE", 0): "T",
                 }
                 appended = 0
-                for d in getattr(diff, "deltas", lambda: diff)():
+                # `diff.deltas` is an iterable; don't call it. If not present,
+                # iterate `diff` directly which is also iterable in pygit2.
+                for d in getattr(diff, "deltas", diff):
                     try:
                         status = getattr(d, "status", None)
                         marker = delta_map.get(status, " ")
@@ -1731,7 +1775,7 @@ class RepoModeHistoryList(HistoryListBase):
                         self.printException(e)
                         pass
             except Exception as exc:
-                self.printException(e, "error populating file list")
+                self.printException(exc, "error populating file list")
 
             try:
                 file_list.styles.display = None
