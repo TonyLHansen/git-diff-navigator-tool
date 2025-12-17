@@ -843,9 +843,197 @@ class RepoModeFileList(FileListBase):
 
     Currently a no-op subclass; behavior will be added in follow-up edits.
     """
+    def key_left(self) -> bool:  # RepoModeFileList
+        """When Left is pressed in the repo-mode Files column, close
+        the Files column and restore the History column to full-width.
 
-    pass
+        Returns True to indicate the key was handled.
+        """
+        try:
+            # Hide the right1 (Files) column and restore left (History)
+            try:
+                # If the files widget itself is at #right1, hide it
+                right1 = self.app.query_one("#right1")
+                try:
+                    right1.styles.display = "none"
+                except Exception as e:
+                    self.printException(e, "exception hiding right1 widget")
+            except Exception as e:
+                self.printException(e, "exception querying #right1")
+                pass
 
+            try:
+                self.app.query_one("#left-column").styles.width = "100%"
+                self.app.query_one("#left-column").styles.flex = 0
+            except Exception as e:
+                self.printException(e, "exception restoring left-column width")
+                pass
+            try:
+                self.app.query_one("#right1-column").styles.width = "0%"
+                self.app.query_one("#right1-column").styles.flex = 0
+            except Exception as e:
+                self.printException(e, "exception shrinking right1-column")
+                pass
+
+            # Update titles so left shows 'History' and right1 hidden
+            try:
+                lbl = self.app.query_one("#left-title", Label)
+                lbl.update(Text("History", style="bold"))
+            except Exception as e:
+                self.printException(e, "exception updating left-title")
+                pass
+            try:
+                lbl = self.app.query_one("#right1-title", Label)
+                lbl.styles.display = "none"
+            except Exception as e:
+                self.printException(e, "exception hiding right1-title")
+                pass
+
+            # Focus the History column (left)
+            try:
+                left = self.app.query_one("#left")
+                left.focus()
+            except Exception as e:
+                self.printException(e, "exception focusing left history")
+                pass
+        except Exception as e:
+            self.printException(e)
+        return True
+
+    def key_right(self) -> bool:  # RepoModeFileList
+        """When Right is pressed on a file in repo-mode, show its diff between
+        the two commits represented by the file list (or per-item hashes).
+
+        Returns True when handled.
+        """
+        child = self.highlighted_child
+        if child is None:
+            return True
+
+        # Prefer attached filename
+        filename = getattr(child, "_filename", None)
+        if filename is None:
+            try:
+                lbl = child.query_one(Label)
+                if hasattr(lbl, "text"):
+                    filename = lbl.text
+                else:
+                    renderable = getattr(lbl, "renderable", None)
+                    if isinstance(renderable, Text):
+                        filename = renderable.plain
+                    elif renderable is not None:
+                        filename = str(renderable)
+                    else:
+                        filename = str(lbl)
+            except Exception as e:
+                try:
+                    self.app.push_screen(_TBDModal(str(e)))
+                except Exception:
+                    pass
+                return True
+
+        # Determine commit hashes: prefer per-item hashes then file_list attrs then app-wide
+        try:
+            prev = getattr(child, "_hash_prev", None) or getattr(self, "current_prev_sha", None) or getattr(self.app, "current_prev_sha", None)
+            curr = getattr(child, "_hash_curr", None) or getattr(self, "current_commit_sha", None) or getattr(self.app, "current_commit_sha", None)
+        except Exception as e:
+            self.printException(e, "exception getting commit hashes")
+            prev = None
+            curr = None
+
+        if not filename:
+            try:
+                self.app.push_screen(_TBDModal("Unknown filename for diff"))
+            except Exception:
+                pass
+            return True
+
+        # Store current diff info on the app for re-rendering/variant toggles
+        try:
+            self.app.current_commit_sha = curr
+            self.app.current_prev_sha = prev
+            self.app.current_diff_file = filename
+        except Exception as e:
+            self.printException(e, "exception setting app diff info")
+            pass
+
+        try:
+            cmd = self.app.build_diff_cmd(prev, curr, filename)
+            proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
+            diff_out = proc.stdout or proc.stderr or ""
+        except Exception as exc:
+            try:
+                self.app.push_screen(_TBDModal(str(exc)))
+            except Exception:
+                pass
+            return True
+
+        # show the Diff column and populate it
+        try:
+            diff_view = self.app.query_one("#right2", ListView)
+            try:
+                diff_view.clear()
+            except Exception as e:
+                self.printException(e, "clearing diff view")
+                pass
+
+            try:
+                header = ListItem(Label(Text(f"Comparing: {prev}..{curr}", style="bold")))
+                diff_view.append(header)
+            except Exception as e:
+                self.printException(e, "appending diff header")
+                pass
+
+            if diff_out:
+                for line in diff_out.splitlines():
+                    if self.app.colorize_diff:
+                        if line.startswith("+++") or line.startswith("---"):
+                            styled_text = Text(line, style="bold white")
+                        elif line.startswith("+"):
+                            styled_text = Text(line, style="green")
+                        elif line.startswith("-"):
+                            styled_text = Text(line, style="red")
+                        elif line.startswith("@@"):
+                            styled_text = Text(line, style="cyan")
+                        elif line.startswith("diff --git") or line.startswith("index "):
+                            styled_text = Text(line, style="bold")
+                        else:
+                            styled_text = Text(line)
+                    else:
+                        styled_text = Text(line)
+                    diff_view.append(ListItem(Label(styled_text)))
+            else:
+                diff_view.append(ListItem(Label(Text(f"No diff between {prev}..{curr}"))))
+
+            try:
+                v = getattr(self.app, "diff_variants", [None])[getattr(self.app, "diff_cmd_index", 0)]
+                title_lbl = self.app.query_one("#right2-title", Label)
+                title_lbl.update(Text("Diff" if not v else f"Diff {v}", style="bold"))
+            except Exception as e:
+                self.printException(e, "updating right2 title")
+                pass
+            try:
+                diff_view.styles.display = None
+            except Exception as e:
+                self.printException(e, "making diff column visible")
+                pass
+
+            try:
+                diff_view.index = 0
+            except Exception as e:
+                self.printException(e, "setting diff view index")
+                pass
+            try:
+                diff_view.focus()
+            except Exception as e:
+                self.printException(e, "focusing diff view")
+                pass
+        except Exception as exc:
+            try:
+                self.app.push_screen(_TBDModal(str(exc)))
+            except Exception:
+                pass
+        return True
 
 class HistoryListBase(AppBase):
     """ListView used for the History column."""
@@ -1813,17 +2001,38 @@ class RepoModeHistoryList(HistoryListBase):
                                     dup.remove()
                                 except Exception as e:
                                     self.printException(e, "removing duplicate right1")
-
                         existing = matches[0]
-                        # Always reuse the existing widget to avoid mount races
-                        # and DuplicateIds. Clearing the existing widget and
-                        # repopulating it is safer than trying to remove and
-                        # re-mount a new widget while the app is running.
-                        file_list = existing
-                        try:
-                            file_list.clear()
-                        except Exception as e:
-                            self.printException(e, "clearing existing right1")
+                        # If the existing widget is already the repo-mode
+                        # specialized list, reuse it. Otherwise, remove the
+                        # existing generic FileModeFileList and replace it
+                        # with a RepoModeFileList so repo-specific key
+                        # handlers work correctly.
+                        if isinstance(existing, RepoModeFileList):
+                            file_list = existing
+                            try:
+                                file_list.clear()
+                            except Exception as e:
+                                self.printException(e, "clearing existing right1")
+                        else:
+                            try:
+                                # Instead of removing and mounting (which can
+                                # trigger DuplicateIds races), convert the
+                                # existing widget in-place to the repo-mode
+                                # class by updating its __class__. This is a
+                                # safe operation because both classes share the
+                                # same base (`FileListBase`). Then clear it and
+                                # reuse it.
+                                try:
+                                    existing.__class__ = RepoModeFileList
+                                except Exception as e:
+                                    self.printException(e, "exception converting existing right1 to RepoModeFileList")
+                                file_list = existing
+                                try:
+                                    file_list.clear()
+                                except Exception as e:
+                                    self.printException(e, "clearing converted right1")
+                            except Exception as e:
+                                self.printException(e, "replacing right1 with repo-mode list")
                     else:
                         # No existing widget: create and mount one.
                         file_list = RepoModeFileList(id="right1")
@@ -2564,7 +2773,13 @@ class DiffListBase(AppBase):
                 except Exception as e:
                     self.printException(e)
                     left = None
-            hist = self.app.query_one("#right1", FileModeHistoryList)
+            try:
+                hist = self.app.query_one("#right1", FileModeHistoryList)
+            except Exception:
+                try:
+                    hist = self.app.query_one("#right1")
+                except Exception:
+                    hist = None
             diff = self.app.query_one("#right2", ListView)
             try:
                 # adjust outer columns to the target proportions
@@ -2592,9 +2807,14 @@ class DiffListBase(AppBase):
                 self.printException(e)
                 pass
             try:
-                hist.styles.width = "100%"
-                hist.styles.flex = 0
-                hist.styles.display = None
+                if hist is not None:
+                    try:
+                        hist.styles.width = "100%"
+                        hist.styles.flex = 0
+                        hist.styles.display = None
+                    except Exception as e:
+                        self.printException(e)
+                        pass
             except Exception as e:
                 self.printException(e)
                 pass
@@ -2693,8 +2913,15 @@ class FileModeDiffList(DiffListBase):
                 return True
             # otherwise move focus back to History
             try:
-                hist = self.app.query_one("#right1", FileModeHistoryList)
-                hist.focus()
+                try:
+                    hist = self.app.query_one("#right1", FileModeHistoryList)
+                except Exception:
+                    try:
+                        hist = self.app.query_one("#right1")
+                    except Exception:
+                        hist = None
+                if hist is not None:
+                    hist.focus()
             except Exception as e:
                 self.printException(e, "exception focusing history")
                 return True
