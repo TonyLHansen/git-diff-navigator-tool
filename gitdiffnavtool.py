@@ -641,7 +641,10 @@ class FileModeFileList(FileListBase):
                                                 self.printException(e, "exception getting index file mtime")
                                                 mtime = None
                                         if mtime:
-                                            display_pseudo = f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} STAGED"
+                                            display_pseudo = (
+                                                f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} "
+                                                "STAGED"
+                                            )
                                 except Exception as e:
                                     self.printException(e, "exception building STAGED display")
                                     display_pseudo = "STAGED"
@@ -866,24 +869,24 @@ class HistoryListBase(AppBase):
                     try:
                         self.index = None
                     except Exception as e:
-                        self.printException(e, "clearing index: exception")
+                        self.printException(e, "clearing index")
                         pass
                     try:
                         self.index = target
                     except Exception as e:
-                        self.printException(e, "restoring index target: exception")
+                        self.printException(e, "restoring index target")
                         pass
                 except Exception as e:
-                    self.printException(e, "nodes processing: exception")
+                    self.printException(e, "nodes processing")
                     return
 
             try:
                 self.call_after_refresh(_apply)
             except Exception as e:
-                self.printException(e, "call_after_refresh exception")
+                self.printException(e, "call_after_refresh")
                 _apply()
         except Exception as e:
-            self.printException(e, "_apply setup: exception")
+            self.printException(e, "_apply setup")
             pass
 
         # When History receives focus, make Files/History split 50/50 and hide Diff
@@ -912,42 +915,42 @@ class HistoryListBase(AppBase):
                     self.app.query_one("#left-column").styles.width = "25%"
                     self.app.query_one("#left-column").styles.flex = 0
                 except Exception as e:
-                    self.printException(e, "setting left-column width: exception")
+                    self.printException(e, "setting left-column width")
                     pass
                 try:
                     self.app.query_one("#right1-column").styles.width = "75%"
                     self.app.query_one("#right1-column").styles.flex = 0
                 except Exception as e:
-                    self.printException(e, "setting right1-column width: exception")
+                    self.printException(e, "setting right1-column width")
                     pass
                 # inner lists should fill their outer column
                 left.styles.width = "100%"
                 left.styles.flex = 0
             except Exception as e:
-                self.printException(e, "setting left list styles: exception")
+                self.printException(e, "setting left list styles")
                 pass
             try:
                 self.styles.width = "100%"
                 self.styles.display = None
                 self.styles.flex = 0
             except Exception as e:
-                self.printException(e, "setting history styles: exception")
+                self.printException(e, "setting history styles")
                 pass
             # hide diff list and shrink its outer column to zero so the
             # title doesn't consume space
             try:
                 right2.styles.display = "none"
             except Exception as e:
-                self.printException(e, "hiding diff list: exception")
+                self.printException(e, "hiding diff list")
                 pass
             try:
                 self.app.query_one("#right2-column").styles.width = "0%"
                 self.app.query_one("#right2-column").styles.flex = 0
             except Exception as e:
-                self.printException(e, "setting right2-column width: exception")
+                self.printException(e, "setting right2-column width")
                 pass
         except Exception as e:
-            self.printException(e, "layout adjustment: exception")
+            self.printException(e, "layout adjustment")
             pass
         # Titles: show left and history, hide diff
         try:
@@ -957,7 +960,7 @@ class HistoryListBase(AppBase):
             lbl.styles.height = None
             lbl.styles.width = None
         except Exception as e:
-            self.printException(e, "updating left-title label: exception")
+            self.printException(e, "updating left-title label")
             pass
         try:
             lbl = self.app.query_one("#right1-title", Label)
@@ -965,7 +968,7 @@ class HistoryListBase(AppBase):
             lbl.styles.height = None
             lbl.styles.width = None
         except Exception as e:
-            self.printException(e, "updating right1-title label: exception")
+            self.printException(e, "updating right1-title label")
             pass
         try:
             lbl = self.app.query_one("#right2-title", Label)
@@ -973,7 +976,7 @@ class HistoryListBase(AppBase):
             lbl.styles.height = 0
             lbl.styles.width = 0
         except Exception as e:
-            self.printException(e, "updating right2 title: exception")
+            self.printException(e, "updating right2 title")
             pass
 
         # istBaseBase footer
@@ -981,7 +984,7 @@ class HistoryListBase(AppBase):
             footer = self.app.query_one("#footer", Label)
             footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →   m(ark)", style="bold"))
         except Exception as e:
-            self.printException(e, "updating footer: exception")
+            self.printException(e, "updating footer")
             pass
 
     def on_key(self, event: events.Key) -> None:  # HistoryListBase
@@ -1002,7 +1005,7 @@ class HistoryListBase(AppBase):
             try:
                 self.toggle_check_current()
             except Exception as e:
-                self.printException(e, "toggle check: exception")
+                self.printException(e, "toggle check")
                 pass
             return
         if key == "left":
@@ -1152,7 +1155,7 @@ class FileModeHistoryList(HistoryListBase):
                     files = None
             files.focus()
         except Exception as e:
-            self.printException(e, "focusing files on left: exception")
+            self.printException(e, "focusing files on left")
             return True
         return True
 
@@ -1168,7 +1171,7 @@ class FileModeHistoryList(HistoryListBase):
             try:
                 self.app.push_screen(_TBDModal("No commit to diff with"))
             except Exception as e:
-                self.printException(e, "showing no commit modal: exception")
+                self.printException(e, "showing no commit modal")
                 pass
             return True
 
@@ -1196,7 +1199,7 @@ class FileModeHistoryList(HistoryListBase):
                     return str(renderable)
                 return str(lbl)
             except Exception as e:
-                self.printException(e, "extracting text: exception")
+                self.printException(e, "extracting text")
                 return str(node)
 
         # Determine the pair of indices to diff: default is current vs next
@@ -1206,7 +1209,7 @@ class FileModeHistoryList(HistoryListBase):
                 try:
                     self.app.push_screen(_TBDModal("No earlier commit to diff with"))
                 except Exception as e:
-                    self.printException(e, "showing no earlier commit modal: exception")
+                    self.printException(e, "showing no earlier commit modal")
                     pass
                 return True
             i_newer = idx
@@ -1240,7 +1243,7 @@ class FileModeHistoryList(HistoryListBase):
                 try:
                     self.app.push_screen(_TBDModal(f"Could not parse hashes: {exc}"))
                 except Exception as e:
-                    self.printException(e, "showing hash parse error modal: exception")
+                    self.printException(e, "showing hash parse error modal")
                     pass
                 return True
 
@@ -1250,7 +1253,7 @@ class FileModeHistoryList(HistoryListBase):
             try:
                 self.app.push_screen(_TBDModal("Unknown filename for history"))
             except Exception as e:
-                self.printException(e, "showing unknown filename modal: exception")
+                self.printException(e, "showing unknown filename modal")
                 pass
             return True
 
@@ -1269,7 +1272,7 @@ class FileModeHistoryList(HistoryListBase):
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
             except Exception as e:
-                self.printException(e, "showing subprocess error modal: exception")
+                self.printException(e, "showing subprocess error modal")
                 pass
             return True
 
@@ -1279,7 +1282,7 @@ class FileModeHistoryList(HistoryListBase):
             try:
                 diff_view.clear()
             except Exception as e:
-                self.printException(e, "clearing diff view: exception")
+                self.printException(e, "clearing diff view")
                 pass
 
             # Header indicating which two hashes are being compared
@@ -1287,7 +1290,7 @@ class FileModeHistoryList(HistoryListBase):
                 header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
                 diff_view.append(header)
             except Exception as e:
-                self.printException(e, "appending diff header: exception")
+                self.printException(e, "appending diff header")
                 pass
 
             if diff_out:
@@ -1327,28 +1330,28 @@ class FileModeHistoryList(HistoryListBase):
                     title_lbl = self.app.query_one("#right2-title", Label)
                     title_lbl.update(Text("Diff" if not v else f"Diff {v}", style="bold"))
                 except Exception as e:
-                    self.printException(e, "updating right2 title: exception")
+                    self.printException(e, "updating right2 title")
                     pass
                 diff_view.styles.display = None
             except Exception as e:
-                self.printException(e, "making diff column visible: exception")
+                self.printException(e, "making diff column visible")
                 pass
 
             try:
                 diff_view.index = 0
             except Exception as e:
-                self.printException(e, "setting diff view index: exception")
+                self.printException(e, "setting diff view index")
                 pass
             try:
                 diff_view.focus()
             except Exception as e:
-                self.printException(e, "focusing diff view: exception")
+                self.printException(e, "focusing diff view")
                 pass
         except Exception as exc:
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
             except Exception as e:
-                self.printException(e, "showing diff error modal: exception")
+                self.printException(e, "showing diff error modal")
                 pass
         return True
 
@@ -1628,29 +1631,49 @@ class RepoModeHistoryList(HistoryListBase):
                 parent = None
 
             try:
-                # remove old widget if present
+                # Reuse existing widget if present to avoid DuplicateIds
                 try:
-                    old = self.app.query_one("#right1")
+                    existing = None
                     try:
-                        old.remove()
-                    except Exception as e:
-                        self.printException(e)
-                        pass
-                except Exception as e:
-                    self.printException(e)
-                    pass
+                        existing = self.app.query_one("#right1")
+                    except Exception:
+                        existing = None
 
-                file_list = RepoModeFileList(id="right1")
-                if parent is not None:
-                    parent.mount(file_list)
-                else:
+                    if existing is not None:
+                        # If it's already the desired type, reuse it; otherwise remove and recreate
+                        if isinstance(existing, RepoModeFileList):
+                            file_list = existing
+                            try:
+                                file_list.clear()
+                            except Exception as e:
+                                self.printException(e, "clearing existing file_list")
+                        else:
+                            # Reuse the existing widget even if it's a different
+                            # subclass (e.g. FileModeFileList) to avoid DuplicateIds.
+                            file_list = existing
+                            try:
+                                file_list.clear()
+                            except Exception as e:
+                                self.printException(e, "clearing existing non-matching right1")
+                    else:
+                        file_list = RepoModeFileList(id="right1")
+                        if parent is not None:
+                            parent.mount(file_list)
+                        else:
+                            try:
+                                self.app.mount(file_list)
+                            except Exception as e:
+                                self.printException(e, "mounting right1")
+                except Exception as e:
+                    self.printException(e, "mount/create error")
                     try:
-                        self.app.mount(file_list)
+                        self.app.push_screen(_TBDModal("Could not show files for commit diff"))
                     except Exception as e:
                         self.printException(e)
                         pass
+                    return True
             except Exception as exc:
-                self.printException(exc, f"RepoModeHistoryList.key_right: mount error")
+                self.printException(exc, "unexpected mount error")
                 try:
                     self.app.push_screen(_TBDModal("Could not show files for commit diff"))
                 except Exception as e:
@@ -1751,7 +1774,10 @@ class DiffListBase(AppBase):
     """
 
     def on_key(self, event: events.Key) -> None:  # DiffListBase
-        """Handle left key to move focus back to History; handle PgUp/PgDn with visible selection; handle c/C to toggle colorization."""
+        """
+        Handle left key to move focus back to History;
+        handle PgUp/PgDn with visible selection; handle c/C to toggle colorization.
+        """
         key = event.key
         logger.debug(f"DiffList.on_key: key={key}")
 
@@ -2079,7 +2105,9 @@ class DiffListBase(AppBase):
                                         if new_index < len(nodes):
                                             nodes[new_index].add_class("-highlight")
                                     except Exception as e:
-                                        self.printException(e, "exception managing highlight classes after instant scroll")
+                                        self.printException(
+                                            e, "exception managing highlight classes after instant scroll"
+                                        )
                                 except Exception as e:
                                     self.printException(e, "exception setting index after instant scroll")
                         except Exception as e:
