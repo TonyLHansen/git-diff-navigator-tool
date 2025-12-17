@@ -56,6 +56,30 @@ class AppBase(ListView):
         logger.warning(f"WARNING: {className}.{funcName}: {msg}")
         logger.warning(traceback.format_exc())
 
+    def text_of(self, node) -> str:
+        """Extract visible text from a ListItem node's Label/renderable.
+
+        This centralizes the logic used by history lists to parse the
+        display text for commits so both FileMode and RepoMode history
+        handlers can reuse it.
+        """
+        try:
+            raw = getattr(node, "_raw_text", None)
+            if raw is not None:
+                return raw
+            lbl = node.query_one(Label)
+            if hasattr(lbl, "text"):
+                return lbl.text
+            renderable = getattr(lbl, "renderable", None)
+            if isinstance(renderable, Text):
+                return renderable.plain
+            if renderable is not None:
+                return str(renderable)
+            return str(lbl)
+        except Exception as e:
+            self.printException(e, "extracting text")
+            return str(node)
+
 
 class FileListBase(AppBase):
     """A ListView showing directory contents. Directories have a blue background.
@@ -107,7 +131,9 @@ class FileListBase(AppBase):
         self.clear()
         # Insert a short key/legend explaining the repo-status markers shown
         try:
-            key_text = Text("Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted", style="bold")
+            key_text = Text(
+                "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted", style="bold"
+            )
             self.append(ListItem(Label(key_text)))
             try:
                 # Prevent cursor from moving into the legend row
@@ -849,6 +875,7 @@ class RepoModeFileList(FileListBase):
 
     Currently a no-op subclass; behavior will be added in follow-up edits.
     """
+
     def key_left(self) -> bool:  # RepoModeFileList
         """When Left is pressed in the repo-mode Files column, close
         the Files column and restore the History column to full-width.
@@ -940,8 +967,16 @@ class RepoModeFileList(FileListBase):
 
         # Determine commit hashes: prefer per-item hashes then file_list attrs then app-wide
         try:
-            prev = getattr(child, "_hash_prev", None) or getattr(self, "current_prev_sha", None) or getattr(self.app, "current_prev_sha", None)
-            curr = getattr(child, "_hash_curr", None) or getattr(self, "current_commit_sha", None) or getattr(self.app, "current_commit_sha", None)
+            prev = (
+                getattr(child, "_hash_prev", None)
+                or getattr(self, "current_prev_sha", None)
+                or getattr(self.app, "current_prev_sha", None)
+            )
+            curr = (
+                getattr(child, "_hash_curr", None)
+                or getattr(self, "current_commit_sha", None)
+                or getattr(self.app, "current_commit_sha", None)
+            )
         except Exception as e:
             self.printException(e, "exception getting commit hashes")
             prev = None
@@ -1040,6 +1075,7 @@ class RepoModeFileList(FileListBase):
             except Exception:
                 pass
         return True
+
 
 class HistoryListBase(AppBase):
     """ListView used for the History column."""
@@ -1501,26 +1537,6 @@ class FileModeHistoryList(HistoryListBase):
                 checked_idx = i
                 break
 
-        # helper to extract the text of a ListItem label
-        def _text_of(node) -> str:
-            try:
-                # prefer stored raw text
-                raw = getattr(node, "_raw_text", None)
-                if raw is not None:
-                    return raw
-                lbl = node.query_one(Label)
-                if hasattr(lbl, "text"):
-                    return lbl.text
-                renderable = getattr(lbl, "renderable", None)
-                if isinstance(renderable, Text):
-                    return renderable.plain
-                if renderable is not None:
-                    return str(renderable)
-                return str(lbl)
-            except Exception as e:
-                self.printException(e, "extracting text")
-                return str(node)
-
         # Determine the pair of indices to diff: default is current vs next
         if checked_idx is None or checked_idx == idx:
             # behave as before: need a next item
@@ -1544,8 +1560,8 @@ class FileModeHistoryList(HistoryListBase):
             i_older = max(i1, i2)
             i_newer = min(i1, i2)
 
-        current_line = _text_of(nodes[i_newer])
-        previous_line = _text_of(nodes[i_older])
+        current_line = self.text_of(nodes[i_newer])
+        previous_line = self.text_of(nodes[i_older])
 
         # Prefer attached _hash on ListItems; fallback to regex parsing
         current_hash = getattr(nodes[i_newer], "_hash", None)
@@ -1867,26 +1883,8 @@ class RepoModeHistoryList(HistoryListBase):
                 else:
                     i_newer, i_older = i2, i1
 
-            def _text_of(node) -> str:
-                try:
-                    raw = getattr(node, "_raw_text", None)
-                    if raw is not None:
-                        return raw
-                    lbl = node.query_one(Label)
-                    if hasattr(lbl, "text"):
-                        return lbl.text
-                    renderable = getattr(lbl, "renderable", None)
-                    if isinstance(renderable, Text):
-                        return renderable.plain
-                    if renderable is not None:
-                        return str(renderable)
-                    return str(lbl)
-                except Exception as e:
-                    self.printException(e)
-                    return str(node)
-
-            current_line = _text_of(nodes[i_newer])
-            previous_line = _text_of(nodes[i_older])
+            current_line = self.text_of(nodes[i_newer])
+            previous_line = self.text_of(nodes[i_older])
 
             current_hash = getattr(nodes[i_newer], "_hash", None)
             previous_hash = getattr(nodes[i_older], "_hash", None)
@@ -2162,6 +2160,7 @@ class RepoModeHistoryList(HistoryListBase):
                         pass
                 # Append buffered items after the next refresh so mounts succeed
                 try:
+
                     def _append_buffer():
                         try:
                             # Prevent double-appending if this callback runs more than once
@@ -2170,7 +2169,14 @@ class RepoModeHistoryList(HistoryListBase):
                                 return
                             # Insert legend at top for repo-populated file lists
                             try:
-                                key_li = ListItem(Label(Text("Key: ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted", style="bold")))
+                                key_li = ListItem(
+                                    Label(
+                                        Text(
+                                            "Key: ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted",
+                                            style="bold",
+                                        )
+                                    )
+                                )
                                 try:
                                     file_list.append(key_li)
                                     try:
@@ -2188,7 +2194,9 @@ class RepoModeHistoryList(HistoryListBase):
                             for it in items_buffer:
                                 try:
                                     file_list.append(it)
-                                    logger.debug(f"RepoModeHistoryList._append_buffer: appended item to file_list: {getattr(it,'_filename',None)!r}")
+                                    logger.debug(
+                                        f"RepoModeHistoryList._append_buffer: appended item to file_list: {getattr(it,'_filename',None)!r}"
+                                    )
                                 except Exception as e:
                                     self.printException(e)
                                     continue
@@ -2216,7 +2224,9 @@ class RepoModeHistoryList(HistoryListBase):
                                     # the legend row isn't selected.
                                     try:
                                         file_list.call_after_refresh(
-                                            lambda: setattr(file_list, "index", getattr(file_list, "_min_index", 0) or 0)
+                                            lambda: setattr(
+                                                file_list, "index", getattr(file_list, "_min_index", 0) or 0
+                                            )
                                         )
                                     except Exception:
                                         try:
@@ -2277,7 +2287,9 @@ class RepoModeHistoryList(HistoryListBase):
             except Exception as exc:
                 self.printException(exc, "error populating file list")
 
-            logger.debug(f"RepoModeHistoryList.key_right: finished populating file_list mounted={bool(getattr(file_list,'app',None))} nodes={len(getattr(file_list,'_nodes',[]))}")
+            logger.debug(
+                f"RepoModeHistoryList.key_right: finished populating file_list mounted={bool(getattr(file_list,'app',None))} nodes={len(getattr(file_list,'_nodes',[]))}"
+            )
 
             try:
                 file_list.styles.display = None
@@ -2955,6 +2967,7 @@ class FileModeDiffList(DiffListBase):
                 try:
                     if hist is not None:
                         hist.focus()
+
                         # After focus, enforce the desired 25/75 split again
                         def _enforce_25_75():
                             try:
@@ -3428,6 +3441,7 @@ App {
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
         self.diff_cmd_index: int = 0
         # start the app showing repository-wide commit log first when True
+
     def printException(self, e, msg=None):
         """Log an exception from the app context (mirrors AppBase.printException)."""
         className = type(self).__name__
@@ -4109,9 +4123,22 @@ App {
                     right2_widget = self.query_one("#right2")
 
                     self.saved_column_state = {
-                        "left": {"width": _norm_width(left_col.styles.width), "flex": left_col.styles.flex, "display": getattr(self.query_one("#left"), "styles", None) and getattr(self.query_one("#left"), "styles").display},
-                        "right1": {"width": _norm_width(right1_col.styles.width), "flex": right1_col.styles.flex, "display": right1_widget.styles.display},
-                        "right2": {"width": _norm_width(right2_col.styles.width), "flex": right2_col.styles.flex, "display": right2_widget.styles.display},
+                        "left": {
+                            "width": _norm_width(left_col.styles.width),
+                            "flex": left_col.styles.flex,
+                            "display": getattr(self.query_one("#left"), "styles", None)
+                            and getattr(self.query_one("#left"), "styles").display,
+                        },
+                        "right1": {
+                            "width": _norm_width(right1_col.styles.width),
+                            "flex": right1_col.styles.flex,
+                            "display": right1_widget.styles.display,
+                        },
+                        "right2": {
+                            "width": _norm_width(right2_col.styles.width),
+                            "flex": right2_col.styles.flex,
+                            "display": right2_widget.styles.display,
+                        },
                     }
                     logger.debug(f"Saved column state: {self.saved_column_state}")
 
@@ -4169,9 +4196,21 @@ App {
                 right1_widget = self.query_one("#right1")
                 right2_widget = self.query_one("#right2")
                 self.saved_column_state = {
-                    "left": {"width": _norm_width(left_col.styles.width), "flex": left_col.styles.flex, "display": getattr(left_widget.styles, "display", None)},
-                    "right1": {"width": _norm_width(right1_col.styles.width), "flex": right1_col.styles.flex, "display": getattr(right1_widget.styles, "display", None)},
-                    "right2": {"width": _norm_width(right2_col.styles.width), "flex": right2_col.styles.flex, "display": getattr(right2_widget.styles, "display", None)},
+                    "left": {
+                        "width": _norm_width(left_col.styles.width),
+                        "flex": left_col.styles.flex,
+                        "display": getattr(left_widget.styles, "display", None),
+                    },
+                    "right1": {
+                        "width": _norm_width(right1_col.styles.width),
+                        "flex": right1_col.styles.flex,
+                        "display": getattr(right1_widget.styles, "display", None),
+                    },
+                    "right2": {
+                        "width": _norm_width(right2_col.styles.width),
+                        "flex": right2_col.styles.flex,
+                        "display": getattr(right2_widget.styles, "display", None),
+                    },
                 }
                 logger.debug(f"enter_diff_fullscreen: saved_column_state={self.saved_column_state}")
             except Exception as e:
@@ -4355,6 +4394,7 @@ App {
                     right2.styles.display = None
                 except Exception:
                     right2 = None
+
                 def _focus_diff():
                     try:
                         if right2 is not None:
