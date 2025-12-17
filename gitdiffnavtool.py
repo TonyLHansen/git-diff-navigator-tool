@@ -274,8 +274,21 @@ class FileListBase(AppBase):
 
         # show/hide titles for columns: left visible, others hidden
         try:
+            # Determine which column holds Files vs History depending on
+            # whether the app was started in log-first mode and which
+            # widget currently has focus. If this FileList is the focused
+            # files widget, show its column title as 'Files' and hide the
+            # other history title.
+            files_id = getattr(self, "id", "left")
+            if files_id == "left":
+                left_text = "Files"
+                right1_text = "History"
+            else:
+                left_text = "History"
+                right1_text = "Files"
+
             lbl = self.app.query_one("#left-title", Label)
-            lbl.update(Text("Files", style="bold"))  # Restore full name
+            lbl.update(Text(left_text, style="bold"))
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
@@ -284,11 +297,12 @@ class FileListBase(AppBase):
             pass
         try:
             lbl = self.app.query_one("#right1-title", Label)
-            lbl.styles.display = "none"
-            lbl.styles.height = 0
-            lbl.styles.width = 0
+            lbl.update(Text(right1_text, style="bold"))
+            lbl.styles.display = None
+            lbl.styles.height = None
+            lbl.styles.width = None
         except Exception as e:
-            self.printException(e, f"exception hiding right1 title")
+            self.printException(e, f"exception updating right1 title")
             pass
         try:
             lbl = self.app.query_one("#right2-title", Label)
@@ -955,8 +969,21 @@ class HistoryListBase(AppBase):
             pass
         # Titles: show left and history, hide diff
         try:
+            # When History is focused, show the History title in the
+            # focused column and label the other column as Files. The
+            # focused history widget may be at `#left` (default layout)
+            # or `#right1` when `log_first` is active; derive titles from
+            # the widget id to ensure correctness.
+            hist_id = getattr(self, "id", "left")
+            if hist_id == "left":
+                left_text = "History"
+                right1_text = "Files"
+            else:
+                left_text = "Files"
+                right1_text = "History"
+
             lbl = self.app.query_one("#left-title", Label)
-            lbl.update(Text("Files", style="bold"))  # Restore full name
+            lbl.update(Text(left_text, style="bold"))
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
@@ -965,6 +992,7 @@ class HistoryListBase(AppBase):
             pass
         try:
             lbl = self.app.query_one("#right1-title", Label)
+            lbl.update(Text(right1_text, style="bold"))
             lbl.styles.display = None
             lbl.styles.height = None
             lbl.styles.width = None
@@ -2778,6 +2806,10 @@ App {
         If `path` names a file, treat its directory as the working path and
         remember the filename to open its history on mount.
         """
+        # Ensure `log_first` is available before `compose` runs in the
+        # Textual `App` initialization so the UI can be composed with the
+        # correct column ordering when starting in log-first mode.
+        self.log_first: bool = bool(log_first)
         super().__init__(**kwargs)
         # If the provided path is a file, treat its directory as the app path
         # and remember the filename so we can immediately open its history.
@@ -2811,7 +2843,6 @@ App {
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
         self.diff_cmd_index: int = 0
         # start the app showing repository-wide commit log first when True
-        self.log_first: bool = bool(log_first)
 
     def build_diff_cmd(self, prev: str | None, curr: str | None, fname: str) -> list[str]:
         """Construct the git diff command honoring the currently selected variant.
