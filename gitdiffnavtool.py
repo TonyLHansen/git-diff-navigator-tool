@@ -56,6 +56,64 @@ class AppBase(ListView):
         logger.warning(f"WARNING: {className}.{funcName}: {msg}")
         logger.warning(traceback.format_exc())
 
+    # Layout helpers: centralize column width/display management
+    def _apply_column_layout(self, left_w: str, right1_w: str, right2_w: str, left_display=None, right1_display=None, right2_display=None) -> None:
+        """Set outer column widths and optional widget display flags."""
+        try:
+            try:
+                lc = self.query_one("#left-column")
+                lc.styles.width = left_w
+                lc.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set left-column")
+            try:
+                r1c = self.query_one("#right1-column")
+                r1c.styles.width = right1_w
+                r1c.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set right1-column")
+            try:
+                r2c = self.query_one("#right2-column")
+                r2c.styles.width = right2_w
+                r2c.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set right2-column")
+
+            # Optionally set widget display styles
+            try:
+                if left_display is not None:
+                    self.query_one("#left").styles.display = left_display
+            except Exception:
+                pass
+            try:
+                if right1_display is not None:
+                    self.query_one("#right1").styles.display = right1_display
+            except Exception:
+                pass
+            try:
+                if right2_display is not None:
+                    self.query_one("#right2").styles.display = right2_display
+            except Exception:
+                pass
+        except Exception as e:
+            self.printException(e, "error applying column layout")
+
+    def layout_left_only(self) -> None:
+        """Show only the left (History) column full-width."""
+        self._apply_column_layout("100%", "0%", "0%", left_display=None, right1_display="none", right2_display="none")
+
+    def layout_left_right_split(self) -> None:
+        """Show left/history and files split 25%/75%."""
+        self._apply_column_layout("25%", "75%", "0%", left_display=None, right1_display=None, right2_display="none")
+
+    def layout_three_columns(self) -> None:
+        """Show three-column layout 5%/15%/80%."""
+        self._apply_column_layout("5%", "15%", "80%", left_display=None, right1_display=None, right2_display=None)
+
+    def layout_diff_fullscreen(self) -> None:
+        """Make the diff column fullscreen (hide left and right1)."""
+        self._apply_column_layout("0%", "0%", "100%", left_display="none", right1_display="none", right2_display=None)
+
     def text_of(self, node) -> str:
         """Extract visible text from a ListItem node's Label/renderable.
 
@@ -288,38 +346,18 @@ class FileListBase(AppBase):
             fid = getattr(self, "id", "left")
             if fid == "left":
                 try:
-                    self.app.query_one("#left-column").styles.width = "100%"
-                    self.app.query_one("#left-column").styles.flex = 0
+                    self.app.layout_left_only()
                 except Exception as e:
                     self.printException(e, f"exception setting left column")
-                    pass
-                try:
-                    self.app.query_one("#right1-column").styles.width = "0%"
-                    self.app.query_one("#right1-column").styles.flex = 0
-                except Exception as e:
-                    self.printException(e, f"exception setting right1 column")
-                    pass
-                try:
-                    self.app.query_one("#right2-column").styles.width = "0%"
-                    self.app.query_one("#right2-column").styles.flex = 0
-                except Exception as e:
-                    self.printException(e, f"exception setting right2 column")
                     pass
                 # Ensure inner left list fills its column
                 self.styles.width = "100%"
                 self.styles.flex = 0
             else:
                 try:
-                    self.app.query_one("#left-column").styles.width = "25%"
-                    self.app.query_one("#left-column").styles.flex = 0
+                    self.app.layout_left_right_split()
                 except Exception as e:
-                    self.printException(e, f"exception setting left column for right1 focus")
-                    pass
-                try:
-                    self.app.query_one("#right1-column").styles.width = "75%"
-                    self.app.query_one("#right1-column").styles.flex = 0
-                except Exception as e:
-                    self.printException(e, f"exception setting right1 column for right1 focus")
+                    self.printException(e, f"exception setting left/right split for right1 focus")
                     pass
                 # Ensure inner right1 list fills its column
                 self.styles.width = "100%"
@@ -886,27 +924,16 @@ class RepoModeFileList(FileListBase):
         try:
             # Hide the right1 (Files) column and restore left (History)
             try:
-                # If the files widget itself is at #right1, hide it
-                right1 = self.app.query_one("#right1")
+                # Restore single-column history layout using helper
+                self.app.layout_left_only()
                 try:
+                    # If the files widget itself is at #right1, hide it
+                    right1 = self.app.query_one("#right1")
                     right1.styles.display = "none"
-                except Exception as e:
-                    self.printException(e, "exception hiding right1 widget")
+                except Exception:
+                    pass
             except Exception as e:
-                self.printException(e, "exception querying #right1")
-                pass
-
-            try:
-                self.app.query_one("#left-column").styles.width = "100%"
-                self.app.query_one("#left-column").styles.flex = 0
-            except Exception as e:
-                self.printException(e, "exception restoring left-column width")
-                pass
-            try:
-                self.app.query_one("#right1-column").styles.width = "0%"
-                self.app.query_one("#right1-column").styles.flex = 0
-            except Exception as e:
-                self.printException(e, "exception shrinking right1-column")
+                self.printException(e, "exception restoring left-only layout")
                 pass
 
             # Update titles so left shows 'History' and right1 hidden
@@ -1242,21 +1269,12 @@ class HistoryListBase(AppBase):
                     self.printException(e)
                     left = None
             right2 = self.app.query_one("#right2", ListView)
-            # set widths to 50/50
+            # Use centralized layout helper to set left/right split and hide diff
             try:
-                # Adjust outer columns so left/right1 split the screen 25/75
                 try:
-                    self.app.query_one("#left-column").styles.width = "25%"
-                    self.app.query_one("#left-column").styles.flex = 0
+                    self.app.layout_left_right_split()
                 except Exception as e:
-                    self.printException(e, "setting left-column width")
-                    pass
-                try:
-                    self.app.query_one("#right1-column").styles.width = "75%"
-                    self.app.query_one("#right1-column").styles.flex = 0
-                except Exception as e:
-                    self.printException(e, "setting right1-column width")
-                    pass
+                    self.printException(e, "layout_left_right_split")
                 # inner lists should fill their outer column
                 left.styles.width = "100%"
                 left.styles.flex = 0
@@ -1270,18 +1288,11 @@ class HistoryListBase(AppBase):
             except Exception as e:
                 self.printException(e, "setting history styles")
                 pass
-            # hide diff list and shrink its outer column to zero so the
-            # title doesn't consume space
+            # explicitly hide the diff list (outer column already shrunk by helper)
             try:
                 right2.styles.display = "none"
             except Exception as e:
                 self.printException(e, "hiding diff list")
-                pass
-            try:
-                self.app.query_one("#right2-column").styles.width = "0%"
-                self.app.query_one("#right2-column").styles.flex = 0
-            except Exception as e:
-                self.printException(e, "setting right2-column width")
                 pass
         except Exception as e:
             self.printException(e, "layout adjustment")
@@ -2302,30 +2313,22 @@ class RepoModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e)
                 pass
-            try:
-                # Make the Files column visible and adjust column widths so
-                # History (left) and Files (right1) split the screen.
                 try:
-                    self.app.query_one("#left-column").styles.width = "25%"
-                    self.app.query_one("#left-column").styles.flex = 0
+                    # Make the Files column visible and use central layout helper
+                    self.app.layout_left_right_split()
+                    try:
+                        # Update titles for log-first layout: left remains History
+                        lbl = self.app.query_one("#left-title", Label)
+                        lbl.update(Text("History", style="bold"))
+                    except Exception as e:
+                        self.printException(e, "updating left-title for files view")
+                    try:
+                        lbl = self.app.query_one("#right1-title", Label)
+                        lbl.update(Text("Files", style="bold"))
+                    except Exception as e:
+                        self.printException(e, "updating right1-title for files view")
                 except Exception as e:
-                    self.printException(e, "setting left-column width for files view")
-                try:
-                    self.app.query_one("#right1-column").styles.width = "75%"
-                    self.app.query_one("#right1-column").styles.flex = 0
-                except Exception as e:
-                    self.printException(e, "setting right1-column width for files view")
-                try:
-                    # Update titles for log-first layout: left remains History
-                    lbl = self.app.query_one("#left-title", Label)
-                    lbl.update(Text("History", style="bold"))
-                except Exception as e:
-                    self.printException(e, "updating left-title for files view")
-                try:
-                    lbl = self.app.query_one("#right1-title", Label)
-                    lbl.update(Text("Files", style="bold"))
-                except Exception as e:
-                    self.printException(e, "updating right1-title for files view")
+                    self.printException(e, "setting files column layout")
 
                 file_list.focus()
             except Exception as e:
@@ -2803,20 +2806,7 @@ class DiffListBase(AppBase):
             try:
                 # adjust outer columns to the target proportions
                 try:
-                    self.app.query_one("#left-column").styles.width = "5%"
-                    self.app.query_one("#left-column").styles.flex = 0
-                except Exception as e:
-                    self.printException(e)
-                    pass
-                try:
-                    self.app.query_one("#right1-column").styles.width = "15%"
-                    self.app.query_one("#right1-column").styles.flex = 0
-                except Exception as e:
-                    self.printException(e)
-                    pass
-                try:
-                    self.app.query_one("#right2-column").styles.width = "80%"
-                    self.app.query_one("#right2-column").styles.flex = 0
+                    self.app.layout_three_columns()
                 except Exception as e:
                     self.printException(e)
                     pass
@@ -2932,16 +2922,10 @@ class FileModeDiffList(DiffListBase):
                 try:
                     # Enforce expected column sizes after exiting fullscreen
                     try:
-                        self.app.query_one("#right2-column").styles.width = "80%"
-                        self.app.query_one("#right2-column").styles.flex = 0
-                    except Exception:
-                        pass
-                    try:
-                        self.app.query_one("#right1-column").styles.width = "15%"
-                        self.app.query_one("#right1-column").styles.flex = 0
-                    except Exception:
-                        pass
-                    logger.debug("FileModeDiffList.key_left: enforced right2=80% right1=15% after exit")
+                        self.app.layout_three_columns()
+                    except Exception as e:
+                        self.printException(e, "layout_three_columns after exit fullscreen")
+                    logger.debug("FileModeDiffList.key_left: enforced three-column layout after exit")
                 except Exception as e:
                     self.printException(e, "could not enforce columns after exit fullscreen")
                 return True
@@ -2956,15 +2940,9 @@ class FileModeDiffList(DiffListBase):
                         hist = None
                 # Ensure the Files/History split is restored to 25/75 before focusing
                 try:
-                    self.app.query_one("#left-column").styles.width = "25%"
-                    self.app.query_one("#left-column").styles.flex = 0
+                    self.app.layout_left_right_split()
                 except Exception as e:
-                    self.printException(e, "could not restore left-column width before focus")
-                try:
-                    self.app.query_one("#right1-column").styles.width = "75%"
-                    self.app.query_one("#right1-column").styles.flex = 0
-                except Exception as e:
-                    self.printException(e, "could not restore right1-column width before focus")
+                    self.printException(e, "could not set left/right split before focus")
                 try:
                     if hist is not None:
                         hist.focus()
@@ -2972,10 +2950,10 @@ class FileModeDiffList(DiffListBase):
                         # After focus, enforce the desired 25/75 split again
                         def _enforce_25_75():
                             try:
-                                self.app.query_one("#left-column").styles.width = "25%"
-                                self.app.query_one("#left-column").styles.flex = 0
-                                self.app.query_one("#right1-column").styles.width = "75%"
-                                self.app.query_one("#right1-column").styles.flex = 0
+                                try:
+                                    self.app.layout_left_right_split()
+                                except Exception as e:
+                                    self.printException(e, "post-focus layout_left_right_split")
                                 try:
                                     r1 = self.app.query_one("#right1")
                                     r1.styles.display = None
@@ -3301,34 +3279,36 @@ class HelpList(AppBase):
             # Restore saved column state if available
             if self.app.saved_column_state:
                 state = self.app.saved_column_state
-                # Restore left column
-                self.app.query_one("#left-column").styles.width = state["left"]["width"]
-                self.app.query_one("#left-column").styles.flex = state["left"]["flex"]
-                # Restore right1 column
-                self.app.query_one("#right1-column").styles.width = state["right1"]["width"]
-                self.app.query_one("#right1-column").styles.flex = state["right1"]["flex"]
-                self.app.query_one("#right1").styles.display = state["right1"]["display"]
-                # Restore right2 column
-                self.app.query_one("#right2-column").styles.width = state["right2"]["width"]
-                self.app.query_one("#right2-column").styles.flex = state["right2"]["flex"]
-                self.app.query_one("#right2").styles.display = state["right2"]["display"]
+                try:
+                    # Use centralized helper to restore widths and displays
+                    self.app._apply_column_layout(
+                        state["left"]["width"],
+                        state["right1"]["width"],
+                        state["right2"]["width"],
+                        left_display=None,
+                        right1_display=state["right1"].get("display"),
+                        right2_display=state["right2"].get("display"),
+                    )
+                except Exception as e:
+                    self.printException(e, "restoring saved column state via helper")
 
                 # Determine focus target: rightmost visible column
-                if state["right2"]["display"] != "none":
-                    focus_target = "#right2"
-                elif state["right1"]["display"] != "none":
-                    focus_target = "#right1"
+                try:
+                    if state["right2"].get("display") != "none":
+                        focus_target = "#right2"
+                    elif state["right1"].get("display") != "none":
+                        focus_target = "#right1"
+                except Exception:
+                    pass
 
                 logger.debug("Column state restored")
             else:
                 logger.debug("No saved state, showing only files column")
                 # Fallback: just show files column
-                self.app.query_one("#left-column").styles.width = "100%"
-                self.app.query_one("#left-column").styles.flex = 0
-                self.app.query_one("#right1-column").styles.width = "0%"
-                self.app.query_one("#right1-column").styles.flex = 0
-                self.app.query_one("#right2-column").styles.width = "0%"
-                self.app.query_one("#right2-column").styles.flex = 0
+                try:
+                    self.app.layout_left_only()
+                except Exception as e:
+                    self.printException(e, "layout_left_only fallback")
 
             # Focus on the appropriate widget
             # Use call_after_refresh to avoid triggering on_focus during layout restore
@@ -3450,6 +3430,62 @@ App {
         msg = msg if msg else "???"
         logger.warning(f"WARNING: {className}.{funcName}: {msg}")
         logger.warning(traceback.format_exc())
+
+    # Layout helpers on the App so widgets can call `self.app.layout_*`.
+    def _apply_column_layout(self, left_w: str, right1_w: str, right2_w: str, left_display=None, right1_display=None, right2_display=None) -> None:
+        try:
+            try:
+                lc = self.query_one("#left-column")
+                lc.styles.width = left_w
+                lc.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set left-column")
+            try:
+                r1c = self.query_one("#right1-column")
+                r1c.styles.width = right1_w
+                r1c.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set right1-column")
+            try:
+                r2c = self.query_one("#right2-column")
+                r2c.styles.width = right2_w
+                r2c.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set right2-column")
+
+            try:
+                if left_display is not None:
+                    self.query_one("#left").styles.display = left_display
+            except Exception:
+                pass
+            try:
+                if right1_display is not None:
+                    self.query_one("#right1").styles.display = right1_display
+            except Exception:
+                pass
+            try:
+                if right2_display is not None:
+                    self.query_one("#right2").styles.display = right2_display
+            except Exception:
+                pass
+        except Exception as e:
+            self.printException(e, "error applying column layout")
+
+    def layout_left_only(self) -> None:
+        """Show only the left (History) column full-width."""
+        self._apply_column_layout("100%", "0%", "0%", left_display=None, right1_display="none", right2_display="none")
+
+    def layout_left_right_split(self) -> None:
+        """Show left/history and files split 25%/75%."""
+        self._apply_column_layout("25%", "75%", "0%", left_display=None, right1_display=None, right2_display="none")
+
+    def layout_three_columns(self) -> None:
+        """Show three-column layout 5%/15%/80%."""
+        self._apply_column_layout("5%", "15%", "80%", left_display=None, right1_display=None, right2_display=None)
+
+    def layout_diff_fullscreen(self) -> None:
+        """Make the diff column fullscreen (hide left and right1)."""
+        self._apply_column_layout("0%", "0%", "100%", left_display="none", right1_display="none", right2_display=None)
 
     def build_diff_cmd(self, prev: str | None, curr: str | None, fname: str) -> list[str]:
         """Construct the git diff command honoring the currently selected variant.
@@ -3833,10 +3869,10 @@ App {
                 self.printException(e)
                 pass
             try:
-                self.query_one("#left-column").styles.width = "25%"
-                self.query_one("#left-column").styles.flex = 0
-                self.query_one("#right1-column").styles.width = "75%"
-                self.query_one("#right1-column").styles.flex = 0
+                try:
+                    self.layout_left_right_split()
+                except Exception as e:
+                    self.printException(e, "layout_left_right_split")
             except Exception as e:
                 self.printException(e)
                 pass
@@ -3884,14 +3920,15 @@ App {
 
                     try:
                         # Make left column full-width and hide others
-                        self.query_one("#left-column").styles.width = "100%"
-                        self.query_one("#left-column").styles.flex = 0
-                        self.query_one("#right1-column").styles.width = "0%"
-                        self.query_one("#right1-column").styles.flex = 0
-                        self.query_one("#right2-column").styles.width = "0%"
-                        self.query_one("#right2-column").styles.flex = 0
-                        self.query_one("#right3-column").styles.width = "0%"
-                        self.query_one("#right3-column").styles.flex = 0
+                        try:
+                            self.layout_left_only()
+                        except Exception as e:
+                            self.printException(e, "layout_left_only in _open_repo_history log-first")
+                        try:
+                            self.query_one("#right3-column").styles.width = "0%"
+                            self.query_one("#right3-column").styles.flex = 0
+                        except Exception:
+                            pass
                     except Exception as e:
                         self.printException(e)
                         pass
@@ -3943,14 +3980,15 @@ App {
 
                     # Adjust layout: hide files and other right columns, show history full-width
                     try:
-                        self.query_one("#left-column").styles.width = "0%"
-                        self.query_one("#left-column").styles.flex = 0
-                        self.query_one("#right1-column").styles.width = "100%"
-                        self.query_one("#right1-column").styles.flex = 0
-                        self.query_one("#right2-column").styles.width = "0%"
-                        self.query_one("#right2-column").styles.flex = 0
-                        self.query_one("#right3-column").styles.width = "0%"
-                        self.query_one("#right3-column").styles.flex = 0
+                        try:
+                            self._apply_column_layout("0%", "100%", "0%", left_display="none", right1_display=None, right2_display="none")
+                        except Exception as e:
+                            self.printException(e, "_apply_column_layout for history full-width")
+                        try:
+                            self.query_one("#right3-column").styles.width = "0%"
+                            self.query_one("#right3-column").styles.flex = 0
+                        except Exception:
+                            pass
                     except Exception as e:
                         self.printException(e)
                         pass

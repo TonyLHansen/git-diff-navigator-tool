@@ -115,3 +115,23 @@ It needs to open a FileRepoList column, initialized with the information from a 
 It should cover the cases of files being changed, added, deleted and renamed.
 The old and new commit hashes need to be passed in to the FileRepoList for
 later use in the Diff window.
+
+
+
+there is a lot of  functionality that is duplicated multiple times.
+Recap for the application: 
+1) there are six classes representing the different sets of information to be displayed in a column.
+2) determining what information to be displayed should be associated with the corresponding class, given a list of parameters specific to that class.
+3) some of the classes have a Key: line to be displayed above other information that is not selectable
+4) all of the scrolling capabilities should be identical between all of the lists and defined in a common base class:
+a) how to move the highlight and determine which item is selected
+b) how to handle up, down, page up, page down, home, end
+5) the specific classes determine how to handle key left and right.
+6) any of the information associated with a class should be displayable in the left, middle or right columns or full screen
+7) the code to switch the display from having
+1 full-screen window to 
+two windows with widths 25%+75%, 
+to three windows with widths 5%+15%+80%, 
+to 1 full-screen window should be stored in one place.
+That code should be callable in the appropriate key_left and key_right keys.
+8) 
