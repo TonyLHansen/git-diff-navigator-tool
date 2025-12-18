@@ -4181,17 +4181,19 @@ App {
                     }
                     logger.debug(f"Saved column state: {self.saved_column_state}")
 
-                    # Show only the help column, hide others
-                    self.query_one("#left-column").styles.width = "0%"
-                    self.query_one("#left-column").styles.flex = 0
-                    self.query_one("#right1-column").styles.width = "0%"
-                    self.query_one("#right1-column").styles.flex = 0
-                    self.query_one("#right2-column").styles.width = "0%"
-                    self.query_one("#right2-column").styles.flex = 0
-                    self.query_one("#right3-column").styles.width = "100%"
-                    self.query_one("#right3-column").styles.flex = 0
-                    self.query_one("#right3").styles.display = "block"
-                    self.query_one("#right3").focus()
+                    # Show only the help column, hide others (use helper for main columns)
+                    try:
+                        self._apply_column_layout("0%", "0%", "0%", left_display="none", right1_display="none", right2_display="none")
+                    except Exception as e:
+                        self.printException(e, "could not apply helper for help view")
+                    try:
+                        # Make right3 the visible/help column
+                        self.query_one("#right3-column").styles.width = "100%"
+                        self.query_one("#right3-column").styles.flex = 0
+                        self.query_one("#right3").styles.display = "block"
+                        self.query_one("#right3").focus()
+                    except Exception:
+                        pass
                     # Update footer
                     footer = self.query_one("#footer", Label)
                     footer.update(Text("q(uit)  ↑ ↓  Press any key to return", style="bold"))
@@ -4254,24 +4256,19 @@ App {
                 logger.debug(f"enter_diff_fullscreen: saved_column_state={self.saved_column_state}")
             except Exception as e:
                 self.printException(e, "could not save column state before fullscreen")
-            # collapse left and history columns
+            # collapse left/history and expand diff column via helper
             try:
-                self.query_one("#left-column").styles.width = "0%"
-                self.query_one("#left-column").styles.flex = 0
+                try:
+                    self.layout_diff_fullscreen()
+                    # ensure right1 is hidden (helper should handle, but enforce)
+                    try:
+                        self.query_one("#right1").styles.display = "none"
+                    except Exception:
+                        pass
+                except Exception as e:
+                    self.printException(e, "layout_diff_fullscreen in enter_diff_fullscreen")
             except Exception as e:
-                self.printException(e, "could not collapse left-column")
-            try:
-                self.query_one("#right1-column").styles.width = "0%"
-                self.query_one("#right1-column").styles.flex = 0
-                self.query_one("#right1").styles.display = "none"
-            except Exception as e:
-                self.printException(e, "could not collapse right1-column")
-            try:
-                self.query_one("#right2-column").styles.width = "100%"
-                self.query_one("#right2-column").styles.flex = 0
-                self.query_one("#right2").styles.display = None
-            except Exception as e:
-                self.printException(e, "could not expand right2-column")
+                self.printException(e, "could not adjust columns for fullscreen")
             # mark state and update footer
             try:
                 self.diff_fullscreen = True
@@ -4399,24 +4396,20 @@ App {
                         pass
                     logger.debug("exit_diff_fullscreen: restored from saved state")
                 else:
-                    # restore a sensible columnated layout
+                    # restore a sensible three-column layout using helper
                     try:
-                        self.query_one("#left-column").styles.width = "5%"
-                        self.query_one("#left-column").styles.flex = 0
+                        try:
+                            self.layout_three_columns()
+                        except Exception as e:
+                            self.printException(e, "layout_three_columns in exit_diff_fullscreen")
+                        try:
+                            # ensure right1/right2 displays are visible after layout
+                            self.query_one("#right1").styles.display = None
+                            self.query_one("#right2").styles.display = None
+                        except Exception:
+                            pass
                     except Exception as e:
-                        self.printException(e, "could not restore left-column")
-                    try:
-                        self.query_one("#right1-column").styles.width = "15%"
-                        self.query_one("#right1-column").styles.flex = 0
-                        self.query_one("#right1").styles.display = None
-                    except Exception as e:
-                        self.printException(e, "could not restore right1-column")
-                    try:
-                        self.query_one("#right2-column").styles.width = "80%"
-                        self.query_one("#right2-column").styles.flex = 0
-                        self.query_one("#right2").styles.display = None
-                    except Exception as e:
-                        self.printException(e, "could not restore right2-column")
+                        self.printException(e, "could not restore three-column layout")
             except Exception as e:
                 self.printException(e)
                 pass
