@@ -83,17 +83,20 @@ class AppBase(ListView):
             try:
                 if left_display is not None:
                     self.query_one("#left").styles.display = left_display
-            except Exception:
+            except Exception as e:
+                self.printException(e, "could not set left display style")
                 pass
             try:
                 if right1_display is not None:
                     self.query_one("#right1").styles.display = right1_display
-            except Exception:
+            except Exception as e:
+                self.printException(e, "could not set right1 display style")
                 pass
             try:
                 if right2_display is not None:
                     self.query_one("#right2").styles.display = right2_display
-            except Exception:
+            except Exception as e:
+                self.printException(e, "could not set right2 display style")
                 pass
         except Exception as e:
             self.printException(e, "error applying column layout")
@@ -394,7 +397,8 @@ class FileListBase(AppBase):
                 try:
                     # Prefer to set after refresh to avoid race with mount
                     self.call_after_refresh(lambda: setattr(self, "index", min_idx))
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "call_after_refresh() failed")
                     try:
                         self.index = min_idx
                     except Exception as e:
@@ -922,16 +926,12 @@ class RepoModeFileList(FileListBase):
         Returns True to indicate the key was handled.
         """
         try:
-            # Hide the right1 (Files) column and restore left (History)
+            # Restore single-column history layout using helper
+            self.app.layout_left_only()
             try:
-                # Restore single-column history layout using helper
-                self.app.layout_left_only()
-                try:
-                    # If the files widget itself is at #right1, hide it
-                    right1 = self.app.query_one("#right1")
-                    right1.styles.display = "none"
-                except Exception:
-                    pass
+                # If the files widget itself is at #right1, hide it
+                right1 = self.app.query_one("#right1")
+                right1.styles.display = "none"
             except Exception as e:
                 self.printException(e, "exception restoring left-only layout")
                 pass
@@ -989,7 +989,8 @@ class RepoModeFileList(FileListBase):
             except Exception as e:
                 try:
                     self.app.push_screen(_TBDModal(str(e)))
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "could not push TBDModal for filename exception")
                     pass
                 return True
 
@@ -1013,7 +1014,8 @@ class RepoModeFileList(FileListBase):
         if not filename:
             try:
                 self.app.push_screen(_TBDModal("Unknown filename for diff"))
-            except Exception:
+            except Exception as e:
+                self.printException(e, "could not push TBDModal for unknown filename in FileModeFileList")
                 pass
             return True
 
@@ -1033,7 +1035,8 @@ class RepoModeFileList(FileListBase):
         except Exception as exc:
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
-            except Exception:
+            except Exception as e:
+                self.printException(e, "could not push TBDModal for diff command error")
                 pass
             return True
 
@@ -1100,7 +1103,8 @@ class RepoModeFileList(FileListBase):
         except Exception as exc:
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
-            except Exception:
+            except Exception as e:
+                self.printException(e, "could not push TBDModal for diff-fullscreen error")
                 pass
         return True
 
@@ -2240,7 +2244,8 @@ class RepoModeHistoryList(HistoryListBase):
                                                 file_list, "index", getattr(file_list, "_min_index", 0) or 0
                                             )
                                         )
-                                    except Exception:
+                                    except Exception as e:
+                                        self.printException(e, "could not schedule index set via call_after_refresh")
                                         try:
                                             file_list.index = getattr(file_list, "_min_index", 0) or 0
                                         except Exception as e:
@@ -2797,10 +2802,12 @@ class DiffListBase(AppBase):
                     left = None
             try:
                 hist = self.app.query_one("#right1", FileModeHistoryList)
-            except Exception:
+            except Exception as e:
+                self.printException(e, "app_query_one('#right1', FileModeHistoryList)")
                 try:
                     hist = self.app.query_one("#right1")
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "query_one('#right1')")
                     hist = None
             diff = self.app.query_one("#right2", ListView)
             try:
@@ -2933,10 +2940,12 @@ class FileModeDiffList(DiffListBase):
             try:
                 try:
                     hist = self.app.query_one("#right1", FileModeHistoryList)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "query_one('#right1', FileModeHistoryList)")
                     try:
                         hist = self.app.query_one("#right1")
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "query_one('#right1')")
                         hist = None
                 # Ensure the Files/History split is restored to 25/75 before focusing
                 try:
@@ -2957,7 +2966,8 @@ class FileModeDiffList(DiffListBase):
                                 try:
                                     r1 = self.app.query_one("#right1")
                                     r1.styles.display = None
-                                except Exception:
+                                except Exception as e:
+                                    self.printException(e, "query_one('#right1')")
                                     pass
                             except Exception as e:
                                 self.printException(e, "post-focus enforce 25/75")
@@ -2965,6 +2975,7 @@ class FileModeDiffList(DiffListBase):
                         try:
                             self.app.call_after_refresh(_enforce_25_75)
                         except Exception:
+                            self.printException(e, "call_after_refresh(_enforce_25_75)")
                             _enforce_25_75()
                 except Exception as e:
                     self.printException(e, "exception focusing history")
@@ -3042,7 +3053,6 @@ class _TBDModal(ModalScreen):
         """Close the modal on any key press."""
         event.stop()
         self.app.pop_screen()
-
 
 HELP_TEXT = """
 Git Diff History Navigator Tool (gitdiffnavtool)
@@ -3298,7 +3308,8 @@ class HelpList(AppBase):
                         focus_target = "#right2"
                     elif state["right1"].get("display") != "none":
                         focus_target = "#right1"
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "focus_target=...")
                     pass
 
                 logger.debug("Column state restored")
@@ -3456,17 +3467,20 @@ App {
             try:
                 if left_display is not None:
                     self.query_one("#left").styles.display = left_display
-            except Exception:
+            except Exception as e:
+                self.printException(e, "could not set left display in _apply_column_layout")
                 pass
             try:
                 if right1_display is not None:
                     self.query_one("#right1").styles.display = right1_display
-            except Exception:
+            except Exception as e:
+                self.printException(e, "could not set right1 display in _apply_column_layout")
                 pass
             try:
                 if right2_display is not None:
                     self.query_one("#right2").styles.display = right2_display
-            except Exception:
+            except Exception as e:
+                self.printException(e, "could not set right2 display in _apply_column_layout")
                 pass
         except Exception as e:
             self.printException(e, "error applying column layout")
@@ -3927,7 +3941,8 @@ App {
                         try:
                             self.query_one("#right3-column").styles.width = "0%"
                             self.query_one("#right3-column").styles.flex = 0
-                        except Exception:
+                        except Exception as e:
+                            self.printException(e, "query_one('#right3-column')...")
                             pass
                     except Exception as e:
                         self.printException(e)
@@ -3988,6 +4003,7 @@ App {
                             self.query_one("#right3-column").styles.width = "0%"
                             self.query_one("#right3-column").styles.flex = 0
                         except Exception:
+                            self.printException(e, "query_one('#right3-column').styles...")
                             pass
                     except Exception as e:
                         self.printException(e)
@@ -4152,7 +4168,8 @@ App {
                                     return f"{m.group(1)}%"
                             # Already a usable string/number
                             return str(w)
-                        except Exception:
+                        except Exception as e:
+                            self.printException(e, "error normalizing width in _norm_width")
                             return str(w)
 
                     left_col = self.query_one("#left-column")
@@ -4192,7 +4209,8 @@ App {
                         self.query_one("#right3-column").styles.flex = 0
                         self.query_one("#right3").styles.display = "block"
                         self.query_one("#right3").focus()
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "could not show/focus right3 help column")
                         pass
                     # Update footer
                     footer = self.query_one("#footer", Label)
@@ -4227,7 +4245,8 @@ App {
                             if m:
                                 return f"{m.group(1)}%"
                         return str(w)
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "error normalizing width in enter_diff_fullscreen._norm_width")
                         return str(w)
 
                 left_col = self.query_one("#left-column")
@@ -4263,7 +4282,8 @@ App {
                     # ensure right1 is hidden (helper should handle, but enforce)
                     try:
                         self.query_one("#right1").styles.display = "none"
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "query_one('#right1')")
                         pass
                 except Exception as e:
                     self.printException(e, "layout_diff_fullscreen in enter_diff_fullscreen")
@@ -4305,7 +4325,8 @@ App {
                             try:
                                 if hasattr(width, "value"):
                                     width = f"{int(getattr(width, 'value', 0))}%"
-                            except Exception:
+                            except Exception as e:
+                                self.printException(e, f"could not normalize saved width for {col_id}")
                                 pass
                             col.styles.width = width
                             col.styles.flex = saved.get("flex", 0)
@@ -4338,7 +4359,8 @@ App {
                     try:
                         self._suppress_focus_layout = True
                         logger.debug("exit_diff_fullscreen: set _suppress_focus_layout flag")
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "could not set _suppress_focus_layout flag")
                         pass
 
                     # Force a layout refresh and log actual computed sizes after restore
@@ -4369,7 +4391,8 @@ App {
                                 # Force a refresh to ensure layout is reflowed
                                 try:
                                     self.refresh()
-                                except Exception:
+                                except Exception as e:
+                                    self.printException(e, "could not refresh during post_restore")
                                     pass
                             except Exception as e:
                                 self.printException(e, "could not refresh after restore")
@@ -4392,7 +4415,8 @@ App {
                     # Clear saved state after restoring
                     try:
                         self.saved_column_state = None
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "could not clear saved_column_state")
                         pass
                     logger.debug("exit_diff_fullscreen: restored from saved state")
                 else:
@@ -4406,7 +4430,8 @@ App {
                             # ensure right1/right2 displays are visible after layout
                             self.query_one("#right1").styles.display = None
                             self.query_one("#right2").styles.display = None
-                        except Exception:
+                        except Exception as e:
+                            self.printException(e, "could not restore right1/right2 display after three-column layout")
                             pass
                     except Exception as e:
                         self.printException(e, "could not restore three-column layout")
@@ -4424,7 +4449,8 @@ App {
                 try:
                     right2 = self.query_one("#right2")
                     right2.styles.display = None
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "could not query #right2 for focus after restore")
                     right2 = None
 
                 def _focus_diff():
@@ -4437,7 +4463,8 @@ App {
 
                 try:
                     self.call_after_refresh(_focus_diff)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "could not schedule _focus_diff via call_after_refresh")
                     _focus_diff()
             except Exception as e:
                 self.printException(e, "exception ensuring diff visibility after restore")

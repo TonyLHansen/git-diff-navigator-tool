@@ -135,3 +135,7 @@ to three windows with widths 5%+15%+80%,
 to 1 full-screen window should be stored in one place.
 That code should be callable in the appropriate key_left and key_right keys.
 8) 
+
+
+why is the code bothering to save the widths to be restored?
+why is the code bothering to save the widths to be restored? Why not just use the _apply_column_layout() function?
