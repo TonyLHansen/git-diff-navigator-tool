@@ -55,7 +55,7 @@ class AppBase(ListView):
         className = type(self).__name__
         funcName = sys._getframe(1).f_code.co_name
         msg = msg if msg else "???"
-        logger.warning("WARNING: %.% (%): %".format(className, funcName, str(e), msg))
+        logger.warning(f"WARNING: {className}.{funcName} ({str(e)}): {msg}")
         logger.warning(traceback.format_exc())
 
     # Layout helpers: centralize column width/display management
@@ -565,16 +565,9 @@ class FileModeFileList(FileListBase):
                             li = ListItem(Label(Text(display, style=style)))
                         else:
                             li = ListItem(Label(display))
-                        try:
-                            li._repo_status = repo_status
-                        except Exception as e:
-                            self.printException(e)
+                        li._repo_status = repo_status
 
-                    try:
-                        li._filename = name
-                    except Exception as e:
-                        self.printException(e)
-
+                    li._filename = name
                     self.append(li)
                 except Exception as e:
                     self.printException(e, f"exception appending {name} in prepFileModeFileList")
@@ -740,188 +733,48 @@ class FileModeFileList(FileListBase):
 
                 return True
 
-            # If it's a file, run `git log` and show output in History column
+            # Delegate history population to the FileModeHistoryList preparatory API
             try:
-                # Run git log in the current directory for the filename
-                proc = subprocess.run(
-                    [
-                        "git",
-                        "log",
-                        "--follow",
-                        "--date=short",
-                        "--pretty=format:%ad %h %s",
-                        "--",
-                        item_name,
-                    ],
-                    cwd=self.path,
-                    capture_output=True,
-                    text=True,
-                )
-                out = proc.stdout.strip()
-                # update the History column (right1)
+                hist = None
                 try:
-                    hist = self.app.query_one("#right1", ListView)
-                    # populate the history ListView with lines from git output
-                    try:
-                        # clear existing items
-                        hist.clear()
-                    except Exception as e:
-                        self.printException(e, "exception clearing history")
-
-                    # remember which file this history is for
-                    try:
-                        hist._filename = item_name
-                    except Exception as e:
-                        self.printException(e, "exception setting hist._filename")
-
-                    if out:
-                        # Before appending real commits, optionally insert
-                        # pseudo-log lines for staged/modified working tree.
-                        try:
-                            app = getattr(self, "app", None)
-                            pseudo_entries: list[str] = []
-                            if app and getattr(app, "repo_available", False) and app.repo_root:
-                                try:
-                                    rel = os.path.relpath(os.path.join(self.app.path, item_name), app.repo_root)
-                                except Exception as e:
-                                    self.printException(e, "exception getting relpath for pseudo entries")
-                                    rel = None
-                                if rel and not rel.startswith(".."):
-                                    flags = app.repo_status_map.get(rel, 0)
-                                    idx_flags = (
-                                        getattr(pygit2, "GIT_STATUS_INDEX_NEW", 0)
-                                        | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
-                                        | getattr(pygit2, "GIT_STATUS_INDEX_DELETED", 0)
-                                    )
-                                    wt_flags = (
-                                        getattr(pygit2, "GIT_STATUS_WT_NEW", 0)
-                                        | getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0)
-                                        | getattr(pygit2, "GIT_STATUS_WT_DELETED", 0)
-                                    )
-                                    has_index = bool(flags & idx_flags)
-                                    has_wt = bool(flags & wt_flags)
-                                    # If both staged and further modifications exist,
-                                    # show MODS (working) first, then STAGED.
-                                    if has_wt and has_index:
-                                        pseudo_entries = ["MODS", "STAGED"]
-                                    elif has_index:
-                                        pseudo_entries = ["STAGED"]
-                                    elif has_wt:
-                                        pseudo_entries = ["MODS"]
-                            # If no repo available but file looks modified in FS,
-                            # fall back to showing MODS when `git diff` would
-                            # have non-empty output vs HEAD. We keep simple
-                            # behavior and only use repo flags when available.
-                        except Exception as e:
-                            self.printException(e, "exception building pseudo entries")
-                            pseudo_entries = []
-
-                        for pseudo in pseudo_entries:
-                            # Attach a best-effort timestamp for STAGED entries.
-                            display_pseudo = pseudo
-                            if pseudo == "STAGED":
-                                try:
-                                    app = getattr(self, "app", None)
-                                    display_pseudo = "STAGED"
-                                    if app and getattr(app, "repo_root", None):
-                                        try:
-                                            rel = os.path.relpath(os.path.join(self.path, item_name), app.repo_root)
-                                        except Exception as e:
-                                            self.printException(e, "exception getting relpath for STAGED")
-                                            rel = None
-                                        mtime = None
-                                        if rel:
-                                            try:
-                                                mtime = app.repo_index_mtime_map.get(rel)
-                                            except Exception as e:
-                                                self.printException(e, "exception getting index mtime")
-                                                mtime = None
-                                        # fallback to index file mtime if per-file not available
-                                        if not mtime:
-                                            try:
-                                                index_path = os.path.join(app.repo_root, ".git", "index")
-                                                mtime = os.path.getmtime(index_path)
-                                            except Exception as e:
-                                                self.printException(e, "exception getting index file mtime")
-                                                mtime = None
-                                        if mtime:
-                                            display_pseudo = (
-                                                f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} "
-                                                "STAGED"
-                                            )
-                                except Exception as e:
-                                    self.printException(e, "exception building STAGED display")
-                                    display_pseudo = "STAGED"
-                            elif pseudo == "MODS":
-                                try:
-                                    # use working-tree file mtime for MODS
-                                    try:
-                                        fp = os.path.join(self.path, item_name)
-                                        mtime = os.path.getmtime(fp)
-                                    except Exception as e:
-                                        self.printException(e, "exception getting MODS file mtime")
-                                        mtime = None
-                                    if mtime:
-                                        display_pseudo = (
-                                            f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} MODS"
-                                        )
-                                    else:
-                                        display_pseudo = "MODS"
-                                except Exception as e:
-                                    self.printException(e, "exception building MODS display")
-                                    display_pseudo = "MODS"
-
-                            pli = ListItem(Label(Text(" " + display_pseudo)))
-                            try:
-                                pli._hash = pseudo
-                            except Exception as e:
-                                self.printException(e, "exception setting pli._hash")
-
-                            try:
-                                pli._raw_text = display_pseudo
-                            except Exception as e:
-                                self.printException(e, "exception setting pli._raw_text")
-
-                            hist.append(pli)
-
-                        for line in out.splitlines():
-                            li = ListItem(Label(Text(" " + line)))
-                            try:
-                                m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
-                                if m:
-                                    li._hash = m.group(2)
-                            except Exception as e:
-                                self.printException(e, "exception parsing hash from line")
-
-                            try:
-                                li._raw_text = line
-                            except Exception as e:
-                                self.printException(e, "exception setting li._raw_text")
-
-                            hist.append(li)
-                    else:
-                        hist.append(ListItem(Label(Text(" " + f"No git history for {item_name}"))))
-
-                    # highlight and focus the top entry
-                    try:
-                        hist.index = 0
-                    except Exception as e:
-                        self.printException(e, "exception setting hist.index")
-
-                    try:
-                        hist.focus()
-                    except Exception as e:
-                        self.printException(e, "exception focusing history")
-
+                    hist = self.app.query_one("#right1")
                 except Exception as e:
-                    self.printException(e, "exception updating history view")
-                    # If unable to update, show modal with output or message
-                    msg = out or f"No git history for {item_name}"
-                    try:
-                        self.app.push_screen(_TBDModal(msg))
-                    except Exception as e:
-                        self.printException(e, "exception showing history error modal")
+                    self.printException(e)
+                    hist = None
 
+                # If the right1 widget doesn't expose the preparatory API,
+                # try the alternate left location (log-first layouts).
+                if hist is None or not hasattr(hist, "prepListModeHistoryList"):
+                    try:
+                        hist = self.app.query_one("#left")
+                    except Exception as e:
+                        self.printException(e)
+                        hist = None
+
+                if hist is not None and hasattr(hist, "prepListModeHistoryList"):
+                    try:
+                        hist.prepListModeHistoryList(item_name)
+                    except Exception as e:
+                        self.printException(e, "prepListModeHistoryList failed")
+                        try:
+                            # fallback: ask app to open history for file
+                            if hasattr(self.app, "_open_history_for_file"):
+                                self.app._open_history_for_file(item_name)
+                        except Exception as e:
+                            self.printException(e, "fallback open history failed")
+                else:
+                    # No preparatory API available; fallback to app helper
+                    try:
+                        if hasattr(self.app, "_open_history_for_file"):
+                            self.app._open_history_for_file(item_name)
+                    except Exception as e:
+                        self.printException(e, "could not open history for file")
+
+                # Ensure the current Files list highlights the selected filename
+                try:
+                    self.call_after_refresh(self._highlight_filename, item_name)
+                except Exception as e:
+                    self.printException(e, "exception calling _highlight_filename")
             except Exception as exc:
                 try:
                     self.app.push_screen(_TBDModal(str(exc)))
@@ -1052,8 +905,8 @@ class RepoModeFileList(FileListBase):
                 self.printException(e, "building items buffer for repo-mode file list")
                 try:
                     self.append(ListItem(Label(Text(f" Error building file list: {e}"))))
-                except Exception as e:
-                    self.printException(e, "appending error building file list item")
+                except Exception as e2:
+                    self.printException(e2, "appending error building file list item")
                 return
 
             # Append buffer after refresh to avoid mount races
@@ -1085,18 +938,11 @@ class RepoModeFileList(FileListBase):
                             except Exception as e:
                                 self.printException(e, "appending repo-mode file item")
                                 continue
-                        try:
-                            self.index = getattr(self, "_min_index", 0) or 0
-                        except Exception as e:
-                            self.printException(e, "setting index to _min_index")
-                        try:
-                            self.focus()
-                        except Exception as e:
-                            self.printException(e, "focusing repo-mode file list")
-                        try:
-                            self.refresh()
-                        except Exception as e:
-                            self.printException(e, "refreshing repo-mode file list")
+
+                        self.index = getattr(self, "_min_index", 0) or 0
+                        self.focus()
+                        self.refresh()
+
                         try:
                             self.call_after_refresh(lambda: setattr(self, "index", getattr(self, "_min_index", 0) or 0))
                         except Exception as e:
@@ -1105,14 +951,8 @@ class RepoModeFileList(FileListBase):
                                 self.index = getattr(self, "_min_index", 0) or 0
                             except Exception as e:
                                 self.printException(e, "setting index to _min_index fallback")
-                        try:
-                            self._populated = True
-                        except Exception as e:
-                            self.printException(e, "setting _populated flag")
-                        try:
-                            items_buffer.clear()
-                        except Exception as e:
-                            self.printException(e, "clearing items buffer")
+                        self._populated = True
+                        items_buffer.clear()
                     except Exception as e:
                         self.printException(e, "error appending repo-mode buffer")
                         return
@@ -1637,27 +1477,16 @@ class HistoryListBase(AppBase):
 class FileModeHistoryList(HistoryListBase):
     """subclass for FileMode HistoryList functionality; see `HistoryListBase` for shared logic."""
 
-    def populate(self, repo_path: Optional[str] = None) -> None:  # FileModeHistoryList
+    def prepListModeHistoryList(self, file_path: str) -> None:
         """Populate this History list with the commit history for a single file.
 
-        This method populates the `ListView` with commits for a single file by
-        running `git log --follow` (via `subprocess`) in `self.app.path`. The
-        widget prefers an attached `_filename` attribute; if not present it will
-        use the optional `repo_path` argument as the filename. Each appended
-        `ListItem` will have `_raw_text` set to the visible log line and, when
-        possible, `_hash` set to the commit short-hash parsed from the line.
-
-        After populating the list the method makes the widget visible, sets
-        the selection to the first item, and focuses the widget so the user can
-        immediately navigate the history.
+        Accepts a file path (filename relative to `self.app.path`) and
+        populates the widget by running `git log --follow` in the current
+        working directory. Appends ListItem entries and focuses the widget.
         """
         try:
-            # File-mode history should show commits for a specific file.
-            # Determine filename: prefer attached `_filename` on the widget,
-            # otherwise accept the `repo_path` parameter as the filename.
-            filename = getattr(self, "_filename", None) or repo_path
+            filename = file_path or getattr(self, "_filename", None)
             if not filename:
-                # Nothing to populate
                 return
 
             proc = subprocess.run(
@@ -1686,7 +1515,103 @@ class FileModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e)
 
+            # Optionally insert pseudo entries (STAGED/MODS) then append real commits
             if out:
+                try:
+                    app = getattr(self, "app", None)
+                    pseudo_entries: list[str] = []
+                    if app and getattr(app, "repo_available", False) and app.repo_root:
+                        try:
+                            rel = os.path.relpath(os.path.join(self.app.path, filename), app.repo_root)
+                        except Exception as e:
+                            self.printException(e, "exception getting relpath for pseudo entries")
+                            rel = None
+                        if rel and not rel.startswith(".."):
+                            flags = app.repo_status_map.get(rel, 0)
+                            idx_flags = (
+                                getattr(pygit2, "GIT_STATUS_INDEX_NEW", 0)
+                                | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
+                                | getattr(pygit2, "GIT_STATUS_INDEX_DELETED", 0)
+                            )
+                            wt_flags = (
+                                getattr(pygit2, "GIT_STATUS_WT_NEW", 0)
+                                | getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0)
+                                | getattr(pygit2, "GIT_STATUS_WT_DELETED", 0)
+                            )
+                            has_index = bool(flags & idx_flags)
+                            has_wt = bool(flags & wt_flags)
+                            if has_wt and has_index:
+                                pseudo_entries = ["MODS", "STAGED"]
+                            elif has_index:
+                                pseudo_entries = ["STAGED"]
+                            elif has_wt:
+                                pseudo_entries = ["MODS"]
+                except Exception as e:
+                    self.printException(e, "exception building pseudo entries")
+                    pseudo_entries = []
+
+                for pseudo in pseudo_entries:
+                    display_pseudo = pseudo
+                    if pseudo == "STAGED":
+                        try:
+                            app = getattr(self, "app", None)
+                            display_pseudo = "STAGED"
+                            if app and getattr(app, "repo_root", None):
+                                try:
+                                    base_path = getattr(app, "path", None)
+                                    rel = os.path.relpath(os.path.join(base_path or "", filename), app.repo_root)
+                                except Exception as e:
+                                    self.printException(e, "exception getting relpath for STAGED")
+                                    rel = None
+                                mtime = None
+                                if rel:
+                                    try:
+                                        mtime = app.repo_index_mtime_map.get(rel)
+                                    except Exception as e:
+                                        self.printException(e, "exception getting index mtime")
+                                        mtime = None
+                                if not mtime:
+                                    try:
+                                        index_path = os.path.join(app.repo_root, ".git", "index")
+                                        mtime = os.path.getmtime(index_path)
+                                    except Exception as e:
+                                        self.printException(e, "exception getting index file mtime")
+                                        mtime = None
+                                if mtime:
+                                    display_pseudo = (
+                                        f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} STAGED"
+                                    )
+                        except Exception as e:
+                            self.printException(e, "exception building STAGED display")
+                            display_pseudo = "STAGED"
+
+                    elif pseudo == "MODS":
+                        try:
+                            try:
+                                base_path = getattr(app, "path", None)
+                                fp = os.path.join(base_path or "", filename)
+                                mtime = os.path.getmtime(fp)
+                            except Exception as e:
+                                self.printException(e, "exception getting MODS file mtime")
+                                mtime = None
+                            if mtime:
+                                display_pseudo = (
+                                    f"{datetime.datetime.fromtimestamp(float(mtime)).strftime('%Y-%m-%d')} MODS"
+                                )
+                            else:
+                                display_pseudo = "MODS"
+                        except Exception as e:
+                            self.printException(e, "exception building MODS display")
+                            display_pseudo = "MODS"
+
+                    pli = ListItem(Label(Text(" " + display_pseudo)))
+                    try:
+                        pli._hash = pseudo
+                        pli._raw_text = display_pseudo
+                        self.append(pli)
+                    except Exception as e:
+                        self.printException(e)
+
                 for line in out.splitlines():
                     try:
                         li = ListItem(Label(Text(" " + line)))
@@ -1931,17 +1856,22 @@ class FileModeHistoryList(HistoryListBase):
 class RepoModeHistoryList(HistoryListBase):
     """RepoMode History list used when `-l/--log-first`"""
 
-    def populate(self, repo_path: Optional[str] = None) -> None:  # RepoModeHistoryList
-        """Populate this History list with a repository-wide commit log using pygit2.
+    def prepRepoModeHistoryList(self) -> None:
+        """Populate this RepoModeHistoryList using the current repository.
 
-        This method walks commits (by time) and appends ListItem entries with
-        the format: "YYYY-MM-DD <short-hash> <subject>".
+        This method discovers the repository from the app state (prefer
+        `self.app.repo_root` then `self.app.path`) and populates the widget
+        with a repository-wide commit log using pygit2. Appends ListItem
+        entries with the format: "YYYY-MM-DD <short-hash> <subject>".
         """
         try:
-            repo_path = repo_path or getattr(self.app, "path", None)
-            if not repo_path:
+            app = getattr(self, "app", None)
+            repo_root = None
+            if app:
+                repo_root = getattr(app, "repo_root", None) or getattr(app, "path", None)
+            if not repo_root:
                 return
-            gitdir = pygit2.discover_repository(repo_path)
+            gitdir = pygit2.discover_repository(repo_root)
             if not gitdir:
                 return
             repo = pygit2.Repository(gitdir)
@@ -3850,114 +3780,17 @@ App {
         Mirrors the behavior used when pressing Right on a file in the Files column.
         """
         try:
-            proc = subprocess.run(
-                [
-                    "git",
-                    "log",
-                    "--follow",
-                    "--date=short",
-                    "--pretty=format:%ad %h %s",
-                    "--",
-                    item_name,
-                ],
-                cwd=self.path,
-                capture_output=True,
-                text=True,
-            )
-            out = proc.stdout.strip()
-
             hist = self.query_one("#right1", ListView)
-            try:
-                hist.clear()
-            except Exception as e:
-                self.printException(e)
-
-            try:
-                hist._filename = item_name
-            except Exception as e:
-                self.printException(e)
-
-            if out:
-                for line in out.splitlines():
-                    li = ListItem(Label(Text(" " + line)))
-                    try:
-                        m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
-                        if m:
-                            li._hash = m.group(2)
-                    except Exception as e:
-                        self.printException(e)
-
-                    try:
-                        li._raw_text = line
-                    except Exception as e:
-                        self.printException(e)
-
-                    hist.append(li)
-            else:
-                hist.append(ListItem(Label(Text(" " + f"No git history for {item_name}"))))
-
-            # Make History column visible and try to apply focus/layout
-            try:
-                hist.styles.display = None
-            except Exception as e:
-                self.printException(e)
-
-            # Highlight the file in the Files column after the DOM refresh
-            try:
-                try:
-                    left = self.query_one("#left")
-                    if not isinstance(left, FileModeFileList):
-                        try:
-                            left = self.query_one("#right1")
-                        except Exception as e:
-                            self.printException(e)
-                            left = None
-                except Exception as e:
-                    self.printException(e)
-                    try:
-                        left = self.query_one("#right1")
-                    except Exception as e:
-                        self.printException(e)
-                        left = None
-                try:
-                    left.call_after_refresh(left._highlight_filename, item_name)
-                except Exception as e:
-                    self.printException(e)
-                    try:
-                        left.index = getattr(left, "_min_index", 0) or 0
-                    except Exception as e:
-                        self.printException(e)
-
-            except Exception as e:
-                self.printException(e)
-
-            try:
-                try:
-                    self.layout_left_right_split()
-                except Exception as e:
-                    self.printException(e, "layout_left_right_split")
-            except Exception as e:
-                self.printException(e)
-
-            try:
-                hist.index = 0
-            except Exception as e:
-                self.printException(e)
-
-            try:
-                hist.focus()
-            except Exception as e:
-                self.printException(e)
-
+            # Prefer the new preparatory API when available on the history widget
+            hist.prepListModeHistoryList(item_name)
+            self.layout_left_right_split()
+            hist.index = 0
+            hist.focus()
             # ensure we are not in diff-fullscreen when opening history
+            self.diff_fullscreen = False
+        except Exception as e:
             try:
-                self.diff_fullscreen = False
-            except Exception as e:
-                self.printException(e)
-
-        except Exception as exc:
-            try:
-                self.push_screen(_TBDModal(str(exc)))
+                self.push_screen(_TBDModal(str(e)))
             except Exception as e:
                 self.printException(e)
 
@@ -3973,39 +3806,19 @@ App {
                     self.printException(e)
                     hist = None
 
-                if hist is not None and hasattr(hist, "populate"):
+                if hist is not None:
                     try:
-                        hist.populate(self.path)
-                    except Exception as e:
-                        self.printException(e)
+                        hist.prepRepoModeHistoryList()
 
-                    try:
                         # Make left column full-width and hide others
-                        try:
-                            self.layout_left_only()
-                        except Exception as e:
-                            self.printException(e, "layout_left_only in _open_repo_history log-first")
-                        try:
-                            self.query_one("#right3-column").styles.width = "0%"
-                            self.query_one("#right3-column").styles.flex = 0
-                        except Exception as e:
-                            self.printException(e, "could not hide right3 column in _open_repo_history log-first")
+                        self.layout_left_only()
+                        self.query_one("#right3-column").styles.width = "0%"
+                        self.query_one("#right3-column").styles.flex = 0
 
-                    except Exception as e:
-                        self.printException(e)
-
-                    try:
                         hist.index = 0
-                    except Exception as e:
-                        self.printException(e)
-
-                    try:
                         hist.focus()
-                    except Exception as e:
-                        self.printException(e)
-
-                    try:
                         self.diff_fullscreen = False
+
                     except Exception as e:
                         self.printException(e)
 
@@ -4035,124 +3848,34 @@ App {
 
                 if repo_hist:
                     try:
-                        repo_hist.populate(self.path)
+                        # RepoModeHistoryList implements prepRepoModeHistoryList()
+                        repo_hist.prepRepoModeHistoryList()
                     except Exception as e:
                         self.printException(e)
 
                     # Adjust layout: hide files and other right columns, show history full-width
                     try:
-                        try:
-                            self._apply_column_layout(
-                                "0%", "100%", "0%", left_display="none", right1_display=None, right2_display="none"
-                            )
-                        except Exception as e:
-                            self.printException(e, "_apply_column_layout for history full-width")
-                        try:
-                            self.query_one("#right3-column").styles.width = "0%"
-                            self.query_one("#right3-column").styles.flex = 0
-                        except Exception as e:
-                            self.printException(e, "could not hide right3 column when mounting repo_hist")
-
-                    except Exception as e:
-                        self.printException(e)
-
-                    try:
+                        self._apply_column_layout(
+                            "0%", "100%", "0%", left_display="none", right1_display=None, right2_display="none"
+                        )
+                        self.query_one("#right3-column").styles.width = "0%"
+                        self.query_one("#right3-column").styles.flex = 0
                         repo_hist.index = 0
-                    except Exception as e:
-                        self.printException(e)
-
-                    try:
                         repo_hist.focus()
-                    except Exception as e:
-                        self.printException(e)
-
-                    try:
                         self.diff_fullscreen = False
                     except Exception as e:
                         self.printException(e)
-
                     return
+
             except Exception as e:
                 self.printException(e)
-                logger.debug("_open_repo_history: failed to replace History widget; falling back")
+                self.push_screen(_TBDModal(str(e)))
 
-            # Fallback to subprocess-based behavior if replacement fails
+        except Exception as e:
             try:
-                proc = subprocess.run(
-                    ["git", "log", "--date=short", "--pretty=format:%ad %h %s"],
-                    cwd=self.path,
-                    capture_output=True,
-                    text=True,
-                )
-                out = proc.stdout.strip()
-            except Exception as e:
-                self.printException(e)
-                out = ""
-
-            try:
-                hist = self.query_one("#right1", ListView)
-            except Exception as e:
-                self.printException(e)
-                hist = None
-
-            if hist:
-                try:
-                    hist.clear()
-                except Exception as e:
-                    self.printException(e)
-
-                try:
-                    hist._filename = None
-                except Exception as e:
-                    self.printException(e)
-
-                if out:
-                    for line in out.splitlines():
-                        li = ListItem(Label(Text(" " + line)))
-                        try:
-                            m = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", line)
-                            if m:
-                                li._hash = m.group(2)
-                        except Exception as e:
-                            self.printException(e)
-
-                        try:
-                            li._raw_text = line
-                        except Exception as e:
-                            self.printException(e)
-
-                        try:
-                            hist.append(li)
-                        except Exception as e:
-                            self.printException(e)
-
-                else:
-                    try:
-                        hist.append(ListItem(Label(Text(" " + "No git history for repository"))))
-                    except Exception as e:
-                        self.printException(e)
-
-                try:
-                    hist.styles.display = None
-                except Exception as e:
-                    self.printException(e)
-
-                try:
-                    hist.index = 0
-                except Exception as e:
-                    self.printException(e)
-
-                try:
-                    hist.focus()
-                except Exception as e:
-                    self.printException(e)
-
-            return
-        except Exception as exc:
-            try:
-                self.push_screen(_TBDModal(str(exc)))
-            except Exception as e:
-                self.printException(e)
+                self.push_screen(_TBDModal(str(e)))
+            except Exception as e2:
+                self.printException(e2)
 
     def on_key(self, event: events.Key) -> None:
         """Global key handler.
