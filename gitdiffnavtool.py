@@ -57,7 +57,9 @@ class AppBase(ListView):
         logger.warning(traceback.format_exc())
 
     # Layout helpers: centralize column width/display management
-    def _apply_column_layout(self, left_w: str, right1_w: str, right2_w: str, left_display=None, right1_display=None, right2_display=None) -> None:
+    def _apply_column_layout(
+        self, left_w: str, right1_w: str, right2_w: str, left_display=None, right1_display=None, right2_display=None
+    ) -> None:
         """Set outer column widths and optional widget display flags."""
         try:
             try:
@@ -3054,6 +3056,7 @@ class _TBDModal(ModalScreen):
         event.stop()
         self.app.pop_screen()
 
+
 HELP_TEXT = """
 Git Diff History Navigator Tool (gitdiffnavtool)
 ================================================
@@ -3443,7 +3446,9 @@ App {
         logger.warning(traceback.format_exc())
 
     # Layout helpers on the App so widgets can call `self.app.layout_*`.
-    def _apply_column_layout(self, left_w: str, right1_w: str, right2_w: str, left_display=None, right1_display=None, right2_display=None) -> None:
+    def _apply_column_layout(
+        self, left_w: str, right1_w: str, right2_w: str, left_display=None, right1_display=None, right2_display=None
+    ) -> None:
         try:
             try:
                 lc = self.query_one("#left-column")
@@ -3996,7 +4001,9 @@ App {
                     # Adjust layout: hide files and other right columns, show history full-width
                     try:
                         try:
-                            self._apply_column_layout("0%", "100%", "0%", left_display="none", right1_display=None, right2_display="none")
+                            self._apply_column_layout(
+                                "0%", "100%", "0%", left_display="none", right1_display=None, right2_display="none"
+                            )
                         except Exception as e:
                             self.printException(e, "_apply_column_layout for history full-width")
                         try:
@@ -4200,7 +4207,9 @@ App {
 
                     # Show only the help column, hide others (use helper for main columns)
                     try:
-                        self._apply_column_layout("0%", "0%", "0%", left_display="none", right1_display="none", right2_display="none")
+                        self._apply_column_layout(
+                            "0%", "0%", "0%", left_display="none", right1_display="none", right2_display="none"
+                        )
                     except Exception as e:
                         self.printException(e, "could not apply helper for help view")
                     try:
