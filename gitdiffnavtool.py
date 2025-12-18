@@ -310,12 +310,14 @@ class FileListBase(AppBase):
         """
         key = event.key
         logger.debug(f"FileList.on_key: key={key}")
+
         if key and key.lower() == "q":
             # Allow global quit (q/Q) to bubble to the app. Ensure the
             # event.key is normalized to lowercase so the app-level handler
             # which checks for 'q' will receive a lower-case key.
             event.key = key.lower()
             return
+
         if key == "up":
             event.stop()
             try:
@@ -340,9 +342,11 @@ class FileListBase(AppBase):
                 self.printException(e)
 
             self.action_cursor_up()
+
         elif key == "down":
             event.stop()
             self.action_cursor_down()
+
         elif key == "right":
             event.stop()
             try:
@@ -351,6 +355,7 @@ class FileListBase(AppBase):
             except Exception as e:
                 self.printException(e, "key_right exception")
             return
+
         elif key == "left":
             event.stop()
             try:
@@ -359,6 +364,7 @@ class FileListBase(AppBase):
             except Exception as e:
                 self.printException(e, "key_left exception")
             return
+
         else:
             # For keys we don't explicitly handle here, allow them to bubble
             # to higher-level handlers (e.g. app-level `on_key`) so global
@@ -1380,9 +1386,32 @@ class HistoryListBase(AppBase):
         """
         key = event.key
         logger.debug(f"HistoryListBase.on_key: key={key}")
+
         if key and key.lower() == "q":
+            # Allow global quit (q/Q) to bubble to the app. Ensure the
+            # event.key is normalized to lowercase so the app-level handler
+            # which checks for 'q' will receive a lower-case key.
             event.key = key.lower()
             return
+
+        if key == "left":
+            event.stop()
+            try:
+                if self.key_left():
+                    return
+            except Exception as e:
+                self.printException(e, "key_left exception")
+            return
+
+        if key == "right":
+            event.stop()
+            try:
+                if self.key_right():
+                    return
+            except Exception as e:
+                self.printException(e, "key_right exception")
+            return
+
         # Mark/unmark the file referenced by this history view
         if key and key.lower() == "m":
             event.stop()
@@ -1392,22 +1421,6 @@ class HistoryListBase(AppBase):
             except Exception as e:
                 self.printException(e, "toggle check")
 
-            return
-        if key == "left":
-            event.stop()
-            try:
-                if self.key_left():
-                    return
-            except Exception as e:
-                self.printException(e, "key_left exception")
-            return
-        if key == "right":
-            event.stop()
-            try:
-                if self.key_right():
-                    return
-            except Exception as e:
-                self.printException(e, "key_right exception")
             return
 
         # Other keys: let default handling run by not stopping the event.
@@ -2244,13 +2257,17 @@ class RepoModeHistoryList(HistoryListBase):
 
 
 class DiffListBase(AppBase):
-    """ListView used for the Diff column. Left arrow moves focus back to History.
-
-    Renamed to `DiffListBase` to allow a thin `DiffList` subclass for
-    backwards compatibility and easier future refactors.
+    """
+    ListView used for the Diff columns.
     """
 
-    def prepDiffListBase(self, filename: str, previous_hash: Optional[str], current_hash: Optional[str], variant_index: Optional[int] = None) -> None:
+    def prepDiffListBase(
+        self,
+        filename: str,
+        previous_hash: Optional[str],
+        current_hash: Optional[str],
+        variant_index: Optional[int] = None,
+    ) -> None:
         """Populate this Diff list for `filename` between two commit hashes.
 
         `variant_index` may be provided to select a diff variant from
@@ -2320,7 +2337,6 @@ class DiffListBase(AppBase):
         except Exception as exc:
             self.printException(exc, "prepDiffListBase outer failure")
 
-
     def on_key(self, event: events.Key) -> None:  # DiffListBase
         """
         Handle left key to move focus back to History;
@@ -2328,6 +2344,140 @@ class DiffListBase(AppBase):
         """
         key = event.key
         logger.debug(f"DiffList.on_key: key={key}")
+
+        if key and key.lower() == "q":
+            try:
+                event.key = key.lower()
+            except Exception as e:
+                self.printException(e, "exception in q handler")
+            return
+        if key == "left":
+            event.stop()
+            try:
+                if self.key_left():
+                    return
+            except Exception as e:
+                self.printException(e, "key_left exception")
+            return
+
+        if key == "right":
+            event.stop()
+            try:
+                if self.key_right():
+                    return
+            except Exception as e:
+                self.printException(e, "key_right exception")
+            return
+
+        # Handle PageUp/PageDown - move selection by page and scroll to position it appropriately
+        if key in ("pageup", "pagedown"):
+            logger.debug(f"DiffList: {key} pressed")
+            event.stop()
+            try:
+                nodes = getattr(self, "_nodes", [])
+                if not nodes:
+                    logger.debug(f"DiffList: WARNING - _nodes is empty for {key}")
+                    return
+
+                current_index = self.index if self.index is not None else 0
+                visible_height = self.scrollable_content_region.height
+                page_size = max(1, visible_height // 2)  # Half screen at a time like built-in behavior
+
+                logger.debug(
+                    f"DiffList: {key} - current_index={current_index}, page_size={page_size}, "
+                    f"visible_height={visible_height}, nodes={len(nodes)}"
+                )
+
+                # Calculate new index
+                if key == "pagedown":
+                    new_index = min(current_index + page_size, len(nodes) - 1)
+                else:  # pageup
+                    new_index = max(current_index - page_size, 0)
+
+                logger.debug(f"DiffList: {key} - moving from index {current_index} to {new_index}")
+
+                # We want to change the viewport first, then highlight the new line.
+                # Schedule a scroll callback that sets scroll_y, then set the index
+                # after the scroll has been applied so highlighting is stable.
+                def scroll_to_position():
+                    try:
+                        # Assume each line is ~1 unit tall, so scroll position ≈ line index
+                        if key == "pagedown":
+                            target_scroll = float(new_index)
+                        else:  # pageup
+                            target_scroll = float(max(0, new_index - visible_height + 1))
+
+                        # Clamp to valid scroll range
+                        max_scroll = float(max(0, len(nodes) - visible_height))
+                        target_scroll = max(0.0, min(target_scroll, max_scroll))
+
+                        logger.debug(
+                            f"DiffList: {key} - before scroll: scroll_y={self.scroll_y}, "
+                            f"setting to {target_scroll}, max_scroll={max_scroll}"
+                        )
+                        # Try to animate the scroll for smooth movement. If animate
+                        # is supported, schedule the highlight after the animation
+                        # duration. Otherwise fall back to instant set.
+                        anim_duration = 0.12
+                        try:
+                            # Some Textual versions support Widget.animate
+                            try:
+                                self.animate("scroll_y", target_scroll, duration=anim_duration)
+                                logger.debug(f"DiffList: {key} - started animate(scroll_y -> {target_scroll})")
+
+                                def _finalize_highlight():
+                                    try:
+                                        old_index = self.index
+                                        self.index = None
+                                        self.index = new_index
+                                        try:
+                                            if old_index is not None and old_index < len(nodes):
+                                                nodes[old_index].remove_class("-highlight")
+                                            if new_index < len(nodes):
+                                                nodes[new_index].add_class("-highlight")
+                                        except Exception as e:
+                                            self.printException(e, "exception managing highlight classes after animate")
+                                    except Exception as e:
+                                        self.printException(e, "exception finalizing highlight after animate")
+
+                                try:
+                                    # schedule after animation completes
+                                    self.set_timer(anim_duration + 0.02, _finalize_highlight)
+                                except Exception as e:
+                                    self.printException(e, "set_timer not available, falling back")
+                                    # fallback to call_after_refresh if set_timer not available
+                                    self.call_after_refresh(_finalize_highlight)
+                            except Exception as e:
+                                self.printException(e, "animate not available, falling back")
+                                # If animate not available, fall back to instant scroll
+                                self.scroll_y = target_scroll
+                                logger.debug(f"DiffList: {key} - after instant scroll: scroll_y={self.scroll_y}")
+                                try:
+                                    old_index = self.index
+                                    self.index = None
+                                    self.index = new_index
+                                    try:
+                                        if old_index is not None and old_index < len(nodes):
+                                            nodes[old_index].remove_class("-highlight")
+                                        if new_index < len(nodes):
+                                            nodes[new_index].add_class("-highlight")
+                                    except Exception as e:
+                                        self.printException(
+                                            e, "exception managing highlight classes after instant scroll"
+                                        )
+                                except Exception as e:
+                                    self.printException(e, "exception setting index after instant scroll")
+                        except Exception as e:
+                            self.printException(e, "exception in scroll_to_position")
+                    except Exception as e:
+                        self.printException(e, "exception in scroll_to_position")
+
+                # Schedule the scroll -> highlight sequence
+                self.call_after_refresh(scroll_to_position)
+
+            except Exception as e:
+                self.printException(e, "exception in {key} handler")
+            return
 
         # Handle f/F to toggle fullscreen diff
         if key and key.lower() == "f":
@@ -2484,140 +2634,6 @@ class DiffListBase(AppBase):
                     logger.debug("DiffList: diff re-rendered after rotating variant")
             except Exception as e:
                 self.printException(e, "exception rotating diff variant")
-            return
-
-        if key and key.lower() == "q":
-            try:
-                event.key = key.lower()
-            except Exception as e:
-                self.printException(e, "exception in q handler")
-            return
-        if key == "left":
-            event.stop()
-            try:
-                if self.key_left():
-                    return
-            except Exception as e:
-                self.printException(e, "key_left exception")
-            return
-
-        if key == "right":
-            event.stop()
-            try:
-                if self.key_right():
-                    return
-            except Exception as e:
-                self.printException(e, "key_right exception")
-            return
-
-        # Handle PageUp/PageDown - move selection by page and scroll to position it appropriately
-        if key in ("pageup", "pagedown"):
-            logger.debug(f"DiffList: {key} pressed")
-            event.stop()
-            try:
-                nodes = getattr(self, "_nodes", [])
-                if not nodes:
-                    logger.debug(f"DiffList: WARNING - _nodes is empty for {key}")
-                    return
-
-                current_index = self.index if self.index is not None else 0
-                visible_height = self.scrollable_content_region.height
-                page_size = max(1, visible_height // 2)  # Half screen at a time like built-in behavior
-
-                logger.debug(
-                    f"DiffList: {key} - current_index={current_index}, page_size={page_size}, "
-                    f"visible_height={visible_height}, nodes={len(nodes)}"
-                )
-
-                # Calculate new index
-                if key == "pagedown":
-                    new_index = min(current_index + page_size, len(nodes) - 1)
-                else:  # pageup
-                    new_index = max(current_index - page_size, 0)
-
-                logger.debug(f"DiffList: {key} - moving from index {current_index} to {new_index}")
-
-                # We want to change the viewport first, then highlight the new line.
-                # Schedule a scroll callback that sets scroll_y, then set the index
-                # after the scroll has been applied so highlighting is stable.
-                def scroll_to_position():
-                    try:
-                        # Assume each line is ~1 unit tall, so scroll position ≈ line index
-                        if key == "pagedown":
-                            target_scroll = float(new_index)
-                        else:  # pageup
-                            target_scroll = float(max(0, new_index - visible_height + 1))
-
-                        # Clamp to valid scroll range
-                        max_scroll = float(max(0, len(nodes) - visible_height))
-                        target_scroll = max(0.0, min(target_scroll, max_scroll))
-
-                        logger.debug(
-                            f"DiffList: {key} - before scroll: scroll_y={self.scroll_y}, "
-                            f"setting to {target_scroll}, max_scroll={max_scroll}"
-                        )
-                        # Try to animate the scroll for smooth movement. If animate
-                        # is supported, schedule the highlight after the animation
-                        # duration. Otherwise fall back to instant set.
-                        anim_duration = 0.12
-                        try:
-                            # Some Textual versions support Widget.animate
-                            try:
-                                self.animate("scroll_y", target_scroll, duration=anim_duration)
-                                logger.debug(f"DiffList: {key} - started animate(scroll_y -> {target_scroll})")
-
-                                def _finalize_highlight():
-                                    try:
-                                        old_index = self.index
-                                        self.index = None
-                                        self.index = new_index
-                                        try:
-                                            if old_index is not None and old_index < len(nodes):
-                                                nodes[old_index].remove_class("-highlight")
-                                            if new_index < len(nodes):
-                                                nodes[new_index].add_class("-highlight")
-                                        except Exception as e:
-                                            self.printException(e, "exception managing highlight classes after animate")
-                                    except Exception as e:
-                                        self.printException(e, "exception finalizing highlight after animate")
-
-                                try:
-                                    # schedule after animation completes
-                                    self.set_timer(anim_duration + 0.02, _finalize_highlight)
-                                except Exception as e:
-                                    self.printException(e, "set_timer not available, falling back")
-                                    # fallback to call_after_refresh if set_timer not available
-                                    self.call_after_refresh(_finalize_highlight)
-                            except Exception as e:
-                                self.printException(e, "animate not available, falling back")
-                                # If animate not available, fall back to instant scroll
-                                self.scroll_y = target_scroll
-                                logger.debug(f"DiffList: {key} - after instant scroll: scroll_y={self.scroll_y}")
-                                try:
-                                    old_index = self.index
-                                    self.index = None
-                                    self.index = new_index
-                                    try:
-                                        if old_index is not None and old_index < len(nodes):
-                                            nodes[old_index].remove_class("-highlight")
-                                        if new_index < len(nodes):
-                                            nodes[new_index].add_class("-highlight")
-                                    except Exception as e:
-                                        self.printException(
-                                            e, "exception managing highlight classes after instant scroll"
-                                        )
-                                except Exception as e:
-                                    self.printException(e, "exception setting index after instant scroll")
-                        except Exception as e:
-                            self.printException(e, "exception in scroll_to_position")
-                    except Exception as e:
-                        self.printException(e, "exception in scroll_to_position")
-
-                # Schedule the scroll -> highlight sequence
-                self.call_after_refresh(scroll_to_position)
-
-            except Exception as e:
-                self.printException(e, "exception in {key} handler")
             return
 
     # let other keys be handled by default (up/down handled by ListView)
@@ -2798,7 +2814,10 @@ class DiffListBase(AppBase):
 
 
 class FileModeDiffList(DiffListBase):
-    """FileMode DiffList subclass; see `DiffListBase` for shared logic."""
+    """
+    FileMode DiffList subclass; see `DiffListBase` for shared logic.
+    Left arrow moves focus back to History.
+    """
 
     def key_left(self) -> bool:  # FileModeDiffList
         """Handle left key behavior
@@ -2927,9 +2946,8 @@ class FileModeDiffList(DiffListBase):
 
 
 class RepoModeDiffList(DiffListBase):
-    """Placeholder Diff list for repo-first / log-first mode.
-
-    Currently a no-op subclass; behavior will be added in follow-up edits.
+    """
+    Diff list for repo-first / log-first mode.
     """
 
 
@@ -3814,6 +3832,7 @@ App {
             if key and key.lower() == "ctrl+p":
                 event.stop()
                 return
+
             if key in ("q", "Q"):
                 # Ensure quitting works for uppercase Q as well.
                 try:
@@ -3831,6 +3850,7 @@ App {
                         self.printException(e)
 
                 return
+
             # Help: show help column on h / H / ?
             if key in ("h", "H", "?", "question_mark"):
                 logger.debug(f"Help key detected: {key}")
