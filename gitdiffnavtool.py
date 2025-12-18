@@ -146,6 +146,98 @@ class AppBase(ListView):
             self.printException(e, "extracting text")
             return str(node)
 
+    def on_key(self, event: events.Key) -> bool:
+        """Handle common navigation keys for ListView-based widgets.
+
+        Returns True when the key was handled and should not be processed
+        further by subclass handlers.
+        """
+        try:
+            key = event.key
+            logger.debug(f"AppBase.on_key: key={key}")
+
+            # Normalize quit key to lowercase so app-level handler can see it
+            if key and key.lower() == "q":
+                try:
+                    event.key = key.lower()
+                except Exception:
+                    pass
+                return True
+
+            if key == "up":
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+                try:
+                    min_idx = getattr(self, "_min_index", 0) or 0
+                except Exception:
+                    min_idx = 0
+                cur = getattr(self, "index", None)
+                if cur is None:
+                    try:
+                        self.index = min_idx
+                    except Exception as e:
+                        self.printException(e)
+                    return True
+                try:
+                    if cur <= min_idx:
+                        return True
+                except Exception:
+                    pass
+                try:
+                    self.action_cursor_up()
+                except Exception as e:
+                    self.printException(e)
+                return True
+
+            if key == "down":
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+                try:
+                    self.action_cursor_down()
+                except Exception as e:
+                    self.printException(e)
+                return True
+
+            if key == "left":
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+                try:
+                    if hasattr(self, "key_left"):
+                        try:
+                            self.key_left()
+                        except Exception as e:
+                            self.printException(e, "key_left exception")
+                except Exception as e:
+                    self.printException(e)
+                return True
+
+            if key == "right":
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+                try:
+                    if hasattr(self, "key_right"):
+                        try:
+                            self.key_right()
+                        except Exception as e:
+                            self.printException(e, "key_right exception")
+                except Exception as e:
+                    self.printException(e)
+                return True
+
+            # Not handled here
+            return False
+        except Exception as e:
+            self.printException(e, "AppBase.on_key outer failure")
+            return False
+
 
 class FileListBase(AppBase):
     """A ListView showing directory contents. Directories have a blue background.
@@ -308,68 +400,17 @@ class FileListBase(AppBase):
         - Left/Right: show a temporary "TBD" modal
         - Other keys: ignore
         """
-        key = event.key
-        logger.debug(f"FileList.on_key: key={key}")
-
-        if key and key.lower() == "q":
-            # Allow global quit (q/Q) to bubble to the app. Ensure the
-            # event.key is normalized to lowercase so the app-level handler
-            # which checks for 'q' will receive a lower-case key.
-            event.key = key.lower()
-            return
-
-        if key == "up":
-            event.stop()
+        try:
+            handled = False
             try:
-                min_idx = getattr(self, "_min_index", 0) or 0
+                handled = super().on_key(event)
             except Exception as e:
                 self.printException(e)
-                min_idx = 0
-            cur = getattr(self, "index", None)
-            # If index is unset, initialize to min_idx
-            if cur is None:
-                try:
-                    self.index = min_idx
-                except Exception as e:
-                    self.printException(e)
-
+            if handled:
                 return
-            # If already at or above minimum, do not move up past it
-            try:
-                if cur <= min_idx:
-                    return
-            except Exception as e:
-                self.printException(e)
-
-            self.action_cursor_up()
-
-        elif key == "down":
-            event.stop()
-            self.action_cursor_down()
-
-        elif key == "right":
-            event.stop()
-            try:
-                if self.key_right():
-                    return
-            except Exception as e:
-                self.printException(e, "key_right exception")
-            return
-
-        elif key == "left":
-            event.stop()
-            try:
-                if self.key_left():
-                    return
-            except Exception as e:
-                self.printException(e, "key_left exception")
-            return
-
-        else:
-            # For keys we don't explicitly handle here, allow them to bubble
-            # to higher-level handlers (e.g. app-level `on_key`) so global
-            # shortcuts like `h` / `?` and `Q` are still processed.
-            return
+        except Exception as e:
+            self.printException(e)
+        return
 
     def _highlight_filename(self, name: str) -> None:  # FileListBase
         """Highlight the ListItem whose attached `_filename` equals `name`.
@@ -1379,52 +1420,40 @@ class HistoryListBase(AppBase):
             self.printException(e, "updating footer")
 
     def on_key(self, event: events.Key) -> None:  # HistoryListBase
-        """Handle left/right keys to move between columns or show diffs.
+        """Handle history-specific keys; common navigation handled by AppBase.on_key.
 
-        Left moves focus back to the Files column. Right computes hashes for
-        the selected history entry pair and populates the Diff column.
+        Subclasses should rely on `AppBase.on_key` for `up/down/left/right/q` and
+        implement other keys (e.g. `m` to toggle marks) here.
         """
-        key = event.key
-        logger.debug(f"HistoryListBase.on_key: key={key}")
-
-        if key and key.lower() == "q":
-            # Allow global quit (q/Q) to bubble to the app. Ensure the
-            # event.key is normalized to lowercase so the app-level handler
-            # which checks for 'q' will receive a lower-case key.
-            event.key = key.lower()
-            return
-
-        if key == "left":
-            event.stop()
+        try:
             try:
-                if self.key_left():
-                    return
+                handled = super().on_key(event)
             except Exception as e:
-                self.printException(e, "key_left exception")
+                self.printException(e)
+                handled = False
+            if handled:
+                return
+
+            key = event.key
+            logger.debug(f"HistoryListBase.on_key: key={key}")
+
+            # Mark/unmark the file referenced by this history view
+            if key and key.lower() == "m":
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+                try:
+                    self.toggle_check_current()
+                except Exception as e:
+                    self.printException(e, "toggle check")
+                return
+
+            # Other keys: allow default handling to continue/bubble.
             return
-
-        if key == "right":
-            event.stop()
-            try:
-                if self.key_right():
-                    return
-            except Exception as e:
-                self.printException(e, "key_right exception")
+        except Exception as e:
+            self.printException(e)
             return
-
-        # Mark/unmark the file referenced by this history view
-        if key and key.lower() == "m":
-            event.stop()
-            # Toggle checkmark on the current history item (in this column)
-            try:
-                self.toggle_check_current()
-            except Exception as e:
-                self.printException(e, "toggle check")
-
-            return
-
-        # Other keys: let default handling run by not stopping the event.
-        return
 
     def key_left(self) -> bool:  # HistoryListBase
         """Handle left key behavior for HistoryListBase.
@@ -2342,33 +2371,20 @@ class DiffListBase(AppBase):
         Handle left key to move focus back to History;
         handle PgUp/PgDn with visible selection; handle c/C to toggle colorization.
         """
+        try:
+            handled = False
+            try:
+                handled = super().on_key(event)
+            except Exception as e:
+                self.printException(e)
+                handled = False
+            if handled:
+                return
+        except Exception as e:
+            self.printException(e)
+
         key = event.key
         logger.debug(f"DiffList.on_key: key={key}")
-
-        if key and key.lower() == "q":
-            try:
-                event.key = key.lower()
-            except Exception as e:
-                self.printException(e, "exception in q handler")
-            return
-        if key == "left":
-            event.stop()
-            try:
-                if self.key_left():
-                    return
-            except Exception as e:
-                self.printException(e, "key_left exception")
-            return
-
-        if key == "right":
-            event.stop()
-            try:
-                if self.key_right():
-                    return
-            except Exception as e:
-                self.printException(e, "key_right exception")
-            return
-
         # Handle PageUp/PageDown - move selection by page and scroll to position it appropriately
         if key in ("pageup", "pagedown"):
             logger.debug(f"DiffList: {key} pressed")
@@ -3184,6 +3200,18 @@ class HelpList(AppBase):
 
     def on_key(self, event: events.Key) -> None:
         """Handle keys - go back to files view on any key except arrows/quit."""
+        try:
+            handled = False
+            try:
+                handled = super().on_key(event)
+            except Exception as e:
+                self.printException(e)
+                handled = False
+            if handled:
+                return
+        except Exception as e:
+            self.printException(e)
+
         key = event.key
         logger.debug(f"HelpList.on_key: key={key}")
 
