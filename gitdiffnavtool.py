@@ -1105,75 +1105,29 @@ class RepoModeFileList(FileListBase):
             self.printException(e, "exception setting app diff info")
 
         try:
-            cmd = self.app.build_diff_cmd(prev, curr, filename)
-            proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
-            diff_out = proc.stdout or proc.stderr or ""
-        except Exception as exc:
+            # Delegate diff population to the shared DiffList preparer
+            diff_widget = None
             try:
-                self.app.push_screen(_TBDModal(str(exc)))
+                diff_widget = self.app.query_one("#right2")
             except Exception as e:
-                self.printException(e, "could not push TBDModal for diff command error")
+                self.printException(e, "locating right2 diff widget")
 
-            return True
-
-        # show the Diff column and populate it
-        try:
-            diff_view = self.app.query_one("#right2", ListView)
-            try:
-                diff_view.clear()
-            except Exception as e:
-                self.printException(e, "clearing diff view")
-
-            try:
-                header = ListItem(Label(Text(f"Comparing: {prev}..{curr}", style="bold")))
-                diff_view.append(header)
-            except Exception as e:
-                self.printException(e, "appending diff header")
-
-            if diff_out:
-                for line in diff_out.splitlines():
-                    if self.app.colorize_diff:
-                        if line.startswith("+++") or line.startswith("---"):
-                            styled_text = Text(line, style="bold white")
-                        elif line.startswith("+"):
-                            styled_text = Text(line, style="green")
-                        elif line.startswith("-"):
-                            styled_text = Text(line, style="red")
-                        elif line.startswith("@@"):
-                            styled_text = Text(line, style="cyan")
-                        elif line.startswith("diff --git") or line.startswith("index "):
-                            styled_text = Text(line, style="bold")
-                        else:
-                            styled_text = Text(line)
-                    else:
-                        styled_text = Text(line)
-                    diff_view.append(ListItem(Label(styled_text)))
+            if diff_widget is not None and hasattr(diff_widget, "prepDiffListBase"):
+                try:
+                    diff_widget.prepDiffListBase(filename, prev, curr)
+                except Exception as exc:
+                    try:
+                        self.app.push_screen(_TBDModal(str(exc)))
+                    except Exception as e:
+                        self.printException(e, "could not push TBDModal for diff-fullscreen error")
             else:
-                diff_view.append(ListItem(Label(Text(f"No diff between {prev}..{curr}"))))
-
-            try:
-                v = getattr(self.app, "diff_variants", [None])[getattr(self.app, "diff_cmd_index", 0)]
-                title_lbl = self.app.query_one("#right2-title", Label)
-                title_lbl.update(Text("Diff" if not v else f"Diff {v}", style="bold"))
-            except Exception as e:
-                self.printException(e, "updating right2 title")
-
-            try:
-                diff_view.styles.display = None
-            except Exception as e:
-                self.printException(e, "making diff column visible")
-
-            try:
-                diff_view.index = 0
-            except Exception as e:
-                self.printException(e, "setting diff view index")
-
-            try:
-                diff_view.focus()
-            except Exception as e:
-                self.printException(e, "focusing diff view")
+                try:
+                    self.app.push_screen(_TBDModal("Could not show diff (no diff widget)"))
+                except Exception as e:
+                    self.printException(e)
 
         except Exception as exc:
+            self.printException(exc)
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
             except Exception as e:
@@ -1765,90 +1719,32 @@ class FileModeHistoryList(HistoryListBase):
         self.app.current_diff_file = filename
 
         try:
-            cmd = self.app.build_diff_cmd(previous_hash, current_hash, filename)
-            proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
-            diff_out = proc.stdout or proc.stderr or ""
-        except Exception as exc:
+            diff_widget = None
             try:
-                self.app.push_screen(_TBDModal(str(exc)))
+                diff_widget = self.app.query_one("#right2")
             except Exception as e:
-                self.printException(e, "showing subprocess error modal")
+                self.printException(e, "locating right2 diff widget")
 
-            return True
-
-        # show the Diff column and populate it
-        try:
-            diff_view = self.app.query_one("#right2", ListView)
-            try:
-                diff_view.clear()
-            except Exception as e:
-                self.printException(e, "clearing diff view")
-
-            # Header indicating which two hashes are being compared
-            try:
-                header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
-                diff_view.append(header)
-            except Exception as e:
-                self.printException(e, "appending diff header")
-
-            if diff_out:
-                for line in diff_out.splitlines():
-                    # Colorize diff lines like git does (if enabled)
-                    if self.app.colorize_diff:
-                        if line.startswith("+++") or line.startswith("---"):
-                            # File headers in bold white
-                            styled_text = Text(line, style="bold white")
-                        elif line.startswith("+"):
-                            # Additions in green
-                            styled_text = Text(line, style="green")
-                        elif line.startswith("-"):
-                            # Deletions in red
-                            styled_text = Text(line, style="red")
-                        elif line.startswith("@@"):
-                            # Hunk headers in cyan
-                            styled_text = Text(line, style="cyan")
-                        elif line.startswith("diff --git") or line.startswith("index "):
-                            # Diff metadata in bold
-                            styled_text = Text(line, style="bold")
-                        else:
-                            # Context lines in default color
-                            styled_text = Text(line)
-                    else:
-                        # No colorization
-                        styled_text = Text(line)
-                    diff_view.append(ListItem(Label(styled_text)))
-            else:
-                diff_view.append(ListItem(Label(Text(f"No diff between {previous_hash}..{current_hash}"))))
-
-            # make sure Diff column is visible
-            try:
-                # Update the Diff column title to reflect selected variant
+            if diff_widget is not None and hasattr(diff_widget, "prepDiffListBase"):
                 try:
-                    v = getattr(self.app, "diff_variants", [None])[getattr(self.app, "diff_cmd_index", 0)]
-                    title_lbl = self.app.query_one("#right2-title", Label)
-                    title_lbl.update(Text("Diff" if not v else f"Diff {v}", style="bold"))
+                    diff_widget.prepDiffListBase(filename, previous_hash, current_hash)
+                except Exception as exc:
+                    try:
+                        self.app.push_screen(_TBDModal(str(exc)))
+                    except Exception as e:
+                        self.printException(e, "showing diff error modal")
+            else:
+                try:
+                    self.app.push_screen(_TBDModal("Could not show diff (no diff widget)"))
                 except Exception as e:
-                    self.printException(e, "updating right2 title")
-
-                diff_view.styles.display = None
-            except Exception as e:
-                self.printException(e, "making diff column visible")
-
-            try:
-                diff_view.index = 0
-            except Exception as e:
-                self.printException(e, "setting diff view index")
-
-            try:
-                diff_view.focus()
-            except Exception as e:
-                self.printException(e, "focusing diff view")
+                    self.printException(e)
 
         except Exception as exc:
+            self.printException(exc)
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
             except Exception as e:
-                self.printException(e, "showing diff error modal")
+                self.printException(e)
 
         return True
 
@@ -2354,6 +2250,77 @@ class DiffListBase(AppBase):
     backwards compatibility and easier future refactors.
     """
 
+    def prepDiffListBase(self, filename: str, previous_hash: Optional[str], current_hash: Optional[str], variant_index: Optional[int] = None) -> None:
+        """Populate this Diff list for `filename` between two commit hashes.
+
+        `variant_index` may be provided to select a diff variant from
+        `self.app.diff_variants`. This method runs the diff command built
+        by `self.app.build_diff_cmd`, clears the list, appends a header
+        and the diff lines, applying colorization if enabled.
+        """
+        try:
+            # Optionally select a diff variant
+            if variant_index is not None:
+                try:
+                    self.app.diff_cmd_index = int(variant_index)
+                except Exception:
+                    pass
+
+            # Record current diff context for potential re-renders
+            self.app.current_commit_sha = current_hash
+            self.app.current_prev_sha = previous_hash
+            self.app.current_diff_file = filename
+
+            # Build and run the diff command
+            try:
+                cmd = self.app.build_diff_cmd(previous_hash, current_hash, filename)
+                proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
+                diff_out = proc.stdout or proc.stderr or ""
+            except Exception as exc:
+                self.printException(exc, "running diff command")
+                return
+
+            # Clear and populate this ListView
+            self.clear()
+            header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
+            self.append(header)
+
+            if diff_out:
+                for line in diff_out.splitlines():
+                    try:
+                        if getattr(self.app, "colorize_diff", False):
+                            if line.startswith("+++") or line.startswith("---"):
+                                styled_text = Text(line, style="bold white")
+                            elif line.startswith("+"):
+                                styled_text = Text(line, style="green")
+                            elif line.startswith("-"):
+                                styled_text = Text(line, style="red")
+                            elif line.startswith("@@"):
+                                styled_text = Text(line, style="cyan")
+                            elif line.startswith("diff --git") or line.startswith("index "):
+                                styled_text = Text(line, style="bold")
+                            else:
+                                styled_text = Text(line)
+                        else:
+                            styled_text = Text(line)
+                        self.append(ListItem(Label(styled_text)))
+                    except Exception as e:
+                        self.printException(e)
+                        continue
+            else:
+                try:
+                    self.append(ListItem(Label(Text(f"No diff between {previous_hash}..{current_hash}"))))
+                except Exception as e:
+                    self.printException(e)
+
+            self.styles.display = None
+            self.index = 0
+            self.focus()
+
+        except Exception as exc:
+            self.printException(exc, "prepDiffListBase outer failure")
+
+
     def on_key(self, event: events.Key) -> None:  # DiffListBase
         """
         Handle left key to move focus back to History;
@@ -2423,45 +2390,19 @@ class DiffListBase(AppBase):
                     saved_scroll_y = self.scroll_y
                     saved_index = self.index
 
-                    # Directly re-run the diff command
+                    # Re-render the diff using the shared preparer and restore state
                     previous_hash = self.app.current_prev_sha
                     current_hash = self.app.current_commit_sha
                     filename = self.app.current_diff_file
 
-                    # Use app-level builder so the selected diff variant is applied
-                    cmd = self.app.build_diff_cmd(previous_hash, current_hash, filename)
-                    proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
-                    diff_out = proc.stdout or proc.stderr or ""
+                    saved_scroll_y = saved_scroll_y
+                    saved_index = saved_index
 
-                    # Clear and repopulate
-                    self.clear()
+                    try:
+                        self.prepDiffListBase(filename, previous_hash, current_hash)
+                    except Exception as e:
+                        self.printException(e, "prepDiffListBase failed in c/C handler")
 
-                    # Header
-                    header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
-                    self.append(header)
-
-                    if diff_out:
-                        for line in diff_out.splitlines():
-                            if self.app.colorize_diff:
-                                if line.startswith("+++") or line.startswith("---"):
-                                    styled_text = Text(line, style="bold white")
-                                elif line.startswith("+"):
-                                    styled_text = Text(line, style="green")
-                                elif line.startswith("-"):
-                                    styled_text = Text(line, style="red")
-                                elif line.startswith("@@"):
-                                    styled_text = Text(line, style="cyan")
-                                elif line.startswith("diff --git") or line.startswith("index "):
-                                    styled_text = Text(line, style="bold")
-                                else:
-                                    styled_text = Text(line)
-                            else:
-                                styled_text = Text(line)
-                            self.append(ListItem(Label(styled_text)))
-                    else:
-                        self.append(ListItem(Label(Text(f"No diff between {previous_hash}..{current_hash}"))))
-
-                    # Restore scroll position and selection
                     def restore_state():
                         try:
                             self.scroll_y = saved_scroll_y
@@ -2526,35 +2467,10 @@ class DiffListBase(AppBase):
                     saved_scroll_y = self.scroll_y
                     saved_index = self.index
 
-                    cmd = self.app.build_diff_cmd(previous_hash, current_hash, filename)
-                    proc = subprocess.run(cmd, cwd=self.app.path, capture_output=True, text=True)
-                    diff_out = proc.stdout or proc.stderr or ""
-
-                    # Clear and repopulate
-                    self.clear()
-                    header = ListItem(Label(Text(f"Comparing: {previous_hash}..{current_hash}", style="bold")))
-                    self.append(header)
-
-                    if diff_out:
-                        for line in diff_out.splitlines():
-                            if self.app.colorize_diff:
-                                if line.startswith("+++") or line.startswith("---"):
-                                    styled_text = Text(line, style="bold white")
-                                elif line.startswith("+"):
-                                    styled_text = Text(line, style="green")
-                                elif line.startswith("-"):
-                                    styled_text = Text(line, style="red")
-                                elif line.startswith("@@"):
-                                    styled_text = Text(line, style="cyan")
-                                elif line.startswith("diff --git") or line.startswith("index "):
-                                    styled_text = Text(line, style="bold")
-                                else:
-                                    styled_text = Text(line)
-                            else:
-                                styled_text = Text(line)
-                            self.append(ListItem(Label(styled_text)))
-                    else:
-                        self.append(ListItem(Label(Text(f"No diff between {previous_hash}..{current_hash}"))))
+                    try:
+                        self.prepDiffListBase(filename, previous_hash, current_hash)
+                    except Exception as e:
+                        self.printException(e, "prepDiffListBase failed after rotating variant")
 
                     def restore_state():
                         try:
