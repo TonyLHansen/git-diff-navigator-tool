@@ -272,7 +272,42 @@ class AppBase(ListView):
                 return True
 
             # Not handled here
+            # Handle Home/End to jump to first/last selectable item
+            if key == "home":
+                event.stop()
+                nodes = getattr(self, "_nodes", [])
+                if not nodes:
+                    return True
+
+                min_idx = getattr(self, "_min_index", 0) or 0
+                try:
+                    self.call_after_refresh(lambda: setattr(self, "index", min_idx))
+                except Exception:
+                    try:
+                        self.index = min_idx
+                    except Exception as e:
+                        self.printException(e, "setting index for home key")
+                return True
+
+            if key == "end":
+                event.stop()
+                nodes = getattr(self, "_nodes", [])
+                if not nodes:
+                    return True
+
+                last_idx = max(0, len(nodes) - 1)
+                try:
+                    self.call_after_refresh(lambda: setattr(self, "index", last_idx))
+                except Exception:
+                    try:
+                        self.index = last_idx
+                    except Exception as e:
+                        self.printException(e, "setting index for end key")
+                return True
+
+            # Not handled here
             return False
+
         except Exception as e:
             self.printException(e, "AppBase.on_key outer failure")
             return False
