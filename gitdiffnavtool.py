@@ -183,8 +183,10 @@ class AppBase(ListView):
                 try:
                     if cur <= min_idx:
                         return True
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
+                    return True
+
                 try:
                     self.action_cursor_up()
                 except Exception as e:
@@ -392,26 +394,7 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, "exception updating footer")
 
-    def on_key(self, event: events.Key) -> None:  # FileListBase
-        """Only allow up/down/left/right in this column.
-
-        - Up: move to previous entry
-        - Down: move to next entry
-        - Left/Right: show a temporary "TBD" modal
-        - Other keys: ignore
-        """
-        try:
-            handled = False
-            try:
-                handled = super().on_key(event)
-            except Exception as e:
-                self.printException(e)
-            if handled:
-                return
-        except Exception as e:
-            self.printException(e)
-        return
-
+    
     def _highlight_filename(self, name: str) -> None:  # FileListBase
         """Highlight the ListItem whose attached `_filename` equals `name`.
 
@@ -708,7 +691,7 @@ class FileModeFileList(FileListBase):
             return True
 
         # Left on non-parent: ignore (do nothing)
-        return True
+        return False
 
     def key_right(self) -> bool:  # FileModeFileList
         """Handle right key behavior for FileModeFileList
@@ -836,7 +819,18 @@ class FileModeFileList(FileListBase):
         except Exception as e:
             self.printException(e)
 
-        return True
+        return False
+
+    def more_keys(self, event: events.Key) -> bool:  # FileModeFileList
+        """Per-mode file list key hook. Do not call super().on_key here.
+
+        Return True when the key was handled, False otherwise.
+        """
+        try:
+            return False
+        except Exception as e:
+            self.printException(e)
+            return False
 
 
 class RepoModeFileList(FileListBase):
@@ -1083,7 +1077,7 @@ class RepoModeFileList(FileListBase):
 
         except Exception as e:
             self.printException(e)
-        return True
+        return False
 
     def key_right(self) -> bool:  # RepoModeFileList
         """When Right is pressed on a file in repo-mode, show its diff between
@@ -1180,7 +1174,18 @@ class RepoModeFileList(FileListBase):
             except Exception as e:
                 self.printException(e, "could not push TBDModal for diff-fullscreen error")
 
-        return True
+        return False
+
+    def more_keys(self, event: events.Key) -> bool:  # RepoModeFileList
+        """Per-mode repo file list key hook. Do not call super().on_key here.
+
+        Return True when the key was handled, False otherwise.
+        """
+        try:
+            return False
+        except Exception as e:
+            self.printException(e)
+            return False
 
 
 class HistoryListBase(AppBase):
@@ -1419,23 +1424,14 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "updating footer")
 
-    def on_key(self, event: events.Key) -> None:  # HistoryListBase
+    def more_keys(self, event: events.Key) -> bool:  # HistoryListBase
         """Handle history-specific keys; common navigation handled by AppBase.on_key.
 
-        Subclasses should rely on `AppBase.on_key` for `up/down/left/right/q` and
-        implement other keys (e.g. `m` to toggle marks) here.
+        Return True when the key was handled (e.g. `m`), False otherwise.
         """
         try:
-            try:
-                handled = super().on_key(event)
-            except Exception as e:
-                self.printException(e)
-                handled = False
-            if handled:
-                return
-
             key = event.key
-            logger.debug(f"HistoryListBase.on_key: key={key}")
+            logger.debug(f"HistoryListBase.more_keys: key={key}")
 
             # Mark/unmark the file referenced by this history view
             if key and key.lower() == "m":
@@ -1447,20 +1443,13 @@ class HistoryListBase(AppBase):
                     self.toggle_check_current()
                 except Exception as e:
                     self.printException(e, "toggle check")
-                return
+                return True
 
-            # Other keys: allow default handling to continue/bubble.
-            return
+            # Other keys: not handled here
+            return False
         except Exception as e:
             self.printException(e)
-            return
-
-    def key_left(self) -> bool:  # HistoryListBase
-        """Handle left key behavior for HistoryListBase.
-
-        Returns True when the key was handled/consumed.
-        """
-        return False
+            return False
 
     def key_right(self) -> bool:  # HistoryListBase
         """Handle right key behavior for HistoryListBase.
@@ -1673,7 +1662,7 @@ class FileModeHistoryList(HistoryListBase):
         except Exception as e:
             self.printException(e, "focusing files on left")
             return True
-        return True
+        return False
 
     def key_right(self) -> bool:  # FileModeHistoryList
         """Handle right key behavior for FileModeHistoryList.
@@ -1788,7 +1777,7 @@ class FileModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e)
 
-        return True
+        return False
 
 
 class RepoModeHistoryList(HistoryListBase):
@@ -2366,82 +2355,86 @@ class DiffListBase(AppBase):
         except Exception as exc:
             self.printException(exc, "prepDiffListBase outer failure")
 
-    def on_key(self, event: events.Key) -> None:  # DiffListBase
+    def more_keys(self, event: events.Key) -> bool:  # DiffListBase
         """
         Handle left key to move focus back to History;
         handle PgUp/PgDn with visible selection; handle c/C to toggle colorization.
+
+        Return True when the key was handled, False otherwise.
         """
         try:
-            handled = False
-            try:
-                handled = super().on_key(event)
-            except Exception as e:
-                self.printException(e)
-                handled = False
-            if handled:
-                return
-        except Exception as e:
-            self.printException(e)
+            key = event.key
+            logger.debug(f"DiffList.more_keys: key={key}")
+            # Handle PageUp/PageDown - move selection by page and scroll to position it appropriately
+            if key in ("pageup", "pagedown"):
+                logger.debug(f"DiffList: {key} pressed")
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+                try:
+                    nodes = getattr(self, "_nodes", [])
+                    if not nodes:
+                        logger.debug(f"DiffList: WARNING - _nodes is empty for {key}")
+                        return True
 
-        key = event.key
-        logger.debug(f"DiffList.on_key: key={key}")
-        # Handle PageUp/PageDown - move selection by page and scroll to position it appropriately
-        if key in ("pageup", "pagedown"):
-            logger.debug(f"DiffList: {key} pressed")
-            event.stop()
-            try:
-                nodes = getattr(self, "_nodes", [])
-                if not nodes:
-                    logger.debug(f"DiffList: WARNING - _nodes is empty for {key}")
-                    return
+                    current_index = self.index if self.index is not None else 0
+                    visible_height = self.scrollable_content_region.height
+                    page_size = max(1, visible_height // 2)  # Half screen at a time like built-in behavior
 
-                current_index = self.index if self.index is not None else 0
-                visible_height = self.scrollable_content_region.height
-                page_size = max(1, visible_height // 2)  # Half screen at a time like built-in behavior
+                    logger.debug(
+                        f"DiffList: {key} - current_index={current_index}, page_size={page_size}, "
+                        f"visible_height={visible_height}, nodes={len(nodes)}"
+                    )
 
-                logger.debug(
-                    f"DiffList: {key} - current_index={current_index}, page_size={page_size}, "
-                    f"visible_height={visible_height}, nodes={len(nodes)}"
-                )
+                    # Calculate new index
+                    if key == "pagedown":
+                        new_index = min(current_index + page_size, len(nodes) - 1)
+                    else:  # pageup
+                        new_index = max(current_index - page_size, 0)
 
-                # Calculate new index
-                if key == "pagedown":
-                    new_index = min(current_index + page_size, len(nodes) - 1)
-                else:  # pageup
-                    new_index = max(current_index - page_size, 0)
+                    logger.debug(f"DiffList: {key} - moving from index {current_index} to {new_index}")
 
-                logger.debug(f"DiffList: {key} - moving from index {current_index} to {new_index}")
-
-                # We want to change the viewport first, then highlight the new line.
-                # Schedule a scroll callback that sets scroll_y, then set the index
-                # after the scroll has been applied so highlighting is stable.
-                def scroll_to_position():
-                    try:
-                        # Assume each line is ~1 unit tall, so scroll position ≈ line index
-                        if key == "pagedown":
-                            target_scroll = float(new_index)
-                        else:  # pageup
-                            target_scroll = float(max(0, new_index - visible_height + 1))
-
-                        # Clamp to valid scroll range
-                        max_scroll = float(max(0, len(nodes) - visible_height))
-                        target_scroll = max(0.0, min(target_scroll, max_scroll))
-
-                        logger.debug(
-                            f"DiffList: {key} - before scroll: scroll_y={self.scroll_y}, "
-                            f"setting to {target_scroll}, max_scroll={max_scroll}"
-                        )
-                        # Try to animate the scroll for smooth movement. If animate
-                        # is supported, schedule the highlight after the animation
-                        # duration. Otherwise fall back to instant set.
-                        anim_duration = 0.12
+                    def scroll_to_position():
                         try:
-                            # Some Textual versions support Widget.animate
-                            try:
-                                self.animate("scroll_y", target_scroll, duration=anim_duration)
-                                logger.debug(f"DiffList: {key} - started animate(scroll_y -> {target_scroll})")
+                            if key == "pagedown":
+                                target_scroll = float(new_index)
+                            else:
+                                target_scroll = float(max(0, new_index - visible_height + 1))
 
-                                def _finalize_highlight():
+                            max_scroll = float(max(0, len(nodes) - visible_height))
+                            target_scroll = max(0.0, min(target_scroll, max_scroll))
+
+                            anim_duration = 0.12
+                            try:
+                                try:
+                                    self.animate("scroll_y", target_scroll, duration=anim_duration)
+                                    logger.debug(f"DiffList: {key} - started animate(scroll_y -> {target_scroll})")
+
+                                    def _finalize_highlight():
+                                        try:
+                                            old_index = self.index
+                                            self.index = None
+                                            self.index = new_index
+                                            try:
+                                                if old_index is not None and old_index < len(nodes):
+                                                    nodes[old_index].remove_class("-highlight")
+                                                if new_index < len(nodes):
+                                                    nodes[new_index].add_class("-highlight")
+                                            except Exception as e:
+                                                self.printException(e, "exception managing highlight classes after animate")
+                                        except Exception as e:
+                                            self.printException(e, "exception finalizing highlight after animate")
+
+                                    try:
+                                        # schedule after animation completes
+                                        self.set_timer(anim_duration + 0.02, _finalize_highlight)
+                                    except Exception as e:
+                                        self.printException(e, "set_timer not available, falling back")
+                                        self.call_after_refresh(_finalize_highlight)
+                                except Exception as e:
+                                    self.printException(e, "animate not available, falling back")
+                                    self.scroll_y = target_scroll
                                     try:
                                         old_index = self.index
                                         self.index = None
@@ -2452,205 +2445,174 @@ class DiffListBase(AppBase):
                                             if new_index < len(nodes):
                                                 nodes[new_index].add_class("-highlight")
                                         except Exception as e:
-                                            self.printException(e, "exception managing highlight classes after animate")
+                                            self.printException(e, "exception managing highlight classes after instant scroll")
                                     except Exception as e:
-                                        self.printException(e, "exception finalizing highlight after animate")
-
-                                try:
-                                    # schedule after animation completes
-                                    self.set_timer(anim_duration + 0.02, _finalize_highlight)
-                                except Exception as e:
-                                    self.printException(e, "set_timer not available, falling back")
-                                    # fallback to call_after_refresh if set_timer not available
-                                    self.call_after_refresh(_finalize_highlight)
+                                        self.printException(e, "exception setting index after instant scroll")
                             except Exception as e:
-                                self.printException(e, "animate not available, falling back")
-                                # If animate not available, fall back to instant scroll
-                                self.scroll_y = target_scroll
-                                logger.debug(f"DiffList: {key} - after instant scroll: scroll_y={self.scroll_y}")
-                                try:
-                                    old_index = self.index
-                                    self.index = None
-                                    self.index = new_index
-                                    try:
-                                        if old_index is not None and old_index < len(nodes):
-                                            nodes[old_index].remove_class("-highlight")
-                                        if new_index < len(nodes):
-                                            nodes[new_index].add_class("-highlight")
-                                    except Exception as e:
-                                        self.printException(
-                                            e, "exception managing highlight classes after instant scroll"
-                                        )
-                                except Exception as e:
-                                    self.printException(e, "exception setting index after instant scroll")
+                                self.printException(e, "exception in scroll_to_position")
                         except Exception as e:
                             self.printException(e, "exception in scroll_to_position")
-                    except Exception as e:
-                        self.printException(e, "exception in scroll_to_position")
 
-                # Schedule the scroll -> highlight sequence
-                self.call_after_refresh(scroll_to_position)
+                    self.call_after_refresh(scroll_to_position)
+                except Exception as e:
+                    self.printException(e, "exception in {key} handler")
+                return True
 
-            except Exception as e:
-                self.printException(e, "exception in {key} handler")
-            return
-
-        # Handle f/F to toggle fullscreen diff
-        if key and key.lower() == "f":
-            event.stop()
-            try:
-                if getattr(self.app, "diff_fullscreen", False):
-                    self.app.exit_diff_fullscreen()
-                    # keep focus on diff after restoring
-                    try:
-                        self.focus()
-                    except Exception as e:
-                        self.printException(e, "focus() exception")
-
-                else:
-                    # Only enter fullscreen when diff is visible (columnated)
-                    try:
-                        # require right2 to be visible
-                        if self.app.query_one("#right2", ListView).styles.display != "none":
-                            self.app.enter_diff_fullscreen()
-                            try:
-                                self.focus()
-                            except Exception as e:
-                                self.printException(e, "focus() after enter_diff_fullscreen exception")
-
-                    except Exception as e:
-                        self.printException(e, "enter fullscreen check exception")
-                        # best-effort: enter anyway
-                        try:
-                            self.app.enter_diff_fullscreen()
-                        except Exception as e:
-                            self.printException(e, "fallback enter_diff_fullscreen exception")
-
-            except Exception as e:
-                self.printException(e, "exception toggling fullscreen f/F")
-            return
-
-        # Handle c/C to toggle colorization
-        if key and key.lower() == "c":
-            event.stop()
-            logger.debug(f"DiffList: c/C pressed, colorize_diff={getattr(self.app, 'colorize_diff', None)}")
-            try:
-                # Toggle the colorization flag
-                self.app.colorize_diff = not self.app.colorize_diff
-                logger.debug(f"DiffList: toggled to colorize_diff={self.app.colorize_diff}")
-
-                # Re-render the diff if we have current diff info
-                logger.debug(
-                    f"DiffList: current_commit_sha={getattr(self.app, 'current_commit_sha', None)}, "
-                    f"current_prev_sha={getattr(self.app, 'current_prev_sha', None)}, "
-                    f"current_diff_file={getattr(self.app, 'current_diff_file', None)}"
-                )
-                if (
-                    getattr(self.app, "current_commit_sha", None)
-                    and getattr(self.app, "current_prev_sha", None)
-                    and getattr(self.app, "current_diff_file", None)
-                ):
-
-                    logger.debug("DiffList: re-rendering diff with new colorization")
-                    # Save current scroll position and selection
-                    saved_scroll_y = self.scroll_y
-                    saved_index = self.index
-
-                    # Re-render the diff using the shared preparer and restore state
-                    previous_hash = self.app.current_prev_sha
-                    current_hash = self.app.current_commit_sha
-                    filename = self.app.current_diff_file
-
-                    saved_scroll_y = saved_scroll_y
-                    saved_index = saved_index
-
-                    try:
-                        self.prepDiffListBase(filename, previous_hash, current_hash)
-                    except Exception as e:
-                        self.printException(e, "prepDiffListBase failed in c/C handler")
-
-                    def restore_state():
-                        try:
-                            self.scroll_y = saved_scroll_y
-                            if saved_index is not None:
-                                self.index = saved_index
-                        except Exception as e:
-                            self.printException(e)
-
-                    self.call_after_refresh(restore_state)
-                    logger.debug("DiffList: diff re-rendered successfully")
-                else:
-                    logger.debug("DiffList: no current diff info available")
-
-            except Exception as e:
-                self.printException(e, "exception in c/C handler")
-            return
-        # Handle d/D to rotate diff command variant
-        if key and key.lower() == "d":
-            event.stop()
-            try:
-                variants = getattr(
-                    self.app, "diff_variants", [None, "--ignore-space-change", "--diff-algorithm=patience"]
-                )
-                cur = getattr(self.app, "diff_cmd_index", 0)
-                cur = (cur + 1) % max(1, len(variants))
-                self.app.diff_cmd_index = cur
-                logger.debug(f"DiffList: rotated diff_cmd_index to {cur}, variant={variants[cur]}")
-                # Update footer to show current variant briefly
+            # Handle f/F to toggle fullscreen diff
+            if key and key.lower() == "f":
                 try:
-                    footer = self.app.query_one("#footer", Label)
-                    v = variants[cur]
-                    vlabel = v if v else "default"
+                    event.stop()
+                except Exception:
+                    pass
+                try:
                     if getattr(self.app, "diff_fullscreen", False):
-                        footer.update(Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold"))
+                        self.app.exit_diff_fullscreen()
+                        # keep focus on diff after restoring
+                        try:
+                            self.focus()
+                        except Exception as e:
+                            self.printException(e, "focus() exception")
+
                     else:
-                        footer.update(
-                            Text(f"q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)  d:{vlabel}", style="bold")
-                        )
-                except Exception as e:
-                    self.printException(e, "could not schedule timer or call_after_refresh")
+                        try:
+                            # require right2 to be visible
+                            if self.app.query_one("#right2", ListView).styles.display != "none":
+                                self.app.enter_diff_fullscreen()
+                                try:
+                                    self.focus()
+                                except Exception as e:
+                                    self.printException(e, "focus() after enter_diff_fullscreen exception")
 
-                # Update Diff column title to show current variant
+                        except Exception as e:
+                            self.printException(e, "enter fullscreen check exception")
+                            try:
+                                self.app.enter_diff_fullscreen()
+                            except Exception as e:
+                                self.printException(e, "fallback enter_diff_fullscreen exception")
+
+                except Exception as e:
+                    self.printException(e, "exception toggling fullscreen f/F")
+                return True
+
+            # Handle c/C to toggle colorization
+            if key and key.lower() == "c":
                 try:
-                    title_lbl = self.app.query_one("#right2-title", Label)
-                    v = variants[cur]
-                    title_text = "Diff" if not v else f"Diff {v}"
-                    title_lbl.update(Text(title_text, style="bold"))
+                    event.stop()
+                except Exception:
+                    pass
+                logger.debug(f"DiffList: c/C pressed, colorize_diff={getattr(self.app, 'colorize_diff', None)}")
+                try:
+                    self.app.colorize_diff = not self.app.colorize_diff
+                    logger.debug(f"DiffList: toggled to colorize_diff={self.app.colorize_diff}")
+
+                    if (
+                        getattr(self.app, "current_commit_sha", None)
+                        and getattr(self.app, "current_prev_sha", None)
+                        and getattr(self.app, "current_diff_file", None)
+                    ):
+
+                        logger.debug("DiffList: re-rendering diff with new colorization")
+                        saved_scroll_y = self.scroll_y
+                        saved_index = self.index
+
+                        previous_hash = self.app.current_prev_sha
+                        current_hash = self.app.current_commit_sha
+                        filename = self.app.current_diff_file
+
+                        try:
+                            self.prepDiffListBase(filename, previous_hash, current_hash)
+                        except Exception as e:
+                            self.printException(e, "prepDiffListBase failed in c/C handler")
+
+                        def restore_state():
+                            try:
+                                self.scroll_y = saved_scroll_y
+                                if saved_index is not None:
+                                    self.index = saved_index
+                            except Exception as e:
+                                self.printException(e)
+
+                        self.call_after_refresh(restore_state)
+                        logger.debug("DiffList: diff re-rendered successfully")
+                    else:
+                        logger.debug("DiffList: no current diff info available")
+
                 except Exception as e:
-                    self.printException(e, "updating right2 title exception")
+                    self.printException(e, "exception in c/C handler")
+                return True
 
-                # Re-render current diff if available
-                if (
-                    getattr(self.app, "current_commit_sha", None)
-                    and getattr(self.app, "current_prev_sha", None)
-                    and getattr(self.app, "current_diff_file", None)
-                ):
-
-                    previous_hash = self.app.current_prev_sha
-                    current_hash = self.app.current_commit_sha
-                    filename = self.app.current_diff_file
-
-                    saved_scroll_y = self.scroll_y
-                    saved_index = self.index
+            # Handle d/D to rotate diff command variant
+            if key and key.lower() == "d":
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+                try:
+                    variants = getattr(
+                        self.app, "diff_variants", [None, "--ignore-space-change", "--diff-algorithm=patience"]
+                    )
+                    cur = getattr(self.app, "diff_cmd_index", 0)
+                    cur = (cur + 1) % max(1, len(variants))
+                    self.app.diff_cmd_index = cur
+                    logger.debug(f"DiffList: rotated diff_cmd_index to {cur}, variant={variants[cur]}")
+                    # Update footer to show current variant briefly
+                    try:
+                        footer = self.app.query_one("#footer", Label)
+                        v = variants[cur]
+                        vlabel = v if v else "default"
+                        if getattr(self.app, "diff_fullscreen", False):
+                            footer.update(Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold"))
+                        else:
+                            footer.update(
+                                Text(f"q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)  d:{vlabel}", style="bold")
+                            )
+                    except Exception as e:
+                        self.printException(e, "could not schedule timer or call_after_refresh")
 
                     try:
-                        self.prepDiffListBase(filename, previous_hash, current_hash)
+                        title_lbl = self.app.query_one("#right2-title", Label)
+                        v = variants[cur]
+                        title_text = "Diff" if not v else f"Diff {v}"
+                        title_lbl.update(Text(title_text, style="bold"))
                     except Exception as e:
-                        self.printException(e, "prepDiffListBase failed after rotating variant")
+                        self.printException(e, "updating right2 title exception")
 
-                    def restore_state():
+                    if (
+                        getattr(self.app, "current_commit_sha", None)
+                        and getattr(self.app, "current_prev_sha", None)
+                        and getattr(self.app, "current_diff_file", None)
+                    ):
+
+                        previous_hash = self.app.current_prev_sha
+                        current_hash = self.app.current_commit_sha
+                        filename = self.app.current_diff_file
+
+                        saved_scroll_y = self.scroll_y
+                        saved_index = self.index
+
                         try:
-                            self.scroll_y = saved_scroll_y
-                            if saved_index is not None:
-                                self.index = saved_index
+                            self.prepDiffListBase(filename, previous_hash, current_hash)
                         except Exception as e:
-                            self.printException(e)
+                            self.printException(e, "prepDiffListBase failed after rotating variant")
 
-                    self.call_after_refresh(restore_state)
-                    logger.debug("DiffList: diff re-rendered after rotating variant")
-            except Exception as e:
-                self.printException(e, "exception rotating diff variant")
-            return
+                        def restore_state():
+                            try:
+                                self.scroll_y = saved_scroll_y
+                                if saved_index is not None:
+                                    self.index = saved_index
+                            except Exception as e:
+                                self.printException(e)
+
+                        self.call_after_refresh(restore_state)
+                        logger.debug("DiffList: diff re-rendered after rotating variant")
+                except Exception as e:
+                    self.printException(e, "exception rotating diff variant")
+                return True
+
+        except Exception as e:
+            self.printException(e)
+        # let other keys be handled by default (up/down handled by ListView)
+        return False
 
     # let other keys be handled by default (up/down handled by ListView)
 
