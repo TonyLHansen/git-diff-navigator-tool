@@ -50,7 +50,7 @@ class AppBase(ListView):
     It provides common functionality that everyone needs.
     """
 
-    def printException(self, e, msg=None): # AppBase
+    def printException(self, e, msg=None):  # AppBase
         """Print a message, the error information and a stacktrace"""
         className = type(self).__name__
         funcName = sys._getframe(1).f_code.co_name
@@ -58,71 +58,7 @@ class AppBase(ListView):
         logger.warning(f"WARNING: {className}.{funcName} ({str(e)}): {msg}")
         logger.warning(traceback.format_exc())
 
-    # Layout helpers: centralize column width/display management
-    # pylint: disable=too-many-positional-arguments
-    def _apply_column_layout( # AppBase
-        self, left_w: str, right1_w: str, right2_w: str, left_display=None, right1_display=None, right2_display=None
-    ) -> None:
-        """Set outer column widths and optional widget display flags."""
-        try:
-            try:
-                lc = self.query_one("#left-column")
-                lc.styles.width = left_w
-                lc.styles.flex = 0
-            except Exception as e:
-                self.printException(e, "could not set left-column")
-            try:
-                r1c = self.query_one("#right1-column")
-                r1c.styles.width = right1_w
-                r1c.styles.flex = 0
-            except Exception as e:
-                self.printException(e, "could not set right1-column")
-            try:
-                r2c = self.query_one("#right2-column")
-                r2c.styles.width = right2_w
-                r2c.styles.flex = 0
-            except Exception as e:
-                self.printException(e, "could not set right2-column")
-
-            # Optionally set widget display styles
-            try:
-                if left_display is not None:
-                    self.query_one("#left").styles.display = left_display
-            except Exception as e:
-                self.printException(e, "could not set left display style")
-
-            try:
-                if right1_display is not None:
-                    self.query_one("#right1").styles.display = right1_display
-            except Exception as e:
-                self.printException(e, "could not set right1 display style")
-
-            try:
-                if right2_display is not None:
-                    self.query_one("#right2").styles.display = right2_display
-            except Exception as e:
-                self.printException(e, "could not set right2 display style")
-
-        except Exception as e:
-            self.printException(e, "error applying column layout")
-
-    def layout_left_only(self) -> None: # AppBase
-        """Show only the left (History) column full-width."""
-        self._apply_column_layout("100%", "0%", "0%", left_display=None, right1_display="none", right2_display="none")
-
-    def layout_left_right_split(self) -> None: # AppBase
-        """Show left/history and files split 25%/75%."""
-        self._apply_column_layout("25%", "75%", "0%", left_display=None, right1_display=None, right2_display="none")
-
-    def layout_three_columns(self) -> None: # AppBase
-        """Show three-column layout 5%/15%/80%."""
-        self._apply_column_layout("5%", "15%", "80%", left_display=None, right1_display=None, right2_display=None)
-
-    def layout_diff_fullscreen(self) -> None: # AppBase
-        """Make the diff column fullscreen (hide left and right1)."""
-        self._apply_column_layout("0%", "0%", "100%", left_display="none", right1_display="none", right2_display=None)
-
-    def text_of(self, node) -> str: # AppBase
+    def text_of(self, node) -> str:  # AppBase
         """Extract visible text from a ListItem node's Label/renderable.
 
         This centralizes the logic used by history lists to parse the
@@ -146,7 +82,7 @@ class AppBase(ListView):
             self.printException(e, "extracting text")
             return str(node)
 
-    def on_key(self, event: events.Key) -> bool: # AppBase
+    def on_key(self, event: events.Key) -> bool:  # AppBase
         """Handle common navigation keys for ListView-based widgets.
 
         Returns True when the key was handled and should not be processed
@@ -323,7 +259,6 @@ class AppBase(ListView):
             self.printException(e, "AppBase.on_key outer failure")
             return False
 
-
     def more_keys(self, event: events.Key) -> bool:  # FileListBase
         """Per-mode file list key hook.
         Return True when the key was handled, False otherwise.
@@ -333,7 +268,6 @@ class AppBase(ListView):
         except Exception as e:
             self.printException(e)
             return False
-
 
 
 class FileListBase(AppBase):
@@ -348,7 +282,7 @@ class FileListBase(AppBase):
     # as `prepFileModeFileList` so that different modes (file vs repo) can
     # populate lists with mode-specific behavior.
 
-    def on_focus(self, event: events.Focus) -> None: # FileListBase
+    def on_focus(self, event: events.Focus) -> None:  # FileListBase
         """When Files column receives focus, make it full-width and hide others."""
         try:
             # Allow callers to temporarily suppress automatic layout changes
@@ -489,7 +423,6 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, "exception updating footer")
 
-    
     def _highlight_filename(self, name: str) -> None:  # FileListBase
         """Highlight the ListItem whose attached `_filename` equals `name`.
 
@@ -540,7 +473,6 @@ class FileListBase(AppBase):
             self.printException(e, "exception")
             return
 
-
     def more_keys(self, event: events.Key) -> bool:  # FileListBase
         """Per-mode file list key hook.
         Return True when the key was handled, False otherwise.
@@ -552,12 +484,10 @@ class FileListBase(AppBase):
             return False
 
 
-
-
 class FileModeFileList(FileListBase):
     """Compatibility subclass; use `FileListBase` for shared logic."""
 
-    def prepFileModeFileList(self, path: str) -> None: # FileModeFileList
+    def prepFileModeFileList(self, path: str) -> None:  # FileModeFileList
         """Prepare and populate this `FileModeFileList` for `path`.
 
         Extracted from the previous helper so this instance can populate
@@ -935,7 +865,9 @@ class RepoModeFileList(FileListBase):
 
     key = "Key: ' ' tracked  U untracked  M modified  R renamed  A staged  D deleted  I ignored  ! conflicted"
 
-    def prepRepoModeFileList(self, previous_hash: Optional[str], current_hash: Optional[str]) -> None: # RepoModeFileList
+    def prepRepoModeFileList(
+        self, previous_hash: Optional[str], current_hash: Optional[str]
+    ) -> None:  # RepoModeFileList
         """Populate this RepoModeFileList with files changed between two commits.
 
         `previous_hash` and `current_hash` are commit-ish identifiers (short
@@ -1547,7 +1479,7 @@ class HistoryListBase(AppBase):
 class FileModeHistoryList(HistoryListBase):
     """subclass for FileMode HistoryList functionality; see `HistoryListBase` for shared logic."""
 
-    def prepListModeHistoryList(self, file_path: str) -> None: # FileModeHistoryList
+    def prepListModeHistoryList(self, file_path: str) -> None:  # FileModeHistoryList
         """Populate this History list with the commit history for a single file.
 
         Accepts a file path (filename relative to `self.app.path`) and
@@ -1868,7 +1800,7 @@ class FileModeHistoryList(HistoryListBase):
 class RepoModeHistoryList(HistoryListBase):
     """RepoMode History list used when `-l/--log-first`"""
 
-    def prepRepoModeHistoryList(self) -> None: # RepoModeHistoryList
+    def prepRepoModeHistoryList(self) -> None:  # RepoModeHistoryList
         """Populate this RepoModeHistoryList using the current repository.
 
         This method discovers the repository from the app state (prefer
@@ -2364,7 +2296,7 @@ class DiffListBase(AppBase):
     ListView used for the Diff columns.
     """
 
-    def prepDiffListBase( # DiffListBase
+    def prepDiffListBase(  # DiffListBase
         self,
         filename: str,
         previous_hash: Optional[str],
@@ -2557,7 +2489,9 @@ class DiffListBase(AppBase):
                             footer.update(Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold"))
                         else:
                             footer.update(
-                                Text(f"q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)  d:{vlabel}", style="bold")
+                                Text(
+                                    f"q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)  d:{vlabel}", style="bold"
+                                )
                             )
                     except Exception as e:
                         self.printException(e, "could not schedule timer or call_after_refresh")
@@ -2935,19 +2869,20 @@ class RepoModeDiffList(DiffListBase):
         """
         return False
 
+
 class _TBDModal(ModalScreen):
     """Simple modal that shows a message (default "TBD") and closes on any key."""
 
-    def __init__(self, message: str | None = None, **kwargs) -> None: # TBDModal
+    def __init__(self, message: str | None = None, **kwargs) -> None:  # TBDModal
         """Create the modal with an optional `message` to display."""
         super().__init__(**kwargs)
         self.message = message or "TBD"
 
-    def compose(self) -> ComposeResult: # TBDModal
+    def compose(self) -> ComposeResult:  # TBDModal
         """Compose the modal contents (a single Static message)."""
         yield Static(Text(self.message, style="bold"), id="tbd-msg")
 
-    def on_key(self, event: events.Key) -> None: # TBDModal
+    def on_key(self, event: events.Key) -> None:  # TBDModal
         """Close the modal on any key press."""
         event.stop()
         self.app.pop_screen()
@@ -3035,7 +2970,7 @@ class HelpList(AppBase):
     The contents are a plain listing derived from the README.
     """
 
-    def on_mount(self) -> None: # HelpList
+    def on_mount(self) -> None:  # HelpList
         """Populate help content."""
         # Split help text into lines and add as list items
         lines = HELP_TEXT.split("\n")
@@ -3296,7 +3231,7 @@ App {
 
     BINDINGS = [("q", "quit", "Quit")]
 
-    def __init__( # GitHistoryTool
+    def __init__(  # GitHistoryTool
         self, path: Optional[str] = None, colorize_diff: bool = True, log_first: bool = False, **kwargs
     ) -> None:
         """Initialize the app state.
@@ -3342,7 +3277,7 @@ App {
         self.diff_cmd_index: int = 0
         # start the app showing repository-wide commit log first when True
 
-    def printException(self, e, msg=None): # GitHistoryTool
+    def printException(self, e, msg=None):  # GitHistoryTool
         """Log an exception from the app context (mirrors AppBase.printException)."""
         className = type(self).__name__
         funcName = sys._getframe(1).f_code.co_name
@@ -3351,7 +3286,7 @@ App {
         logger.warning(traceback.format_exc())
 
     # Layout helpers on the App so widgets can call `self.app.layout_*`.
-    def _apply_column_layout( # GitHistoryTool
+    def _apply_column_layout(  # GitHistoryTool
         self, left_w: str, right1_w: str, right2_w: str, left_display=None, right1_display=None, right2_display=None
     ) -> None:
         try:
@@ -3395,23 +3330,23 @@ App {
         except Exception as e:
             self.printException(e, "error applying column layout")
 
-    def layout_left_only(self) -> None: # GitHistoryTool
+    def layout_left_only(self) -> None:  # GitHistoryTool
         """Show only the left (History) column full-width."""
         self._apply_column_layout("100%", "0%", "0%", left_display=None, right1_display="none", right2_display="none")
 
-    def layout_left_right_split(self) -> None: # GitHistoryTool
+    def layout_left_right_split(self) -> None:  # GitHistoryTool
         """Show left/history and files split 25%/75%."""
         self._apply_column_layout("25%", "75%", "0%", left_display=None, right1_display=None, right2_display="none")
 
-    def layout_three_columns(self) -> None: # GitHistoryTool
+    def layout_three_columns(self) -> None:  # GitHistoryTool
         """Show three-column layout 5%/15%/80%."""
         self._apply_column_layout("5%", "15%", "80%", left_display=None, right1_display=None, right2_display=None)
 
-    def layout_diff_fullscreen(self) -> None: # GitHistoryTool
+    def layout_diff_fullscreen(self) -> None:  # GitHistoryTool
         """Make the diff column fullscreen (hide left and right1)."""
         self._apply_column_layout("0%", "0%", "100%", left_display="none", right1_display="none", right2_display=None)
 
-    def build_diff_cmd(self, prev: str | None, curr: str | None, fname: str) -> list[str]: # GitHistoryTool
+    def build_diff_cmd(self, prev: str | None, curr: str | None, fname: str) -> list[str]:  # GitHistoryTool
         """Construct the git diff command honoring the currently selected variant.
 
         The variant (if not None) is inserted right after `git diff` so that
@@ -3419,7 +3354,7 @@ App {
         are applied to the invoked command.
         """
 
-        def _is_pseudo(h: str | None) -> bool: # GitHistoryTool
+        def _is_pseudo(h: str | None) -> bool:  # GitHistoryTool
             return h in ("STAGED", "MODS")
 
         try:
@@ -3476,7 +3411,7 @@ App {
         # Fallback
         return ["git", "diff", "--", fname]
 
-    def build_repo_cache(self) -> None: # GitHistoryTool
+    def build_repo_cache(self) -> None:  # GitHistoryTool
         """
         Discover repository (if any) and build in-memory index/status maps.
         """
@@ -3553,7 +3488,7 @@ App {
             # leave as not available
             self.repo_available = False
 
-    def compose(self) -> ComposeResult: # GitHistoryTool
+    def compose(self) -> ComposeResult:  # GitHistoryTool
         """Compose the app UI: title, four-column layout, and footer hints."""
         with Vertical(id="root"):
             yield Label(Text(self.TITLE, style="bold"), id="title")
@@ -3592,7 +3527,7 @@ App {
             # GitHistoryTool footer
             yield Label(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →", style="bold"), id="footer")
 
-    async def on_mount(self) -> None: # GitHistoryTool
+    async def on_mount(self) -> None:  # GitHistoryTool
         """Mount-time initialization: build repo cache and populate Files.
 
         This method configures initial layout sizes, builds the repository
@@ -3702,7 +3637,7 @@ App {
         except Exception as e:
             self.printException(e)
 
-    def _open_history_for_file(self, item_name: str) -> None: # GitHistoryTool
+    def _open_history_for_file(self, item_name: str) -> None:  # GitHistoryTool
         """Populate the History column for `item_name` and focus it.
 
         Mirrors the behavior used when pressing Right on a file in the Files column.
@@ -3722,7 +3657,7 @@ App {
             except Exception as e:
                 self.printException(e)
 
-    def _open_repo_history(self) -> None: # GitHistoryTool
+    def _open_repo_history(self) -> None:  # GitHistoryTool
         """Populate the History column with repository-wide commits and focus it."""
         try:
             # If we started in log-first mode, the left column already hosts
@@ -3805,7 +3740,7 @@ App {
             except Exception as e2:
                 self.printException(e2)
 
-    def on_key(self, event: events.Key) -> None: # GitHistoryTool
+    def on_key(self, event: events.Key) -> None:  # GitHistoryTool
         """Global key handler.
 
         - Block the Ctrl+P palette shortcut.
@@ -3928,7 +3863,7 @@ App {
         except Exception as e:
             self.printException(e)
 
-    def enter_diff_fullscreen(self) -> None: # GitHistoryTool
+    def enter_diff_fullscreen(self) -> None:  # GitHistoryTool
         """Make the Diff column full-screen (hide other columns) and update footer."""
         try:
             # save whether we were fullscreen already
@@ -4004,7 +3939,7 @@ App {
         except Exception as e:
             self.printException(e)
 
-    def exit_diff_fullscreen(self) -> None: # GitHistoryTool
+    def exit_diff_fullscreen(self) -> None:  # GitHistoryTool
         """Restore the standard three-column layout (columnated mode)."""
         try:
             if not getattr(self, "diff_fullscreen", False):
