@@ -96,18 +96,17 @@ class AppBase(ListView):
             if key and key.lower() == "q":
                 try:
                     event.key = key.lower()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
+
                 return True
 
             if key == "up":
                 try:
                     event.stop()
-                except Exception:
-                    pass
-                try:
                     min_idx = getattr(self, "_min_index", 0) or 0
-                except Exception:
+                except Exception as e:
+                    self.printException(e)
                     min_idx = 0
                 cur = getattr(self, "index", None)
                 if cur is None:
@@ -119,11 +118,6 @@ class AppBase(ListView):
                 try:
                     if cur <= min_idx:
                         return True
-                except Exception as e:
-                    self.printException(e)
-                    return True
-
-                try:
                     self.action_cursor_up()
                 except Exception as e:
                     self.printException(e)
@@ -132,8 +126,9 @@ class AppBase(ListView):
             if key == "down":
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
+
                 try:
                     self.action_cursor_down()
                 except Exception as e:
@@ -145,8 +140,9 @@ class AppBase(ListView):
                 try:
                     try:
                         event.stop()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
+
                     nodes = getattr(self, "_nodes", [])
                     if not nodes:
                         return True
@@ -155,7 +151,8 @@ class AppBase(ListView):
                     visible_height = 0
                     try:
                         visible_height = int(getattr(self, "scrollable_content_region").height)
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e)
                         # fallback to a reasonable page size when not available
                         visible_height = 10
                     page_size = max(1, visible_height // 2)
@@ -168,7 +165,8 @@ class AppBase(ListView):
                     try:
                         # schedule index change after refresh for stability
                         self.call_after_refresh(lambda: setattr(self, "index", new_index))
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e)
                         try:
                             self.index = new_index
                         except Exception as e:
@@ -180,8 +178,9 @@ class AppBase(ListView):
             if key == "left":
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
+
                 try:
                     if hasattr(self, "key_left"):
                         try:
@@ -195,8 +194,9 @@ class AppBase(ListView):
             if key == "right":
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
+
                 try:
                     if hasattr(self, "key_right"):
                         try:
@@ -218,7 +218,8 @@ class AppBase(ListView):
                 min_idx = getattr(self, "_min_index", 0) or 0
                 try:
                     self.call_after_refresh(lambda: setattr(self, "index", min_idx))
-                except Exception:
+                except Exception as e:
+                    self.printException(e)
                     try:
                         self.index = min_idx
                     except Exception as e:
@@ -234,7 +235,8 @@ class AppBase(ListView):
                 last_idx = max(0, len(nodes) - 1)
                 try:
                     self.call_after_refresh(lambda: setattr(self, "index", last_idx))
-                except Exception:
+                except Exception as e:
+                    self.printException(e)
                     try:
                         self.index = last_idx
                     except Exception as e:
@@ -302,7 +304,7 @@ class FileListBase(AppBase):
                 try:
                     if fid == "left":
                         try:
-                            self.app.layout_left_only()
+                            self.app.layout_left_fullscreen()
                         except Exception as e:
                             self.printException(e, "exception setting left column")
 
@@ -1058,7 +1060,7 @@ class RepoModeFileList(FileListBase):
             # Hide the right1 (Files) column and restore left (History)
             try:
                 # Restore single-column history layout using helper
-                self.app.layout_left_only()
+                self.app.layout_left_fullscreen()
             except Exception as e:
                 self.printException(e, "exception restoring left-only layout")
             # Additionally enforce container widths/display to be robust across Textual versions
@@ -1454,8 +1456,9 @@ class HistoryListBase(AppBase):
             if key and key.lower() == "m":
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
+
                 try:
                     self.toggle_check_current()
                 except Exception as e:
@@ -2315,8 +2318,8 @@ class DiffListBase(AppBase):
             if variant_index is not None:
                 try:
                     self.app.diff_cmd_index = int(variant_index)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
 
             # Record current diff context for potential re-renders
             self.app.current_commit_sha = current_hash
@@ -2387,8 +2390,9 @@ class DiffListBase(AppBase):
             if key and key.lower() == "f":
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
+
                 try:
                     if getattr(self.app, "diff_fullscreen", False):
                         self.app.exit_diff_fullscreen()
@@ -2423,8 +2427,9 @@ class DiffListBase(AppBase):
             if key and key.lower() == "c":
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
+
                 logger.debug(f"DiffList: c/C pressed, colorize_diff={getattr(self.app, 'colorize_diff', None)}")
                 try:
                     self.app.colorize_diff = not self.app.colorize_diff
@@ -2470,8 +2475,9 @@ class DiffListBase(AppBase):
             if key and key.lower() == "d":
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
+
                 try:
                     variants = getattr(
                         self.app, "diff_variants", [None, "--ignore-space-change", "--diff-algorithm=patience"]
@@ -3115,8 +3121,9 @@ class HelpList(AppBase):
             try:
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
+
                 logger.debug(f"Restoring column state: {self.app.saved_column_state}")
                 # Hide help column
                 self.app.query_one("#right3-column").styles.width = "0%"
@@ -3155,7 +3162,7 @@ class HelpList(AppBase):
                     logger.debug("No saved state, showing only files column")
                     # Fallback: just show files column
                     try:
-                        self.app.layout_left_only()
+                        self.app.layout_left_fullscreen()
                     except Exception as e:
                         self.printException(e, "layout_left_only fallback")
 
@@ -3330,7 +3337,7 @@ App {
         except Exception as e:
             self.printException(e, "error applying column layout")
 
-    def layout_left_only(self) -> None:  # GitHistoryTool
+    def layout_left_fullscreen(self) -> None:  # GitHistoryTool
         """Show only the left (History) column full-width."""
         self._apply_column_layout("100%", "0%", "0%", left_display=None, right1_display="none", right2_display="none")
 
@@ -3578,29 +3585,37 @@ App {
         except Exception as e:
             self.printException(e)
 
-        # Start with Files column full-width, other columns hidden
+        # Force left-only layout at startup (Files full-width, others hidden)
         try:
-            left.styles.width = "100%"
-            left.styles.flex = 0
-        except Exception as e:
-            self.printException(e)
             try:
-                left.styles.flex = 1
+                self.layout_left_fullscreen()
             except Exception as e:
-                self.printException(e)
+                # Fall back to manual adjustments if the helper fails
+                self.printException(e, "layout_left_only")
+                try:
+                    left.styles.width = "100%"
+                    left.styles.flex = 0
+                except Exception as e:
+                    self.printException(e)
+                    try:
+                        left.styles.flex = 1
+                    except Exception as e:
+                        self.printException(e)
 
-        try:
-            right1.styles.display = "none"
-        except Exception as e:
-            self.printException(e)
+                try:
+                    right1.styles.display = "none"
+                except Exception as e:
+                    self.printException(e)
 
-        try:
-            right2.styles.display = "none"
-        except Exception as e:
-            self.printException(e)
+                try:
+                    right2.styles.display = "none"
+                except Exception as e:
+                    self.printException(e)
 
-        try:
-            right3.styles.display = "none"
+                try:
+                    right3.styles.display = "none"
+                except Exception as e:
+                    self.printException(e)
         except Exception as e:
             self.printException(e)
 
@@ -3674,7 +3689,7 @@ App {
                         hist.prepRepoModeHistoryList()
 
                         # Make left column full-width and hide others
-                        self.layout_left_only()
+                        self.layout_left_fullscreen()
                         self.query_one("#right3-column").styles.width = "0%"
                         self.query_one("#right3-column").styles.flex = 0
 
