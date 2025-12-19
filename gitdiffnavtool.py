@@ -489,6 +489,8 @@ class FileListBase(AppBase):
 class FileModeFileList(FileListBase):
     """Compatibility subclass; use `FileListBase` for shared logic."""
 
+    key = "Key:  [yellow]'[yellow on white]\u00A0[/yellow on white]'[/yellow] tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
+
     def prepFileModeFileList(self, path: str) -> None:  # FileModeFileList
         """Prepare and populate this `FileModeFileList` for `path`.
 
@@ -532,8 +534,8 @@ class FileModeFileList(FileListBase):
             self.clear()
             # Insert legend key
             try:
-                key_text = Text(
-                    "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted",
+                key_text = Text.from_markup(
+                    FileModeFileList.key,
                     style="bold white on blue",
                 )
                 self.append(ListItem(Label(key_text)))
@@ -862,7 +864,7 @@ class FileModeFileList(FileListBase):
 class RepoModeFileList(FileListBase):
     """File list for repo-first / log-first mode."""
 
-    key = "Key: ' ' tracked  U untracked  M modified  R renamed  A staged  D deleted  I ignored  ! conflicted"
+    key = "Key: [yellow]'[yellow on white]\u00A0[/yellow on white]'[/yellow] tracked  U untracked  M modified  R renamed  A staged  D deleted  I ignored  ! conflicted"
 
     def prepRepoModeFileList(
         self, previous_hash: Optional[str], current_hash: Optional[str]
@@ -988,7 +990,7 @@ class RepoModeFileList(FileListBase):
                         try:
                             key_li = ListItem(
                                 Label(
-                                    Text(
+                                    Text.from_markup(
                                         RepoModeFileList.key,
                                         style="bold white on blue",
                                     )
