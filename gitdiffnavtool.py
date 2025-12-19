@@ -204,6 +204,43 @@ class AppBase(ListView):
                     self.printException(e)
                 return True
 
+            # Handle PageUp/PageDown generically for ListView-based widgets
+            if key in ("pageup", "pagedown"):
+                try:
+                    try:
+                        event.stop()
+                    except Exception:
+                        pass
+                    nodes = getattr(self, "_nodes", [])
+                    if not nodes:
+                        return True
+
+                    current_index = self.index if self.index is not None else 0
+                    visible_height = 0
+                    try:
+                        visible_height = int(getattr(self, "scrollable_content_region").height)
+                    except Exception:
+                        # fallback to a reasonable page size when not available
+                        visible_height = 10
+                    page_size = max(1, visible_height // 2)
+
+                    if key == "pagedown":
+                        new_index = min(current_index + page_size, len(nodes) - 1)
+                    else:
+                        new_index = max(current_index - page_size, 0)
+
+                    try:
+                        # schedule index change after refresh for stability
+                        self.call_after_refresh(lambda: setattr(self, "index", new_index))
+                    except Exception:
+                        try:
+                            self.index = new_index
+                        except Exception as e:
+                            self.printException(e, "setting index for page navigation")
+                except Exception as e:
+                    self.printException(e, "AppBase.page navigation failure")
+                return True
+
             if key == "left":
                 try:
                     event.stop()
@@ -239,6 +276,18 @@ class AppBase(ListView):
         except Exception as e:
             self.printException(e, "AppBase.on_key outer failure")
             return False
+
+
+    def more_keys(self, event: events.Key) -> bool:  # FileListBase
+        """Per-mode file list key hook.
+        Return True when the key was handled, False otherwise.
+        """
+        try:
+            return False
+        except Exception as e:
+            self.printException(e)
+            return False
+
 
 
 class FileListBase(AppBase):
@@ -833,6 +882,7 @@ class FileModeFileList(FileListBase):
             self.printException(e)
 
         return False
+
 
 class RepoModeFileList(FileListBase):
     """File list for repo-first / log-first mode."""
@@ -2354,98 +2404,6 @@ class DiffListBase(AppBase):
         try:
             key = event.key
             logger.debug(f"DiffList.more_keys: key={key}")
-            # Handle PageUp/PageDown - move selection by page and scroll to position it appropriately
-            if key in ("pageup", "pagedown"):
-                logger.debug(f"DiffList: {key} pressed")
-                try:
-                    event.stop()
-                except Exception:
-                    pass
-                try:
-                    nodes = getattr(self, "_nodes", [])
-                    if not nodes:
-                        logger.debug(f"DiffList: WARNING - _nodes is empty for {key}")
-                        return True
-
-                    current_index = self.index if self.index is not None else 0
-                    visible_height = self.scrollable_content_region.height
-                    page_size = max(1, visible_height // 2)  # Half screen at a time like built-in behavior
-
-                    logger.debug(
-                        f"DiffList: {key} - current_index={current_index}, page_size={page_size}, "
-                        f"visible_height={visible_height}, nodes={len(nodes)}"
-                    )
-
-                    # Calculate new index
-                    if key == "pagedown":
-                        new_index = min(current_index + page_size, len(nodes) - 1)
-                    else:  # pageup
-                        new_index = max(current_index - page_size, 0)
-
-                    logger.debug(f"DiffList: {key} - moving from index {current_index} to {new_index}")
-
-                    def scroll_to_position():
-                        try:
-                            if key == "pagedown":
-                                target_scroll = float(new_index)
-                            else:
-                                target_scroll = float(max(0, new_index - visible_height + 1))
-
-                            max_scroll = float(max(0, len(nodes) - visible_height))
-                            target_scroll = max(0.0, min(target_scroll, max_scroll))
-
-                            anim_duration = 0.12
-                            try:
-                                try:
-                                    self.animate("scroll_y", target_scroll, duration=anim_duration)
-                                    logger.debug(f"DiffList: {key} - started animate(scroll_y -> {target_scroll})")
-
-                                    def _finalize_highlight():
-                                        try:
-                                            old_index = self.index
-                                            self.index = None
-                                            self.index = new_index
-                                            try:
-                                                if old_index is not None and old_index < len(nodes):
-                                                    nodes[old_index].remove_class("-highlight")
-                                                if new_index < len(nodes):
-                                                    nodes[new_index].add_class("-highlight")
-                                            except Exception as e:
-                                                self.printException(e, "exception managing highlight classes after animate")
-                                        except Exception as e:
-                                            self.printException(e, "exception finalizing highlight after animate")
-
-                                    try:
-                                        # schedule after animation completes
-                                        self.set_timer(anim_duration + 0.02, _finalize_highlight)
-                                    except Exception as e:
-                                        self.printException(e, "set_timer not available, falling back")
-                                        self.call_after_refresh(_finalize_highlight)
-                                except Exception as e:
-                                    self.printException(e, "animate not available, falling back")
-                                    self.scroll_y = target_scroll
-                                    try:
-                                        old_index = self.index
-                                        self.index = None
-                                        self.index = new_index
-                                        try:
-                                            if old_index is not None and old_index < len(nodes):
-                                                nodes[old_index].remove_class("-highlight")
-                                            if new_index < len(nodes):
-                                                nodes[new_index].add_class("-highlight")
-                                        except Exception as e:
-                                            self.printException(e, "exception managing highlight classes after instant scroll")
-                                    except Exception as e:
-                                        self.printException(e, "exception setting index after instant scroll")
-                            except Exception as e:
-                                self.printException(e, "exception in scroll_to_position")
-                        except Exception as e:
-                            self.printException(e, "exception in scroll_to_position")
-
-                    self.call_after_refresh(scroll_to_position)
-                except Exception as e:
-                    self.printException(e, "exception in {key} handler")
-                return True
 
             # Handle f/F to toggle fullscreen diff
             if key and key.lower() == "f":
@@ -2917,6 +2875,19 @@ class RepoModeDiffList(DiffListBase):
     Diff list for repo-first / log-first mode.
     """
 
+    def key_left(self) -> bool:  # FileModeDiffList
+        """Handle left key behavior
+
+        Returns True when the key was handled/consumed.
+        """
+        return False
+
+    def key_right(self) -> bool:  # FileModeDiffList
+        """Handle left key behavior
+
+        Returns True when the key was handled/consumed.
+        """
+        return False
 
 class _TBDModal(ModalScreen):
     """Simple modal that shows a message (default "TBD") and closes on any key."""
