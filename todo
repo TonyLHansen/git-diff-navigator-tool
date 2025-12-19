@@ -155,3 +155,15 @@ coalesce up/down/pgup/pgdn/begin/end key support
 AppBase
 calls more_keys() in XYZListBase()
 
+Let's also record a layout state variable that the various layout_* functions save; 
+for example, layout_left_fullscreen() would set the layout state variable to "left_fullscreen". 
+Let's also add a push_layout that records the current layout state in a stack; 
+it can be used prior to invoking
+
+Let's change the various layout_left_fullscreen, layout_left_right_split, etc. functions
+to a single change_layout(self, newlayout: str) function, where the string is one of
+"left_fullscreen", "left_right_split", "three_columns", "diff_fullscreen", "help_fullscreen"
+with an if/elif check that calls the _apply_column_layout method with the appropriate values
+
+		
+

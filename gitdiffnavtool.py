@@ -304,7 +304,7 @@ class FileListBase(AppBase):
                 try:
                     if fid == "left":
                         try:
-                            self.app.layout_left_fullscreen()
+                            self.app.change_layout("left_fullscreen")
                         except Exception as e:
                             self.printException(e, "exception setting left column")
 
@@ -313,7 +313,7 @@ class FileListBase(AppBase):
                         self.styles.flex = 0
                     else:
                         try:
-                            self.app.layout_left_right_split()
+                            self.app.change_layout("left_right_split")
                         except Exception as e:
                             self.printException(e, "exception setting left/right split for right1 focus")
 
@@ -339,13 +339,13 @@ class FileListBase(AppBase):
                         right1 = self.app.query_one("#right1")
                         if not getattr(self.app, "_suppress_focus_layout", False):
                             if right1 is not self:
-                                right1.styles.display = "none"
+                                right1.styles.display = None
                     except Exception as e:
                         self.printException(e, "exception hiding right1")
 
                     try:
                         right2 = self.app.query_one("#right2", ListView)
-                        right2.styles.display = "none"
+                        right2.styles.display = None
                     except Exception as e:
                         self.printException(e, "exception hiding right2")
 
@@ -412,7 +412,7 @@ class FileListBase(AppBase):
 
         try:
             lbl = self.app.query_one("#right2-title", Label)
-            lbl.styles.display = "none"
+            lbl.styles.display = None
             lbl.styles.height = 0
             lbl.styles.width = 0
         except Exception as e:
@@ -537,10 +537,7 @@ class FileModeFileList(FileListBase):
                     style="bold white on blue",
                 )
                 self.append(ListItem(Label(key_text)))
-                try:
-                    self._min_index = 1
-                except Exception as e:
-                    self.printException(e)
+                self._min_index = 1
 
             except Exception as e:
                 logger.debug(f"prepFileModeFileList: exception adding key legend: {e}")
@@ -1059,10 +1056,10 @@ class RepoModeFileList(FileListBase):
         try:
             # Hide the right1 (Files) column and restore left (History)
             try:
-                # Restore single-column history layout using helper
-                self.app.layout_left_fullscreen()
+                # Restore single-column history layout by popping layout
+                self.app.pop_layout()
             except Exception as e:
-                self.printException(e, "exception restoring left-only layout")
+                self.printException(e, "exception popping layout for left-only restore")
             # Additionally enforce container widths/display to be robust across Textual versions
             try:
                 try:
@@ -1074,7 +1071,7 @@ class RepoModeFileList(FileListBase):
 
                 try:
                     right1 = self.app.query_one("#right1")
-                    right1.styles.display = "none"
+                    right1.styles.display = None
                 except Exception as e:
                     self.printException(e, "could not hide right1 in RepoModeFileList.key_left")
             except Exception as e:
@@ -1089,7 +1086,7 @@ class RepoModeFileList(FileListBase):
 
             try:
                 lbl = self.app.query_one("#right1-title", Label)
-                lbl.styles.display = "none"
+                lbl.styles.display = None
             except Exception as e:
                 self.printException(e, "exception hiding right1-title")
 
@@ -1372,7 +1369,7 @@ class HistoryListBase(AppBase):
             # Use centralized layout helper to set left/right split and hide diff
             try:
                 try:
-                    self.app.layout_left_right_split()
+                    self.app.change_layout("left_right_split")
                 except Exception as e:
                     self.printException(e, "layout_left_right_split")
                 # inner lists should fill their outer column
@@ -1390,7 +1387,7 @@ class HistoryListBase(AppBase):
 
             # explicitly hide the diff list (outer column already shrunk by helper)
             try:
-                right2.styles.display = "none"
+                right2.styles.display = None
             except Exception as e:
                 self.printException(e, "hiding diff list")
 
@@ -1431,7 +1428,7 @@ class HistoryListBase(AppBase):
 
         try:
             lbl = self.app.query_one("#right2-title", Label)
-            lbl.styles.display = "none"
+            lbl.styles.display = None
             lbl.styles.height = 0
             lbl.styles.width = 0
         except Exception as e:
@@ -2236,7 +2233,7 @@ class RepoModeHistoryList(HistoryListBase):
 
                 try:
                     # Make the Files column visible and use central layout helper
-                    self.app.layout_left_right_split()
+                    self.app.change_layout("left_right_split")
                     try:
                         # Update titles for log-first layout: left remains History
                         lbl = self.app.query_one("#left-title", Label)
@@ -2405,7 +2402,7 @@ class DiffListBase(AppBase):
                     else:
                         try:
                             # require right2 to be visible
-                            if self.app.query_one("#right2", ListView).styles.display != "none":
+                            if self.app.query_one("#right2", ListView).styles.display is not None:
                                 self.app.enter_diff_fullscreen()
                                 try:
                                     self.focus()
@@ -2628,7 +2625,7 @@ class DiffListBase(AppBase):
             try:
                 # adjust outer columns to the target proportions
                 try:
-                    self.app.layout_three_columns()
+                    self.app.pop_layout()
                 except Exception as e:
                     self.printException(e)
 
@@ -2745,7 +2742,7 @@ class FileModeDiffList(DiffListBase):
                 try:
                     # Enforce expected column sizes after exiting fullscreen
                     try:
-                        self.app.layout_three_columns()
+                        self.app.change_layout("three_columns")
                     except Exception as e:
                         self.printException(e, "layout_three_columns after exit fullscreen")
                     logger.debug("FileModeDiffList.key_left: enforced three-column layout after exit")
@@ -2777,9 +2774,9 @@ class FileModeDiffList(DiffListBase):
                     hist = None
                 # Ensure the Files/History split is restored to 25/75 before focusing
                 try:
-                    self.app.layout_left_right_split()
+                    self.app.pop_layout()
                 except Exception as e:
-                    self.printException(e, "could not set left/right split before focus")
+                    self.printException(e, "could not pop layout before focus")
                 try:
                     if hist is not None:
                         hist.focus()
@@ -2788,9 +2785,9 @@ class FileModeDiffList(DiffListBase):
                         def _enforce_25_75():
                             try:
                                 try:
-                                    self.app.layout_left_right_split()
+                                    self.app.pop_layout()
                                 except Exception as e:
-                                    self.printException(e, "post-focus layout_left_right_split")
+                                    self.printException(e, "post-focus pop_layout failed")
                                 try:
                                     r1 = self.app.query_one("#right1")
                                     r1.styles.display = None
@@ -2830,7 +2827,7 @@ class FileModeDiffList(DiffListBase):
             try:
                 right1_display = self.app.query_one("#right1").styles.display
                 right2_display = self.app.query_one("#right2").styles.display
-                if right1_display != "none" and right2_display != "none":
+                if right1_display is not None and right2_display is not None:
                     try:
                         self.app.enter_diff_fullscreen()
                     except Exception as e:
@@ -3134,25 +3131,17 @@ class HelpList(AppBase):
 
                 # Restore saved column state if available
                 if self.app.saved_column_state:
-                    state = self.app.saved_column_state
+                    # Restore previous layout pushed before showing help.
                     try:
-                        # Use centralized helper to restore widths and displays
-                        self.app._apply_column_layout(
-                            state["left"]["width"],
-                            state["right1"]["width"],
-                            state["right2"]["width"],
-                            left_display=None,
-                            right1_display=state["right1"].get("display"),
-                            right2_display=state["right2"].get("display"),
-                        )
+                        self.app.pop_layout()
                     except Exception as e:
-                        self.printException(e, "restoring saved column state via helper")
+                        self.printException(e, "pop_layout failed while dismissing help")
 
                     # Determine focus target: rightmost visible column
                     try:
-                        if state["right2"].get("display") != "none":
+                        if state["right2"].get("display") is not None:
                             focus_target = "#right2"
-                        elif state["right1"].get("display") != "none":
+                        elif state["right1"].get("display") is not None:
                             focus_target = "#right1"
                     except Exception as e:
                         self.printException(e, "could not determine focus target from saved state")
@@ -3162,7 +3151,7 @@ class HelpList(AppBase):
                     logger.debug("No saved state, showing only files column")
                     # Fallback: just show files column
                     try:
-                        self.app.layout_left_fullscreen()
+                        self.app.change_layout("left_fullscreen")
                     except Exception as e:
                         self.printException(e, "layout_left_only fallback")
 
@@ -3271,6 +3260,8 @@ App {
         self.repo_index_mtime_map: dict[str, float] = {}
         # column state for restoring after help
         self.saved_column_state: Optional[dict] = None
+        # layout stack to support push/pop of layouts
+        self.layout_stack: list[str] = []
         # colorization state and current diff info
         self.colorize_diff = colorize_diff
         self.current_commit_sha: Optional[str] = None
@@ -3294,7 +3285,15 @@ App {
 
     # Layout helpers on the App so widgets can call `self.app.layout_*`.
     def _apply_column_layout(  # GitHistoryTool
-        self, left_w: str, right1_w: str, right2_w: str, left_display=None, right1_display=None, right2_display=None
+        self,
+        left_w: str,
+        right1_w: str,
+        right2_w: str,
+        right3_w,
+        left_display=None,
+        right1_display=None,
+        right2_display=None,
+        right3_display=None,
     ) -> None:
         try:
             try:
@@ -3315,6 +3314,13 @@ App {
                 r2c.styles.flex = 0
             except Exception as e:
                 self.printException(e, "could not set right2-column")
+            try:
+                r3c = self.query_one("#right3-column")
+                r3c.styles.width = right3_w
+                r3c.styles.flex = 0
+            except Exception as e:
+                # Right3 column may not always be present; log and continue
+                self.printException(e, "could not set right3-column")
 
             try:
                 if left_display is not None:
@@ -3334,24 +3340,127 @@ App {
             except Exception as e:
                 self.printException(e, "could not set right2 display in _apply_column_layout")
 
+            try:
+                if right3_display is not None:
+                    self.query_one("#right3").styles.display = right3_display
+            except Exception as e:
+                self.printException(e, "could not set right3 display in _apply_column_layout")
+
         except Exception as e:
             self.printException(e, "error applying column layout")
 
-    def layout_left_fullscreen(self) -> None:  # GitHistoryTool
-        """Show only the left (History) column full-width."""
-        self._apply_column_layout("100%", "0%", "0%", left_display=None, right1_display="none", right2_display="none")
+    def change_layout(self, newlayout: str) -> None:  # GitHistoryTool
+        """Change column layout using a named layout.
 
-    def layout_left_right_split(self) -> None:  # GitHistoryTool
-        """Show left/history and files split 25%/75%."""
-        self._apply_column_layout("25%", "75%", "0%", left_display=None, right1_display=None, right2_display="none")
+        Valid names: "left_fullscreen", "left_right_split", "three_columns",
+        "diff_fullscreen", "help_fullscreen".
+        """
+        try:
+            if newlayout == "left_fullscreen":
+                self._apply_column_layout(
+                    "100%",
+                    "0%",
+                    "0%",
+                    "0%",
+                    left_display=None,
+                    right1_display="none",
+                    right2_display="none",
+                    right3_display="none",
+                )
+            elif newlayout == "left_right_split":
+                self._apply_column_layout(
+                    "25%",
+                    "75%",
+                    "0%",
+                    "0%",
+                    left_display=None,
+                    right1_display=None,
+                    right2_display="none",
+                    right3_display="none",
+                )
+            elif newlayout == "three_columns":
+                self._apply_column_layout(
+                    "5%",
+                    "15%",
+                    "80%",
+                    "0%",
+                    left_display=None,
+                    right1_display=None,
+                    right2_display=None,
+                    right3_display=None,
+                )
+            elif newlayout == "diff_fullscreen":
+                self._apply_column_layout(
+                    "0%",
+                    "0%",
+                    "100%",
+                    "0%",
+                    left_display="none",
+                    right1_display="none",
+                    right2_display=None,
+                    right3_display="none",
+                )
+            elif newlayout == "help_fullscreen":
+                # Show only the Help column (right3)
+                self._apply_column_layout(
+                    "0%",
+                    "0%",
+                    "0%",
+                    "100%",
+                    left_display="none",
+                    right1_display="none",
+                    right2_display="none",
+                    right3_display=None,
+                )
+            else:
+                raise ValueError(f"unknown layout: {newlayout}")
+        except Exception as e:
+            self.printException(e, f"change_layout {newlayout}")
 
-    def layout_three_columns(self) -> None:  # GitHistoryTool
-        """Show three-column layout 5%/15%/80%."""
-        self._apply_column_layout("5%", "15%", "80%", left_display=None, right1_display=None, right2_display=None)
+    def push_layout(self, newlayout: str) -> None:  # GitHistoryTool
+        """Push a new layout onto the layout stack and apply it."""
+        try:
+            try:
+                self.layout_stack.append(newlayout)
+            except Exception:
+                # ensure layout_stack exists
+                try:
+                    self.layout_stack = [newlayout]
+                except Exception:
+                    self.printException(None, "could not append to layout_stack")
+            try:
+                self.change_layout(newlayout)
+            except Exception as e:
+                self.printException(e, "push_layout change_layout failed")
+        except Exception as e:
+            self.printException(e, "push_layout outer failure")
 
-    def layout_diff_fullscreen(self) -> None:  # GitHistoryTool
-        """Make the diff column fullscreen (hide left and right1)."""
-        self._apply_column_layout("0%", "0%", "100%", left_display="none", right1_display="none", right2_display=None)
+    def pop_layout(self) -> None:  # GitHistoryTool
+        """Pop the current layout and restore the previous one (if any)."""
+        try:
+            try:
+                if not getattr(self, "layout_stack", None):
+                    return
+            except Exception:
+                return
+
+            try:
+                # Remove current layout
+                try:
+                    self.layout_stack.pop()
+                except Exception:
+                    pass
+
+                # Determine previous layout
+                prev = self.layout_stack[-1] if self.layout_stack else "left_fullscreen"
+                try:
+                    self.change_layout(prev)
+                except Exception as e:
+                    self.printException(e, "pop_layout change_layout failed")
+            except Exception as e:
+                self.printException(e, "pop_layout inner failure")
+        except Exception as e:
+            self.printException(e, "pop_layout outer failure")
 
     def build_diff_cmd(self, prev: str | None, curr: str | None, fname: str) -> list[str]:  # GitHistoryTool
         """Construct the git diff command honoring the currently selected variant.
@@ -3588,7 +3697,7 @@ App {
         # Force left-only layout at startup (Files full-width, others hidden)
         try:
             try:
-                self.layout_left_fullscreen()
+                self.push_layout("left_fullscreen")
             except Exception as e:
                 # Fall back to manual adjustments if the helper fails
                 self.printException(e, "layout_left_only")
@@ -3603,17 +3712,17 @@ App {
                         self.printException(e)
 
                 try:
-                    right1.styles.display = "none"
+                    right1.styles.display = None
                 except Exception as e:
                     self.printException(e)
 
                 try:
-                    right2.styles.display = "none"
+                    right2.styles.display = None
                 except Exception as e:
                     self.printException(e)
 
                 try:
-                    right3.styles.display = "none"
+                    right3.styles.display = None
                 except Exception as e:
                     self.printException(e)
         except Exception as e:
@@ -3661,7 +3770,7 @@ App {
             hist = self.query_one("#right1", ListView)
             # Prefer the new preparatory API when available on the history widget
             hist.prepListModeHistoryList(item_name)
-            self.layout_left_right_split()
+            self.change_layout("left_right_split")
             hist.index = 0
             hist.focus()
             # ensure we are not in diff-fullscreen when opening history
@@ -3689,7 +3798,7 @@ App {
                         hist.prepRepoModeHistoryList()
 
                         # Make left column full-width and hide others
-                        self.layout_left_fullscreen()
+                        self.change_layout("left_fullscreen")
                         self.query_one("#right3-column").styles.width = "0%"
                         self.query_one("#right3-column").styles.flex = 0
 
@@ -3734,7 +3843,7 @@ App {
                     # Adjust layout: hide files and other right columns, show history full-width
                     try:
                         self._apply_column_layout(
-                            "0%", "100%", "0%", left_display="none", right1_display=None, right2_display="none"
+                            "0%", "100%", "0%", "0%", left_display=None, right1_display=None, right2_display=None, right3_display=None
                         )
                         self.query_one("#right3-column").styles.width = "0%"
                         self.query_one("#right3-column").styles.flex = 0
@@ -3851,15 +3960,13 @@ App {
                     }
                     logger.debug(f"Saved column state: {self.saved_column_state}")
 
-                    # Show only the help column, hide others (use helper for main columns)
+                    # Show only the help column using the centralized layout helper
                     try:
-                        self._apply_column_layout(
-                            "0%", "0%", "0%", left_display="none", right1_display="none", right2_display="none"
-                        )
+                        self.push_layout("help_fullscreen")
                     except Exception as e:
-                        self.printException(e, "could not apply helper for help view")
+                        self.printException(e, "could not push_layout help_fullscreen")
                     try:
-                        # Make right3 the visible/help column
+                        # Ensure right3 is visible/focused after layout change
                         self.query_one("#right3-column").styles.width = "100%"
                         self.query_one("#right3-column").styles.flex = 0
                         self.query_one("#right3").styles.display = "block"
@@ -3931,10 +4038,10 @@ App {
                 self.printException(e, "could not save column state before fullscreen")
             # collapse left/history and expand diff column via helper
             try:
-                self.layout_diff_fullscreen()
+                self.change_layout("diff_fullscreen")
                 # ensure right1 is hidden (helper should handle, but enforce)
                 try:
-                    self.query_one("#right1").styles.display = "none"
+                    self.query_one("#right1").styles.display = None
                 except Exception as e:
                     self.printException(e, "could not hide #right1 when entering fullscreen")
 
@@ -4073,7 +4180,7 @@ App {
                     # restore a sensible three-column layout using helper
                     try:
                         try:
-                            self.layout_three_columns()
+                            self.change_layout("three_columns")
                         except Exception as e:
                             self.printException(e, "layout_three_columns in exit_diff_fullscreen")
                         try:
