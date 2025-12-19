@@ -446,6 +446,19 @@ class FileListBase(AppBase):
             return
 
 
+    def more_keys(self, event: events.Key) -> bool:  # FileListBase
+        """Per-mode file list key hook.
+        Return True when the key was handled, False otherwise.
+        """
+        try:
+            return False
+        except Exception as e:
+            self.printException(e)
+            return False
+
+
+
+
 class FileModeFileList(FileListBase):
     """Compatibility subclass; use `FileListBase` for shared logic."""
 
@@ -821,18 +834,6 @@ class FileModeFileList(FileListBase):
 
         return False
 
-    def more_keys(self, event: events.Key) -> bool:  # FileModeFileList
-        """Per-mode file list key hook. Do not call super().on_key here.
-
-        Return True when the key was handled, False otherwise.
-        """
-        try:
-            return False
-        except Exception as e:
-            self.printException(e)
-            return False
-
-
 class RepoModeFileList(FileListBase):
     """File list for repo-first / log-first mode."""
 
@@ -1176,17 +1177,6 @@ class RepoModeFileList(FileListBase):
 
         return False
 
-    def more_keys(self, event: events.Key) -> bool:  # RepoModeFileList
-        """Per-mode repo file list key hook. Do not call super().on_key here.
-
-        Return True when the key was handled, False otherwise.
-        """
-        try:
-            return False
-        except Exception as e:
-            self.printException(e)
-            return False
-
 
 class HistoryListBase(AppBase):
     """ListView used for the History column."""
@@ -1425,8 +1415,7 @@ class HistoryListBase(AppBase):
             self.printException(e, "updating footer")
 
     def more_keys(self, event: events.Key) -> bool:  # HistoryListBase
-        """Handle history-specific keys; common navigation handled by AppBase.on_key.
-
+        """Handle history-specific keys.
         Return True when the key was handled (e.g. `m`), False otherwise.
         """
         try:
