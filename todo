@@ -168,4 +168,15 @@ with an if/elif check that calls the _apply_column_layout method with the approp
 		
 
 
-Currently there is a mixture of layout information that is sometimes conflicting in both the on_focus functions, various methods in GitHistoryTool, and the various key_left and key_right methods. I want to remove all knowledge of how the columns are layed out from the on_focus functions and keep that information only on the GitHistoryTool startup methods and the key_right and key_left functions.
+Currently layout changes, focus changes, and initialization of the lines in the widgets
+is found  in a mixture of the various on_focus functions,
+various methods in GitHistoryTool, and the various key_left and key_right methods,
+and sometimes they are conflicting or redundant.
+I want to remove all knowledge of how the columns are layed out and initialized from the on_focus functions and 
+keep that information only on the GitHistoryTool startup methods and the key_right and key_left functions.
+Similarly, the changes in focus should not be in any code except the key_right and key_left functions.
+So a typical key_right() function can be paraphrased as
+if we need to change to a different layout, then a) set the information in the widget,
+b) push the layout, and c) push the focus.
+And a typical key_left() can be paraphrased as a) pop the layout, and b) pop the focus
+

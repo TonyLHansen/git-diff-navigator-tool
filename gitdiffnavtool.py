@@ -286,77 +286,10 @@ class FileListBase(AppBase):
 
     def on_focus(self, event: events.Focus) -> None:  # FileListBase
         """When Files column receives focus, make it full-width and hide others."""
-        try:
-            # Allow callers to temporarily suppress automatic layout changes
-            if getattr(self.app, "_suppress_focus_layout", False):
-                logger.debug(f"FileList.on_focus: suppressed layout change for {getattr(self,'id',None)}")
-                return
-
-            # Only apply layout/title changes when focus was caused by a
-            # recent user navigation key. Programmatic focus calls should
-            # not trigger layout mutations. The `GitHistoryTool.on_key`
-            # stores the most recent user key in `self._last_user_key`.
-            last_key = getattr(self.app, "_last_user_key", None)
-            nav_keys = ("left", "right", "up", "down")
-            apply_layout = last_key in nav_keys
-            if apply_layout:
-                fid = getattr(self, "id", "left")
-                try:
-                    if fid == "left":
-                        try:
-                            self.app.change_layout("left_fullscreen")
-                        except Exception as e:
-                            self.printException(e, "exception setting left column")
-
-                        # Ensure inner left list fills its column
-                        self.styles.width = "100%"
-                        self.styles.flex = 0
-                    else:
-                        try:
-                            self.app.change_layout("left_right_split")
-                        except Exception as e:
-                            self.printException(e, "exception setting left/right split for right1 focus")
-
-                        # Ensure inner right1 list fills its column
-                        self.styles.width = "100%"
-                        self.styles.flex = 0
-                finally:
-                    # Clear the last user key so subsequent programmatic
-                    # focus calls don't re-trigger layout.
-                    try:
-                        self.app._last_user_key = None
-                    except Exception as e:
-                        self.printException(e)
-
-            # Hide other columns only if we applied layout above.
-            try:
-                if apply_layout:
-                    try:
-                        # Accept any widget at `#right1` (HistoryListBase or FileList).
-                        # If this FileList instance *is* the widget at `#right1`, do
-                        # not hide it — avoid toggling off the very list that just
-                        # received focus (this was hiding appended items).
-                        right1 = self.app.query_one("#right1")
-                        if not getattr(self.app, "_suppress_focus_layout", False):
-                            if right1 is not self:
-                                right1.styles.display = None
-                    except Exception as e:
-                        self.printException(e, "exception hiding right1")
-
-                    try:
-                        right2 = self.app.query_one("#right2", ListView)
-                        right2.styles.display = None
-                    except Exception as e:
-                        self.printException(e, "exception hiding right2")
-
-                else:
-                    # When not applying layout, do not mutate other columns.
-                    pass
-            except Exception as e:
-                self.printException(e, "exception managing other columns on focus")
-
-        except Exception as e:
-            self.printException(e, "exception checking/enforcing _min_index on focus")
+        # Intentionally do not modify layout or other widgets here.
+        # Layout and focus changes are centralized in `GitHistoryTool`
+        # and in the `key_left`/`key_right` handlers. Keep on_focus
+        # limited to selection/index handling.
 
         # Ensure selection is at or below the minimum selectable index
         # (e.g. skip the Key legend row). Use call_after_refresh so the
@@ -378,45 +311,7 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, "exception checking/enforcing _min_index on focus")
 
-        # show/hide titles for columns: left visible, others hidden
-        try:
-            # Determine which column holds Files vs History depending on
-            # whether the app was started in log-first mode and which
-            # widget currently has focus. If this FileList is the focused
-            # files widget, show its column title as 'Files' and hide the
-            # other history title.
-            files_id = getattr(self, "id", "left")
-            if files_id == "left":
-                left_text = "Files"
-                right1_text = "History"
-            else:
-                left_text = "History"
-                right1_text = "Files"
-
-            lbl = self.app.query_one("#left-title", Label)
-            lbl.update(Text(left_text, style="bold"))
-            lbl.styles.display = None
-            lbl.styles.height = None
-            lbl.styles.width = None
-        except Exception as e:
-            self.printException(e, "exception updating left title")
-
-        try:
-            lbl = self.app.query_one("#right1-title", Label)
-            lbl.update(Text(right1_text, style="bold"))
-            lbl.styles.display = None
-            lbl.styles.height = None
-            lbl.styles.width = None
-        except Exception as e:
-            self.printException(e, "exception updating right1 title")
-
-        try:
-            lbl = self.app.query_one("#right2-title", Label)
-            lbl.styles.display = None
-            lbl.styles.height = 0
-            lbl.styles.width = 0
-        except Exception as e:
-            self.printException(e, "exception hiding right2 title")
+        # Titles and other UI chrome are managed by the app / key handlers.
 
         # FileList footer
         try:
@@ -723,7 +618,10 @@ class FileModeFileList(FileListBase):
                 self.printException(e, "exception updating app path info")
 
             try:
-                self.focus()
+                try:
+                    self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+                except Exception as e:
+                    self.printException(e)
             except Exception as e:
                 self.printException(e)
 
@@ -796,7 +694,10 @@ class FileModeFileList(FileListBase):
 
                 # focus back on this list
                 try:
-                    self.focus()
+                    try:
+                        self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+                    except Exception as e:
+                        self.printException(e)
                 except Exception as e:
                     self.printException(e)
 
@@ -1011,7 +912,10 @@ class RepoModeFileList(FileListBase):
                                 continue
 
                         self.index = getattr(self, "_min_index", 0) or 0
-                        self.focus()
+                        try:
+                            self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+                        except Exception as e:
+                            self.printException(e)
                         self.refresh()
 
                         try:
@@ -1101,7 +1005,10 @@ class RepoModeFileList(FileListBase):
                     self.printException(e)
                     left = None
                 if left is not None:
-                    left.focus()
+                    try:
+                        self.app.change_focus(f"#{getattr(left, 'id', 'left')}")
+                    except Exception as e:
+                        self.printException(e, "exception focusing left history")
             except Exception as e:
                 self.printException(e, "exception focusing left history")
 
@@ -1349,92 +1256,10 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "_apply setup")
 
-        # When History receives focus, make Files/History split 50/50 and hide Diff
-        try:
-            # In log-first mode the Files widget may be at #right1 instead of #left
-            try:
-                left = self.app.query_one("#left")
-                if not isinstance(left, FileModeFileList):
-                    try:
-                        left = self.app.query_one("#right1")
-                    except Exception as e:
-                        self.printException(e)
-                        left = None
-            except Exception as e:
-                self.printException(e)
-                try:
-                    left = self.app.query_one("#right1")
-                except Exception as e:
-                    self.printException(e)
-                    left = None
-            right2 = self.app.query_one("#right2", ListView)
-            # Use centralized layout helper to set left/right split and hide diff
-            try:
-                try:
-                    self.app.change_layout("left_right_split")
-                except Exception as e:
-                    self.printException(e, "layout_left_right_split")
-                # inner lists should fill their outer column
-                left.styles.width = "100%"
-                left.styles.flex = 0
-            except Exception as e:
-                self.printException(e, "setting left list styles")
-
-            try:
-                self.styles.width = "100%"
-                self.styles.display = None
-                self.styles.flex = 0
-            except Exception as e:
-                self.printException(e, "setting history styles")
-
-            # explicitly hide the diff list (outer column already shrunk by helper)
-            try:
-                right2.styles.display = None
-            except Exception as e:
-                self.printException(e, "hiding diff list")
-
-        except Exception as e:
-            self.printException(e, "layout adjustment")
-
-        # Titles: show left and history, hide diff
-        try:
-            # When History is focused, show the History title in the
-            # focused column and label the other column as Files. The
-            # focused history widget may be at `#left` (default layout)
-            # or `#right1` when `log_first` is active; derive titles from
-            # the widget id to ensure correctness.
-            hist_id = getattr(self, "id", "left")
-            if hist_id == "left":
-                left_text = "History"
-                right1_text = "Files"
-            else:
-                left_text = "Files"
-                right1_text = "History"
-
-            lbl = self.app.query_one("#left-title", Label)
-            lbl.update(Text(left_text, style="bold"))
-            lbl.styles.display = None
-            lbl.styles.height = None
-            lbl.styles.width = None
-        except Exception as e:
-            self.printException(e, "updating left-title label")
-
-        try:
-            lbl = self.app.query_one("#right1-title", Label)
-            lbl.update(Text(right1_text, style="bold"))
-            lbl.styles.display = None
-            lbl.styles.height = None
-            lbl.styles.width = None
-        except Exception as e:
-            self.printException(e, "updating right1-title label")
-
-        try:
-            lbl = self.app.query_one("#right2-title", Label)
-            lbl.styles.display = None
-            lbl.styles.height = 0
-            lbl.styles.width = 0
-        except Exception as e:
-            self.printException(e, "updating right2 title")
+        # Intentionally do not modify layout or other widgets here.
+        # Layout and focus changes are centralized in `GitHistoryTool`
+        # and in the `key_left`/`key_right` handlers. Keep on_focus
+        # limited to selection/index handling and minor widget updates.
 
         # HistoryListBase footer
         try:
@@ -1644,7 +1469,7 @@ class FileModeHistoryList(HistoryListBase):
                 self.printException(e)
 
             try:
-                self.focus()
+                self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
             except Exception as e:
                 self.printException(e)
 
@@ -1677,7 +1502,10 @@ class FileModeHistoryList(HistoryListBase):
                 except Exception as e:
                     self.printException(e)
                     files = None
-            files.focus()
+            try:
+                self.app.change_focus(f"#{getattr(files, 'id', 'left')}")
+            except Exception as e:
+                self.printException(e, "focusing files on left")
         except Exception as e:
             self.printException(e, "focusing files on left")
             return True
@@ -1921,7 +1749,10 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e)
 
             try:
-                self.focus()
+                try:
+                    self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+                except Exception as e:
+                    self.printException(e)
             except Exception as e:
                 self.printException(e)
 
@@ -2250,7 +2081,10 @@ class RepoModeHistoryList(HistoryListBase):
                 except Exception as e:
                     self.printException(e, "setting files column layout")
 
-                file_list.focus()
+                try:
+                    self.app.change_focus(f"#{getattr(file_list, 'id', 'right1')}")
+                except Exception as e:
+                    self.printException(e)
             except Exception as e:
                 self.printException(e)
 
@@ -2369,7 +2203,10 @@ class DiffListBase(AppBase):
 
             self.styles.display = None
             self.index = 0
-            self.focus()
+            try:
+                self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+            except Exception as e:
+                self.printException(e)
 
         except Exception as exc:
             self.printException(exc, "prepDiffListBase outer failure")
@@ -2397,7 +2234,10 @@ class DiffListBase(AppBase):
                         self.app.exit_diff_fullscreen()
                         # keep focus on diff after restoring
                         try:
-                            self.focus()
+                            try:
+                                self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+                            except Exception as e:
+                                self.printException(e)
                         except Exception as e:
                             self.printException(e, "focus() exception")
 
@@ -2407,7 +2247,10 @@ class DiffListBase(AppBase):
                             if self.app.query_one("#right2", ListView).styles.display is not None:
                                 self.app.enter_diff_fullscreen()
                                 try:
-                                    self.focus()
+                                    try:
+                                        self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+                                    except Exception as e:
+                                        self.printException(e)
                                 except Exception as e:
                                     self.printException(e, "focus() after enter_diff_fullscreen exception")
 
@@ -2594,122 +2437,10 @@ class DiffListBase(AppBase):
         except Exception as e:
             self.printException(e)
 
-        # When Diff receives focus, show all columns and set widths: Files 5%, History 20%, Diff 75%
-        try:
-            try:
-                left = self.app.query_one("#left")
-                if not isinstance(left, FileModeFileList):
-                    try:
-                        left = self.app.query_one("#right1")
-                    except Exception as e:
-                        self.printException(e)
-                        left = None
-            except Exception as e:
-                self.printException(e)
-                try:
-                    left = self.app.query_one("#right1")
-                except Exception as e:
-                    self.printException(e)
-                    left = None
-            try:
-                # Query untyped and verify instance to avoid WrongType exceptions
-                try:
-                    hist = self.app.query_one("#right1")
-                except Exception as e:
-                    self.printException(e, "could not query #right1")
-                    hist = None
-                if hist is not None and not isinstance(hist, FileModeHistoryList):
-                    hist = None
-            except Exception as e:
-                self.printException(e, "could not query #right1 in DiffList.on_focus")
-                hist = None
-            diff = self.app.query_one("#right2", ListView)
-            try:
-                # adjust outer columns to the target proportions
-                try:
-                    self.app.pop_layout()
-                except Exception as e:
-                    self.printException(e)
-
-                left.styles.width = "100%"
-                left.styles.flex = 0
-            except Exception as e:
-                self.printException(e)
-
-            try:
-                if hist is not None:
-                    try:
-                        hist.styles.width = "100%"
-                        hist.styles.flex = 0
-                        hist.styles.display = None
-                    except Exception as e:
-                        self.printException(e)
-
-            except Exception as e:
-                self.printException(e)
-
-            try:
-                diff.styles.width = "100%"
-                diff.styles.display = None
-                diff.styles.flex = 0
-            except Exception as e:
-                self.printException(e)
-
-        except Exception as e:
-            self.printException(e)
-
-        # Show all titles when diff active
-        try:
-            lbl = self.app.query_one("#left-title", Label)
-            # Prefer to show full "Files" when there's enough room; otherwise shorten
-            try:
-                left = self.app.query_one("#left")
-                width = None
-                # prefer computed region if available
-                if hasattr(left, "region") and left.region is not None:
-                    width = left.region.width
-                elif hasattr(left, "size") and left.size is not None:
-                    width = left.size.width
-                else:
-                    # fallback to container percent width if set
-                    col = self.app.query_one("#left-column")
-                    s = getattr(col.styles, "width", None)
-                    if isinstance(s, str) and s.endswith("%") and getattr(self, "size", None):
-                        try:
-                            percent = float(s[:-1]) / 100.0
-                            width = int(self.size.width * percent)
-                        except Exception as e:
-                            self.printException(e)
-                            width = None
-                if width is not None and width >= 8:
-                    lbl.update(Text("Files", style="bold"))
-                else:
-                    lbl.update(Text("Fi", style="bold"))
-            except Exception as e:
-                self.printException(e)
-                # If any lookup fails, use the shortened title to be safe
-                lbl.update(Text("Fi", style="bold"))
-            lbl.styles.display = None
-            lbl.styles.height = None
-            lbl.styles.width = None
-        except Exception as e:
-            self.printException(e)
-
-        try:
-            lbl = self.app.query_one("#right1-title", Label)
-            lbl.styles.display = None
-            lbl.styles.height = None
-            lbl.styles.width = None
-        except Exception as e:
-            self.printException(e)
-
-        try:
-            lbl = self.app.query_one("#right2-title", Label)
-            lbl.styles.display = None
-            lbl.styles.height = None
-            lbl.styles.width = None
-        except Exception as e:
-            self.printException(e)
+        # Intentionally do not modify layout or other widgets here.
+        # Layout and focus changes are centralized in `GitHistoryTool`
+        # and in the `key_left`/`key_right` handlers. Keep on_focus
+        # limited to selection/index handling and footer updates.
 
         # DiffList footer
         try:
@@ -2780,8 +2511,11 @@ class FileModeDiffList(DiffListBase):
                 except Exception as e:
                     self.printException(e, "could not pop layout before focus")
                 try:
-                    if hist is not None:
-                        hist.focus()
+                        if hist is not None:
+                            try:
+                                self.app.change_focus(f"#{getattr(hist, 'id', 'right1')}")
+                            except Exception as e:
+                                self.printException(e)
 
                         # After focus, enforce the desired 25/75 split again
                         def _enforce_25_75():
@@ -2835,7 +2569,7 @@ class FileModeDiffList(DiffListBase):
                     except Exception as e:
                         self.printException(e, "enter_diff_fullscreen exception")
                     try:
-                        self.focus()
+                        self.app.push_focus("#right2")
                     except Exception as e:
                         self.printException(e)
 
@@ -3161,7 +2895,10 @@ class HelpList(AppBase):
                 # Use call_after_refresh to avoid triggering on_focus during layout restore
                 def restore_focus():
                     try:
-                        self.app.query_one(focus_target).focus()
+                        try:
+                            self.app.pop_focus()
+                        except Exception as e:
+                            self.printException(e)
                     except Exception as e:
                         self.printException(e)
 
@@ -3841,7 +3578,10 @@ App {
             hist.prepListModeHistoryList(item_name)
             self.change_layout("left_right_split")
             hist.index = 0
-            hist.focus()
+            try:
+                self.push_focus("#right1")
+            except Exception as e:
+                self.printException(e)
             # ensure we are not in diff-fullscreen when opening history
             self.diff_fullscreen = False
         except Exception as e:
@@ -3872,7 +3612,10 @@ App {
                         self.query_one("#right3-column").styles.flex = 0
 
                         hist.index = 0
-                        hist.focus()
+                        try:
+                            self.push_focus(f"#{getattr(hist, 'id', 'right1')}")
+                        except Exception as e:
+                            self.printException(e)
                         self.diff_fullscreen = False
 
                     except Exception as e:
@@ -3917,7 +3660,10 @@ App {
                         self.query_one("#right3-column").styles.width = "0%"
                         self.query_one("#right3-column").styles.flex = 0
                         repo_hist.index = 0
-                        repo_hist.focus()
+                        try:
+                            self.push_focus("#right1")
+                        except Exception as e:
+                            self.printException(e)
                         self.diff_fullscreen = False
                     except Exception as e:
                         self.printException(e)
@@ -4039,7 +3785,10 @@ App {
                         self.query_one("#right3-column").styles.width = "100%"
                         self.query_one("#right3-column").styles.flex = 0
                         self.query_one("#right3").styles.display = "block"
-                        self.query_one("#right3").focus()
+                        try:
+                            self.push_focus("#right3")
+                        except Exception as e:
+                            self.printException(e, "could not show/focus right3 help column")
                     except Exception as e:
                         self.printException(e, "could not show/focus right3 help column")
 
@@ -4281,9 +4030,12 @@ App {
 
                 def _focus_diff():
                     try:
-                        if right2 is not None:
-                            right2.focus()
-                            logger.debug("exit_diff_fullscreen: focused #right2 (diff)")
+                            if right2 is not None:
+                                try:
+                                    self.push_focus("#right2")
+                                    logger.debug("exit_diff_fullscreen: focused #right2 (diff)")
+                                except Exception as e:
+                                    self.printException(e, "could not push_focus #right2")
                     except Exception as e:
                         self.printException(e, "could not focus right2 after restore")
 
