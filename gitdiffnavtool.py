@@ -3264,6 +3264,8 @@ App {
         self.saved_column_state: Optional[dict] = None
         # layout stack to support push/pop of layouts
         self.layout_stack: list[str] = []
+        # focus stack to support push/pop of focus targets; start empty
+        self.focus_stack: list[str] = []
         # colorization state and current diff info
         self.colorize_diff = colorize_diff
         self.current_commit_sha: Optional[str] = None
@@ -3463,6 +3465,63 @@ App {
                 self.printException(e, "pop_layout inner failure")
         except Exception as e:
             self.printException(e, "pop_layout outer failure")
+
+    def change_focus(self, target: str) -> None:  # GitHistoryTool
+        """Change focus to the given widget id (safely)."""
+        try:
+            def _do():
+                try:
+                    w = self.query_one(target)
+                    w.focus()
+                except Exception as e:
+                    self.printException(e, f"could not change focus to {target}")
+
+            try:
+                self.call_after_refresh(_do)
+            except Exception:
+                _do()
+        except Exception as e:
+            self.printException(e, "change_focus outer failure")
+
+    def push_focus(self, target: str) -> None:  # GitHistoryTool
+        """Push a new focus target and focus it."""
+        try:
+            try:
+                self.focus_stack.append(target)
+            except Exception:
+                self.focus_stack = [target]
+            try:
+                self.change_focus(target)
+            except Exception as e:
+                self.printException(e, "push_focus change_focus failed")
+        except Exception as e:
+            self.printException(e, "push_focus outer failure")
+
+    def pop_focus(self) -> None:  # GitHistoryTool
+        """Pop the current focus and restore the previous one."""
+        try:
+            try:
+                if not getattr(self, "focus_stack", None):
+                    return
+            except Exception:
+                return
+
+            try:
+                try:
+                    if self.focus_stack:
+                        self.focus_stack.pop()
+                except Exception:
+                    pass
+
+                prev = self.focus_stack[-1] if self.focus_stack else "#left"
+                try:
+                    self.change_focus(prev)
+                except Exception as e:
+                    self.printException(e, "pop_focus change_focus failed")
+            except Exception as e:
+                self.printException(e, "pop_focus inner failure")
+        except Exception as e:
+            self.printException(e, "pop_focus outer failure")
 
     def build_diff_cmd(self, prev: str | None, curr: str | None, fname: str) -> list[str]:  # GitHistoryTool
         """Construct the git diff command honoring the currently selected variant.
@@ -3727,6 +3786,14 @@ App {
                     right3.styles.display = None
                 except Exception as e:
                     self.printException(e)
+            try:
+                # Ensure initial focus is set via the focus stack
+                try:
+                    self.push_focus("#left")
+                except Exception as e:
+                    self.printException(e, "push_focus startup failed")
+            except Exception as e:
+                self.printException(e)
         except Exception as e:
             self.printException(e)
 

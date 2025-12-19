@@ -167,3 +167,5 @@ with an if/elif check that calls the _apply_column_layout method with the approp
 
 		
 
+
+Currently there is a mixture of layout information that is sometimes conflicting in both the on_focus functions, various methods in GitHistoryTool, and the various key_left and key_right methods. I want to remove all knowledge of how the columns are layed out from the on_focus functions and keep that information only on the GitHistoryTool startup methods and the key_right and key_left functions.
