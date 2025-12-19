@@ -471,9 +471,11 @@ class FileModeFileList(FileListBase):
                                 if rel and not rel.startswith(".."):
                                     flags = app.repo_status_map.get(rel, 0)
                                     try:
+                                        # conflicted
                                         if flags & getattr(pygit2, "GIT_STATUS_CONFLICTED", 0):
                                             style = "magenta"
                                             repo_status = "conflicted"
+                                        # staged (index changes)
                                         elif flags & (
                                             getattr(pygit2, "GIT_STATUS_INDEX_NEW", 0)
                                             | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
@@ -481,6 +483,7 @@ class FileModeFileList(FileListBase):
                                         ):
                                             style = "cyan"
                                             repo_status = "staged"
+                                        # deleted in working tree
                                         elif flags & getattr(pygit2, "GIT_STATUS_WT_DELETED", 0):
                                             style = "red"
                                             repo_status = "wt_deleted"
@@ -1006,7 +1009,10 @@ class RepoModeFileList(FileListBase):
                     left = None
                 if left is not None:
                     try:
-                        self.app.change_focus(f"#{getattr(left, 'id', 'left')}")
+                        try:
+                            self.app.pop_focus()
+                        except Exception as e:
+                            self.printException(e, "exception popping focus to left history")
                     except Exception as e:
                         self.printException(e, "exception focusing left history")
             except Exception as e:
@@ -1098,6 +1104,18 @@ class RepoModeFileList(FileListBase):
                         self.app.push_screen(_TBDModal(str(exc)))
                     except Exception as e:
                         self.printException(e, "could not push TBDModal for diff-fullscreen error")
+                # Ensure the three-column layout is active and push focus to diff
+                try:
+                    try:
+                        self.app.push_layout("three_columns")
+                    except Exception as e:
+                        self.printException(e, "could not push_layout three_columns for diff")
+                    try:
+                        self.app.push_focus("#right2")
+                    except Exception as e:
+                        self.printException(e, "could not push_focus to diff after prep")
+                except Exception as e:
+                    self.printException(e, "error ensuring layout/focus for diff")
             else:
                 try:
                     self.app.push_screen(_TBDModal("Could not show diff (no diff widget)"))
@@ -1611,6 +1629,18 @@ class FileModeHistoryList(HistoryListBase):
                         self.app.push_screen(_TBDModal(str(exc)))
                     except Exception as e:
                         self.printException(e, "showing diff error modal")
+                # Ensure the three-column layout is active and push focus to diff
+                try:
+                    try:
+                        self.app.push_layout("three_columns")
+                    except Exception as e:
+                        self.printException(e, "could not push_layout three_columns for diff")
+                    try:
+                        self.app.push_focus("#right2")
+                    except Exception as e:
+                        self.printException(e, "could not push_focus to diff after prep")
+                except Exception as e:
+                    self.printException(e, "error ensuring layout/focus for diff")
             else:
                 try:
                     self.app.push_screen(_TBDModal("Could not show diff (no diff widget)"))
@@ -2066,7 +2096,7 @@ class RepoModeHistoryList(HistoryListBase):
 
                 try:
                     # Make the Files column visible and use central layout helper
-                    self.app.change_layout("left_right_split")
+                    self.app.push_layout("left_right_split")
                     try:
                         # Update titles for log-first layout: left remains History
                         lbl = self.app.query_one("#left-title", Label)
@@ -2082,7 +2112,7 @@ class RepoModeHistoryList(HistoryListBase):
                     self.printException(e, "setting files column layout")
 
                 try:
-                    self.app.change_focus(f"#{getattr(file_list, 'id', 'right1')}")
+                    self.app.push_focus(f"#{getattr(file_list, 'id', 'right1')}")
                 except Exception as e:
                     self.printException(e)
             except Exception as e:
@@ -2475,9 +2505,9 @@ class FileModeDiffList(DiffListBase):
                 try:
                     # Enforce expected column sizes after exiting fullscreen
                     try:
-                        self.app.change_layout("three_columns")
+                        self.app.pop_layout()
                     except Exception as e:
-                        self.printException(e, "layout_three_columns after exit fullscreen")
+                        self.printException(e, "pop_layout after exit fullscreen")
                     logger.debug("FileModeDiffList.key_left: enforced three-column layout after exit")
                 except Exception as e:
                     self.printException(e, "could not enforce columns after exit fullscreen")
@@ -2513,7 +2543,10 @@ class FileModeDiffList(DiffListBase):
                 try:
                         if hist is not None:
                             try:
-                                self.app.change_focus(f"#{getattr(hist, 'id', 'right1')}")
+                                try:
+                                    self.app.pop_focus()
+                                except Exception as e:
+                                    self.printException(e, "exception popping focus to history")
                             except Exception as e:
                                 self.printException(e)
 
@@ -2867,6 +2900,7 @@ class HelpList(AppBase):
 
                 # Restore saved column state if available
                 if self.app.saved_column_state:
+                    state = self.app.saved_column_state
                     # Restore previous layout pushed before showing help.
                     try:
                         self.app.pop_layout()
@@ -3576,7 +3610,7 @@ App {
             hist = self.query_one("#right1", ListView)
             # Prefer the new preparatory API when available on the history widget
             hist.prepListModeHistoryList(item_name)
-            self.change_layout("left_right_split")
+            self.push_layout("left_right_split")
             hist.index = 0
             try:
                 self.push_focus("#right1")
@@ -3607,7 +3641,7 @@ App {
                         hist.prepRepoModeHistoryList()
 
                         # Make left column full-width and hide others
-                        self.change_layout("left_fullscreen")
+                        self.push_layout("left_fullscreen")
                         self.query_one("#right3-column").styles.width = "0%"
                         self.query_one("#right3-column").styles.flex = 0
 
@@ -3856,7 +3890,45 @@ App {
                 self.printException(e, "could not save column state before fullscreen")
             # collapse left/history and expand diff column via helper
             try:
-                self.change_layout("diff_fullscreen")
+                # Determine current logical layout so it can be restored later
+                prev_layout = "three_columns"
+                try:
+                    r1_disp = getattr(self.query_one("#right1"), "styles", None) and getattr(
+                        self.query_one("#right1"), "styles").display
+                    r2_disp = getattr(self.query_one("#right2"), "styles", None) and getattr(
+                        self.query_one("#right2"), "styles").display
+                    if r1_disp is None and r2_disp is None:
+                        prev_layout = "three_columns"
+                    elif r1_disp is not None and (r2_disp is None or r2_disp == "none"):
+                        prev_layout = "left_right_split"
+                    elif (r1_disp is None or r1_disp == "none") and r2_disp is not None:
+                        prev_layout = "left_fullscreen"
+                except Exception:
+                    prev_layout = "three_columns"
+
+                try:
+                    if not getattr(self, "layout_stack", None):
+                        self.layout_stack = [prev_layout]
+                    else:
+                        if not self.layout_stack or self.layout_stack[-1] != prev_layout:
+                            self.layout_stack.append(prev_layout)
+                except Exception:
+                    self.layout_stack = [prev_layout]
+
+                try:
+                    self.push_layout("diff_fullscreen")
+                except Exception as e:
+                    self.printException(e, "push_layout diff_fullscreen failed")
+
+                try:
+                    # ensure diff column receives focus under the layout stack
+                    try:
+                        self.push_focus("#right2")
+                    except Exception as e:
+                        self.printException(e, "could not push_focus #right2 on enter fullscreen")
+                except Exception as e:
+                    self.printException(e, "could not set focus after pushing diff_fullscreen layout")
+
                 # ensure right1 is hidden (helper should handle, but enforce)
                 try:
                     self.query_one("#right1").styles.display = None
@@ -3998,9 +4070,9 @@ App {
                     # restore a sensible three-column layout using helper
                     try:
                         try:
-                            self.change_layout("three_columns")
+                            self.pop_layout()
                         except Exception as e:
-                            self.printException(e, "layout_three_columns in exit_diff_fullscreen")
+                            self.printException(e, "pop_layout in exit_diff_fullscreen")
                         try:
                             # ensure right1/right2 displays are visible after layout
                             self.query_one("#right1").styles.display = None
@@ -4032,10 +4104,10 @@ App {
                     try:
                             if right2 is not None:
                                 try:
-                                    self.push_focus("#right2")
-                                    logger.debug("exit_diff_fullscreen: focused #right2 (diff)")
+                                    self.pop_focus()
+                                    logger.debug("exit_diff_fullscreen: popped focus to previous (restored from fullscreen)")
                                 except Exception as e:
-                                    self.printException(e, "could not push_focus #right2")
+                                    self.printException(e, "could not pop_focus after exit fullscreen")
                     except Exception as e:
                         self.printException(e, "could not focus right2 after restore")
 
