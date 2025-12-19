@@ -305,7 +305,18 @@ class AppBase(ListView):
                         self.printException(e, "setting index for end key")
                 return True
 
-            # Not handled here
+            # Not handled here: offer subclass a chance to handle additional keys
+            try:
+                handled = False
+                try:
+                    handled = self.more_keys(event)
+                except Exception as e:
+                    self.printException(e)
+                    handled = False
+                if handled:
+                    return True
+            except Exception as e:
+                self.printException(e, "AppBase.more_keys dispatch failure")
             return False
 
         except Exception as e:
@@ -3155,86 +3166,84 @@ class HelpList(AppBase):
             else:
                 self.append(ListItem(Label(text)))
 
-    def on_key(self, event: events.Key) -> None: # HelpList
-        """Handle keys - go back to files view on any key except arrows/quit."""
+    def more_keys(self, event: events.Key) -> bool:  # HelpList
+        """Handle keys - go back to files view on any key.
+
+        Return True when the key is handled here and should not be processed
+        further; otherwise return False to allow default handling.
+        """
         try:
-            handled = False
+            key = event.key
+            logger.debug(f"HelpList.more_keys: key={key}")
+
+            # Restore column state and return to previous view for any key
             try:
-                handled = super().on_key(event)
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+                logger.debug(f"Restoring column state: {self.app.saved_column_state}")
+                # Hide help column
+                self.app.query_one("#right3-column").styles.width = "0%"
+                self.app.query_one("#right3-column").styles.flex = 0
+
+                # Determine which widget to focus based on saved state
+                focus_target = "#left"  # default
+
+                # Restore saved column state if available
+                if self.app.saved_column_state:
+                    state = self.app.saved_column_state
+                    try:
+                        # Use centralized helper to restore widths and displays
+                        self.app._apply_column_layout(
+                            state["left"]["width"],
+                            state["right1"]["width"],
+                            state["right2"]["width"],
+                            left_display=None,
+                            right1_display=state["right1"].get("display"),
+                            right2_display=state["right2"].get("display"),
+                        )
+                    except Exception as e:
+                        self.printException(e, "restoring saved column state via helper")
+
+                    # Determine focus target: rightmost visible column
+                    try:
+                        if state["right2"].get("display") != "none":
+                            focus_target = "#right2"
+                        elif state["right1"].get("display") != "none":
+                            focus_target = "#right1"
+                    except Exception as e:
+                        self.printException(e, "could not determine focus target from saved state")
+
+                    logger.debug("Column state restored")
+                else:
+                    logger.debug("No saved state, showing only files column")
+                    # Fallback: just show files column
+                    try:
+                        self.app.layout_left_only()
+                    except Exception as e:
+                        self.printException(e, "layout_left_only fallback")
+
+                # Focus on the appropriate widget
+                # Use call_after_refresh to avoid triggering on_focus during layout restore
+                def restore_focus():
+                    try:
+                        self.app.query_one(focus_target).focus()
+                    except Exception as e:
+                        self.printException(e)
+
+                self.app.call_after_refresh(restore_focus)
+
+                # HelpList footer
+                footer = self.app.query_one("#footer", Label)
+                footer.update(Text("q(uit)  ?h/(elp)  ← ↑ ↓ →", style="bold"))
+                return True
             except Exception as e:
                 self.printException(e)
-                handled = False
-            if handled:
-                return
+                return False
         except Exception as e:
             self.printException(e)
-
-        key = event.key
-        logger.debug(f"HelpList.on_key: key={key}")
-
-        # Allow arrow keys for scrolling, quit for quitting
-        if key in ("up", "down", "pageup", "pagedown", "q", "Q"):
-            return
-        # Any other key: return to previous view
-        try:
-            event.stop()
-            logger.debug(f"Restoring column state: {self.app.saved_column_state}")
-            # Hide help column
-            self.app.query_one("#right3-column").styles.width = "0%"
-            self.app.query_one("#right3-column").styles.flex = 0
-
-            # Determine which widget to focus based on saved state
-            focus_target = "#left"  # default
-
-            # Restore saved column state if available
-            if self.app.saved_column_state:
-                state = self.app.saved_column_state
-                try:
-                    # Use centralized helper to restore widths and displays
-                    self.app._apply_column_layout(
-                        state["left"]["width"],
-                        state["right1"]["width"],
-                        state["right2"]["width"],
-                        left_display=None,
-                        right1_display=state["right1"].get("display"),
-                        right2_display=state["right2"].get("display"),
-                    )
-                except Exception as e:
-                    self.printException(e, "restoring saved column state via helper")
-
-                # Determine focus target: rightmost visible column
-                try:
-                    if state["right2"].get("display") != "none":
-                        focus_target = "#right2"
-                    elif state["right1"].get("display") != "none":
-                        focus_target = "#right1"
-                except Exception as e:
-                    self.printException(e, "could not determine focus target from saved state")
-
-                logger.debug("Column state restored")
-            else:
-                logger.debug("No saved state, showing only files column")
-                # Fallback: just show files column
-                try:
-                    self.app.layout_left_only()
-                except Exception as e:
-                    self.printException(e, "layout_left_only fallback")
-
-            # Focus on the appropriate widget
-            # Use call_after_refresh to avoid triggering on_focus during layout restore
-            def restore_focus():
-                try:
-                    self.app.query_one(focus_target).focus()
-                except Exception as e:
-                    self.printException(e)
-
-            self.app.call_after_refresh(restore_focus)
-
-            # HelpList footer
-            footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q(uit)  ?h/(elp)  ← ↑ ↓ →", style="bold"))
-        except Exception as e:
-            self.printException(e)
+            return False
 
 
 class GitHistoryTool(App):
