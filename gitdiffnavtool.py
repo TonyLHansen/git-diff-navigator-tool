@@ -2280,21 +2280,44 @@ class DiffListBase(AppBase):
                         try:
                             # require right2 to be visible
                             if self.app.query_one("#right2", ListView).styles.display is not None:
-                                self.app.enter_diff_fullscreen()
-                                try:
                                     try:
-                                        self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+                                        try:
+                                            self.app.push_layout("diff_fullscreen")
+                                        except Exception as e:
+                                            self.printException(e, "push_layout diff_fullscreen failed")
+                                        try:
+                                            self.app.push_focus("#right2")
+                                        except Exception as e:
+                                            self.printException(e, "could not push_focus #right2 on enter fullscreen")
+                                        try:
+                                            self.app.diff_fullscreen = True
+                                        except Exception as e:
+                                            self.printException(e, "could not set diff_fullscreen flag")
+                                        try:
+                                            footer = self.app.query_one("#footer", Label)
+                                            footer.update(Text("q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)", style="bold"))
+                                        except Exception:
+                                            pass
                                     except Exception as e:
-                                        self.printException(e)
-                                except Exception as e:
-                                    self.printException(e, "focus() after enter_diff_fullscreen exception")
+                                        self.printException(e, "enter fullscreen check exception")
 
                         except Exception as e:
                             self.printException(e, "enter fullscreen check exception")
                             try:
-                                self.app.enter_diff_fullscreen()
+                                try:
+                                    self.app.push_layout("diff_fullscreen")
+                                except Exception as e:
+                                    self.printException(e, "fallback push_layout diff_fullscreen exception")
+                                try:
+                                    self.app.push_focus("#right2")
+                                except Exception as e:
+                                    self.printException(e)
+                                try:
+                                    self.app.diff_fullscreen = True
+                                except Exception as e:
+                                    self.printException(e, "could not set diff_fullscreen flag")
                             except Exception as e:
-                                self.printException(e, "fallback enter_diff_fullscreen exception")
+                                self.printException(e, "fallback enter fullscreen exception")
 
                 except Exception as e:
                     self.printException(e, "exception toggling fullscreen f/F")
@@ -2507,15 +2530,7 @@ class FileModeDiffList(DiffListBase):
                     self.app.exit_diff_fullscreen()
                 except Exception as e:
                     self.printException(e, "exception exiting fullscreen on left")
-                try:
-                    # Enforce expected column sizes after exiting fullscreen
-                    try:
-                        self.app.pop_layout()
-                    except Exception as e:
-                        self.printException(e, "pop_layout after exit fullscreen")
-                    logger.debug("FileModeDiffList.key_left: enforced three-column layout after exit")
-                except Exception as e:
-                    self.printException(e, "could not enforce columns after exit fullscreen")
+                # exit_diff_fullscreen restores the prior layout; do not pop again
                 return True
             # otherwise move focus back to History
             try:
@@ -2603,22 +2618,40 @@ class FileModeDiffList(DiffListBase):
                 right2_display = self.app.query_one("#right2").styles.display
                 if right1_display is not None and right2_display is not None:
                     try:
-                        self.app.enter_diff_fullscreen()
+                        try:
+                            self.app.push_layout("diff_fullscreen")
+                        except Exception as e:
+                            self.printException(e, "push_layout diff_fullscreen failed")
+                        try:
+                            self.app.push_focus("#right2")
+                        except Exception as e:
+                            self.printException(e, "could not push_focus #right2 on enter fullscreen")
+                        try:
+                            self.app.diff_fullscreen = True
+                        except Exception as e:
+                            self.printException(e, "could not set diff_fullscreen flag")
                     except Exception as e:
-                        self.printException(e, "enter_diff_fullscreen exception")
-                    try:
-                        self.app.push_focus("#right2")
-                    except Exception as e:
-                        self.printException(e)
+                        self.printException(e, "enter_diff_fullscreen inline exception")
 
                     return True
             except Exception as e:
                 self.printException(e, "checking displays for fullscreen failed")
                 # best-effort enter
                 try:
-                    self.app.enter_diff_fullscreen()
+                    try:
+                        self.app.push_layout("diff_fullscreen")
+                    except Exception as e:
+                        self.printException(e, "fallback push_layout diff_fullscreen exception")
+                    try:
+                        self.app.push_focus("#right2")
+                    except Exception as e:
+                        self.printException(e)
+                    try:
+                        self.app.diff_fullscreen = True
+                    except Exception as e:
+                        self.printException(e, "could not set diff_fullscreen flag")
                 except Exception as e:
-                    self.printException(e, "fallback enter_diff_fullscreen exception")
+                    self.printException(e, "fallback enter fullscreen exception")
 
             return True
         except Exception as e:
@@ -3038,10 +3071,10 @@ App {
         self.repo_index_mtime_map: dict[str, float] = {}
         # column state for restoring after help
         self.saved_column_state: Optional[dict] = None
-        # layout stack to support push/pop of layouts
-        self.layout_stack: list[str] = []
-        # focus stack to support push/pop of focus targets; start empty
-        self.focus_stack: list[str] = []
+        # layout stack to support push/pop of layouts. Each entry is (name,count)
+        self.layout_stack: list[tuple[str, int]] = []
+        # focus stack to support push/pop of focus targets; start empty. Each entry is (target,count)
+        self.focus_stack: list[tuple[str, int]] = []
         # colorization state and current diff info
         self.colorize_diff = colorize_diff
         self.current_commit_sha: Optional[str] = None
@@ -3202,21 +3235,28 @@ App {
         """Push a new layout onto the layout stack and apply it."""
         try:
             try:
-                logger.debug(f"push_layout: pushing {newlayout} (before={getattr(self,'layout_stack',None)})")
+                logger.debug(f"push_layout: requested={newlayout} before={getattr(self,'layout_stack',None)}")
             except Exception:
                 pass
+
             try:
-                self.layout_stack.append(newlayout)
+                # If top matches, increment its count
+                if getattr(self, "layout_stack", None) and self.layout_stack and self.layout_stack[-1][0] == newlayout:
+                    name, cnt = self.layout_stack[-1]
+                    self.layout_stack[-1] = (name, cnt + 1)
+                else:
+                    self.layout_stack.append((newlayout, 1))
             except Exception:
-                # ensure layout_stack exists
                 try:
-                    self.layout_stack = [newlayout]
+                    self.layout_stack = [(newlayout, 1)]
                 except Exception:
                     self.printException(None, "could not append to layout_stack")
+
             try:
                 logger.debug(f"push_layout: stack after push={self.layout_stack}")
             except Exception:
                 pass
+
             try:
                 self.change_layout(newlayout)
             except Exception as e:
@@ -3238,14 +3278,18 @@ App {
                 return
 
             try:
-                # Remove current layout
+                # Decrement count or remove current layout
                 try:
-                    self.layout_stack.pop()
+                    name, cnt = self.layout_stack[-1]
+                    if cnt > 1:
+                        self.layout_stack[-1] = (name, cnt - 1)
+                    else:
+                        self.layout_stack.pop()
                 except Exception:
                     pass
 
-                # Determine previous layout
-                prev = self.layout_stack[-1] if self.layout_stack else "left_fullscreen"
+                # Determine previous layout name
+                prev = self.layout_stack[-1][0] if self.layout_stack else "left_fullscreen"
                 try:
                     logger.debug(f"pop_layout: applying prev={prev} resulting_stack={self.layout_stack}")
                 except Exception:
@@ -3286,17 +3330,28 @@ App {
         """Push a new focus target and focus it."""
         try:
             try:
-                logger.debug(f"push_focus: pushing {target} (before={getattr(self,'focus_stack',None)})")
+                logger.debug(f"push_focus: requested={target} before={getattr(self,'focus_stack',None)}")
             except Exception:
                 pass
+
             try:
-                self.focus_stack.append(target)
+                # If top matches, increment its count
+                if getattr(self, "focus_stack", None) and self.focus_stack and self.focus_stack[-1][0] == target:
+                    name, cnt = self.focus_stack[-1]
+                    self.focus_stack[-1] = (name, cnt + 1)
+                else:
+                    self.focus_stack.append((target, 1))
             except Exception:
-                self.focus_stack = [target]
+                try:
+                    self.focus_stack = [(target, 1)]
+                except Exception:
+                    self.printException(None, "could not append to focus_stack")
+
             try:
                 logger.debug(f"push_focus: stack after push={self.focus_stack}")
             except Exception:
                 pass
+
             try:
                 self.change_focus(target)
             except Exception as e:
@@ -3319,12 +3374,16 @@ App {
 
             try:
                 try:
-                    if self.focus_stack:
+                    # Decrement count or remove current focus
+                    name, cnt = self.focus_stack[-1]
+                    if cnt > 1:
+                        self.focus_stack[-1] = (name, cnt - 1)
+                    else:
                         self.focus_stack.pop()
                 except Exception:
                     pass
 
-                prev = self.focus_stack[-1] if self.focus_stack else "#left"
+                prev = self.focus_stack[-1][0] if self.focus_stack else "#left"
                 try:
                     logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={self.focus_stack}")
                 except Exception:
@@ -3977,292 +4036,17 @@ App {
         except Exception as e:
             self.printException(e)
 
-    def enter_diff_fullscreen(self) -> None:  # GitHistoryTool
-        """Make the Diff column full-screen (hide other columns) and update footer."""
-        try:
-            # save whether we were fullscreen already
-            if getattr(self, "diff_fullscreen", False):
-                return
-            # Save current column state so we can restore it on exit.
-            try:
-                # Normalize saved widths to percent strings so restoring applies expected values
-                def _norm_width(w):
-                    try:
-                        if w is None:
-                            return None
-                        if hasattr(w, "value"):
-                            val = int(getattr(w, "value", 0))
-                            return f"{val}%"
-                        if isinstance(w, str) and "Unit.WIDTH" in w:
-                            m = re.match(r"^(\d+)", w)
-                            if m:
-                                return f"{m.group(1)}%"
-                        return str(w)
-                    except Exception as e:
-                        self.printException(e, "error normalizing width in enter_diff_fullscreen._norm_width")
-                        return str(w)
-
-                left_col = self.query_one("#left-column")
-                right1_col = self.query_one("#right1-column")
-                right2_col = self.query_one("#right2-column")
-                left_widget = self.query_one("#left")
-                right1_widget = self.query_one("#right1")
-                right2_widget = self.query_one("#right2")
-                self.saved_column_state = {
-                    "left": {
-                        "width": _norm_width(left_col.styles.width),
-                        "flex": left_col.styles.flex,
-                        "display": getattr(left_widget.styles, "display", None),
-                    },
-                    "right1": {
-                        "width": _norm_width(right1_col.styles.width),
-                        "flex": right1_col.styles.flex,
-                        "display": getattr(right1_widget.styles, "display", None),
-                    },
-                    "right2": {
-                        "width": _norm_width(right2_col.styles.width),
-                        "flex": right2_col.styles.flex,
-                        "display": getattr(right2_widget.styles, "display", None),
-                    },
-                }
-                logger.debug(f"enter_diff_fullscreen: saved_column_state={self.saved_column_state}")
-            except Exception as e:
-                self.printException(e, "could not save column state before fullscreen")
-            # collapse left/history and expand diff column via helper
-            try:
-                # Determine current logical layout so it can be restored later
-                prev_layout = "three_columns"
-                try:
-                    r1_disp = getattr(self.query_one("#right1"), "styles", None) and getattr(
-                        self.query_one("#right1"), "styles").display
-                    r2_disp = getattr(self.query_one("#right2"), "styles", None) and getattr(
-                        self.query_one("#right2"), "styles").display
-                    if r1_disp is None and r2_disp is None:
-                        prev_layout = "three_columns"
-                    elif r1_disp is not None and (r2_disp is None or r2_disp == "none"):
-                        prev_layout = "left_right_split"
-                    elif (r1_disp is None or r1_disp == "none") and r2_disp is not None:
-                        prev_layout = "left_fullscreen"
-                except Exception:
-                    prev_layout = "three_columns"
-
-                try:
-                    if not getattr(self, "layout_stack", None):
-                        self.layout_stack = [prev_layout]
-                    else:
-                        if not self.layout_stack or self.layout_stack[-1] != prev_layout:
-                            self.layout_stack.append(prev_layout)
-                except Exception:
-                    self.layout_stack = [prev_layout]
-
-                try:
-                    self.push_layout("diff_fullscreen")
-                except Exception as e:
-                    self.printException(e, "push_layout diff_fullscreen failed")
-
-                try:
-                    # ensure diff column receives focus under the layout stack
-                    try:
-                        self.push_focus("#right2")
-                    except Exception as e:
-                        self.printException(e, "could not push_focus #right2 on enter fullscreen")
-                except Exception as e:
-                    self.printException(e, "could not set focus after pushing diff_fullscreen layout")
-
-                # ensure right1 is hidden (helper should handle, but enforce)
-                try:
-                    self.query_one("#right1").styles.display = None
-                except Exception as e:
-                    self.printException(e, "could not hide #right1 when entering fullscreen")
-
-            except Exception as e:
-                self.printException(e, "could not adjust columns for fullscreen")
-            # mark state and update footer
-            try:
-                self.diff_fullscreen = True
-            except Exception as e:
-                self.printException(e, "could not set diff_fullscreen flag")
-
-            try:
-                footer = self.query_one("#footer", Label)
-                footer.update(Text("q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)", style="bold"))
-            except Exception as e:
-                self.printException(e, "could not update footer")
-        except Exception as e:
-            self.printException(e)
-
     def exit_diff_fullscreen(self) -> None:  # GitHistoryTool
-        """Restore the standard three-column layout (columnated mode)."""
+        """Exit diff fullscreen: clear fullscreen state only (no layout changes)."""
         try:
             if not getattr(self, "diff_fullscreen", False):
                 return
-            # If we previously saved a column state, restore it; otherwise
-            # fall back to the default 5/15/80 layout. This ensures that
-            # entering/exiting fullscreen preserves the layout active when
-            # fullscreen was requested (e.g. log-first 25/75 vs default 5/15).
-            try:
-                if getattr(self, "saved_column_state", None):
-                    s = self.saved_column_state
-                    logger.debug(f"exit_diff_fullscreen: restoring saved_column_state={s}")
-
-                    def _apply_saved(col_id, saved, default_width):
-                        try:
-                            col = self.query_one(col_id)
-                            width = saved.get("width", default_width)
-                            # If width is a scalar-like object stored earlier, convert to string
-                            try:
-                                if hasattr(width, "value"):
-                                    width = f"{int(getattr(width, 'value', 0))}%"
-                            except Exception as e:
-                                self.printException(e, f"could not normalize saved width for {col_id}")
-
-                            col.styles.width = width
-                            col.styles.flex = saved.get("flex", 0)
-                        except Exception as e:
-                            self.printException(e, f"could not restore {col_id} from saved state")
-
-                    _apply_saved("#left-column", s.get("left", {}), "5%")
-                    try:
-                        left_widget = self.query_one("#left")
-                        left_widget.styles.display = s.get("left", {}).get("display", None)
-                    except Exception as e:
-                        self.printException(e, "could not restore left widget display")
-
-                    _apply_saved("#right1-column", s.get("right1", {}), "15%")
-                    try:
-                        right1_widget = self.query_one("#right1")
-                        right1_widget.styles.display = s.get("right1", {}).get("display", None)
-                    except Exception as e:
-                        self.printException(e, "could not restore right1 widget display")
-
-                    _apply_saved("#right2-column", s.get("right2", {}), "80%")
-                    try:
-                        right2_widget = self.query_one("#right2")
-                        right2_widget.styles.display = s.get("right2", {}).get("display", None)
-                    except Exception as e:
-                        self.printException(e, "could not restore right2 widget display")
-
-                    # While we restore, suppress file-list focus handlers from
-                    # overriding the applied column sizes.
-                    try:
-                        self._suppress_focus_layout = True
-                        logger.debug("exit_diff_fullscreen: set _suppress_focus_layout flag")
-                    except Exception as e:
-                        self.printException(e, "could not set _suppress_focus_layout flag")
-
-                    # Force a layout refresh and log actual computed sizes after restore
-                    def _post_restore():
-                        try:
-                            lc = self.query_one("#left-column")
-                            r1c = self.query_one("#right1-column")
-                            r2c = self.query_one("#right2-column")
-                            logger.debug(
-                                "post_restore columns styles: left=%s right1=%s right2=%s",
-                                (lc.styles.width, lc.styles.flex),
-                                (r1c.styles.width, r1c.styles.flex),
-                                (r2c.styles.width, r2c.styles.flex),
-                            )
-                            try:
-                                lreg = getattr(lc, "region", None)
-                                r1reg = getattr(r1c, "region", None)
-                                r2reg = getattr(r2c, "region", None)
-                                logger.debug(
-                                    "post_restore regions (width,height): left=%s right1=%s right2=%s",
-                                    (getattr(lreg, "width", None), getattr(lreg, "height", None)),
-                                    (getattr(r1reg, "width", None), getattr(r1reg, "height", None)),
-                                    (getattr(r2reg, "width", None), getattr(r2reg, "height", None)),
-                                )
-                            except Exception as e:
-                                self.printException(e, "could not read column regions")
-                            try:
-                                # Force a refresh to ensure layout is reflowed
-                                try:
-                                    self.refresh()
-                                except Exception as e:
-                                    self.printException(e, "could not refresh during post_restore")
-
-                            except Exception as e:
-                                self.printException(e, "could not refresh after restore")
-                        except Exception as e:
-                            self.printException(e, "post_restore diagnostics failed")
-
-                    self.call_after_refresh(_post_restore)
-
-                    # clear the suppress flag after post-restore completes
-                    def _clear_suppress():
-                        try:
-                            if getattr(self, "_suppress_focus_layout", False):
-                                self._suppress_focus_layout = False
-                                logger.debug("exit_diff_fullscreen: cleared _suppress_focus_layout flag")
-                        except Exception as e:
-                            self.printException(e, "could not clear suppress flag")
-
-                    self.call_after_refresh(_clear_suppress)
-
-                    # Clear saved state after restoring
-                    try:
-                        self.saved_column_state = None
-                    except Exception as e:
-                        self.printException(e, "could not clear saved_column_state")
-
-                    logger.debug("exit_diff_fullscreen: restored from saved state")
-                else:
-                    # restore a sensible three-column layout using helper
-                    try:
-                        try:
-                            self.pop_layout()
-                        except Exception as e:
-                            self.printException(e, "pop_layout in exit_diff_fullscreen")
-                        try:
-                            # ensure right1/right2 displays are visible after layout
-                            self.query_one("#right1").styles.display = None
-                            self.query_one("#right2").styles.display = None
-                        except Exception as e:
-                            self.printException(e, "could not restore right1/right2 display after three-column layout")
-
-                    except Exception as e:
-                        self.printException(e, "could not restore three-column layout")
-            except Exception as e:
-                self.printException(e)
-
+            # Only clear the fullscreen flag. Do not modify layouts here.
             try:
                 self.diff_fullscreen = False
-                logger.debug("exit_diff_fullscreen: diff_fullscreen flag cleared")
+                logger.debug("exit_diff_fullscreen: cleared diff_fullscreen flag (no layout changes)")
             except Exception as e:
                 self.printException(e, "could not clear diff_fullscreen flag")
-
-            # Ensure Diff column is visible and focused after restoring layout
-            try:
-                try:
-                    right2 = self.query_one("#right2")
-                    right2.styles.display = None
-                except Exception as e:
-                    self.printException(e, "could not query #right2 for focus after restore")
-                    right2 = None
-
-                def _focus_diff():
-                    try:
-                            if right2 is not None:
-                                try:
-                                    self.pop_focus()
-                                    logger.debug("exit_diff_fullscreen: popped focus to previous (restored from fullscreen)")
-                                except Exception as e:
-                                    self.printException(e, "could not pop_focus after exit fullscreen")
-                    except Exception as e:
-                        self.printException(e, "could not focus right2 after restore")
-
-                try:
-                    self.call_after_refresh(_focus_diff)
-                except Exception as e:
-                    self.printException(e, "could not schedule _focus_diff via call_after_refresh")
-                    _focus_diff()
-            except Exception as e:
-                self.printException(e, "exception ensuring diff visibility after restore")
-            try:
-                footer = self.query_one("#footer", Label)
-                footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)", style="bold"))
-            except Exception as e:
-                self.printException(e, "could not update footer")
         except Exception as e:
             self.printException(e)
 
