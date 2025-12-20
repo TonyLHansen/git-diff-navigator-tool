@@ -38,7 +38,7 @@ from textual.widgets import (
 DOLOGGING = True
 if DOLOGGING:
     logging.basicConfig(
-        filename="tmp/gitdiff_debug.log",
+        filename="tmp/debug.log",
         level=logging.DEBUG,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
@@ -135,7 +135,7 @@ class AppBase(ListView):
                     self.printException(e)
                 return True
 
-            # Handle PageUp/PageDown generically for ListView-based widgets
+            # Handle PageUp/PageDown for ListView-based widgets
             if key in ("pageup", "pagedown"):
                 try:
                     try:
@@ -157,20 +157,24 @@ class AppBase(ListView):
                         visible_height = 10
                     page_size = max(1, visible_height // 2)
 
+                    # Pagedown: move forward but do not exceed last index
                     if key == "pagedown":
                         new_index = min(current_index + page_size, len(nodes) - 1)
-                    else:
-                        new_index = max(current_index - page_size, 0)
+
+                    # Pageup: move backward but do not go above the minimum selectable index
+                    elif key == "pageup":
+                        min_idx = getattr(self, "_min_index", 0) or 0
+                        new_index = max(current_index - page_size, min_idx)
 
                     try:
-                        # schedule index change after refresh for stability
                         self.call_after_refresh(lambda: setattr(self, "index", new_index))
                     except Exception as e:
                         self.printException(e)
                         try:
                             self.index = new_index
                         except Exception as e:
-                            self.printException(e, "setting index for page navigation")
+                            self.printException(e, "setting index for pageup")
+                    return True
                 except Exception as e:
                     self.printException(e, "AppBase.page navigation failure")
                 return True
@@ -182,11 +186,10 @@ class AppBase(ListView):
                     self.printException(e)
 
                 try:
-                    if hasattr(self, "key_left"):
-                        try:
-                            self.key_left()
-                        except Exception as e:
-                            self.printException(e, "key_left exception")
+                    try:
+                        self.key_left()
+                    except Exception as e:
+                        self.printException(e, "key_left exception")
                 except Exception as e:
                     self.printException(e)
                 return True
@@ -198,13 +201,30 @@ class AppBase(ListView):
                     self.printException(e)
 
                 try:
-                    if hasattr(self, "key_right"):
-                        try:
-                            self.key_right()
-                        except Exception as e:
-                            self.printException(e, "key_right exception")
+                    try:
+                        self.key_right()
+                    except Exception as e:
+                        self.printException(e, "key_right exception")
                 except Exception as e:
                     self.printException(e)
+                return True
+
+            if key == "enter":
+                try:
+                    try:
+                        event.stop()
+                    except Exception as e:
+                        self.printException(e)
+
+                    try:
+                        try:
+                            self.key_enter()
+                        except Exception as e:
+                            self.printException(e, "key_enter exception")
+                    except Exception as e:
+                        self.printException(e)
+                except Exception as e:
+                    self.printException(e, "enter key handling failure")
                 return True
 
             # Not handled here
@@ -261,16 +281,35 @@ class AppBase(ListView):
             self.printException(e, "AppBase.on_key outer failure")
             return False
 
-    def more_keys(self, event: events.Key) -> bool:  # FileListBase
+    def more_keys(self, event: events.Key) -> bool:  # AppBase
         """Per-mode file list key hook.
         Return True when the key was handled, False otherwise.
         """
-        try:
-            return False
-        except Exception as e:
-            self.printException(e)
-            return False
+        return False
 
+    def key_left(self) -> bool:  # AppBase
+        """Default left-key handler for widgets that don't override it.
+
+        Subclasses may override this to implement custom behavior. Return
+        True when the key was handled (consumed), False otherwise.
+        """
+        return False
+
+    def key_right(self) -> bool:  # AppBase
+        """Default right-key handler for widgets that don't override it.
+
+        Subclasses may override this to implement custom behavior. Return
+        True when the key was handled (consumed), False otherwise.
+        """
+        return False
+    
+    def key_enter(self) -> bool:  # AppBase
+        """Default Enter-key handler for widgets that don't override it.
+
+        Subclasses may override this to implement custom behavior. Return
+        True when the key was handled (consumed), False otherwise.
+        """
+        return False
 
 class FileListBase(AppBase):
     """A ListView showing directory contents. Directories have a blue background.
@@ -341,13 +380,6 @@ class FileListBase(AppBase):
             self.printException(e, "exception in outer block")
             return
 
-    def key_left(self) -> bool:  # FileListBase
-        """Handle left key behavior for FileListBase.
-
-        Returns True when the key was handled/consumed.
-        """
-        return False
-
     def _highlight_top(self) -> None:  # FileListBase
         """Highlight the first entry in the list after a refresh."""
         try:
@@ -364,16 +396,6 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, "exception")
             return
-
-    def more_keys(self, event: events.Key) -> bool:  # FileListBase
-        """Per-mode file list key hook.
-        Return True when the key was handled, False otherwise.
-        """
-        try:
-            return False
-        except Exception as e:
-            self.printException(e)
-            return False
 
 
 class FileModeFileList(FileListBase):
@@ -1322,13 +1344,6 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e)
             return False
-
-    def key_right(self) -> bool:  # HistoryListBase
-        """Handle right key behavior for HistoryListBase.
-
-        Returns True when the key was handled/consumed.
-        """
-        return False
 
 
 class FileModeHistoryList(HistoryListBase):
