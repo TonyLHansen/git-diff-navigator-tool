@@ -333,19 +333,9 @@ class AppBase(ListView):
                         self.app.push_screen(_TBDModal(str(exc)))
                     except Exception as e:
                         self.printException(e, "could not push TBDModal for diff-fullscreen error")
+                # Use helper to push layout/focus/footer together
                 try:
-                    try:
-                        self.app.push_layout("three_columns")
-                    except Exception as e:
-                        self.printException(e, "could not push_layout three_columns for diff")
-                    try:
-                        self.app.push_focus("#right2")
-                    except Exception as e:
-                        self.printException(e, "could not push_focus to diff after prep")
-                    try:
-                        self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
-                    except Exception as e:
-                        self.printException(e)
+                    self.app.push_state("three_columns", "#right2", Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
                 except Exception as e:
                     self.printException(e, "error ensuring layout/focus for diff")
             else:
@@ -355,6 +345,7 @@ class AppBase(ListView):
                     self.printException(e)
         except Exception as e:
             self.printException(e)
+
 
 class FileListBase(AppBase):
     """A ListView showing directory contents. Directories have a blue background.
@@ -794,9 +785,11 @@ class FileModeFileList(FileListBase):
                         hist.prepListModeHistoryList(item_name)
                         try:
                             # ensure history column is shown and focused
-                            self.app.push_layout("left_right_split")
-                            self.app.push_focus("#right1")
-                            self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                            self.app.push_state(
+                                "left_right_split",
+                                "#right1",
+                                Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"),
+                            )
                         except Exception as e:
                             self.printException(e)
                     except Exception as e:
@@ -2118,11 +2111,11 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e, "setting files column layout")
 
             try:
-                self.app.push_focus(f"#{getattr(file_list, 'id', 'right1')}")
-            except Exception as e:
-                self.printException(e)
-            try:
-                self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                self.app.push_state(
+                    None,
+                    f"#{getattr(file_list, 'id', 'right1')}",
+                    Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"),
+                )
             except Exception as e:
                 self.printException(e)
 
@@ -2408,22 +2401,7 @@ class DiffListBase(AppBase):
         Returns True when the key was handled/consumed.
         """
         try:
-            try:
-                self.app.pop_focus()
-            except Exception as e:
-                self.printException(e, "could not pop_focus in DiffListBase.key_left")
-            try:
-                self.app.pop_footer()
-            except Exception as e:
-                self.printException(e)
-            try:
-                self.app.pop_layout()
-            except Exception as e:
-                self.printException(e, "could not pop_layout in DiffListBase.key_left")
-            try:
-                self.app.pop_footer()
-            except Exception as e:
-                self.printException(e)
+            self.app.pop_state()
         except Exception as e:
             self.printException(e, "unexpected exception in DiffListBase.key_left")
         return True
@@ -2440,9 +2418,11 @@ class DiffListBase(AppBase):
                 return True
             else:
                 # If diff is visible and not fullscreen, enter fullscreen
-                self.app.push_layout("diff_fullscreen")
-                self.app.push_focus("#right2")
-                self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                self.app.push_state(
+                    "diff_fullscreen",
+                    "#right2",
+                    Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"),
+                )
 
         except Exception as e:
             self.printException(e, "unexpected exception")
@@ -2750,9 +2730,7 @@ class HelpList(AppBase):
             try:
                 try:
                     event.stop()
-                    self.app.pop_layout()
-                    self.app.pop_focus()
-                    self.app.pop_footer()
+                    self.app.pop_state()
                 except Exception as e:
                     self.printException(e, "could not pop_footer when dismissing help")
                 return True
@@ -3274,6 +3252,55 @@ App {
         except Exception as e:
             self.printException(e, "pop_focus outer failure")
 
+    def push_state(self, layout: Optional[str] = None, focus: Optional[str] = None, footer: Optional[Text | str] = None) -> None:  # GitHistoryTool
+        """Push layout, focus, and footer together (app-level helper).
+
+        Any parameter may be None to skip that action.
+        """
+        try:
+            try:
+                if layout:
+                    self.push_layout(layout)
+            except Exception as e:
+                self.printException(e, "push_state push_layout failed")
+
+            try:
+                if focus:
+                    self.push_focus(focus)
+            except Exception as e:
+                self.printException(e, "push_state push_focus failed")
+
+            try:
+                if footer is not None:
+                    self.push_footer(footer)
+            except Exception as e:
+                self.printException(e, "push_state push_footer failed")
+        except Exception as e:
+            self.printException(e, "push_state outer failure")
+
+    def pop_state(self) -> None:
+        """Pop footer, focus, and layout together (reverse of push_state).
+
+        Safe no-op when stacks are empty; logs exceptions.
+        """
+        try:
+            try:
+                self.pop_footer()
+            except Exception as e:
+                self.printException(e, "pop_state pop_footer failed")
+
+            try:
+                self.pop_focus()
+            except Exception as e:
+                self.printException(e, "pop_state pop_focus failed")
+
+            try:
+                self.pop_layout()
+            except Exception as e:
+                self.printException(e, "pop_state pop_layout failed")
+        except Exception as e:
+            self.printException(e, "pop_state outer failure")
+
     def build_diff_cmd(self, prev: str | None, curr: str | None, fname: str) -> list[str]:  # GitHistoryTool
         """Construct the git diff command honoring the currently selected variant.
 
@@ -3495,9 +3522,11 @@ App {
         # Force left-only layout at startup (Files full-width, others hidden)
         try:
             try:
-                self.push_layout("left_fullscreen")
-                self.push_focus("#left")
-                self.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                self.push_state(
+                    "left_fullscreen",
+                    "#left",
+                    Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"),
+                )
             except Exception as e:
                 self.printException(e)
         except Exception as e:
@@ -3807,9 +3836,11 @@ App {
                 try:
                     # Simply push the help fullscreen layout and focus the help widget
                     try:
-                        self.push_layout("help_fullscreen")
-                        self.push_focus("#right3")
-                        self.push_footer(Text("q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold"))
+                        self.push_state(
+                            "help_fullscreen",
+                            "#right3",
+                            Text("q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold"),
+                        )
                     except Exception as e:
                         self.printException(e)                        
                 except Exception as e:
