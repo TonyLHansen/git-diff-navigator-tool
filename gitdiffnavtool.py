@@ -313,12 +313,7 @@ class FileListBase(AppBase):
 
         # Titles and other UI chrome are managed by the app / key handlers.
 
-        # FileList footer
-        try:
-            footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →", style="bold"))
-        except Exception as e:
-            self.printException(e, "exception updating footer")
+           # FileList footer: handled by callers that change layout/focus
 
     def _highlight_filename(self, name: str) -> None:  # FileListBase
         """Highlight the ListItem whose attached `_filename` equals `name`.
@@ -733,12 +728,10 @@ class FileModeFileList(FileListBase):
                         try:
                             # ensure history column is shown and focused
                             self.app.push_layout("left_right_split")
+                            self.app.push_focus("#right1")
+                            self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
                         except Exception:
                             pass
-                        try:
-                            self.app.push_focus("#right1")
-                        except Exception as e:
-                            self.printException(e, "could not push_focus to history after prep")
                     except Exception as e:
                         self.printException(e, "prepListModeHistoryList failed")
                         try:
@@ -747,8 +740,9 @@ class FileModeFileList(FileListBase):
                                 self.app._open_history_for_file(item_name)
                                 try:
                                     self.app.push_focus("#right1")
-                                except Exception as e:
-                                    self.printException(e, "could not push_focus to history after app helper")
+                                    self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                                except Exception:
+                                    pass
                         except Exception as e:
                             self.printException(e, "fallback open history failed")
                 else:
@@ -758,8 +752,9 @@ class FileModeFileList(FileListBase):
                             self.app._open_history_for_file(item_name)
                             try:
                                 self.app.push_focus("#right1")
-                            except Exception as e:
-                                self.printException(e, "could not push_focus to history after app helper")
+                                self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                            except Exception:
+                                pass
                     except Exception as e:
                         self.printException(e, "could not open history for file")
 
@@ -994,24 +989,9 @@ class RepoModeFileList(FileListBase):
             try:
                 # Restore single-column history layout by popping layout
                 self.app.pop_layout()
+                self.app.pop_footer()
             except Exception as e:
-                self.printException(e, "exception popping layout for left-only restore")
-            # Additionally enforce container widths/display to be robust across Textual versions
-            try:
-                try:
-                    right1_col = self.app.query_one("#right1-column")
-                    right1_col.styles.width = "0%"
-                    right1_col.styles.flex = 0
-                except Exception as e:
-                    self.printException(e)
-
-                try:
-                    right1 = self.app.query_one("#right1")
-                    right1.styles.display = None
-                except Exception as e:
-                    self.printException(e, "could not hide right1 in RepoModeFileList.key_left")
-            except Exception as e:
-                self.printException(e, "could not enforce right1 hide")
+                self.printException(e, "exception popping layout for left-only restore")            
 
             # Update titles so left shows 'History' and right1 hidden
             try:
@@ -1035,13 +1015,17 @@ class RepoModeFileList(FileListBase):
                     self.printException(e)
                     left = None
                 if left is not None:
-                    try:
                         try:
-                            self.app.pop_focus()
+                            try:
+                                self.app.pop_focus()
+                            except Exception as e:
+                                self.printException(e, "exception popping focus to left history")
+                            try:
+                                self.app.pop_footer()
+                            except Exception:
+                                pass
                         except Exception as e:
-                            self.printException(e, "exception popping focus to left history")
-                    except Exception as e:
-                        self.printException(e, "exception focusing left history")
+                            self.printException(e, "exception focusing left history")
             except Exception as e:
                 self.printException(e, "exception focusing left history")
 
@@ -1141,6 +1125,10 @@ class RepoModeFileList(FileListBase):
                         self.app.push_focus("#right2")
                     except Exception as e:
                         self.printException(e, "could not push_focus to diff after prep")
+                    try:
+                        self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                    except Exception:
+                        pass
                 except Exception as e:
                     self.printException(e, "error ensuring layout/focus for diff")
             else:
@@ -1306,12 +1294,7 @@ class HistoryListBase(AppBase):
         # and in the `key_left`/`key_right` handlers. Keep on_focus
         # limited to selection/index handling and minor widget updates.
 
-        # HistoryListBase footer
-        try:
-            footer = self.app.query_one("#footer", Label)
-            footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →   m(ark)", style="bold"))
-        except Exception as e:
-            self.printException(e, "updating footer")
+        # HistoryListBase footer: managed by callers that change layout/focus
 
     def more_keys(self, event: events.Key) -> bool:  # HistoryListBase
         """Handle history-specific keys.
@@ -1526,33 +1509,34 @@ class FileModeHistoryList(HistoryListBase):
         Returns True when the key was handled/consumed.
         """
         try:
-            # Find the Files widget whether it's at #left or #right1 (log-first layout)
-            try:
-                files = self.app.query_one("#left")
-                if not isinstance(files, FileModeFileList):
-                    try:
-                        files = self.app.query_one("#right1")
-                    except Exception as e:
-                        self.printException(e)
-                        files = None
-            except Exception as e:
-                self.printException(e)
-                try:
-                    files = self.app.query_one("#right1")
-                except Exception as e:
-                    self.printException(e)
-                    files = None
+            # Restore focus first, then restore the layout to left_fullscreen
             try:
                 try:
                     self.app.pop_focus()
                 except Exception as e:
                     self.printException(e, "exception popping focus to files on left from history")
+                try:
+                    self.app.pop_footer()
+                except Exception:
+                    pass
             except Exception as e:
                 self.printException(e, "focusing files on left")
+
+            try:
+                try:
+                    self.app.pop_layout()
+                except Exception as e:
+                    self.printException(e, "could not pop_layout to restore left_fullscreen from history")
+                try:
+                    self.app.pop_footer()
+                except Exception:
+                    pass
+            except Exception as e:
+                self.printException(e, "error restoring layout from history left")
+
         except Exception as e:
             self.printException(e, "focusing files on left")
-            return True
-        return False
+        return True
 
     def key_right(self) -> bool:  # FileModeHistoryList
         """Handle right key behavior for FileModeHistoryList.
@@ -1664,6 +1648,10 @@ class FileModeHistoryList(HistoryListBase):
                         self.app.push_focus("#right2")
                     except Exception as e:
                         self.printException(e, "could not push_focus to diff after prep")
+                    try:
+                        self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                    except Exception:
+                        pass
                 except Exception as e:
                     self.printException(e, "error ensuring layout/focus for diff")
             else:
@@ -2134,8 +2122,10 @@ class RepoModeHistoryList(HistoryListBase):
                 self.app.push_focus(f"#{getattr(file_list, 'id', 'right1')}")
             except Exception as e:
                 self.printException(e)
-            except Exception as e:
-                self.printException(e)
+            try:
+                self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+            except Exception:
+                pass
 
             try:
                 # Diagnostic: log the column styles and file_list state
@@ -2351,7 +2341,10 @@ class DiffListBase(AppBase):
                         v = variants[cur]
                         vlabel = v if v else "default"
                         if self.app.is_diff_fullscreen():
-                            footer.update(Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold"))
+                            try:
+                                self.app.change_footer(Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold"))
+                            except Exception as e:
+                                self.printException(e, "could not change footer")
                         else:
                             footer.update(
                                 Text(
@@ -2419,16 +2412,24 @@ class DiffListBase(AppBase):
             except Exception as e:
                 self.printException(e, "could not pop_focus in DiffListBase.key_left")
             try:
+                self.app.pop_footer()
+            except Exception:
+                pass
+            try:
                 self.app.pop_layout()
             except Exception as e:
                 self.printException(e, "could not pop_layout in DiffListBase.key_left")
+            try:
+                self.app.pop_footer()
+            except Exception:
+                pass
         except Exception as e:
             self.printException(e, "unexpected exception in DiffListBase.key_left")
         return True
 
     def key_right(self) -> bool:  # DiffListBase
-        """Handle right key behavior for DiffListBase.
-
+        """
+        Handle right key behavior for DiffListBase.
         Returns True when the key was handled/consumed.
         """
         try:
@@ -2440,6 +2441,7 @@ class DiffListBase(AppBase):
                 # If diff is visible and not fullscreen, enter fullscreen
                 self.app.push_layout("diff_fullscreen")
                 self.app.push_focus("#right2")
+                self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
 
         except Exception as e:
             self.printException(e, "unexpected exception")
@@ -2482,16 +2484,7 @@ class DiffListBase(AppBase):
         # and in the `key_left`/`key_right` handlers. Keep on_focus
         # limited to selection/index handling and footer updates.
 
-        # DiffList footer
-        try:
-            footer = self.app.query_one("#footer", Label)
-            # Show fullscreen hint depending on current fullscreen state
-            if self.app.is_diff_fullscreen():
-                footer.update(Text("q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)", style="bold"))
-            else:
-                footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)", style="bold"))
-        except Exception as e:
-            self.printException(e)
+        # DiffList footer: managed by callers that change layout/focus
 
 
 class FileModeDiffList(DiffListBase):
@@ -2756,23 +2749,11 @@ class HelpList(AppBase):
             try:
                 try:
                     event.stop()
-                except Exception:
-                    pass
-                try:
                     self.app.pop_layout()
-                except Exception as e:
-                    self.printException(e, "could not pop_layout when dismissing help")
-                try:
                     self.app.pop_focus()
+                    self.app.pop_footer()
                 except Exception as e:
-                    self.printException(e, "could not pop_focus when dismissing help")
-            except Exception as e:
-                self.printException(e)
-
-            # HelpList footer
-            try:
-                footer = self.app.query_one("#footer", Label)
-                footer.update(Text("q(uit)  ?h/(elp)  ← ↑ ↓ →", style="bold"))
+                    self.printException(e, "could not pop_footer when dismissing help")
                 return True
             except Exception as e:
                 self.printException(e)
@@ -2869,6 +2850,8 @@ App {
         self.repo_index_mtime_map: dict[str, float] = {}
         # column state for restoring after help
         self.saved_column_state: Optional[dict] = None
+        # footer stack to support push/pop of footer messages. Each entry is (text,count)
+        self.footer_stack: list[tuple[Text | str, int]] = []
         # layout stack to support push/pop of layouts. Each entry is (name,count)
         self.layout_stack: list[tuple[str, int]] = []
         # focus stack to support push/pop of focus targets; start empty. Each entry is (target,count)
@@ -3135,6 +3118,97 @@ App {
                 _do()
         except Exception as e:
             self.printException(e, "change_focus outer failure")
+
+    def _normalize_footer(self, value: Text | str) -> Text:
+        try:
+            if isinstance(value, Text):
+                return value
+            return Text(str(value))
+        except Exception:
+            return Text(str(value))
+
+    def change_footer(self, value: Text | str) -> None:  # GitHistoryTool
+        """Set the footer to `value` (Text or str) immediately."""
+        try:
+            txt = self._normalize_footer(value)
+            try:
+                footer = self.query_one("#footer", Label)
+                footer.update(txt)
+            except Exception as e:
+                self.printException(e, "could not update footer in change_footer")
+        except Exception as e:
+            self.printException(e, "change_footer outer failure")
+
+    def push_footer(self, value: Text | str) -> None:  # GitHistoryTool
+        """Push a footer message onto the footer stack and set it."""
+        try:
+            try:
+                logger.debug(f"push_footer: requested={value} before={getattr(self,'footer_stack',None)}")
+            except Exception:
+                pass
+
+            try:
+                txt = self._normalize_footer(value)
+                # If top matches, increment its count
+                if getattr(self, "footer_stack", None) and self.footer_stack and self.footer_stack[-1][0] == txt:
+                    name, cnt = self.footer_stack[-1]
+                    self.footer_stack[-1] = (name, cnt + 1)
+                else:
+                    self.footer_stack.append((txt, 1))
+            except Exception:
+                try:
+                    self.footer_stack = [(self._normalize_footer(value), 1)]
+                except Exception:
+                    self.printException(None, "could not append to footer_stack")
+
+            try:
+                logger.debug(f"push_footer: stack after push={self.footer_stack}")
+            except Exception:
+                pass
+
+            try:
+                self.change_footer(self.footer_stack[-1][0])
+            except Exception as e:
+                self.printException(e, "push_footer change_footer failed")
+        except Exception as e:
+            self.printException(e, "push_footer outer failure")
+
+    def pop_footer(self) -> None:  # GitHistoryTool
+        """Pop the current footer message and restore the previous one."""
+        try:
+            try:
+                logger.debug(f"pop_footer: stack before pop={getattr(self,'footer_stack',None)}")
+            except Exception:
+                pass
+            try:
+                if not getattr(self, "footer_stack", None):
+                    return
+            except Exception:
+                return
+
+            try:
+                try:
+                    name, cnt = self.footer_stack[-1]
+                    if cnt > 1:
+                        self.footer_stack[-1] = (name, cnt - 1)
+                    else:
+                        self.footer_stack.pop()
+                except Exception:
+                    pass
+
+                prev = self.footer_stack[-1][0] if self.footer_stack else Text("q(uit)  ?/h(elp)  ← ↑ ↓ →")
+                try:
+                    logger.debug(f"pop_footer: restoring prev={prev} resulting_stack={self.footer_stack}")
+                except Exception:
+                    pass
+                try:
+                    self.change_footer(prev)
+                except Exception as e:
+                    self.printException(e, "pop_footer change_footer failed")
+            except Exception as e:
+                self.printException(e, "pop_footer inner failure")
+        except Exception as e:
+            self.printException(e, "pop_footer outer failure")
 
     def push_focus(self, target: str) -> None:  # GitHistoryTool
         """Push a new focus target and focus it."""
@@ -3443,39 +3517,8 @@ App {
         try:
             try:
                 self.push_layout("left_fullscreen")
-            except Exception as e:
-                # Fall back to manual adjustments if the helper fails
-                self.printException(e, "layout_left_only")
-                try:
-                    left.styles.width = "100%"
-                    left.styles.flex = 0
-                except Exception as e:
-                    self.printException(e)
-                    try:
-                        left.styles.flex = 1
-                    except Exception as e:
-                        self.printException(e)
-
-                try:
-                    right1.styles.display = None
-                except Exception as e:
-                    self.printException(e)
-
-                try:
-                    right2.styles.display = None
-                except Exception as e:
-                    self.printException(e)
-
-                try:
-                    right3.styles.display = None
-                except Exception as e:
-                    self.printException(e)
-            try:
-                # Ensure initial focus is set via the focus stack
-                try:
-                    self.push_focus("#left")
-                except Exception as e:
-                    self.printException(e, "push_focus startup failed")
+                self.push_focus("#left")
+                self.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
             except Exception as e:
                 self.printException(e)
         except Exception as e:
@@ -3500,8 +3543,9 @@ App {
                     try:
                         # focus the history column after populating repo history
                         self.push_focus("#left")
-                    except Exception as e:
-                        self.printException(e, "could not push_focus to left after repo history open")
+                        self.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                    except Exception:
+                        pass
                 except Exception as e:
                     self.printException(e)
 
@@ -3515,8 +3559,9 @@ App {
                     self._open_history_for_file(self.initial_file)
                     try:
                         self.push_focus("#right1")
-                    except Exception as e:
-                        self.printException(e, "could not push_focus to right1 after opening initial file history")
+                        self.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                    except Exception:
+                        pass
                 except Exception as e:
                     self.printException(e)
 
@@ -3790,10 +3835,9 @@ App {
                     except Exception as e:
                         self.printException(e, "could not push_focus #right3")
 
-                    # Update footer
+                    # Push footer message for help modal
                     try:
-                        footer = self.query_one("#footer", Label)
-                        footer.update(Text("q(uit)  ↑ ↓  Press any key to return", style="bold"))
+                        self.push_footer(Text("q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold"))
                     except Exception:
                         pass
                 except Exception as e:
