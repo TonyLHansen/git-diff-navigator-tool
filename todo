@@ -180,3 +180,6 @@ if we need to change to a different layout, then a) set the information in the w
 b) push the layout, and c) push the focus.
 And a typical key_left() can be paraphrased as a) pop the layout, and b) pop the focus
 
+
+GitHistoryTool.on_mount can be simplified by checking for log_first first. If not log_first, then 1) if a file was specified, set the history column (layout, focus, footer), and 2) set the file column (layout, focus, footer). If not log_first, then do 1) set the file column (layout, focus, footer), and 2) set the history column (layout, focus, footer)
+

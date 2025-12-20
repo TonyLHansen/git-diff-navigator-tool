@@ -313,7 +313,7 @@ class FileListBase(AppBase):
 
         # Titles and other UI chrome are managed by the app / key handlers.
 
-           # FileList footer: handled by callers that change layout/focus
+        # FileList footer: handled by callers that change layout/focus
 
     def _highlight_filename(self, name: str) -> None:  # FileListBase
         """Highlight the ListItem whose attached `_filename` equals `name`.
@@ -730,8 +730,8 @@ class FileModeFileList(FileListBase):
                             self.app.push_layout("left_right_split")
                             self.app.push_focus("#right1")
                             self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
                     except Exception as e:
                         self.printException(e, "prepListModeHistoryList failed")
                         try:
@@ -741,8 +741,8 @@ class FileModeFileList(FileListBase):
                                 try:
                                     self.app.push_focus("#right1")
                                     self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    self.printException(e)
                         except Exception as e:
                             self.printException(e, "fallback open history failed")
                 else:
@@ -753,8 +753,8 @@ class FileModeFileList(FileListBase):
                             try:
                                 self.app.push_focus("#right1")
                                 self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                self.printException(e)
                     except Exception as e:
                         self.printException(e, "could not open history for file")
 
@@ -805,8 +805,8 @@ class RepoModeFileList(FileListBase):
         # Reset populated flag so repeated preps will re-append items
         try:
             self._populated = False
-        except Exception:
-            pass
+        except Exception as e:
+            self.printException(e)
         try:
             repo = None
             try:
@@ -991,7 +991,7 @@ class RepoModeFileList(FileListBase):
                 self.app.pop_layout()
                 self.app.pop_footer()
             except Exception as e:
-                self.printException(e, "exception popping layout for left-only restore")            
+                self.printException(e, "exception popping layout for left-only restore")
 
             # Update titles so left shows 'History' and right1 hidden
             try:
@@ -1015,17 +1015,17 @@ class RepoModeFileList(FileListBase):
                     self.printException(e)
                     left = None
                 if left is not None:
+                    try:
                         try:
-                            try:
-                                self.app.pop_focus()
-                            except Exception as e:
-                                self.printException(e, "exception popping focus to left history")
-                            try:
-                                self.app.pop_footer()
-                            except Exception:
-                                pass
+                            self.app.pop_focus()
                         except Exception as e:
-                            self.printException(e, "exception focusing left history")
+                            self.printException(e, "exception popping focus to left history")
+                        try:
+                            self.app.pop_footer()
+                        except Exception as e:
+                            self.printException(e)
+                    except Exception as e:
+                        self.printException(e, "exception focusing left history")
             except Exception as e:
                 self.printException(e, "exception focusing left history")
 
@@ -1127,8 +1127,8 @@ class RepoModeFileList(FileListBase):
                         self.printException(e, "could not push_focus to diff after prep")
                     try:
                         self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                 except Exception as e:
                     self.printException(e, "error ensuring layout/focus for diff")
             else:
@@ -1517,8 +1517,8 @@ class FileModeHistoryList(HistoryListBase):
                     self.printException(e, "exception popping focus to files on left from history")
                 try:
                     self.app.pop_footer()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
             except Exception as e:
                 self.printException(e, "focusing files on left")
 
@@ -1529,8 +1529,8 @@ class FileModeHistoryList(HistoryListBase):
                     self.printException(e, "could not pop_layout to restore left_fullscreen from history")
                 try:
                     self.app.pop_footer()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
             except Exception as e:
                 self.printException(e, "error restoring layout from history left")
 
@@ -1650,8 +1650,8 @@ class FileModeHistoryList(HistoryListBase):
                         self.printException(e, "could not push_focus to diff after prep")
                     try:
                         self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                 except Exception as e:
                     self.printException(e, "error ensuring layout/focus for diff")
             else:
@@ -2124,8 +2124,8 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e)
             try:
                 self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             try:
                 # Diagnostic: log the column styles and file_list state
@@ -2342,7 +2342,9 @@ class DiffListBase(AppBase):
                         vlabel = v if v else "default"
                         if self.app.is_diff_fullscreen():
                             try:
-                                self.app.change_footer(Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold"))
+                                self.app.change_footer(
+                                    Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold")
+                                )
                             except Exception as e:
                                 self.printException(e, "could not change footer")
                         else:
@@ -2413,16 +2415,16 @@ class DiffListBase(AppBase):
                 self.printException(e, "could not pop_focus in DiffListBase.key_left")
             try:
                 self.app.pop_footer()
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
             try:
                 self.app.pop_layout()
             except Exception as e:
                 self.printException(e, "could not pop_layout in DiffListBase.key_left")
             try:
                 self.app.pop_footer()
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
         except Exception as e:
             self.printException(e, "unexpected exception in DiffListBase.key_left")
         return True
@@ -3014,8 +3016,8 @@ App {
         try:
             try:
                 logger.debug(f"push_layout: requested={newlayout} before={getattr(self,'layout_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             try:
                 # If top matches, increment its count
@@ -3024,16 +3026,17 @@ App {
                     self.layout_stack[-1] = (name, cnt + 1)
                 else:
                     self.layout_stack.append((newlayout, 1))
-            except Exception:
+            except Exception as e:
+                self.printException(e)
                 try:
                     self.layout_stack = [(newlayout, 1)]
-                except Exception:
-                    self.printException(None, "could not append to layout_stack")
+                except Exception as e:
+                    self.printException(e, "could not append to layout_stack")
 
             try:
                 logger.debug(f"push_layout: stack after push={self.layout_stack}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             try:
                 self.change_layout(newlayout)
@@ -3047,13 +3050,13 @@ App {
         try:
             try:
                 logger.debug(f"pop_layout: stack before pop={getattr(self,'layout_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
             try:
                 if not getattr(self, "layout_stack", None):
                     return
-            except Exception:
-                return
+            except Exception as e:
+                self.printException(e)
 
             try:
                 # Decrement count or remove current layout
@@ -3063,15 +3066,15 @@ App {
                         self.layout_stack[-1] = (name, cnt - 1)
                     else:
                         self.layout_stack.pop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
 
                 # Determine previous layout name
                 prev = self.layout_stack[-1][0] if self.layout_stack else "left_fullscreen"
                 try:
                     logger.debug(f"pop_layout: applying prev={prev} resulting_stack={self.layout_stack}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
                 try:
                     self.change_layout(prev)
                 except Exception as e:
@@ -3094,6 +3097,7 @@ App {
                 and self.layout_stack[-1][0] == "diff_fullscreen"
             )
         except Exception:
+            self.printException(e)
             return False
 
     def change_focus(self, target: str) -> None:  # GitHistoryTool
@@ -3107,8 +3111,8 @@ App {
                     w.focus()
                     try:
                         logger.debug(f"change_focus: focused {target}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                 except Exception as e:
                     self.printException(e, f"could not change focus to {target}")
 
@@ -3144,8 +3148,8 @@ App {
         try:
             try:
                 logger.debug(f"push_footer: requested={value} before={getattr(self,'footer_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             try:
                 txt = self._normalize_footer(value)
@@ -3158,13 +3162,13 @@ App {
             except Exception:
                 try:
                     self.footer_stack = [(self._normalize_footer(value), 1)]
-                except Exception:
-                    self.printException(None, "could not append to footer_stack")
+                except Exception as e:
+                    self.printException(e, "could not append to footer_stack")
 
             try:
                 logger.debug(f"push_footer: stack after push={self.footer_stack}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             try:
                 self.change_footer(self.footer_stack[-1][0])
@@ -3178,12 +3182,13 @@ App {
         try:
             try:
                 logger.debug(f"pop_footer: stack before pop={getattr(self,'footer_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
             try:
                 if not getattr(self, "footer_stack", None):
                     return
-            except Exception:
+            except Exception as e:
+                self.printException(e)
                 return
 
             try:
@@ -3193,14 +3198,14 @@ App {
                         self.footer_stack[-1] = (name, cnt - 1)
                     else:
                         self.footer_stack.pop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
 
                 prev = self.footer_stack[-1][0] if self.footer_stack else Text("q(uit)  ?/h(elp)  ← ↑ ↓ →")
                 try:
                     logger.debug(f"pop_footer: restoring prev={prev} resulting_stack={self.footer_stack}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
                 try:
                     self.change_footer(prev)
                 except Exception as e:
@@ -3215,8 +3220,8 @@ App {
         try:
             try:
                 logger.debug(f"push_focus: requested={target} before={getattr(self,'focus_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             try:
                 # If top matches, increment its count
@@ -3226,6 +3231,7 @@ App {
                 else:
                     self.focus_stack.append((target, 1))
             except Exception:
+                self.printException(e)
                 try:
                     self.focus_stack = [(target, 1)]
                 except Exception:
@@ -3233,8 +3239,8 @@ App {
 
             try:
                 logger.debug(f"push_focus: stack after push={self.focus_stack}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             try:
                 self.change_focus(target)
@@ -3248,12 +3254,13 @@ App {
         try:
             try:
                 logger.debug(f"pop_focus: stack before pop={getattr(self,'focus_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
             try:
                 if not getattr(self, "focus_stack", None):
                     return
-            except Exception:
+            except Exception as e:
+                self.printException(e)
                 return
 
             try:
@@ -3264,14 +3271,14 @@ App {
                         self.focus_stack[-1] = (name, cnt - 1)
                     else:
                         self.focus_stack.pop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
 
                 prev = self.focus_stack[-1][0] if self.focus_stack else "#left"
                 try:
                     logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={self.focus_stack}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
                 try:
                     self.change_focus(prev)
                 except Exception as e:
@@ -3475,21 +3482,7 @@ App {
         except Exception as e:
             self.printException(e)
             left = None
-        try:
-            right1 = self.query_one("#right1")
-        except Exception as e:
-            self.printException(e)
-            right1 = None
-        try:
-            right2 = self.query_one("#right2")
-        except Exception as e:
-            self.printException(e)
-            right2 = None
-        try:
-            right3 = self.query_one("#right3")
-        except Exception as e:
-            self.printException(e)
-            right3 = None
+        # Eager queries for right1/right2/right3 removed — query these widgets on demand.
         # Ensure the main horizontal fills remaining space so the title remains visible
         try:
             # ensure root fills the app and main flexes so footer remains visible
@@ -3544,8 +3537,8 @@ App {
                         # focus the history column after populating repo history
                         self.push_focus("#left")
                         self.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                 except Exception as e:
                     self.printException(e)
 
@@ -3560,8 +3553,8 @@ App {
                     try:
                         self.push_focus("#right1")
                         self.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                 except Exception as e:
                     self.printException(e)
 
@@ -3699,8 +3692,8 @@ App {
                         try:
                             self.query_one("#right3-column").styles.width = "0%"
                             self.query_one("#right3-column").styles.flex = 0
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
                         hist.index = 0
                     except Exception as e:
                         self.printException(e)
@@ -3720,9 +3713,10 @@ App {
                     old = self.query_one("#right1")
                     try:
                         old.remove()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                 except Exception:
+                    self.printException(e)
                     old = None
 
                 repo_hist = None
@@ -3757,8 +3751,8 @@ App {
                         try:
                             self.query_one("#right3-column").styles.width = "0%"
                             self.query_one("#right3-column").styles.flex = 0
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
                         repo_hist.index = 0
                     except Exception as e:
                         self.printException(e)
@@ -3768,8 +3762,8 @@ App {
                 self.printException(e)
                 try:
                     self.push_screen(_TBDModal(str(e)))
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
 
         except Exception as e:
             try:
@@ -3828,18 +3822,10 @@ App {
                     # Simply push the help fullscreen layout and focus the help widget
                     try:
                         self.push_layout("help_fullscreen")
-                    except Exception as e:
-                        self.printException(e, "could not push_layout help_fullscreen")
-                    try:
                         self.push_focus("#right3")
-                    except Exception as e:
-                        self.printException(e, "could not push_focus #right3")
-
-                    # Push footer message for help modal
-                    try:
                         self.push_footer(Text("q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold"))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)                        
                 except Exception as e:
                     self.printException(e)
 
