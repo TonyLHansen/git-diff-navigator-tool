@@ -2786,6 +2786,10 @@ class GitHistoryTool(App):
     """
 
     TITLE = "Git Diff History Navigator Tool"
+
+    # Block the Ctrl+P palette shortcut.
+    ENABLE_COMMAND_PALETTE = False
+
     # CSS: reserve one line for `#title` and let the main Horizontal flex to fill rest
     CSS = """
 /* Disable scrolling on the app itself - only columns should scroll */
@@ -3726,7 +3730,6 @@ App {
     def on_key(self, event: events.Key) -> None:  # GitHistoryTool
         """Global key handler.
 
-        - Block the Ctrl+P palette shortcut.
         - Accept uppercase `Q` as a quit key in addition to lowercase `q`.
         """
         logger.debug(f"GitHistoryTool.on_key: key={event.key}")
