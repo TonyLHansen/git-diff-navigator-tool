@@ -311,6 +311,51 @@ class AppBase(ListView):
         """
         return False
 
+    def prep_and_show_diff(self, filename: str, prev: Optional[str], curr: Optional[str]) -> None:  # AppBase
+        """Helper to populate the shared Diff column and make it visible.
+
+        This centralizes the common sequence used by multiple callers: find
+        the `#right2` diff widget, call its `prepDiffListBase`, and ensure
+        the app shows the three-column layout with focus and footer set.
+        """
+        try:
+            diff_widget = None
+            try:
+                diff_widget = self.app.query_one("#right2")
+            except Exception as e:
+                self.printException(e, "locating right2 diff widget")
+
+            if diff_widget is not None and hasattr(diff_widget, "prepDiffListBase"):
+                try:
+                    diff_widget.prepDiffListBase(filename, prev, curr)
+                except Exception as exc:
+                    try:
+                        self.app.push_screen(_TBDModal(str(exc)))
+                    except Exception as e:
+                        self.printException(e, "could not push TBDModal for diff-fullscreen error")
+                try:
+                    try:
+                        self.app.push_layout("three_columns")
+                    except Exception as e:
+                        self.printException(e, "could not push_layout three_columns for diff")
+                    try:
+                        self.app.push_focus("#right2")
+                    except Exception as e:
+                        self.printException(e, "could not push_focus to diff after prep")
+                    try:
+                        self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                    except Exception as e:
+                        self.printException(e)
+                except Exception as e:
+                    self.printException(e, "error ensuring layout/focus for diff")
+            else:
+                try:
+                    self.app.push_screen(_TBDModal("Could not show diff (no diff widget)"))
+                except Exception as e:
+                    self.printException(e)
+        except Exception as e:
+            self.printException(e)
+
 class FileListBase(AppBase):
     """A ListView showing directory contents. Directories have a blue background.
 
@@ -1090,20 +1135,20 @@ class RepoModeFileList(FileListBase):
 
         # Determine commit hashes: prefer per-item hashes then file_list attrs then app-wide
         try:
-            prev = (
+            previous_hash = (
                 getattr(child, "_hash_prev", None)
                 or getattr(self, "current_prev_sha", None)
                 or getattr(self.app, "current_prev_sha", None)
             )
-            curr = (
+            current_hash = (
                 getattr(child, "_hash_curr", None)
                 or getattr(self, "current_commit_sha", None)
                 or getattr(self.app, "current_commit_sha", None)
             )
         except Exception as e:
             self.printException(e, "exception getting commit hashes")
-            prev = None
-            curr = None
+            previous_hash = None
+            current_hash = None
 
         if not filename:
             try:
@@ -1115,49 +1160,18 @@ class RepoModeFileList(FileListBase):
 
         # Store current diff info on the app for re-rendering/variant toggles
         try:
-            self.app.current_commit_sha = curr
-            self.app.current_prev_sha = prev
+            self.app.current_commit_sha = current_hash
+            self.app.current_prev_sha = previous_hash
             self.app.current_diff_file = filename
         except Exception as e:
             self.printException(e, "exception setting app diff info")
 
         try:
-            # Delegate diff population to the shared DiffList preparer
-            diff_widget = None
+            # Delegate to centralized helper
             try:
-                diff_widget = self.app.query_one("#right2")
+                self.prep_and_show_diff(filename, prev, curr)
             except Exception as e:
-                self.printException(e, "locating right2 diff widget")
-
-            if diff_widget is not None and hasattr(diff_widget, "prepDiffListBase"):
-                try:
-                    diff_widget.prepDiffListBase(filename, prev, curr)
-                except Exception as exc:
-                    try:
-                        self.app.push_screen(_TBDModal(str(exc)))
-                    except Exception as e:
-                        self.printException(e, "could not push TBDModal for diff-fullscreen error")
-                # Ensure the three-column layout is active and push focus to diff
-                try:
-                    try:
-                        self.app.push_layout("three_columns")
-                    except Exception as e:
-                        self.printException(e, "could not push_layout three_columns for diff")
-                    try:
-                        self.app.push_focus("#right2")
-                    except Exception as e:
-                        self.printException(e, "could not push_focus to diff after prep")
-                    try:
-                        self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
-                    except Exception as e:
-                        self.printException(e)
-                except Exception as e:
-                    self.printException(e, "error ensuring layout/focus for diff")
-            else:
-                try:
-                    self.app.push_screen(_TBDModal("Could not show diff (no diff widget)"))
-                except Exception as e:
-                    self.printException(e)
+                self.printException(e, "prep_and_show_diff failed")
 
         except Exception as exc:
             self.printException(exc)
@@ -1639,41 +1653,11 @@ class FileModeHistoryList(HistoryListBase):
         self.app.current_diff_file = filename
 
         try:
-            diff_widget = None
+            # Delegate to centralized helper
             try:
-                diff_widget = self.app.query_one("#right2")
+                self.prep_and_show_diff(filename, previous_hash, current_hash)
             except Exception as e:
-                self.printException(e, "locating right2 diff widget")
-
-            if diff_widget is not None and hasattr(diff_widget, "prepDiffListBase"):
-                try:
-                    diff_widget.prepDiffListBase(filename, previous_hash, current_hash)
-                except Exception as exc:
-                    try:
-                        self.app.push_screen(_TBDModal(str(exc)))
-                    except Exception as e:
-                        self.printException(e, "showing diff error modal")
-                # Ensure the three-column layout is active and push focus to diff
-                try:
-                    try:
-                        self.app.push_layout("three_columns")
-                    except Exception as e:
-                        self.printException(e, "could not push_layout three_columns for diff")
-                    try:
-                        self.app.push_focus("#right2")
-                    except Exception as e:
-                        self.printException(e, "could not push_focus to diff after prep")
-                    try:
-                        self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
-                    except Exception as e:
-                        self.printException(e)
-                except Exception as e:
-                    self.printException(e, "error ensuring layout/focus for diff")
-            else:
-                try:
-                    self.app.push_screen(_TBDModal("Could not show diff (no diff widget)"))
-                except Exception as e:
-                    self.printException(e)
+                self.printException(e, "prep_and_show_diff failed")
 
         except Exception as exc:
             self.printException(exc)
