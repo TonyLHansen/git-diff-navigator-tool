@@ -335,7 +335,7 @@ class AppBase(ListView):
                         self.printException(e, "could not push TBDModal for diff-fullscreen error")
                 # Use helper to push layout/focus/footer together
                 try:
-                    self.app.push_state("three_columns", "#right2", self.app.footer_diff)
+                    self.app.push_state("three_columns", "#right2", self.app.footer_diff3)
                 except Exception as e:
                     self.printException(e, "error ensuring layout/focus for diff")
             else:
@@ -2422,7 +2422,7 @@ class DiffListBase(AppBase):
                 self.app.push_state(
                     "diff_fullscreen",
                     "#right2",
-                    self.app.footer_diff,
+                    self.app.footer_difffull,
                 )
 
         except Exception as e:
@@ -2848,9 +2848,11 @@ App {
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
         self.diff_cmd_index: int = 0
         # Standard footer texts used throughout the app (one per column/type)
-        self.footer_file: Text = Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold")
-        self.footer_history: Text = Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  Enter=Open Diff", style="bold")
-        self.footer_diff: Text = Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  d=rotate", style="bold")
+        self.footer_file: Text = Text("generic q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn", style="bold")
+        # self.footer_file: Text = Text("q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn →", style="bold")
+        self.footer_history: Text = Text("q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn  →  m(ark)", style="bold")
+        self.footer_diff3: Text = Text("q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn →/f(ull) c(olor) d(iff-type)", style="bold")
+        self.footer_difffull: Text = Text("q(uit)  ?/h(elp)  ←/f(ull) ↑/↓/PgUp/PgDn c(olor) d(iff-type)", style="bold")
         self.footer_help: Text = Text("q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
         # start the app showing repository-wide commit log first when True
 
