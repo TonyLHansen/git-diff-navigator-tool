@@ -3031,8 +3031,8 @@ App {
                 stack.append((value, 1))
             try:
                 logger.debug(f"_stack_push: {stack_name} after push={stack}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
             return stack
         except Exception as e:
             self.printException(e, f"_stack_push {stack_name}")
@@ -3054,12 +3054,12 @@ App {
                     stack[-1] = (name, cnt - 1)
                 else:
                     stack.pop()
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
             try:
                 logger.debug(f"_stack_pop: {stack_name} after pop={stack}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
             return stack
         except Exception as e:
             self.printException(e, f"_stack_pop {stack_name}")
@@ -3070,8 +3070,8 @@ App {
         try:
             try:
                 logger.debug(f"push_layout: requested={newlayout} before={getattr(self,'layout_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             try:
                 self._stack_push("layout_stack", newlayout)
@@ -3090,12 +3090,13 @@ App {
         try:
             try:
                 logger.debug(f"pop_layout: stack before pop={getattr(self,'layout_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
             try:
                 if not getattr(self, "layout_stack", None):
                     return
-            except Exception:
+            except Exception as e:
+                self.printException(e)
                 return
 
             try:
@@ -3103,8 +3104,8 @@ App {
                 prev = self.layout_stack[-1][0] if self.layout_stack else "left_fullscreen"
                 try:
                     logger.debug(f"pop_layout: applying prev={prev} resulting_stack={self.layout_stack}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
                 try:
                     self.change_layout(prev)
                 except Exception as e:
@@ -3126,7 +3127,7 @@ App {
                 and self.layout_stack
                 and self.layout_stack[-1][0] == "diff_fullscreen"
             )
-        except Exception:
+        except Exception as e:
             self.printException(e)
             return False
 
@@ -3148,7 +3149,8 @@ App {
 
             try:
                 self.call_after_refresh(_do)
-            except Exception:
+            except Exception as e:
+                self.printException(e)
                 _do()
         except Exception as e:
             self.printException(e, "change_focus outer failure")
@@ -3158,7 +3160,8 @@ App {
             if isinstance(value, Text):
                 return value
             return Text(str(value))
-        except Exception:
+        except Exception as e:
+            self.printException(e)
             return Text(str(value))
 
     def change_footer(self, value: Text | str) -> None:  # GitHistoryTool
@@ -3178,8 +3181,8 @@ App {
         try:
             try:
                 logger.debug(f"push_footer: requested={value} before={getattr(self,'footer_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             try:
                 txt = self._normalize_footer(value)
@@ -3199,8 +3202,8 @@ App {
         try:
             try:
                 logger.debug(f"pop_footer: stack before pop={getattr(self,'footer_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
             try:
                 if not getattr(self, "footer_stack", None):
                     return
@@ -3212,8 +3215,8 @@ App {
                 prev = self.footer_stack[-1][0] if self.footer_stack else Text("q(uit)  ?/h(elp)  ← ↑ ↓ →")
                 try:
                     logger.debug(f"pop_footer: restoring prev={prev} resulting_stack={self.footer_stack}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
                 try:
                     self.change_footer(prev)
                 except Exception as e:
@@ -3228,8 +3231,8 @@ App {
         try:
             try:
                 logger.debug(f"push_focus: requested={target} before={getattr(self,'focus_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             try:
                 self._stack_push("focus_stack", target)
@@ -3248,8 +3251,8 @@ App {
         try:
             try:
                 logger.debug(f"pop_focus: stack before pop={getattr(self,'focus_stack',None)}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
             try:
                 if not getattr(self, "focus_stack", None):
                     return
@@ -3261,8 +3264,8 @@ App {
                 prev = self.focus_stack[-1][0] if self.focus_stack else "#left"
                 try:
                     logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={self.focus_stack}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
                 try:
                     self.change_focus(prev)
                 except Exception as e:
@@ -3699,7 +3702,7 @@ App {
                         old.remove()
                     except Exception as e:
                         self.printException(e)
-                except Exception:
+                except Exception as e:
                     self.printException(e)
                     old = None
 
