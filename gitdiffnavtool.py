@@ -727,12 +727,25 @@ class FileModeFileList(FileListBase):
                 if hist is not None and hasattr(hist, "prepListModeHistoryList"):
                     try:
                         hist.prepListModeHistoryList(item_name)
+                        try:
+                            # ensure history column is shown and focused
+                            self.push_layout("left_right_split")
+                        except Exception:
+                            pass
+                        try:
+                            self.push_focus("#right1")
+                        except Exception as e:
+                            self.printException(e, "could not push_focus to history after prep")
                     except Exception as e:
                         self.printException(e, "prepListModeHistoryList failed")
                         try:
                             # fallback: ask app to open history for file
                             if hasattr(self.app, "_open_history_for_file"):
                                 self.app._open_history_for_file(item_name)
+                                try:
+                                    self.app.push_focus("#right1")
+                                except Exception as e:
+                                    self.printException(e, "could not push_focus to history after app helper")
                         except Exception as e:
                             self.printException(e, "fallback open history failed")
                 else:
@@ -740,6 +753,10 @@ class FileModeFileList(FileListBase):
                     try:
                         if hasattr(self.app, "_open_history_for_file"):
                             self.app._open_history_for_file(item_name)
+                            try:
+                                self.app.push_focus("#right1")
+                            except Exception as e:
+                                self.printException(e, "could not push_focus to history after app helper")
                     except Exception as e:
                         self.printException(e, "could not open history for file")
 
@@ -916,9 +933,9 @@ class RepoModeFileList(FileListBase):
 
                         self.index = getattr(self, "_min_index", 0) or 0
                         try:
-                            self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+                            self.app.push_focus(f"#{getattr(self, 'id', 'left')}")
                         except Exception as e:
-                            self.printException(e)
+                            self.printException(e, "could not push_focus to repo-mode file list")
                         self.refresh()
 
                         try:
@@ -1783,9 +1800,9 @@ class RepoModeHistoryList(HistoryListBase):
 
             try:
                 try:
-                    self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+                    self.app.push_focus(f"#{getattr(self, 'id', 'left')}")
                 except Exception as e:
-                    self.printException(e)
+                    self.printException(e, "could not push_focus to repo-mode history")
             except Exception as e:
                 self.printException(e)
 
@@ -2237,7 +2254,10 @@ class DiffListBase(AppBase):
             self.styles.display = None
             self.index = 0
             try:
-                self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+                try:
+                    self.app.push_focus(f"#{getattr(self, 'id', 'left')}")
+                except Exception as e:
+                    self.printException(e, "could not push_focus to diff view")
             except Exception as e:
                 self.printException(e)
 
@@ -3134,6 +3154,7 @@ App {
         "diff_fullscreen", "help_fullscreen".
         """
         try:
+            logger.debug(f"change_layout: newlayout={newlayout}")
             if newlayout == "left_fullscreen":
                 self._apply_column_layout(
                     "100%",
@@ -3199,6 +3220,10 @@ App {
         """Push a new layout onto the layout stack and apply it."""
         try:
             try:
+                logger.debug(f"push_layout: pushing {newlayout} (before={getattr(self,'layout_stack',None)})")
+            except Exception:
+                pass
+            try:
                 self.layout_stack.append(newlayout)
             except Exception:
                 # ensure layout_stack exists
@@ -3206,6 +3231,10 @@ App {
                     self.layout_stack = [newlayout]
                 except Exception:
                     self.printException(None, "could not append to layout_stack")
+            try:
+                logger.debug(f"push_layout: stack after push={self.layout_stack}")
+            except Exception:
+                pass
             try:
                 self.change_layout(newlayout)
             except Exception as e:
@@ -3216,6 +3245,10 @@ App {
     def pop_layout(self) -> None:  # GitHistoryTool
         """Pop the current layout and restore the previous one (if any)."""
         try:
+            try:
+                logger.debug(f"pop_layout: stack before pop={getattr(self,'layout_stack',None)}")
+            except Exception:
+                pass
             try:
                 if not getattr(self, "layout_stack", None):
                     return
@@ -3232,6 +3265,10 @@ App {
                 # Determine previous layout
                 prev = self.layout_stack[-1] if self.layout_stack else "left_fullscreen"
                 try:
+                    logger.debug(f"pop_layout: applying prev={prev} resulting_stack={self.layout_stack}")
+                except Exception:
+                    pass
+                try:
                     self.change_layout(prev)
                 except Exception as e:
                     self.printException(e, "pop_layout change_layout failed")
@@ -3243,10 +3280,16 @@ App {
     def change_focus(self, target: str) -> None:  # GitHistoryTool
         """Change focus to the given widget id (safely)."""
         try:
+            logger.debug(f"change_focus: target={target}")
+
             def _do():
                 try:
                     w = self.query_one(target)
                     w.focus()
+                    try:
+                        logger.debug(f"change_focus: focused {target}")
+                    except Exception:
+                        pass
                 except Exception as e:
                     self.printException(e, f"could not change focus to {target}")
 
@@ -3261,9 +3304,17 @@ App {
         """Push a new focus target and focus it."""
         try:
             try:
+                logger.debug(f"push_focus: pushing {target} (before={getattr(self,'focus_stack',None)})")
+            except Exception:
+                pass
+            try:
                 self.focus_stack.append(target)
             except Exception:
                 self.focus_stack = [target]
+            try:
+                logger.debug(f"push_focus: stack after push={self.focus_stack}")
+            except Exception:
+                pass
             try:
                 self.change_focus(target)
             except Exception as e:
@@ -3274,6 +3325,10 @@ App {
     def pop_focus(self) -> None:  # GitHistoryTool
         """Pop the current focus and restore the previous one."""
         try:
+            try:
+                logger.debug(f"pop_focus: stack before pop={getattr(self,'focus_stack',None)}")
+            except Exception:
+                pass
             try:
                 if not getattr(self, "focus_stack", None):
                     return
@@ -3288,6 +3343,10 @@ App {
                     pass
 
                 prev = self.focus_stack[-1] if self.focus_stack else "#left"
+                try:
+                    logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={self.focus_stack}")
+                except Exception:
+                    pass
                 try:
                     self.change_focus(prev)
                 except Exception as e:
@@ -3587,6 +3646,11 @@ App {
             if getattr(self, "log_first", False):
                 try:
                     self._open_repo_history()
+                    try:
+                        # focus the history column after populating repo history
+                        self.push_focus("#left")
+                    except Exception as e:
+                        self.printException(e, "could not push_focus to left after repo history open")
                 except Exception as e:
                     self.printException(e)
 
@@ -3598,6 +3662,10 @@ App {
             if getattr(self, "initial_file", None):
                 try:
                     self._open_history_for_file(self.initial_file)
+                    try:
+                        self.push_focus("#right1")
+                    except Exception as e:
+                        self.printException(e, "could not push_focus to right1 after opening initial file history")
                 except Exception as e:
                     self.printException(e)
 
@@ -3615,10 +3683,6 @@ App {
             hist.prepListModeHistoryList(item_name)
             self.push_layout("left_right_split")
             hist.index = 0
-            try:
-                self.push_focus("#right1")
-            except Exception as e:
-                self.printException(e)
             # ensure we are not in diff-fullscreen when opening history
             self.diff_fullscreen = False
         except Exception as e:
@@ -3641,6 +3705,7 @@ App {
 
                 if hist is not None:
                     try:
+
                         hist.prepRepoModeHistoryList()
 
                         # Make left column full-width and hide others
@@ -3649,10 +3714,6 @@ App {
                         self.query_one("#right3-column").styles.flex = 0
 
                         hist.index = 0
-                        try:
-                            self.push_focus(f"#{getattr(hist, 'id', 'right1')}")
-                        except Exception as e:
-                            self.printException(e)
                         self.diff_fullscreen = False
 
                     except Exception as e:
@@ -3697,10 +3758,6 @@ App {
                         self.query_one("#right3-column").styles.width = "0%"
                         self.query_one("#right3-column").styles.flex = 0
                         repo_hist.index = 0
-                        try:
-                            self.push_focus("#right1")
-                        except Exception as e:
-                            self.printException(e)
                         self.diff_fullscreen = False
                     except Exception as e:
                         self.printException(e)
