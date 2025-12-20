@@ -2402,14 +2402,37 @@ class DiffListBase(AppBase):
 
         Returns True when the key was handled/consumed.
         """
-        return False
+        try:
+            try:
+                self.app.pop_layout()
+            except Exception as e:
+                self.printException(e, "could not pop_layout in DiffListBase.key_left")
+            try:
+                self.app.pop_focus()
+            except Exception as e:
+                self.printException(e, "could not pop_focus in DiffListBase.key_left")
+        except Exception as e:
+            self.printException(e, "unexpected exception in DiffListBase.key_left")
+        return True
 
     def key_right(self) -> bool:  # DiffListBase
         """Handle right key behavior for DiffListBase.
 
         Returns True when the key was handled/consumed.
         """
-        return False
+        try:
+            # In columnated mode, pressing right expands Diff to fullscreen.
+            if self.app.is_diff_fullscreen():
+                # already fullscreen; right arrow does nothing
+                return True
+            else:
+                # If diff is visible and not fullscreen, enter fullscreen
+                self.app.push_layout("diff_fullscreen")
+                self.app.push_focus("#right2")
+
+        except Exception as e:
+            self.printException(e, "unexpected exception")
+        return True
 
     def on_focus(self, event: events.Focus) -> None:  # DiffListBase
         """When the DiffList receives focus, ensure the first item is highlighted."""
@@ -2466,145 +2489,7 @@ class FileModeDiffList(DiffListBase):
     Left arrow moves focus back to History.
     """
 
-    def key_left(self) -> bool:  # FileModeDiffList
-        """Handle left key behavior
-
-        Returns True when the key was handled/consumed.
-        """
-        try:
-            # If we're in fullscreen, left arrow exits fullscreen
-            if self.app.is_diff_fullscreen():
-                try:
-                    try:
-                        self.app.pop_layout()
-                    except Exception as e:
-                        self.printException(e, "could not pop_layout when exiting fullscreen on left")
-                    try:
-                        self.app.pop_focus()
-                    except Exception as e:
-                        self.printException(e, "could not pop_focus when exiting fullscreen on left")
-                except Exception as e:
-                    self.printException(e, "exception exiting fullscreen on left")
-                # layout/pop restores prior column; do not pop again
-                return True
-            # otherwise move focus back to History
-            try:
-                try:
-                    # Try to locate the History widget in either #right1 or #left
-                    hist = None
-                    try:
-                        cand = self.app.query_one("#right1")
-                    except Exception as e:
-                        self.printException(e)
-                        cand = None
-                    if cand is not None and isinstance(cand, FileModeHistoryList):
-                        hist = cand
-                    else:
-                        try:
-                            cand2 = self.app.query_one("#left")
-                        except Exception as e:
-                            self.printException(e)
-                            cand2 = None
-                        if cand2 is not None and isinstance(cand2, FileModeHistoryList):
-                            hist = cand2
-                except Exception as e:
-                    self.printException(e, "could not locate history widget in FileModeDiffList.key_left")
-                    hist = None
-                # Ensure the Files/History split is restored to 25/75 before focusing
-                try:
-                    self.app.pop_layout()
-                except Exception as e:
-                    self.printException(e, "could not pop layout before focus")
-                try:
-                        if hist is not None:
-                            try:
-                                try:
-                                    self.app.pop_focus()
-                                except Exception as e:
-                                    self.printException(e, "exception popping focus to history")
-                            except Exception as e:
-                                self.printException(e)
-
-                        # After focus, enforce the desired 25/75 split again
-                        def _enforce_25_75():
-                            try:
-                                try:
-                                    self.app.pop_layout()
-                                except Exception as e:
-                                    self.printException(e, "post-focus pop_layout failed")
-                                try:
-                                    r1 = self.app.query_one("#right1")
-                                    r1.styles.display = None
-                                except Exception as e:
-                                    self.printException(e, "could not unhide #right1 after focus")
-
-                            except Exception as e:
-                                self.printException(e, "post-focus enforce 25/75")
-
-                        try:
-                            self.app.call_after_refresh(_enforce_25_75)
-                        except Exception as e:
-                            self.printException(e, "could not schedule _enforce_25_75 via call_after_refresh")
-                            _enforce_25_75()
-                except Exception as e:
-                    self.printException(e, "exception focusing history")
-            except Exception as e:
-                self.printException(e, "exception focusing history")
-                return True
-            return True
-        except Exception as e:
-            self.printException(e, "unexpected exception")
-            return True
-        return True
-
-    def key_right(self) -> bool:  # FileModeDiffList
-        """Handle right key behavior
-
-        Returns True when the key was handled/consumed.
-        """
-        try:
-            # In columnated mode, pressing right expands Diff to fullscreen.
-            if self.app.is_diff_fullscreen():
-                # already fullscreen; right arrow does nothing
-                return True
-            # If diff is visible and not fullscreen, enter fullscreen
-            try:
-                right1_display = self.app.query_one("#right1").styles.display
-                right2_display = self.app.query_one("#right2").styles.display
-                if right1_display is not None and right2_display is not None:
-                    try:
-                        try:
-                            self.app.push_layout("diff_fullscreen")
-                        except Exception as e:
-                            self.printException(e, "push_layout diff_fullscreen failed")
-                        try:
-                            self.app.push_focus("#right2")
-                        except Exception as e:
-                            self.printException(e, "could not push_focus #right2 on enter fullscreen")
-                    except Exception as e:
-                        self.printException(e, "enter_diff_fullscreen inline exception")
-
-                    return True
-            except Exception as e:
-                self.printException(e, "checking displays for fullscreen failed")
-                # best-effort enter fullscreen: push layout and focus
-                try:
-                    try:
-                        self.app.push_layout("diff_fullscreen")
-                    except Exception as e:
-                        self.printException(e, "fallback push_layout diff_fullscreen exception")
-                    try:
-                        self.app.push_focus("#right2")
-                    except Exception as e:
-                        self.printException(e, "fallback push_focus diff_fullscreen exception")
-                except Exception as e:
-                    self.printException(e, "fallback enter fullscreen exception")
-
-            return True
-        except Exception as e:
-            self.printException(e, "unexpected exception")
-            return True
-        return True
+    # Inherit key handlers from DiffListBase (shared behavior)
 
 
 class RepoModeDiffList(DiffListBase):
@@ -2612,19 +2497,7 @@ class RepoModeDiffList(DiffListBase):
     Diff list for repo-first / log-first mode.
     """
 
-    def key_left(self) -> bool:  # FileModeDiffList
-        """Handle left key behavior
-
-        Returns True when the key was handled/consumed.
-        """
-        return False
-
-    def key_right(self) -> bool:  # FileModeDiffList
-        """Handle left key behavior
-
-        Returns True when the key was handled/consumed.
-        """
-        return False
+    # Inherit key handlers from DiffListBase (shared behavior)
 
 
 class _TBDModal(ModalScreen):
