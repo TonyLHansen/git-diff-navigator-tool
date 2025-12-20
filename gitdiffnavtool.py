@@ -384,7 +384,10 @@ class FileListBase(AppBase):
 class FileModeFileList(FileListBase):
     """Compatibility subclass; use `FileListBase` for shared logic."""
 
-    key = "Key:  [yellow]'[yellow on white]\u00A0[/yellow on white]'[/yellow] tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
+    key = (
+        "Key:  [yellow]'[yellow on white]\u00a0[/yellow on white]'[/yellow] tracked  U untracked  "
+        "M modified  A staged  D deleted  I ignored  ! conflicted"
+    )
 
     def prepFileModeFileList(self, path: str) -> None:  # FileModeFileList
         """Prepare and populate this `FileModeFileList` for `path`.
@@ -785,7 +788,10 @@ class FileModeFileList(FileListBase):
 class RepoModeFileList(FileListBase):
     """File list for repo-first / log-first mode."""
 
-    key = "Key: [yellow]'[yellow on white]\u00A0[/yellow on white]'[/yellow] tracked  U untracked  M modified  R renamed  A staged  D deleted  I ignored  ! conflicted"
+    key = (
+        "Key: [yellow]'[yellow on white]\u00a0[/yellow on white]'[/yellow] tracked  U untracked  "
+        "M modified  R renamed  A staged  D deleted  I ignored  ! conflicted"
+    )
 
     def prepRepoModeFileList(
         self, previous_hash: Optional[str], current_hash: Optional[str]
@@ -2404,13 +2410,13 @@ class DiffListBase(AppBase):
         """
         try:
             try:
-                self.app.pop_layout()
-            except Exception as e:
-                self.printException(e, "could not pop_layout in DiffListBase.key_left")
-            try:
                 self.app.pop_focus()
             except Exception as e:
                 self.printException(e, "could not pop_focus in DiffListBase.key_left")
+            try:
+                self.app.pop_layout()
+            except Exception as e:
+                self.printException(e, "could not pop_layout in DiffListBase.key_left")
         except Exception as e:
             self.printException(e, "unexpected exception in DiffListBase.key_left")
         return True
@@ -2741,62 +2747,25 @@ class HelpList(AppBase):
             key = event.key
             logger.debug(f"HelpList.more_keys: key={key}")
 
-            # Restore column state and return to previous view for any key
+            # Any key dismisses help: pop the help layout and restore previous focus
             try:
                 try:
                     event.stop()
+                except Exception:
+                    pass
+                try:
+                    self.app.pop_layout()
                 except Exception as e:
-                    self.printException(e)
+                    self.printException(e, "could not pop_layout when dismissing help")
+                try:
+                    self.app.pop_focus()
+                except Exception as e:
+                    self.printException(e, "could not pop_focus when dismissing help")
+            except Exception as e:
+                self.printException(e)
 
-                logger.debug(f"Restoring column state: {self.app.saved_column_state}")
-                # Hide help column
-                self.app.query_one("#right3-column").styles.width = "0%"
-                self.app.query_one("#right3-column").styles.flex = 0
-
-                # Determine which widget to focus based on saved state
-                focus_target = "#left"  # default
-
-                # Restore saved column state if available
-                if self.app.saved_column_state:
-                    state = self.app.saved_column_state
-                    # Restore previous layout pushed before showing help.
-                    try:
-                        self.app.pop_layout()
-                    except Exception as e:
-                        self.printException(e, "pop_layout failed while dismissing help")
-
-                    # Determine focus target: rightmost visible column
-                    try:
-                        if state["right2"].get("display") is not None:
-                            focus_target = "#right2"
-                        elif state["right1"].get("display") is not None:
-                            focus_target = "#right1"
-                    except Exception as e:
-                        self.printException(e, "could not determine focus target from saved state")
-
-                    logger.debug("Column state restored")
-                else:
-                    logger.debug("No saved state, showing only files column")
-                    # Fallback: just show files column
-                    try:
-                        self.app.change_layout("left_fullscreen")
-                    except Exception as e:
-                        self.printException(e, "layout_left_only fallback")
-
-                # Focus on the appropriate widget
-                # Use call_after_refresh to avoid triggering on_focus during layout restore
-                def restore_focus():
-                    try:
-                        try:
-                            self.app.pop_focus()
-                        except Exception as e:
-                            self.printException(e)
-                    except Exception as e:
-                        self.printException(e)
-
-                self.app.call_after_refresh(restore_focus)
-
-                # HelpList footer
+            # HelpList footer
+            try:
                 footer = self.app.query_one("#footer", Label)
                 footer.update(Text("q(uit)  ?h/(elp)  ← ↑ ↓ →", style="bold"))
                 return True
@@ -2956,28 +2925,25 @@ App {
                 self.printException(e, "could not set right3-column")
 
             try:
-                if left_display is not None:
+                # Always assign display values (None means visible)
+                try:
                     self.query_one("#left").styles.display = left_display
-            except Exception as e:
-                self.printException(e, "could not set left display in _apply_column_layout")
-
-            try:
-                if right1_display is not None:
+                except Exception as e:
+                    self.printException(e, "could not set left display in _apply_column_layout")
+                try:
                     self.query_one("#right1").styles.display = right1_display
-            except Exception as e:
-                self.printException(e, "could not set right1 display in _apply_column_layout")
-
-            try:
-                if right2_display is not None:
+                except Exception as e:
+                    self.printException(e, "could not set right1 display in _apply_column_layout")
+                try:
                     self.query_one("#right2").styles.display = right2_display
-            except Exception as e:
-                self.printException(e, "could not set right2 display in _apply_column_layout")
-
-            try:
-                if right3_display is not None:
+                except Exception as e:
+                    self.printException(e, "could not set right2 display in _apply_column_layout")
+                try:
                     self.query_one("#right3").styles.display = right3_display
+                except Exception as e:
+                    self.printException(e, "could not set right3 display in _apply_column_layout")
             except Exception as e:
-                self.printException(e, "could not set right3 display in _apply_column_layout")
+                self.printException(e, "could not assign displays in _apply_column_layout")
 
         except Exception as e:
             self.printException(e, "error applying column layout")
@@ -3130,7 +3096,11 @@ App {
         separate attribute so push/pop semantics remain authoritative.
         """
         try:
-            return bool(getattr(self, "layout_stack", None) and self.layout_stack and self.layout_stack[-1][0] == "diff_fullscreen")
+            return bool(
+                getattr(self, "layout_stack", None)
+                and self.layout_stack
+                and self.layout_stack[-1][0] == "diff_fullscreen"
+            )
         except Exception:
             return False
 
@@ -3555,8 +3525,8 @@ App {
             hist.prepListModeHistoryList(item_name)
             self.push_layout("left_right_split")
             hist.index = 0
-                # ensure we are not in diff-fullscreen when opening history
-                # (no-op: fullscreen is derived from layout_stack)
+            # ensure we are not in diff-fullscreen when opening history
+            # (no-op: fullscreen is derived from layout_stack)
         except Exception as e:
             try:
                 self.push_screen(_TBDModal(str(e)))
@@ -3624,7 +3594,14 @@ App {
                     # Adjust layout: hide files and other right columns, show history full-width
                     try:
                         self._apply_column_layout(
-                            "0%", "100%", "0%", "0%", left_display=None, right1_display=None, right2_display=None, right3_display=None
+                            "0%",
+                            "100%",
+                            "0%",
+                            "0%",
+                            left_display=None,
+                            right1_display=None,
+                            right2_display=None,
+                            right3_display=None,
                         )
                         self.query_one("#right3-column").styles.width = "0%"
                         self.query_one("#right3-column").styles.flex = 0
@@ -3714,7 +3691,14 @@ App {
                     try:
                         # Adjust layout: hide files and other right columns, show history full-width
                         self._apply_column_layout(
-                            "0%", "100%", "0%", "0%", left_display=None, right1_display=None, right2_display=None, right3_display=None
+                            "0%",
+                            "100%",
+                            "0%",
+                            "0%",
+                            left_display=None,
+                            right1_display=None,
+                            right2_display=None,
+                            right3_display=None,
                         )
                         try:
                             self.query_one("#right3-column").styles.width = "0%"
@@ -3788,73 +3772,22 @@ App {
                     self.printException(e)
 
                 try:
-                    # Save current column state, normalizing widths to percent strings
-                    def _norm_width(w):
-                        try:
-                            if w is None:
-                                return None
-                            # Textual may store a Scalar-like object with a `value` attr
-                            if hasattr(w, "value"):
-                                val = int(getattr(w, "value", 0))
-                                return f"{val}%"
-                            # If it's already a string that accidentally contains Unit names,
-                            # extract leading number and use percent.
-                            if isinstance(w, str) and "Unit.WIDTH" in w:
-                                m = re.match(r"^(\d+)", w)
-                                if m:
-                                    return f"{m.group(1)}%"
-                            # Already a usable string/number
-                            return str(w)
-                        except Exception as e:
-                            self.printException(e, "error normalizing width in _norm_width")
-                            return str(w)
-
-                    left_col = self.query_one("#left-column")
-                    right1_col = self.query_one("#right1-column")
-                    right2_col = self.query_one("#right2-column")
-                    right1_widget = self.query_one("#right1")
-                    right2_widget = self.query_one("#right2")
-
-                    self.saved_column_state = {
-                        "left": {
-                            "width": _norm_width(left_col.styles.width),
-                            "flex": left_col.styles.flex,
-                            "display": getattr(self.query_one("#left"), "styles", None)
-                            and getattr(self.query_one("#left"), "styles").display,
-                        },
-                        "right1": {
-                            "width": _norm_width(right1_col.styles.width),
-                            "flex": right1_col.styles.flex,
-                            "display": right1_widget.styles.display,
-                        },
-                        "right2": {
-                            "width": _norm_width(right2_col.styles.width),
-                            "flex": right2_col.styles.flex,
-                            "display": right2_widget.styles.display,
-                        },
-                    }
-                    logger.debug(f"Saved column state: {self.saved_column_state}")
-
-                    # Show only the help column using the centralized layout helper
+                    # Simply push the help fullscreen layout and focus the help widget
                     try:
                         self.push_layout("help_fullscreen")
                     except Exception as e:
                         self.printException(e, "could not push_layout help_fullscreen")
                     try:
-                        # Ensure right3 is visible/focused after layout change
-                        self.query_one("#right3-column").styles.width = "100%"
-                        self.query_one("#right3-column").styles.flex = 0
-                        self.query_one("#right3").styles.display = "block"
-                        try:
-                            self.push_focus("#right3")
-                        except Exception as e:
-                            self.printException(e, "could not show/focus right3 help column")
+                        self.push_focus("#right3")
                     except Exception as e:
-                        self.printException(e, "could not show/focus right3 help column")
+                        self.printException(e, "could not push_focus #right3")
 
                     # Update footer
-                    footer = self.query_one("#footer", Label)
-                    footer.update(Text("q(uit)  ↑ ↓  Press any key to return", style="bold"))
+                    try:
+                        footer = self.query_one("#footer", Label)
+                        footer.update(Text("q(uit)  ↑ ↓  Press any key to return", style="bold"))
+                    except Exception:
+                        pass
                 except Exception as e:
                     self.printException(e)
 
