@@ -690,8 +690,12 @@ class FileModeFileList(FileListBase):
         return False
 
     def key_right(self) -> bool:  # FileModeFileList
-        """Handle right key behavior for FileModeFileList
-
+        """
+        Handle right key behavior for FileModeFileList
+            Either 
+                1) ignore "..", or
+                2) enter a directory, or 
+                3) show file history in the History column.
         Returns True when the key was handled/consumed.
         """
         # If the highlighted entry is a directory (and not ".."), enter it.
@@ -731,11 +735,12 @@ class FileModeFileList(FileListBase):
         if item_name != "..":
             full = os.path.join(self.path, item_name)
             if os.path.isdir(full):
+                # ???? move to a callable method, sharable with ".." handling in key_left?
                 # switch the listing to the selected directory
                 try:
                     if hasattr(self, "prepFileModeFileList"):
                         self.prepFileModeFileList(full)
-                    else:
+                    else: # ???? do a complete fail instead -- no fallback
                         super().set_path(full)
                 except Exception as e:
                     self.printException(e, "changing directory in key_right")
@@ -752,11 +757,9 @@ class FileModeFileList(FileListBase):
                     self.printException(e, "exception updating app.path")
 
                 # focus back on this list
-                try:
-                    try:
-                        self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
-                    except Exception as e:
-                        self.printException(e)
+                # ???? why would the focus have changed and need to be reset back?
+                try: 
+                    self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
                 except Exception as e:
                     self.printException(e)
 
@@ -770,6 +773,13 @@ class FileModeFileList(FileListBase):
                 except Exception as e:
                     self.printException(e)
                     hist = None
+
+                # ???? how can there not be a history widget here?
+                # ???? if hist is None, should we bail here instead of trying left?
+                # ???? if there is no prepListModeHistoryList method, should we bail instead of trying fallback?
+                # ???? assert(hist is not None), "No history widget found"
+                # ???? assert(hasattr(hist, "prepListModeHistoryList")), "History widget has no prepListModeHistoryList method"
+                # ???? we KNOW that there IS a prepListModeHistoryList, so why check?
 
                 # If the right1 widget doesn't expose the preparatory API,
                 # try the alternate left location (log-first layouts).
@@ -1304,8 +1314,6 @@ class HistoryListBase(AppBase):
                         self.index = target
                     except Exception as e:
                         self.printException(e, "restoring index target")
-                    except Exception as e:
-                        self.printException(e, "restoring index target")
 
                 except Exception as e:
                     self.printException(e, "nodes processing")
@@ -1349,6 +1357,65 @@ class HistoryListBase(AppBase):
 
             # Other keys: not handled here
             return False
+        except Exception as e:
+            self.printException(e)
+            return False
+
+    def compute_commit_pair_hashes(self):  # HistoryListBase
+        """Compute the pair of commit hashes for a history diff.
+
+        Returns a tuple `(current_hash, previous_hash, current_line, previous_line, i_newer, i_older)`
+        or `(None, None, None, None, None, None)` on failure. Callers should
+        decide how to present errors to the user.
+        """
+        try:
+            nodes = getattr(self, "_nodes", [])
+            idx = getattr(self, "index", None)
+            if idx is None or idx < 0 or not nodes or idx >= len(nodes):
+                return (None, None, None, None, None, None)
+
+            # Find any checked item
+            checked_idx = None
+            for i, node in enumerate(nodes):
+                if getattr(node, "_checked", False):
+                    checked_idx = i
+                    break
+
+            if checked_idx is None or checked_idx == idx:
+                # default to current vs next (older)
+                if idx >= len(nodes) - 1:
+                    return (None, None, None, None, None, None)
+                i_newer = idx
+                i_older = idx + 1
+            else:
+                i1 = idx
+                i2 = checked_idx
+                if i1 == i2:
+                    return (None, None, None, None, None, None)
+                if i1 < i2:
+                    i_newer, i_older = i1, i2
+                else:
+                    i_newer, i_older = i2, i1
+
+            current_line = self.text_of(nodes[i_newer])
+            previous_line = self.text_of(nodes[i_older])
+
+            current_hash = getattr(nodes[i_newer], "_hash", None)
+            previous_hash = getattr(nodes[i_older], "_hash", None)
+            if not current_hash or not previous_hash:
+                try:
+                    m1 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", current_line)
+                    m2 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", previous_line)
+                    if not m1 or not m2:
+                        return (None, None, None, None, None, None)
+                    current_hash = m1.group(2)
+                    previous_hash = m2.group(2)
+                except Exception:
+                    return (None, None, None, None, None, None)
+
+            return (current_hash, previous_hash, current_line, previous_line, i_newer, i_older)
+        except Exception:
+            return (None, None, None, None, None, None)
         except Exception as e:
             self.printException(e)
             return False
@@ -1802,352 +1869,105 @@ class RepoModeHistoryList(HistoryListBase):
         diff rendering.
         """
         try:
-            nodes = getattr(self, "_nodes", [])
-            if not nodes:
-                try:
-                    self.app.push_screen(_TBDModal("No commit selected"))
-                except Exception as e:
-                    self.printException(e)
-
-                return True
-            idx = getattr(self, "index", None)
-            if idx is None or idx < 0 or idx >= len(nodes):
-                try:
-                    self.app.push_screen(_TBDModal("No commit selected"))
-                except Exception as e:
-                    self.printException(e)
-
-                return True
-
-            # Find checked item to diff against, if any
-            checked_idx = None
-            for i, node in enumerate(nodes):
-                if getattr(node, "_checked", False):
-                    checked_idx = i
-                    break
-
-            if checked_idx is None or checked_idx == idx:
-                # default to current vs next (older)
-                if idx >= len(nodes) - 1:
-                    try:
-                        self.app.push_screen(_TBDModal("No earlier commit to diff with"))
-                    except Exception as e:
-                        self.printException(e)
-
-                    return True
-                i_newer = idx
-                i_older = idx + 1
-            else:
-                i1 = idx
-                i2 = checked_idx
-                if i1 == i2:
-                    try:
-                        self.app.push_screen(_TBDModal("No commit to diff with"))
-                    except Exception as e:
-                        self.printException(e)
-
-                    return True
-                if i1 < i2:
-                    i_newer, i_older = i1, i2
-                else:
-                    i_newer, i_older = i2, i1
-
-            current_line = self.text_of(nodes[i_newer])
-            previous_line = self.text_of(nodes[i_older])
-
-            current_hash = getattr(nodes[i_newer], "_hash", None)
-            previous_hash = getattr(nodes[i_older], "_hash", None)
+            # Use centralized helper to compute the two commit hashes/lines
+            current_hash, previous_hash, _, _, _, _ = self.compute_commit_pair_hashes()
             if not current_hash or not previous_hash:
                 try:
-                    m1 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", current_line)
-                    m2 = re.match(r"^\s*(\S+)\s+([0-9a-fA-F]+)\b", previous_line)
-                    if not m1 or not m2:
-                        raise ValueError("Could not parse commit lines for hashes")
-                    current_hash = m1.group(2)
-                    previous_hash = m2.group(2)
-                except Exception as exc:
-                    try:
-                        self.app.push_screen(_TBDModal(f"Could not parse hashes: {exc}"))
-                    except Exception as e:
-                        self.printException(e)
-
-                    return True
-
-            # Compute diff between trees using pygit2
-            try:
-                repo_path = getattr(self.app, "path", None)
-                gitdir = pygit2.discover_repository(repo_path)
-                if not gitdir:
-                    raise RuntimeError("Repository not found")
-                repo = pygit2.Repository(gitdir)
-
-                try:
-                    curr_obj = repo.get(current_hash)
+                    self.app.push_screen(_TBDModal("No commits available to diff"))
                 except Exception as e:
                     self.printException(e)
-                    curr_obj = None
-                try:
-                    prev_obj = repo.get(previous_hash)
-                except Exception as e:
-                    self.printException(e)
-                    prev_obj = None
-
-                curr_tree = getattr(curr_obj, "tree", None)
-                prev_tree = getattr(prev_obj, "tree", None)
-
-                if prev_tree is None and curr_tree is not None:
-                    diff = repo.diff(None, curr_tree)
-                elif curr_tree is None and prev_tree is not None:
-                    diff = repo.diff(prev_tree, None)
-                else:
-                    diff = repo.diff(prev_tree, curr_tree)
-            except Exception as exc:
-                try:
-                    self.app.push_screen(_TBDModal(str(exc)))
-                except Exception as e:
-                    self.printException(e)
-
                 return True
 
-            # Pre-build ListItem buffer from diff deltas so we can mount
-            # the desired widget later and append items atomically. This
-            # avoids mount-time races when replacing widgets with the
-            # same id.
+            # Ensure a RepoModeFileList is present at #right1, mount if needed
             try:
-                delta_map = {
-                    getattr(pygit2, "GIT_DELTA_ADDED", 0): "A",
-                    getattr(pygit2, "GIT_DELTA_MODIFIED", 0): "M",
-                    getattr(pygit2, "GIT_DELTA_DELETED", 0): "D",
-                    getattr(pygit2, "GIT_DELTA_RENAMED", 0): "R",
-                    getattr(pygit2, "GIT_DELTA_TYPECHANGE", 0): "T",
-                }
-                items_buffer: list = []
-                for d in getattr(diff, "deltas", diff):
-                    try:
-                        status = getattr(d, "status", None)
-                        marker = delta_map.get(status, " ")
-                        old_path = getattr(getattr(d, "old_file", None), "path", None)
-                        new_path = getattr(getattr(d, "new_file", None), "path", None)
-                        display_path = new_path or old_path or ""
-                        text = f"{marker} {display_path}"
-                        li = ListItem(Label(Text(" " + text)))
-                        li._change_type = marker
-                        li._filename = display_path
-                        li._old_filename = old_path
-                        li._new_filename = new_path
-                        li._hash_prev = previous_hash
-                        li._hash_curr = current_hash
-                        items_buffer.append(li)
-                    except Exception as e:
-                        self.printException(e)
-                        continue
-                if not items_buffer:
-                    items_buffer.append(ListItem(Label(Text(" No changed files between selected commits"))))
-            except Exception as exc:
-                self.printException(exc, "error building items buffer")
-
-            # Mount RepoModeFileList in middle column (#right1)
-            try:
-                parent = self.app.query_one("#right1-column")
-            except Exception as e:
-                self.printException(e)
                 parent = None
-
-            try:
-                # Reuse existing widget if present to avoid DuplicateIds
                 try:
-                    # Find any existing widgets with id 'right1'. Use `query` to
-                    # tolerate multiple matches (which can throw otherwise).
+                    parent = self.app.query_one("#right1-column")
+                except Exception:
+                    parent = None
+
+                file_list = None
+                try:
+                    file_list = self.app.query_one("#right1")
+                except Exception:
                     file_list = None
-                    try:
-                        matches = list(self.app.query("#right1"))
-                    except Exception as e:
-                        self.printException(e)
-                        matches = []
 
-                    if matches:
-                        # If there are multiple, remove all but the first to
-                        # restore a sane state.
-                        if len(matches) > 1:
-                            for dup in matches[1:]:
-                                try:
-                                    dup.remove()
-                                except Exception as e:
-                                    self.printException(e, "removing duplicate right1")
-                        existing = matches[0]
-                        # If the existing widget is already the repo-mode
-                        # specialized list, reuse it. Otherwise, remove the
-                        # existing generic FileModeFileList and replace it
-                        # with a RepoModeFileList so repo-specific key
-                        # handlers work correctly.
-                        if isinstance(existing, RepoModeFileList):
-                            file_list = existing
-                            try:
-                                file_list.clear()
-                            except Exception as e:
-                                self.printException(e, "clearing existing right1")
+                if file_list is None:
+                    file_list = RepoModeFileList(id="right1")
+                    try:
+                        if parent is not None:
+                            parent.mount(file_list)
                         else:
-                            try:
-                                # Instead of removing and mounting (which can
-                                # trigger DuplicateIds races), convert the
-                                # existing widget in-place to the repo-mode
-                                # class by updating its __class__. This is a
-                                # safe operation because both classes share the
-                                # same base (`FileListBase`). Then clear it and
-                                # reuse it.
-                                try:
-                                    existing.__class__ = RepoModeFileList
-                                except Exception as e:
-                                    self.printException(e, "exception converting existing right1 to RepoModeFileList")
-                                file_list = existing
-                                try:
-                                    file_list.clear()
-                                except Exception as e:
-                                    self.printException(e, "clearing converted right1")
-                            except Exception as e:
-                                self.printException(e, "replacing right1 with repo-mode list")
-                    else:
-                        # No existing widget: create and mount one.
-                        file_list = RepoModeFileList(id="right1")
-                        try:
-                            if parent is not None:
-                                parent.mount(file_list)
-                            else:
-                                self.app.mount(file_list)
-                        except Exception as e:
-                            self.printException(e, "mounting right1")
-                except Exception as e:
-                    self.printException(e, "mount/create error")
-                    try:
-                        self.app.push_screen(_TBDModal("Could not show files for commit diff"))
+                            self.app.mount(file_list)
                     except Exception as e:
-                        self.printException(e)
-
-                    return True
-            except Exception as exc:
-                self.printException(exc, "unexpected mount error")
-                try:
-                    self.app.push_screen(_TBDModal("Could not show files for commit diff"))
-                except Exception as e:
-                    self.printException(e)
-
-                return True
-
-            # Ensure the file_list is actually mounted. If our attempt to
-            # create/mount a new widget failed (e.g. DuplicateIds), try to
-            # locate the mounted `#right1` widget and use that instead. If
-            # none is mounted, abort gracefully.
-            try:
-                mounted_ok = bool(getattr(file_list, "app", None))
-            except Exception as e:
-                self.printException(e)
-                mounted_ok = False
-            if not mounted_ok:
-                try:
-                    existing_mounted = None
-                    try:
-                        existing_mounted = self.app.query_one("#right1")
-                    except Exception as e:
-                        self.printException(e)
-                        existing_mounted = None
-                    if existing_mounted is not None and getattr(existing_mounted, "app", None):
-                        file_list = existing_mounted
-                    else:
+                        self.printException(e, "mounting right1")
                         try:
-                            self.app.push_screen(_TBDModal("Could not mount file list for commit diff"))
-                        except Exception as e:
-                            self.printException(e)
+                            self.app.push_screen(_TBDModal("Could not show files for commit diff"))
+                        except Exception:
+                            pass
                         return True
-                except Exception as e:
-                    self.printException(e, "verifying mounted right1")
-                    return True
+                else:
+                    # If an existing widget is present but not the repo-mode
+                    # specialized list, try converting it in-place; if that
+                    # fails, remove and create a fresh RepoModeFileList.
+                    if not isinstance(file_list, RepoModeFileList):
+                        try:
+                            file_list.__class__ = RepoModeFileList
+                        except Exception:
+                            try:
+                                file_list.remove()
+                            except Exception:
+                                pass
+                            file_list = RepoModeFileList(id="right1")
+                            try:
+                                if parent is not None:
+                                    parent.mount(file_list)
+                                else:
+                                    self.app.mount(file_list)
+                            except Exception as e:
+                                self.printException(e, "mounting replacement right1")
+                                try:
+                                    self.app.push_screen(_TBDModal("Could not show files for commit diff"))
+                                except Exception:
+                                    pass
+                                return True
+                    try:
+                        file_list.clear()
+                    except Exception:
+                        pass
 
-            # store commit hashes for later diff rendering
-            try:
-                file_list.current_commit_sha = current_hash
-                file_list.current_prev_sha = previous_hash
-            except Exception as e:
-                self.printException(e)
-
-            # Delegate population to the RepoModeFileList instance so it can
-            # assemble and append its items in a safe, mount-friendly way.
-            try:
+                # Delegate population to the RepoModeFileList helper
                 try:
                     file_list.current_commit_sha = current_hash
                     file_list.current_prev_sha = previous_hash
-                except Exception as e:
-                    self.printException(e, "setting commit hashes on file_list")
-                try:
                     file_list.prepRepoModeFileList(previous_hash, current_hash)
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList failed")
-            except Exception as e:
-                self.printException(e, "delegating repo-mode file list population failed")
 
-            try:
-                file_list.styles.display = None
-            except Exception as e:
-                self.printException(e)
-
-            try:
-                file_list.index = getattr(file_list, "_min_index", 0) or 0
-            except Exception as e:
-                self.printException(e)
-
-            # Make the Files column visible and use central layout helper
-            try:
-                self.app.push_layout("left_right_split")
                 try:
-                    # Update titles for log-first layout: left remains History
-                    lbl = self.app.query_one("#left-title", Label)
-                    lbl.update(Text("History", style="bold"))
-                except Exception as e:
-                    self.printException(e, "updating left-title for files view")
+                    file_list.styles.display = None
+                except Exception:
+                    pass
                 try:
-                    lbl = self.app.query_one("#right1-title", Label)
-                    lbl.update(Text("Files", style="bold"))
-                except Exception as e:
-                    self.printException(e, "updating right1-title for files view")
-            except Exception as e:
-                self.printException(e, "setting files column layout")
+                    file_list.index = getattr(file_list, "_min_index", 0) or 0
+                except Exception:
+                    pass
 
-            try:
-                self.app.push_state(
-                    None,
-                    f"#{getattr(file_list, 'id', 'right1')}",
-                    self.app.footer_file,
-                )
-            except Exception as e:
-                self.printException(e)
-
-            try:
-                # Diagnostic: log the column styles and file_list state
                 try:
-                    left_col = self.app.query_one("#left-column")
-                    right1_col = self.app.query_one("#right1-column")
-                    logger.debug(
-                        f"RepoModeHistoryList.key_right: columns left={getattr(left_col.styles,'width',None)} "
-                        f"right1={getattr(right1_col.styles,'width',None)}"
-                    )
+                    self.app.push_state("left_right_split", f"#{getattr(file_list, 'id', 'right1')}", self.app.footer_file)
                 except Exception as e:
                     self.printException(e)
-
-                try:
-                    logger.debug(
-                        f"RepoModeHistoryList.key_right: file_list.display={getattr(file_list.styles,'display',None)}"
-                        f"nodes={len(getattr(file_list,'_nodes',[]))}"
-                    )
-                except Exception as e:
-                    self.printException(e)
-
             except Exception as e:
-                self.printException(e)
+                self.printException(e, "unexpected error in key_right")
+                return True
 
             try:
                 self.app.current_commit_sha = current_hash
                 self.app.current_prev_sha = previous_hash
             except Exception as e:
                 self.printException(e)
+
+            return True
 
         except Exception as exc:
             self.printException(exc)
@@ -2422,7 +2242,7 @@ class DiffListBase(AppBase):
                 self.app.push_state(
                     "diff_fullscreen",
                     "#right2",
-                    self.app.footer_difffull,
+                    self.app.footer_diff_full,
                 )
 
         except Exception as e:
@@ -2848,12 +2668,11 @@ App {
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
         self.diff_cmd_index: int = 0
         # Standard footer texts used throughout the app (one per column/type)
-        self.footer_file: Text = Text("generic q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn", style="bold")
-        # self.footer_file: Text = Text("q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn →", style="bold")
-        self.footer_history: Text = Text("q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn  →  m(ark)", style="bold")
-        self.footer_diff3: Text = Text("q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn →/f(ull) c(olor) d(iff-type)", style="bold")
-        self.footer_difffull: Text = Text("q(uit)  ?/h(elp)  ←/f(ull) ↑/↓/PgUp/PgDn c(olor) d(iff-type)", style="bold")
-        self.footer_help: Text = Text("q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
+        self.footer_file: Text = Text("File: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn", style="bold")
+        self.footer_history: Text = Text("History: q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn  →  m(ark)", style="bold")
+        self.footer_diff3: Text = Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn →/f(ull) c(olor) d(iff-type)", style="bold")
+        self.footer_diff_full: Text = Text("Diff: q(uit)  ?/h(elp)  ←/f(ull) ↑/↓/PgUp/PgDn c(olor) d(iff-type)", style="bold")
+        self.footer_help: Text = Text("Help: q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
         # start the app showing repository-wide commit log first when True
 
     def printException(self, e, msg=None):  # GitHistoryTool
@@ -3527,13 +3346,14 @@ App {
         except Exception as e:
             self.printException(e)
 
-        # Force left-only layout at startup (Files full-width, others hidden)
+        # Force left-only layout at startup (Files or History full-width)
         try:
             try:
+                footer_start = self.footer_history if getattr(self, "log_first", False) else self.footer_file
                 self.push_state(
                     "left_fullscreen",
                     "#left",
-                    self.footer_file,
+                    footer_start,
                 )
             except Exception as e:
                 self.printException(e)
