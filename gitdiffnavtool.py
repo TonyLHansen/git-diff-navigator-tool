@@ -1521,7 +1521,10 @@ class FileModeHistoryList(HistoryListBase):
                     self.printException(e)
                     files = None
             try:
-                self.app.change_focus(f"#{getattr(files, 'id', 'left')}")
+                try:
+                    self.app.pop_focus()
+                except Exception as e:
+                    self.printException(e, "exception popping focus to files on left from history")
             except Exception as e:
                 self.printException(e, "focusing files on left")
         except Exception as e:
