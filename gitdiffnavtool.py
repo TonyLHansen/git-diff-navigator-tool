@@ -335,7 +335,7 @@ class AppBase(ListView):
                         self.printException(e, "could not push TBDModal for diff-fullscreen error")
                 # Use helper to push layout/focus/footer together
                 try:
-                    self.app.push_state("three_columns", "#right2", Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                    self.app.push_state("three_columns", "#right2", self.app.footer_diff)
                 except Exception as e:
                     self.printException(e, "error ensuring layout/focus for diff")
             else:
@@ -785,10 +785,10 @@ class FileModeFileList(FileListBase):
                         hist.prepListModeHistoryList(item_name)
                         try:
                             # ensure history column is shown and focused
-                            self.app.push_state(
+                                self.app.push_state(
                                 "left_right_split",
                                 "#right1",
-                                Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"),
+                                self.app.footer_history,
                             )
                         except Exception as e:
                             self.printException(e)
@@ -800,7 +800,7 @@ class FileModeFileList(FileListBase):
                                 self.app._open_history_for_file(item_name)
                                 try:
                                     self.app.push_focus("#right1")
-                                    self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                                    self.app.push_footer(self.app.footer_history)
                                 except Exception as e:
                                     self.printException(e)
                         except Exception as e:
@@ -812,7 +812,7 @@ class FileModeFileList(FileListBase):
                             self.app._open_history_for_file(item_name)
                             try:
                                 self.app.push_focus("#right1")
-                                self.app.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                                self.app.push_footer(self.app.footer_history)
                             except Exception as e:
                                 self.printException(e)
                     except Exception as e:
@@ -1300,9 +1300,10 @@ class HistoryListBase(AppBase):
                         self.index = None
                     except Exception as e:
                         self.printException(e, "clearing index")
-
                     try:
                         self.index = target
+                    except Exception as e:
+                        self.printException(e, "restoring index target")
                     except Exception as e:
                         self.printException(e, "restoring index target")
 
@@ -2114,7 +2115,7 @@ class RepoModeHistoryList(HistoryListBase):
                 self.app.push_state(
                     None,
                     f"#{getattr(file_list, 'id', 'right1')}",
-                    Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"),
+                    self.app.footer_file,
                 )
             except Exception as e:
                 self.printException(e)
@@ -2421,7 +2422,7 @@ class DiffListBase(AppBase):
                 self.app.push_state(
                     "diff_fullscreen",
                     "#right2",
-                    Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"),
+                    self.app.footer_diff,
                 )
 
         except Exception as e:
@@ -2846,6 +2847,11 @@ App {
         # None = default `git diff`; other entries are flags inserted after `git diff`
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
         self.diff_cmd_index: int = 0
+        # Standard footer texts used throughout the app (one per column/type)
+        self.footer_file: Text = Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold")
+        self.footer_history: Text = Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  Enter=Open Diff", style="bold")
+        self.footer_diff: Text = Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  d=rotate", style="bold")
+        self.footer_help: Text = Text("q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
         # start the app showing repository-wide commit log first when True
 
     def printException(self, e, msg=None):  # GitHistoryTool
@@ -3189,7 +3195,7 @@ App {
 
             try:
                 self._stack_pop("footer_stack")
-                prev = self.footer_stack[-1][0] if self.footer_stack else Text("q(uit)  ?/h(elp)  ← ↑ ↓ →")
+                prev = self.footer_stack[-1][0] if self.footer_stack else self.footer_file
                 try:
                     logger.debug(f"pop_footer: restoring prev={prev} resulting_stack={self.footer_stack}")
                 except Exception as e:
@@ -3480,7 +3486,7 @@ App {
                         yield HelpList(id="right3")
 
             # GitHistoryTool footer
-            yield Label(Text("q(uit)  ?/h(elp)  ← ↑ ↓ →", style="bold"), id="footer")
+            yield Label(self.footer_file, id="footer")
 
     async def on_mount(self) -> None:  # GitHistoryTool
         """Mount-time initialization: build repo cache and populate Files.
@@ -3525,7 +3531,7 @@ App {
                 self.push_state(
                     "left_fullscreen",
                     "#left",
-                    Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"),
+                    self.footer_file,
                 )
             except Exception as e:
                 self.printException(e)
@@ -3550,8 +3556,8 @@ App {
                     self._open_repo_history()
                     try:
                         # focus the history column after populating repo history
-                        self.push_focus("#left")
-                        self.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                            self.push_focus("#left")
+                            self.push_footer(self.footer_history)
                     except Exception as e:
                         self.printException(e)
                 except Exception as e:
@@ -3567,7 +3573,7 @@ App {
                     self._open_history_for_file(self.initial_file)
                     try:
                         self.push_focus("#right1")
-                        self.push_footer(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn", style="bold"))
+                        self.push_footer(self.footer_history)
                     except Exception as e:
                         self.printException(e)
                 except Exception as e:
