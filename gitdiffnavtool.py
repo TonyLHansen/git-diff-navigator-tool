@@ -933,10 +933,9 @@ class RepoModeFileList(FileListBase):
 
                         self.index = getattr(self, "_min_index", 0) or 0
                         try:
-                            self.app.push_focus(f"#{getattr(self, 'id', 'left')}")
+                            self.refresh()
                         except Exception as e:
-                            self.printException(e, "could not push_focus to repo-mode file list")
-                        self.refresh()
+                            self.printException(e, "could not refresh repo-mode file list")
 
                         try:
                             self.call_after_refresh(lambda: setattr(self, "index", getattr(self, "_min_index", 0) or 0))
@@ -1503,11 +1502,6 @@ class FileModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e)
 
-            try:
-                self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
-            except Exception as e:
-                self.printException(e)
-
         except Exception as exc:
             self.printException(exc)
             try:
@@ -1798,13 +1792,7 @@ class RepoModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e)
 
-            try:
-                try:
-                    self.app.push_focus(f"#{getattr(self, 'id', 'left')}")
-                except Exception as e:
-                    self.printException(e, "could not push_focus to repo-mode history")
-            except Exception as e:
-                self.printException(e)
+            # Do not perform focus changes here; callers should push_focus as needed.
 
         except Exception as exc:
             self.printException(exc)
@@ -2114,27 +2102,27 @@ class RepoModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e)
 
+            # Make the Files column visible and use central layout helper
+            try:
+                self.app.push_layout("left_right_split")
                 try:
-                    # Make the Files column visible and use central layout helper
-                    self.app.push_layout("left_right_split")
-                    try:
-                        # Update titles for log-first layout: left remains History
-                        lbl = self.app.query_one("#left-title", Label)
-                        lbl.update(Text("History", style="bold"))
-                    except Exception as e:
-                        self.printException(e, "updating left-title for files view")
-                    try:
-                        lbl = self.app.query_one("#right1-title", Label)
-                        lbl.update(Text("Files", style="bold"))
-                    except Exception as e:
-                        self.printException(e, "updating right1-title for files view")
+                    # Update titles for log-first layout: left remains History
+                    lbl = self.app.query_one("#left-title", Label)
+                    lbl.update(Text("History", style="bold"))
                 except Exception as e:
-                    self.printException(e, "setting files column layout")
+                    self.printException(e, "updating left-title for files view")
+                try:
+                    lbl = self.app.query_one("#right1-title", Label)
+                    lbl.update(Text("Files", style="bold"))
+                except Exception as e:
+                    self.printException(e, "updating right1-title for files view")
+            except Exception as e:
+                self.printException(e, "setting files column layout")
 
-                try:
-                    self.app.push_focus(f"#{getattr(file_list, 'id', 'right1')}")
-                except Exception as e:
-                    self.printException(e)
+            try:
+                self.app.push_focus(f"#{getattr(file_list, 'id', 'right1')}")
+            except Exception as e:
+                self.printException(e)
             except Exception as e:
                 self.printException(e)
 
@@ -2253,13 +2241,7 @@ class DiffListBase(AppBase):
 
             self.styles.display = None
             self.index = 0
-            try:
-                try:
-                    self.app.push_focus(f"#{getattr(self, 'id', 'left')}")
-                except Exception as e:
-                    self.printException(e, "could not push_focus to diff view")
-            except Exception as e:
-                self.printException(e)
+            # Do not perform focus changes here; callers should push_focus as needed.
 
         except Exception as exc:
             self.printException(exc, "prepDiffListBase outer failure")
@@ -3766,6 +3748,104 @@ App {
             except Exception as e:
                 self.printException(e)
                 self.push_screen(_TBDModal(str(e)))
+
+        except Exception as e:
+            try:
+                self.push_screen(_TBDModal(str(e)))
+            except Exception as e2:
+                self.printException(e2)
+
+    def prepRepoModeHistoryList(self) -> None:  # GitHistoryTool
+        """Prepare or mount a RepoModeHistoryList into the History column.
+
+        This mirrors the mounting/population logic used by `_open_repo_history`
+        but does not perform any focus changes; callers may push focus as
+        desired.
+        """
+        try:
+            # If started in log-first mode, the left column already hosts
+            # a `RepoModeHistoryList`; populate it rather than mounting a new widget.
+            if getattr(self, "log_first", False):
+                try:
+                    hist = self.query_one("#left")
+                except Exception as e:
+                    self.printException(e)
+                    hist = None
+
+                if hist is not None:
+                    try:
+                        hist.prepRepoModeHistoryList()
+                        # Make left column full-width and hide others
+                        self.push_layout("left_fullscreen")
+                        try:
+                            self.query_one("#right3-column").styles.width = "0%"
+                            self.query_one("#right3-column").styles.flex = 0
+                        except Exception:
+                            pass
+                        hist.index = 0
+                        self.diff_fullscreen = False
+                    except Exception as e:
+                        self.printException(e)
+
+                    return
+
+            # Non-log-first: mount/replace the right1 history widget with
+            # a repository-backed history list and populate it.
+            try:
+                parent = self.query_one("#right1-column")
+            except Exception as e:
+                self.printException(e)
+                parent = None
+
+            try:
+                try:
+                    old = self.query_one("#right1")
+                    try:
+                        old.remove()
+                    except Exception:
+                        pass
+                except Exception:
+                    old = None
+
+                repo_hist = None
+                try:
+                    repo_hist = RepoModeHistoryList(id="right1")
+                    if parent is not None:
+                        parent.mount(repo_hist)
+                    else:
+                        self.mount(repo_hist)
+                except Exception as e:
+                    self.printException(e)
+                    repo_hist = None
+
+                if repo_hist:
+                    try:
+                        repo_hist.prepRepoModeHistoryList()
+                    except Exception as e:
+                        self.printException(e)
+
+                    try:
+                        # Adjust layout: hide files and other right columns, show history full-width
+                        self._apply_column_layout(
+                            "0%", "100%", "0%", "0%", left_display=None, right1_display=None, right2_display=None, right3_display=None
+                        )
+                        try:
+                            self.query_one("#right3-column").styles.width = "0%"
+                            self.query_one("#right3-column").styles.flex = 0
+                        except Exception:
+                            pass
+                        repo_hist.index = 0
+                        self.diff_fullscreen = False
+                    except Exception as e:
+                        self.printException(e)
+                    return
+
+            except Exception as e:
+                self.printException(e)
+                try:
+                    self.push_screen(_TBDModal(str(e)))
+                except Exception:
+                    pass
 
         except Exception as e:
             try:
