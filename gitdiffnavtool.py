@@ -2265,16 +2265,23 @@ class DiffListBase(AppBase):
                     self.printException(e)
 
                 try:
-                    if getattr(self.app, "diff_fullscreen", False):
-                        self.app.exit_diff_fullscreen()
-                        # keep focus on diff after restoring
+                    if self.app.is_diff_fullscreen():
                         try:
                             try:
-                                self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
+                                self.app.pop_layout()
                             except Exception as e:
-                                self.printException(e)
+                                self.printException(e, "could not pop_layout when exiting fullscreen")
+                            try:
+                                self.app.pop_focus()
+                            except Exception as e:
+                                self.printException(e, "could not pop_focus when exiting fullscreen")
+                            try:
+                                footer = self.app.query_one("#footer", Label)
+                                footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)", style="bold"))
+                            except Exception:
+                                pass
                         except Exception as e:
-                            self.printException(e, "focus() exception")
+                            self.printException(e, "error exiting diff fullscreen")
 
                     else:
                         try:
@@ -2289,10 +2296,7 @@ class DiffListBase(AppBase):
                                             self.app.push_focus("#right2")
                                         except Exception as e:
                                             self.printException(e, "could not push_focus #right2 on enter fullscreen")
-                                        try:
-                                            self.app.diff_fullscreen = True
-                                        except Exception as e:
-                                            self.printException(e, "could not set diff_fullscreen flag")
+                                        # fullscreen state is derived from layout_stack; no flag to set
                                         try:
                                             footer = self.app.query_one("#footer", Label)
                                             footer.update(Text("q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)", style="bold"))
@@ -2312,10 +2316,6 @@ class DiffListBase(AppBase):
                                     self.app.push_focus("#right2")
                                 except Exception as e:
                                     self.printException(e)
-                                try:
-                                    self.app.diff_fullscreen = True
-                                except Exception as e:
-                                    self.printException(e, "could not set diff_fullscreen flag")
                             except Exception as e:
                                 self.printException(e, "fallback enter fullscreen exception")
 
@@ -2391,7 +2391,7 @@ class DiffListBase(AppBase):
                         footer = self.app.query_one("#footer", Label)
                         v = variants[cur]
                         vlabel = v if v else "default"
-                        if getattr(self.app, "diff_fullscreen", False):
+                        if self.app.is_diff_fullscreen():
                             footer.update(Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold"))
                         else:
                             footer.update(
@@ -2504,7 +2504,7 @@ class DiffListBase(AppBase):
         try:
             footer = self.app.query_one("#footer", Label)
             # Show fullscreen hint depending on current fullscreen state
-            if getattr(self.app, "diff_fullscreen", False):
+            if self.app.is_diff_fullscreen():
                 footer.update(Text("q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)", style="bold"))
             else:
                 footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)", style="bold"))
@@ -2525,12 +2525,19 @@ class FileModeDiffList(DiffListBase):
         """
         try:
             # If we're in fullscreen, left arrow exits fullscreen
-            if getattr(self.app, "diff_fullscreen", False):
+            if self.app.is_diff_fullscreen():
                 try:
-                    self.app.exit_diff_fullscreen()
+                    try:
+                        self.app.pop_layout()
+                    except Exception as e:
+                        self.printException(e, "could not pop_layout when exiting fullscreen on left")
+                    try:
+                        self.app.pop_focus()
+                    except Exception as e:
+                        self.printException(e, "could not pop_focus when exiting fullscreen on left")
                 except Exception as e:
                     self.printException(e, "exception exiting fullscreen on left")
-                # exit_diff_fullscreen restores the prior layout; do not pop again
+                # layout/pop restores prior column; do not pop again
                 return True
             # otherwise move focus back to History
             try:
@@ -2609,7 +2616,7 @@ class FileModeDiffList(DiffListBase):
         """
         try:
             # In columnated mode, pressing right expands Diff to fullscreen.
-            if getattr(self.app, "diff_fullscreen", False):
+            if self.app.is_diff_fullscreen():
                 # already fullscreen; right arrow does nothing
                 return True
             # If diff is visible and not fullscreen, enter fullscreen
@@ -2626,17 +2633,13 @@ class FileModeDiffList(DiffListBase):
                             self.app.push_focus("#right2")
                         except Exception as e:
                             self.printException(e, "could not push_focus #right2 on enter fullscreen")
-                        try:
-                            self.app.diff_fullscreen = True
-                        except Exception as e:
-                            self.printException(e, "could not set diff_fullscreen flag")
                     except Exception as e:
                         self.printException(e, "enter_diff_fullscreen inline exception")
 
                     return True
             except Exception as e:
                 self.printException(e, "checking displays for fullscreen failed")
-                # best-effort enter
+                # best-effort enter fullscreen: push layout and focus
                 try:
                     try:
                         self.app.push_layout("diff_fullscreen")
@@ -2645,11 +2648,7 @@ class FileModeDiffList(DiffListBase):
                     try:
                         self.app.push_focus("#right2")
                     except Exception as e:
-                        self.printException(e)
-                    try:
-                        self.app.diff_fullscreen = True
-                    except Exception as e:
-                        self.printException(e, "could not set diff_fullscreen flag")
+                        self.printException(e, "fallback push_focus diff_fullscreen exception")
                 except Exception as e:
                     self.printException(e, "fallback enter fullscreen exception")
 
@@ -3081,7 +3080,7 @@ App {
         self.current_prev_sha: Optional[str] = None
         self.current_diff_file: Optional[str] = None
         # Diff fullscreen flag: when True, Diff column occupies 100% width
-        self.diff_fullscreen: bool = False
+        # removed: `diff_fullscreen` flag is now derived from `layout_stack`
         # Diff command variants and current selection index
         # None = default `git diff`; other entries are flags inserted after `git diff`
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
@@ -3302,6 +3301,17 @@ App {
                 self.printException(e, "pop_layout inner failure")
         except Exception as e:
             self.printException(e, "pop_layout outer failure")
+
+    def is_diff_fullscreen(self) -> bool:  # GitHistoryTool
+        """Return True when the current layout is `diff_fullscreen`.
+
+        This derives fullscreen state from the layout stack rather than a
+        separate attribute so push/pop semantics remain authoritative.
+        """
+        try:
+            return bool(getattr(self, "layout_stack", None) and self.layout_stack and self.layout_stack[-1][0] == "diff_fullscreen")
+        except Exception:
+            return False
 
     def change_focus(self, target: str) -> None:  # GitHistoryTool
         """Change focus to the given widget id (safely)."""
@@ -3724,8 +3734,8 @@ App {
             hist.prepListModeHistoryList(item_name)
             self.push_layout("left_right_split")
             hist.index = 0
-            # ensure we are not in diff-fullscreen when opening history
-            self.diff_fullscreen = False
+                # ensure we are not in diff-fullscreen when opening history
+                # (no-op: fullscreen is derived from layout_stack)
         except Exception as e:
             try:
                 self.push_screen(_TBDModal(str(e)))
@@ -3755,7 +3765,6 @@ App {
                         self.query_one("#right3-column").styles.flex = 0
 
                         hist.index = 0
-                        self.diff_fullscreen = False
 
                     except Exception as e:
                         self.printException(e)
@@ -3799,7 +3808,6 @@ App {
                         self.query_one("#right3-column").styles.width = "0%"
                         self.query_one("#right3-column").styles.flex = 0
                         repo_hist.index = 0
-                        self.diff_fullscreen = False
                     except Exception as e:
                         self.printException(e)
                     return
@@ -3842,7 +3850,6 @@ App {
                         except Exception:
                             pass
                         hist.index = 0
-                        self.diff_fullscreen = False
                     except Exception as e:
                         self.printException(e)
 
@@ -3894,7 +3901,6 @@ App {
                         except Exception:
                             pass
                         repo_hist.index = 0
-                        self.diff_fullscreen = False
                     except Exception as e:
                         self.printException(e)
                     return
@@ -4036,19 +4042,7 @@ App {
         except Exception as e:
             self.printException(e)
 
-    def exit_diff_fullscreen(self) -> None:  # GitHistoryTool
-        """Exit diff fullscreen: clear fullscreen state only (no layout changes)."""
-        try:
-            if not getattr(self, "diff_fullscreen", False):
-                return
-            # Only clear the fullscreen flag. Do not modify layouts here.
-            try:
-                self.diff_fullscreen = False
-                logger.debug("exit_diff_fullscreen: cleared diff_fullscreen flag (no layout changes)")
-            except Exception as e:
-                self.printException(e, "could not clear diff_fullscreen flag")
-        except Exception as e:
-            self.printException(e)
+    # exit_diff_fullscreen removed: fullscreen state is derived from layout_stack
 
 
 def main() -> None:
