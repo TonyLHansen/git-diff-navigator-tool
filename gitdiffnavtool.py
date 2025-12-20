@@ -807,6 +807,11 @@ class RepoModeFileList(FileListBase):
             self.clear()
         except Exception as e:
             self.printException(e, "clearing repo-mode file list")
+        # Reset populated flag so repeated preps will re-append items
+        try:
+            self._populated = False
+        except Exception:
+            pass
         try:
             repo = None
             try:
