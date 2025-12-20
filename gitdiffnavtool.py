@@ -1162,7 +1162,7 @@ class RepoModeFileList(FileListBase):
         try:
             # Delegate to centralized helper
             try:
-                self.prep_and_show_diff(filename, prev, curr)
+                self.prep_and_show_diff(filename, previoius_hash, current_hash)
             except Exception as e:
                 self.printException(e, "prep_and_show_diff failed")
 
