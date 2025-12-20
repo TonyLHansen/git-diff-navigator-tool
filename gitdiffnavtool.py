@@ -2257,68 +2257,16 @@ class DiffListBase(AppBase):
             key = event.key
             logger.debug(f"DiffList.more_keys: key={key}")
 
-            # Handle f/F to toggle fullscreen diff
+            # Handle f/F: toggle fullscreen by delegating to left/right handlers
             if key and key.lower() == "f":
                 try:
                     event.stop()
-                except Exception as e:
-                    self.printException(e)
-
-                try:
                     if self.app.is_diff_fullscreen():
-                        try:
-                            try:
-                                self.app.pop_layout()
-                            except Exception as e:
-                                self.printException(e, "could not pop_layout when exiting fullscreen")
-                            try:
-                                self.app.pop_focus()
-                            except Exception as e:
-                                self.printException(e, "could not pop_focus when exiting fullscreen")
-                            try:
-                                footer = self.app.query_one("#footer", Label)
-                                footer.update(Text("q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)", style="bold"))
-                            except Exception:
-                                pass
-                        except Exception as e:
-                            self.printException(e, "error exiting diff fullscreen")
-
+                        # when fullscreen, left behavior exits fullscreen
+                        self.key_left()
                     else:
-                        try:
-                            # require right2 to be visible
-                            if self.app.query_one("#right2", ListView).styles.display is not None:
-                                    try:
-                                        try:
-                                            self.app.push_layout("diff_fullscreen")
-                                        except Exception as e:
-                                            self.printException(e, "push_layout diff_fullscreen failed")
-                                        try:
-                                            self.app.push_focus("#right2")
-                                        except Exception as e:
-                                            self.printException(e, "could not push_focus #right2 on enter fullscreen")
-                                        # fullscreen state is derived from layout_stack; no flag to set
-                                        try:
-                                            footer = self.app.query_one("#footer", Label)
-                                            footer.update(Text("q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)", style="bold"))
-                                        except Exception:
-                                            pass
-                                    except Exception as e:
-                                        self.printException(e, "enter fullscreen check exception")
-
-                        except Exception as e:
-                            self.printException(e, "enter fullscreen check exception")
-                            try:
-                                try:
-                                    self.app.push_layout("diff_fullscreen")
-                                except Exception as e:
-                                    self.printException(e, "fallback push_layout diff_fullscreen exception")
-                                try:
-                                    self.app.push_focus("#right2")
-                                except Exception as e:
-                                    self.printException(e)
-                            except Exception as e:
-                                self.printException(e, "fallback enter fullscreen exception")
-
+                        # when not fullscreen, right behavior enters fullscreen
+                        self.key_right()
                 except Exception as e:
                     self.printException(e, "exception toggling fullscreen f/F")
                 return True
