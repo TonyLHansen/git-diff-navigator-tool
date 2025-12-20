@@ -729,11 +729,11 @@ class FileModeFileList(FileListBase):
                         hist.prepListModeHistoryList(item_name)
                         try:
                             # ensure history column is shown and focused
-                            self.push_layout("left_right_split")
+                            self.app.push_layout("left_right_split")
                         except Exception:
                             pass
                         try:
-                            self.push_focus("#right1")
+                            self.app.push_focus("#right1")
                         except Exception as e:
                             self.printException(e, "could not push_focus to history after prep")
                     except Exception as e:
