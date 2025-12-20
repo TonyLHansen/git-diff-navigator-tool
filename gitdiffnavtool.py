@@ -3011,32 +3011,72 @@ App {
         except Exception as e:
             self.printException(e, f"change_layout {newlayout}")
 
+    def _stack_push(self, stack_name: str, value) -> list:
+        """Generic push helper for refcounted stacks.
+
+        Ensures the named attribute exists as a list of (value,count) tuples,
+        collapses identical consecutive pushes by incrementing the count,
+        and returns the resulting stack.
+        """
+        try:
+            stack = getattr(self, stack_name, None)
+            if stack is None:
+                stack = []
+                setattr(self, stack_name, stack)
+            # If top matches, increment its count
+            if stack and stack[-1][0] == value:
+                name, cnt = stack[-1]
+                stack[-1] = (name, cnt + 1)
+            else:
+                stack.append((value, 1))
+            try:
+                logger.debug(f"_stack_push: {stack_name} after push={stack}")
+            except Exception:
+                pass
+            return stack
+        except Exception as e:
+            self.printException(e, f"_stack_push {stack_name}")
+            return getattr(self, stack_name, [])
+
+    def _stack_pop(self, stack_name: str) -> list:
+        """Generic pop helper for refcounted stacks.
+
+        Decrements the top count or removes the top entry; returns the
+        resulting stack.
+        """
+        try:
+            stack = getattr(self, stack_name, None)
+            if not stack:
+                return []
+            try:
+                name, cnt = stack[-1]
+                if cnt > 1:
+                    stack[-1] = (name, cnt - 1)
+                else:
+                    stack.pop()
+            except Exception:
+                pass
+            try:
+                logger.debug(f"_stack_pop: {stack_name} after pop={stack}")
+            except Exception:
+                pass
+            return stack
+        except Exception as e:
+            self.printException(e, f"_stack_pop {stack_name}")
+            return getattr(self, stack_name, [])
+
     def push_layout(self, newlayout: str) -> None:  # GitHistoryTool
         """Push a new layout onto the layout stack and apply it."""
         try:
             try:
                 logger.debug(f"push_layout: requested={newlayout} before={getattr(self,'layout_stack',None)}")
-            except Exception as e:
-                self.printException(e)
+            except Exception:
+                pass
 
             try:
-                # If top matches, increment its count
-                if getattr(self, "layout_stack", None) and self.layout_stack and self.layout_stack[-1][0] == newlayout:
-                    name, cnt = self.layout_stack[-1]
-                    self.layout_stack[-1] = (name, cnt + 1)
-                else:
-                    self.layout_stack.append((newlayout, 1))
+                self._stack_push("layout_stack", newlayout)
             except Exception as e:
-                self.printException(e)
-                try:
-                    self.layout_stack = [(newlayout, 1)]
-                except Exception as e:
-                    self.printException(e, "could not append to layout_stack")
-
-            try:
-                logger.debug(f"push_layout: stack after push={self.layout_stack}")
-            except Exception as e:
-                self.printException(e)
+                self.printException(e, "push_layout stack push failed")
 
             try:
                 self.change_layout(newlayout)
@@ -3050,31 +3090,21 @@ App {
         try:
             try:
                 logger.debug(f"pop_layout: stack before pop={getattr(self,'layout_stack',None)}")
-            except Exception as e:
-                self.printException(e)
+            except Exception:
+                pass
             try:
                 if not getattr(self, "layout_stack", None):
                     return
-            except Exception as e:
-                self.printException(e)
+            except Exception:
+                return
 
             try:
-                # Decrement count or remove current layout
-                try:
-                    name, cnt = self.layout_stack[-1]
-                    if cnt > 1:
-                        self.layout_stack[-1] = (name, cnt - 1)
-                    else:
-                        self.layout_stack.pop()
-                except Exception as e:
-                    self.printException(e)
-
-                # Determine previous layout name
+                self._stack_pop("layout_stack")
                 prev = self.layout_stack[-1][0] if self.layout_stack else "left_fullscreen"
                 try:
                     logger.debug(f"pop_layout: applying prev={prev} resulting_stack={self.layout_stack}")
-                except Exception as e:
-                    self.printException(e)
+                except Exception:
+                    pass
                 try:
                     self.change_layout(prev)
                 except Exception as e:
@@ -3148,27 +3178,14 @@ App {
         try:
             try:
                 logger.debug(f"push_footer: requested={value} before={getattr(self,'footer_stack',None)}")
-            except Exception as e:
-                self.printException(e)
+            except Exception:
+                pass
 
             try:
                 txt = self._normalize_footer(value)
-                # If top matches, increment its count
-                if getattr(self, "footer_stack", None) and self.footer_stack and self.footer_stack[-1][0] == txt:
-                    name, cnt = self.footer_stack[-1]
-                    self.footer_stack[-1] = (name, cnt + 1)
-                else:
-                    self.footer_stack.append((txt, 1))
-            except Exception:
-                try:
-                    self.footer_stack = [(self._normalize_footer(value), 1)]
-                except Exception as e:
-                    self.printException(e, "could not append to footer_stack")
-
-            try:
-                logger.debug(f"push_footer: stack after push={self.footer_stack}")
+                self._stack_push("footer_stack", txt)
             except Exception as e:
-                self.printException(e)
+                self.printException(e, "push_footer stack push failed")
 
             try:
                 self.change_footer(self.footer_stack[-1][0])
@@ -3182,30 +3199,21 @@ App {
         try:
             try:
                 logger.debug(f"pop_footer: stack before pop={getattr(self,'footer_stack',None)}")
-            except Exception as e:
-                self.printException(e)
+            except Exception:
+                pass
             try:
                 if not getattr(self, "footer_stack", None):
                     return
-            except Exception as e:
-                self.printException(e)
+            except Exception:
                 return
 
             try:
-                try:
-                    name, cnt = self.footer_stack[-1]
-                    if cnt > 1:
-                        self.footer_stack[-1] = (name, cnt - 1)
-                    else:
-                        self.footer_stack.pop()
-                except Exception as e:
-                    self.printException(e)
-
+                self._stack_pop("footer_stack")
                 prev = self.footer_stack[-1][0] if self.footer_stack else Text("q(uit)  ?/h(elp)  ← ↑ ↓ →")
                 try:
                     logger.debug(f"pop_footer: restoring prev={prev} resulting_stack={self.footer_stack}")
-                except Exception as e:
-                    self.printException(e)
+                except Exception:
+                    pass
                 try:
                     self.change_footer(prev)
                 except Exception as e:
@@ -3220,27 +3228,13 @@ App {
         try:
             try:
                 logger.debug(f"push_focus: requested={target} before={getattr(self,'focus_stack',None)}")
-            except Exception as e:
-                self.printException(e)
-
-            try:
-                # If top matches, increment its count
-                if getattr(self, "focus_stack", None) and self.focus_stack and self.focus_stack[-1][0] == target:
-                    name, cnt = self.focus_stack[-1]
-                    self.focus_stack[-1] = (name, cnt + 1)
-                else:
-                    self.focus_stack.append((target, 1))
             except Exception:
-                self.printException(e)
-                try:
-                    self.focus_stack = [(target, 1)]
-                except Exception:
-                    self.printException(None, "could not append to focus_stack")
+                pass
 
             try:
-                logger.debug(f"push_focus: stack after push={self.focus_stack}")
+                self._stack_push("focus_stack", target)
             except Exception as e:
-                self.printException(e)
+                self.printException(e, "push_focus stack push failed")
 
             try:
                 self.change_focus(target)
@@ -3254,31 +3248,21 @@ App {
         try:
             try:
                 logger.debug(f"pop_focus: stack before pop={getattr(self,'focus_stack',None)}")
-            except Exception as e:
-                self.printException(e)
+            except Exception:
+                pass
             try:
                 if not getattr(self, "focus_stack", None):
                     return
-            except Exception as e:
-                self.printException(e)
+            except Exception:
                 return
 
             try:
-                try:
-                    # Decrement count or remove current focus
-                    name, cnt = self.focus_stack[-1]
-                    if cnt > 1:
-                        self.focus_stack[-1] = (name, cnt - 1)
-                    else:
-                        self.focus_stack.pop()
-                except Exception as e:
-                    self.printException(e)
-
+                self._stack_pop("focus_stack")
                 prev = self.focus_stack[-1][0] if self.focus_stack else "#left"
                 try:
                     logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={self.focus_stack}")
-                except Exception as e:
-                    self.printException(e)
+                except Exception:
+                    pass
                 try:
                     self.change_focus(prev)
                 except Exception as e:
