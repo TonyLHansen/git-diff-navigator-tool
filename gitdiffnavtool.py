@@ -1045,16 +1045,16 @@ class RepoModeFileList(FileListBase):
 
             # Update titles so left shows 'History' and right1 hidden
             try:
-                lbl = self.app.query_one("#left-title", Label)
+                lbl = self.app.query_one("#left-history-title", Label)
                 lbl.update(Text("History", style="bold"))
             except Exception as e:
-                self.printException(e, "exception updating left-title")
+                self.printException(e, "exception updating left-history-title")
 
             try:
-                lbl = self.app.query_one("#right1-title", Label)
+                lbl = self.app.query_one("#right-file-title", Label)
                 lbl.styles.display = None
             except Exception as e:
-                self.printException(e, "exception hiding right1-title")
+                self.printException(e, "exception hiding right-file-title")
 
             # Focus the History column (left)
             try:
@@ -1839,27 +1839,42 @@ class RepoModeHistoryList(HistoryListBase):
 
             # Ensure a RepoModeFileList instance is available via app attribute and mount it
             try:
-                parent = None
+                # Use the already-composed repo_mode_file_list (no remounting).
                 try:
-                    parent = self.app.query_one("#right1-column")
-                except Exception as e:
-                    self.printException(e)
-                    parent = None
+                    file_list = self.app.repo_mode_file_list
+                    if file_list is None:
+                        try:
+                            file_list = self.app.query_one("#right-file-list", RepoModeFileList)
+                        except Exception:
+                            file_list = None
 
-                file_list = self.app.repo_mode_file_list
-                try:
-                    file_list = RepoModeFileList(id="right1")
-                    if parent is not None:
-                        self.app._mount_replace(parent, file_list)
-                    else:
-                        self.app.mount(file_list)
-                    self.app.repo_mode_file_list = file_list
-                except Exception as e:
-                    self.printException(e, "mounting right1")
+                    if file_list is None:
+                        try:
+                            self.app.push_screen(_TBDModal("Could not show files for commit diff"))
+                        except Exception as e:
+                            self.printException(e)
+                        return True
+
                     try:
-                        self.app.push_screen(_TBDModal("Could not show files for commit diff"))
+                        file_list.prepRepoModeFileList(previous_hash, current_hash)
+                    except Exception as e:
+                        self.printException(e, "prepRepoModeFileList failed")
+
+                    try:
+                        file_list.styles.display = None
                     except Exception as e:
                         self.printException(e)
+                    try:
+                        file_list.index = getattr(file_list, "_min_index", 0) or 0
+                    except Exception as e:
+                        self.printException(e)
+
+                    try:
+                        self.app.push_state("left_right_split", f"#{getattr(file_list, 'id', file_list.id if file_list else 'right-file-list')}", self.app.footer_file)
+                    except Exception as e:
+                        self.printException(e)
+                except Exception as e:
+                    self.printException(e, "unexpected error in key_right")
                     return True
 
                 try:
@@ -2073,12 +2088,12 @@ class DiffListBase(AppBase):
                     logger.debug(f"DiffList: rotated diff_cmd_index to {cur}, variant={variants[cur]}")
                     
                     try:
-                        title_lbl = self.app.query_one("#right2-title", Label)
+                        title_lbl = self.app.query_one("#diff-title", Label)
                         v = variants[cur]
                         title_text = "Diff" if not v else f"Diff {v}"
                         title_lbl.update(Text(title_text, style="bold"))
                     except Exception as e:
-                        self.printException(e, "updating right2 title exception")
+                        self.printException(e, "updating diff title exception")
 
                     if (
                         self.app.current_commit_sha
@@ -2494,19 +2509,28 @@ App {
     text-align: center;
 }
 /* Let the layout determine main area height so footer remains visible */
-#left {
+/* Column widget ids */
+#left-file-list {
     border: solid white;
     scrollbar-size-vertical: 1;
 }
-#right1 {
+#left-history-list {
+    border: solid white;
+    scrollbar-size-vertical: 1;
+}
+#right-history-list {
     border: heavy #555555;
     scrollbar-size-vertical: 1;
 }
-#right2 {
+#right-file-list {
     border: heavy #555555;
     scrollbar-size-vertical: 1;
 }
-#right3 {
+#diff-list {
+    border: heavy #555555;
+    scrollbar-size-vertical: 1;
+}
+#help-list {
     border: heavy #555555;
     scrollbar-size-vertical: 1;
 }
@@ -2589,85 +2613,108 @@ App {
     # Layout helpers on the App so widgets can call `self.app.layout_*`.
     def _apply_column_layout(  # GitHistoryTool
         self,
-        left_w: str,
-        right1_w: str,
-        right2_w: str,
-        right3_w,
-        left_display=None,
-        right1_display=None,
-        right2_display=None,
-        right3_display=None,
+        left_file_w: str,
+        left_history_w: str,
+        right_history_w: str,
+        right_file_w: str,
+        diff_w: str,
+        help_w: str,
+        left_file_display=None,
+        left_history_display=None,
+        right_history_display=None,
+        right_file_display=None,
+        diff_display=None,
+        help_display=None,
     ) -> None:
         try:
             try:
-                lc = self.query_one("#left-column")
-                lc.styles.width = left_w
-                lc.styles.flex = 0
+                c1 = self.query_one("#left-file-column")
+                c1.styles.width = left_file_w
+                c1.styles.flex = 0
             except Exception as e:
-                self.printException(e, "could not set left-column")
+                self.printException(e, "could not set left-file-column")
             try:
-                r1c = self.query_one("#right1-column")
-                r1c.styles.width = right1_w
-                r1c.styles.flex = 0
+                c2 = self.query_one("#left-history-column")
+                c2.styles.width = left_history_w
+                c2.styles.flex = 0
             except Exception as e:
-                self.printException(e, "could not set right1-column")
+                self.printException(e, "could not set left-history-column")
             try:
-                r2c = self.query_one("#right2-column")
-                r2c.styles.width = right2_w
-                r2c.styles.flex = 0
+                c3 = self.query_one("#right-history-column")
+                c3.styles.width = right_history_w
+                c3.styles.flex = 0
             except Exception as e:
-                self.printException(e, "could not set right2-column")
+                self.printException(e, "could not set right-history-column")
             try:
-                r3c = self.query_one("#right3-column")
-                r3c.styles.width = right3_w
-                r3c.styles.flex = 0
+                c4 = self.query_one("#right-file-column")
+                c4.styles.width = right_file_w
+                c4.styles.flex = 0
             except Exception as e:
-                # Right3 column may not always be present; log and continue
-                self.printException(e, "could not set right3-column")
+                self.printException(e, "could not set right-file-column")
+            try:
+                c5 = self.query_one("#diff-column")
+                c5.styles.width = diff_w
+                c5.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set diff-column")
+            try:
+                c6 = self.query_one("#help-column")
+                c6.styles.width = help_w
+                c6.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set help-column")
 
             try:
-                # Always assign display values (None means visible)
-                # Prefer attribute-backed widget references when available
-
+                # left-file-list
                 try:
-                    if self.log_first:
-                        left_wgt = self.repo_mode_history_list
+                    lf = self.file_mode_file_list
+                    if lf is not None:
+                        lf.styles.display = left_file_display
                     else:
-                        left_wgt = self.file_mode_file_list
-                    if left_wgt is not None:
-                        left_wgt.styles.display = left_display
-                    else:
-                        self.query_one("#left").styles.display = left_display
+                        self.query_one("#left-file-list").styles.display = left_file_display
                 except Exception as e:
-                    self.printException(e, "could not set left display in _apply_column_layout")
+                    self.printException(e, "could not set left-file-list display in _apply_column_layout")
                 try:
-                    if self.log_first:
-                        r1_wgt = self.repo_mode_file_list
+                    # left-history-list
+                    lh = self.repo_mode_history_list if self.log_first else self.file_mode_history_list
+                    if lh is not None:
+                        lh.styles.display = left_history_display
                     else:
-                        r1_wgt = self.file_mode_history_list
-                    if r1_wgt is not None:
-                        r1_wgt.styles.display = right1_display
-                    else:
-                        self.query_one("#right1").styles.display = right1_display
+                        self.query_one("#left-history-list").styles.display = left_history_display
                 except Exception as e:
-                    self.printException(e, "could not set right1 display in _apply_column_layout")
+                    self.printException(e, "could not set left-history-list display in _apply_column_layout")
                 try:
-                    if self.log_first:
-                        r2_wgt = self.repo_mode_diff_list
+                    # right-history-list
+                    rh = self.file_mode_history_list if self.log_first else self.repo_mode_history_list
+                    if rh is not None:
+                        rh.styles.display = right_history_display
                     else:
-                        r2_wgt = self.file_mode_diff_list
-                    if r2_wgt is not None:
-                        r2_wgt.styles.display = right2_display
-                    else:
-                        self.query_one("#right2").styles.display = right2_display
+                        self.query_one("#right-history-list").styles.display = right_history_display
                 except Exception as e:
-                    self.printException(e, "could not set right2 display in _apply_column_layout")
+                    self.printException(e, "could not set right-history-list display in _apply_column_layout")
                 try:
-                    # help_list must exist after allocation
-                    self.help_list.styles.display = right3_display
-                    
+                    # right-file-list
+                    rf = self.repo_mode_file_list
+                    if rf is not None:
+                        rf.styles.display = right_file_display
+                    else:
+                        self.query_one("#right-file-list").styles.display = right_file_display
                 except Exception as e:
-                    self.printException(e, "could not set right3 display in _apply_column_layout")
+                    self.printException(e, "could not set right-file-list display in _apply_column_layout")
+                try:
+                    # diff-list
+                    dl = self.repo_mode_diff_list if self.log_first else self.file_mode_diff_list
+                    if dl is not None:
+                        dl.styles.display = diff_display
+                    else:
+                        self.query_one("#diff-list").styles.display = diff_display
+                except Exception as e:
+                    self.printException(e, "could not set diff-list display in _apply_column_layout")
+                try:
+                    # help-list must exist after allocation
+                    self.help_list.styles.display = help_display
+                except Exception as e:
+                    self.printException(e, "could not set help-list display in _apply_column_layout")
             except Exception as e:
                 self.printException(e, "could not assign displays in _apply_column_layout")
 
@@ -2682,61 +2729,132 @@ App {
         """
         try:
             logger.debug(f"change_layout: newlayout={newlayout}")
-            if newlayout == "left_fullscreen":
+            if newlayout == "file_fullscreen":
+                # show left-file-list only
                 self._apply_column_layout(
                     "100%",
                     "0%",
                     "0%",
                     "0%",
-                    left_display=None,
-                    right1_display="none",
-                    right2_display="none",
-                    right3_display="none",
+                    "0%",
+                    "0%",
+                    left_file_display=None,
+                    left_history_display="none",
+                    right_history_display="none",
+                    right_file_display="none",
+                    diff_display="none",
+                    help_display="none",
                 )
-            elif newlayout == "left_right_split":
+            elif newlayout == "history_fullscreen":
+                # show left-history-list only
+                self._apply_column_layout(
+                    "0%",
+                    "100%",
+                    "0%",
+                    "0%",
+                    "0%",
+                    "0%",
+                    left_file_display="none",
+                    left_history_display=None,
+                    right_history_display="none",
+                    right_file_display="none",
+                    diff_display="none",
+                    help_display="none",
+                )
+            elif newlayout == "file_history":
+                # left-file-list (25%), left-history-list (25%), others hidden
                 self._apply_column_layout(
                     "25%",
-                    "75%",
+                    "25%",
                     "0%",
                     "0%",
-                    left_display=None,
-                    right1_display=None,
-                    right2_display="none",
-                    right3_display="none",
+                    "0%",
+                    "0%",
+                    left_file_display=None,
+                    left_history_display=None,
+                    right_history_display="none",
+                    right_file_display="none",
+                    diff_display="none",
+                    help_display="none",
                 )
-            elif newlayout == "three_columns":
+            elif newlayout == "history_file":
+                # left-history-list then right-file-list
                 self._apply_column_layout(
-                    "5%",
-                    "15%",
-                    "80%",
                     "0%",
-                    left_display=None,
-                    right1_display=None,
-                    right2_display=None,
-                    right3_display=None,
+                    "25%",
+                    "0%",
+                    "25%",
+                    "0%",
+                    "0%",
+                    left_file_display="none",
+                    left_history_display=None,
+                    right_history_display="none",
+                    right_file_display=None,
+                    diff_display="none",
+                    help_display="none",
+                )
+            elif newlayout == "file_history_diff":
+                # show left-file, left-history, diff
+                self._apply_column_layout(
+                    "20%",
+                    "20%",
+                    "0%",
+                    "0%",
+                    "60%",
+                    "0%",
+                    left_file_display=None,
+                    left_history_display=None,
+                    right_history_display="none",
+                    right_file_display="none",
+                    diff_display=None,
+                    help_display="none",
+                )
+            elif newlayout == "history_file_diff":
+                # show left-history, right-file, diff
+                self._apply_column_layout(
+                    "0%",
+                    "25%",
+                    "0%",
+                    "25%",
+                    "50%",
+                    "0%",
+                    left_file_display="none",
+                    left_history_display=None,
+                    right_history_display="none",
+                    right_file_display=None,
+                    diff_display=None,
+                    help_display="none",
                 )
             elif newlayout == "diff_fullscreen":
                 self._apply_column_layout(
                     "0%",
                     "0%",
+                    "0%",
+                    "0%",
                     "100%",
                     "0%",
-                    left_display="none",
-                    right1_display="none",
-                    right2_display=None,
-                    right3_display="none",
+                    left_file_display="none",
+                    left_history_display="none",
+                    right_history_display="none",
+                    right_file_display="none",
+                    diff_display=None,
+                    help_display="none",
                 )
             elif newlayout == "help_fullscreen":
-                # Show only the Help column (right3)
+                # Show only the Help column
                 self._apply_column_layout(
                     "0%",
                     "0%",
                     "0%",
+                    "0%",
+                    "0%",
                     "100%",
-                    left_display="none",
-                    right1_display="none",
-                    right2_display="none",
-                    right3_display=None,
+                    left_file_display="none",
+                    left_history_display="none",
+                    right_history_display="none",
+                    right_file_display="none",
+                    diff_display="none",
+                    help_display=None,
                 )
             else:
                 raise ValueError(f"unknown layout: {newlayout}")
@@ -3026,7 +3144,7 @@ App {
 
             try:
                 self._stack_pop("focus_stack")
-                prev = self.focus_stack[-1][0] if self.focus_stack else "#left"
+                prev = self.focus_stack[-1][0] if self.focus_stack else "#left-file-list"
                 try:
                     logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={self.focus_stack}")
                 except Exception as e:
@@ -3236,36 +3354,27 @@ App {
         with Vertical(id="root"):
             yield Label(Text(self.TITLE, style="bold"), id="title")
             with Horizontal(id="main"):
-                # allow alternate column ordering when starting in log-first mode
-                if self.log_first:
-                    # History on the left, Files in the middle, Diff on the right
-                    with Vertical(id="left-column"):
-                        yield Label(Text("History", style="bold"), id="left-title")
-                        yield RepoModeHistoryList(id="left")
-                    with Vertical(id="right1-column"):
-                        yield Label(Text("Files", style="bold"), id="right1-title")
-                        yield FileModeFileList(id="right1")
-                    with Vertical(id="right2-column"):
-                        yield Label(Text("Diff", style="bold"), id="right2-title")
-                        yield FileModeDiffList(id="right2")
-                    with Vertical(id="right3-column"):
-                        yield Label(Text("Help", style="bold"), id="right3-title")
-                        yield HelpList(id="right3")
-                else:
-                    # default: Files on the left, History middle, Diff right
-                    with Vertical(id="left-column"):
-                        yield Label(Text("Files", style="bold"), id="left-title")
-                        yield FileModeFileList(id="left")
-                    # three minimal right columns
-                    with Vertical(id="right1-column"):
-                        yield Label(Text("History", style="bold"), id="right1-title")
-                        yield FileModeHistoryList(id="right1")
-                    with Vertical(id="right2-column"):
-                        yield Label(Text("Diff", style="bold"), id="right2-title")
-                        yield FileModeDiffList(id="right2")
-                    with Vertical(id="right3-column"):
-                        yield Label(Text("Help", style="bold"), id="right3-title")
-                        yield HelpList(id="right3")
+                # Six dedicated columns in fixed order:
+                # left-file-list, left-history-list, right-history-list,
+                # right-file-list, diff-list, help-list
+                with Vertical(id="left-file-column"):
+                    yield Label(Text("Files", style="bold"), id="left-file-title")
+                    yield FileModeFileList(id="left-file-list")
+                with Vertical(id="left-history-column"):
+                    yield Label(Text("History", style="bold"), id="left-history-title")
+                    yield FileModeHistoryList(id="left-history-list")
+                with Vertical(id="right-history-column"):
+                    yield Label(Text("History", style="bold"), id="right-history-title")
+                    yield FileModeHistoryList(id="right-history-list")
+                with Vertical(id="right-file-column"):
+                    yield Label(Text("Files", style="bold"), id="right-file-title")
+                    yield FileModeFileList(id="right-file-list")
+                with Vertical(id="diff-column"):
+                    yield Label(Text("Diff", style="bold"), id="diff-title")
+                    yield FileModeDiffList(id="diff-list")
+                with Vertical(id="help-column"):
+                    yield Label(Text("Help", style="bold"), id="help-title")
+                    yield HelpList(id="help-list")
 
                 # GitHistoryTool footer
                 yield Label(self.footer_file, id="footer")
@@ -3313,161 +3422,60 @@ App {
         cache, and sets the initial path listing. If the app was launched with
         a filename, it will also open that file's history.
         """
-        # Query column containers and mount the seven canonical widgets
+        # Resolve references to the six canonical widgets composed in `compose()`
         try:
             try:
-                left_col = self.query_one("#left-column")
+                self.file_mode_file_list = self.query_one("#left-file-list", FileListBase)
+                logger.debug(f"on_mount: found composed file_mode_file_list id={getattr(self.file_mode_file_list,'id',None)}")
             except Exception as e:
                 self.printException(e)
-                left_col = None
+                self.file_mode_file_list = FileModeFileList(id="left-file-list")
+                logger.debug(f"on_mount: created file_mode_file_list id={getattr(self.file_mode_file_list,'id',None)}")
+
             try:
-                right1_col = self.query_one("#right1-column")
+                self.file_mode_history_list = self.query_one("#left-history-list", HistoryListBase)
+                logger.debug(f"on_mount: found composed file_mode_history_list id={getattr(self.file_mode_history_list,'id',None)}")
             except Exception as e:
                 self.printException(e)
-                right1_col = None
+                self.file_mode_history_list = FileModeHistoryList(id="left-history-list")
+                logger.debug(f"on_mount: created file_mode_history_list id={getattr(self.file_mode_history_list,'id',None)}")
+
             try:
-                right2_col = self.query_one("#right2-column")
+                self.repo_mode_history_list = self.query_one("#right-history-list", HistoryListBase)
+                logger.debug(f"on_mount: found composed repo_mode_history_list id={getattr(self.repo_mode_history_list,'id',None)}")
             except Exception as e:
                 self.printException(e)
-                right2_col = None
+                self.repo_mode_history_list = RepoModeHistoryList(id="right-history-list")
+                logger.debug(f"on_mount: created repo_mode_history_list id={getattr(self.repo_mode_history_list,'id',None)}")
+
             try:
-                right3_col = self.query_one("#right3-column")
+                self.repo_mode_file_list = self.query_one("#right-file-list", FileListBase)
+                logger.debug(f"on_mount: found composed repo_mode_file_list id={getattr(self.repo_mode_file_list,'id',None)}")
             except Exception as e:
                 self.printException(e)
-                right3_col = None
+                self.repo_mode_file_list = RepoModeFileList(id="right-file-list")
+                logger.debug(f"on_mount: created repo_mode_file_list id={getattr(self.repo_mode_file_list,'id',None)}")
 
-            # Resolve references to the seven canonical widgets. Prefer the
-            # composed instances (from `compose`) when present; otherwise
-            # create the missing widget but give it a unique id to avoid
-            # colliding with already-mounted widgets.
             try:
-                # left column: try to resolve whichever canonical widget is composed
-                try:
-                    try:
-                        node = self.query_one("#left", AppBase)
-                        if isinstance(node, FileListBase):
-                            self.file_mode_file_list = node
-                            logger.debug(f"on_mount: left contains FileListBase id={getattr(node,'id',None)}")
-                        elif isinstance(node, HistoryListBase):
-                            self.repo_mode_history_list = node
-                            logger.debug(f"on_mount: left contains HistoryListBase id={getattr(node,'id',None)}")
-                        else:
-                            logger.debug(f"on_mount: left contains unexpected node {type(node)!r}; creating fallbacks")
-                            self.file_mode_file_list = FileModeFileList(id="left-file-mode")
-                            self.repo_mode_history_list = RepoModeHistoryList(id="left-repo-mode")
-                    except Exception as e:
-                        self.printException(e)
-                        self.file_mode_file_list = FileModeFileList(id="left-file-mode")
-                        self.repo_mode_history_list = RepoModeHistoryList(id="left-repo-mode")
-                except Exception as e:
-                    self.printException(e)
-                    self.file_mode_file_list = FileModeFileList(id="left-file-mode")
-                    self.repo_mode_history_list = RepoModeHistoryList(id="left-repo-mode")
-
-                # middle column (right1): try to resolve either HistoryListBase or FileListBase
-                try:
-                    try:
-                        node = self.query_one("#right1", AppBase)
-                        if isinstance(node, HistoryListBase):
-                            self.file_mode_history_list = node
-                            logger.debug(f"on_mount: right1 contains HistoryListBase id={getattr(node,'id',None)}")
-                        elif isinstance(node, FileListBase):
-                            self.repo_mode_file_list = node
-                            logger.debug(f"on_mount: right1 contains FileListBase id={getattr(node,'id',None)}")
-                        else:
-                            logger.debug(f"on_mount: right1 contains unexpected node {type(node)!r}; creating fallbacks")
-                            self.file_mode_history_list = FileModeHistoryList(id="right1-file-mode")
-                            self.repo_mode_file_list = RepoModeFileList(id="right1-repo-mode")
-                    except Exception as e:
-                        self.printException(e)
-                        self.file_mode_history_list = FileModeHistoryList(id="right1-file-mode")
-                        self.repo_mode_file_list = RepoModeFileList(id="right1-repo-mode")
-                except Exception as e:
-                    self.printException(e)
-                    self.file_mode_history_list = FileModeHistoryList(id="right1-file-mode")
-                    self.repo_mode_file_list = RepoModeFileList(id="right1-repo-mode")
-
-                # right column (right2): diff lists
-                try:
-                    self.file_mode_diff_list = self.query_one("#right2", DiffListBase)
-                    logger.debug(
-                        f"on_mount: found composed file_mode_diff_list id={getattr(self.file_mode_diff_list,'id',None)}"
-                    )
-                except Exception as e:
-                    self.printException(e)
-                    self.file_mode_diff_list = FileModeDiffList(id="right2-file-mode")
-                    logger.debug(f"on_mount: created file_mode_diff_list id={getattr(self.file_mode_diff_list,'id',None)}")
-
-                try:
-                    self.repo_mode_diff_list = self.query_one("#right2", DiffListBase)
-                    logger.debug(
-                        f"on_mount: found composed repo_mode_diff_list id={getattr(self.repo_mode_diff_list,'id',None)}"
-                    )
-                except Exception as e:
-                    self.printException(e)
-                    self.repo_mode_diff_list = RepoModeDiffList(id="right2-repo-mode")
-                    logger.debug(f"on_mount: created repo_mode_diff_list id={getattr(self.repo_mode_diff_list,'id',None)}")
-
-                # help column
-                try:
-                    self.help_list = self.query_one("#right3", HelpList)
-                    logger.debug(f"on_mount: found composed help_list id={getattr(self.help_list,'id',None)}")
-                except Exception as e:
-                    self.printException(e)
-                    self.help_list = HelpList(id="right3-help")
-                    logger.debug(f"on_mount: created help_list id={getattr(self.help_list,'id',None)}")
-            except Exception as e:
-                # Allocation/resolution raised an exception; log and abort.
-                raise RuntimeError(f"Critical widget allocation/resolution failure: {e}") from e
-                
-            # Mount the appropriate mode widgets into the columns based on startup mode
-            try:
-                if self.log_first:
-                    # mount repo-mode widgets
-                    try:
-                        if self.repo_mode_history_list is not None and left_col is not None:
-                            self._mount_replace(left_col, self.repo_mode_history_list)
-                    except Exception as e:
-                        self.printException(e)
-                    try:
-                        if self.repo_mode_file_list is not None and right1_col is not None:
-                            self._mount_replace(right1_col, self.repo_mode_file_list)
-                    except Exception as e:
-                        self.printException(e)
-                    try:
-                        if self.repo_mode_diff_list is not None and right2_col is not None:
-                            self._mount_replace(right2_col, self.repo_mode_diff_list)
-                    except Exception as e:
-                        self.printException(e)
-                else:
-                    # mount file-mode widgets
-                    try:
-                        if self.file_mode_file_list is not None and left_col is not None:
-                            self._mount_replace(left_col, self.file_mode_file_list)
-                    except Exception as e:
-                        self.printException(e)
-                    try:
-                        if self.file_mode_history_list is not None and right1_col is not None:
-                            self._mount_replace(right1_col, self.file_mode_history_list)
-                    except Exception as e:
-                        self.printException(e)
-                    try:
-                        if self.file_mode_diff_list is not None and right2_col is not None:
-                            self._mount_replace(right2_col, self.file_mode_diff_list)
-                    except Exception as e:
-                        self.printException(e)
-
-                # Always mount help into right3 when available
-                try:
-                    if self.help_list is not None and right3_col is not None:
-                        self._mount_replace(right3_col, self.help_list)
-                except Exception as e:
-                    self.printException(e)
+                self.file_mode_diff_list = self.query_one("#diff-list", DiffListBase)
+                logger.debug(f"on_mount: found composed file_mode_diff_list id={getattr(self.file_mode_diff_list,'id',None)}")
+                # Use same diff widget for repo/file modes; they share DiffListBase
+                self.repo_mode_diff_list = self.file_mode_diff_list
             except Exception as e:
                 self.printException(e)
+                self.file_mode_diff_list = FileModeDiffList(id="diff-list")
+                self.repo_mode_diff_list = self.file_mode_diff_list
+                logger.debug(f"on_mount: created file_mode_diff_list id={getattr(self.file_mode_diff_list,'id',None)}")
 
+            try:
+                self.help_list = self.query_one("#help-list", HelpList)
+                logger.debug(f"on_mount: found composed help_list id={getattr(self.help_list,'id',None)}")
+            except Exception as e:
+                self.printException(e)
+                self.help_list = HelpList(id="help-list")
+                logger.debug(f"on_mount: created help_list id={getattr(self.help_list,'id',None)}")
         except Exception as e:
-            self.printException(e)
+            raise RuntimeError(f"Critical widget allocation/resolution failure: {e}") from e
         # Eager queries for right1/right2/right3 removed — query these widgets on demand.
         # Ensure the main horizontal fills remaining space so the title remains visible
         try:
@@ -3497,11 +3505,11 @@ App {
                 self.repo_mode_history_list.prepRepoModeHistoryList()
                 # Resolve the left target id from attributes (direct access)
                 left_widget = self.repo_mode_history_list if self.log_first else self.file_mode_file_list
-                left_target = f"#{left_widget.id}" if left_widget is not None else "#left"
+                left_target = f"#{left_widget.id}" if left_widget is not None else "#left-file-list"
                 self.push_state(
-                    "left_fullscreen",
+                    "history_fullscreen",
                     left_target,
-                            self.footer_history,
+                    self.footer_history,
                 )
             except Exception as e:
                 self.printException(e)
@@ -3509,7 +3517,7 @@ App {
             try:
                 self.file_mode_file_list.prepFileModeFileList(self.path)
                 # make sure the stacks contain the initial state
-                self.push_state("left_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
+                self.push_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
                 if self.initial_file:
                     self.file_mode_history_list.prepFileModeHistoryList(self.initial_file)
                     self.push_state("left_right_split", f"#{self.file_mode_history_list.id}", self.footer_history)
@@ -3570,7 +3578,7 @@ App {
                     try:
                         self.push_state(
                             "help_fullscreen",
-                            "#right3",
+                            "#help-list",
                             Text("q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold"),
                         )
                     except Exception as e:
