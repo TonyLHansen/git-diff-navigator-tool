@@ -311,38 +311,30 @@ class AppBase(ListView):
         """
         return False
 
-    def prep_and_show_diff(self, filename: str, prev: Optional[str], curr: Optional[str]) -> None:  # AppBase
+    def prep_and_show_diff(
+        self, filename: str, prev: Optional[str], curr: Optional[str], diff_widget
+    ) -> None:  # AppBase
         """Helper to populate the shared Diff column and make it visible.
 
         This centralizes the common sequence used by multiple callers: find
         the `#right2` diff widget, call its `prepDiffListBase`, and ensure
         the app shows the three-column layout with focus and footer set.
         """
+        # Caller MUST pass the correct diff widget matching the caller's mode.
         try:
-            diff_widget = None
             try:
-                diff_widget = self.app.query_one("#right2")
-            except Exception as e:
-                self.printException(e, "locating right2 diff widget")
+                diff_widget.prepDiffListBase(filename, prev, curr)
+            except Exception as exc:
+                try:
+                    self.app.push_screen(_TBDModal(str(exc)))
+                except Exception as e:
+                    self.printException(e, "could not push TBDModal for diff-fullscreen error")
 
-            if diff_widget is not None and hasattr(diff_widget, "prepDiffListBase"):
-                try:
-                    diff_widget.prepDiffListBase(filename, prev, curr)
-                except Exception as exc:
-                    try:
-                        self.app.push_screen(_TBDModal(str(exc)))
-                    except Exception as e:
-                        self.printException(e, "could not push TBDModal for diff-fullscreen error")
-                # Use helper to push layout/focus/footer together
-                try:
-                    self.app.push_state("three_columns", "#right2", self.app.footer_diff3)
-                except Exception as e:
-                    self.printException(e, "error ensuring layout/focus for diff")
-            else:
-                try:
-                    self.app.push_screen(_TBDModal("Could not show diff (no diff widget)"))
-                except Exception as e:
-                    self.printException(e)
+            # Ensure three-column layout, focus, and footer are applied for diff
+            try:
+                self.app.push_state("three_columns", f"#{diff_widget.id}", self.app.footer_diff3)
+            except Exception as e:
+                self.printException(e, "error ensuring layout/focus for diff")
         except Exception as e:
             self.printException(e)
 
@@ -767,28 +759,23 @@ class FileModeFileList(FileListBase):
 
             # Delegate history population to the FileModeHistoryList preparatory API
             try:
-                hist = None
-                try:
-                    hist = self.app.query_one("#right1")
-                except Exception as e:
-                    self.printException(e)
-                    hist = None
-
-                # ???? how can there not be a history widget here?
-                # ???? if hist is None, should we bail here instead of trying left?
-                # ???? if there is no prepListModeHistoryList method, should we bail instead of trying fallback?
-                # ???? assert(hist is not None), "No history widget found"
-                # ???? assert(hasattr(hist, "prepListModeHistoryList")), "History widget has no prepListModeHistoryList method"
-                # ???? we KNOW that there IS a prepListModeHistoryList, so why check?
-
-                # If the right1 widget doesn't expose the preparatory API,
-                # try the alternate left location (log-first layouts).
+                
+                
+                # Use file-mode history list only (do not mix modes)
+                hist = getattr(self.app, "file_mode_history_list", None)
+                # ???? bail if no history list available
+                # ???? we KNOW it has prepListModeHistoryList because it's FileModeHistoryList
+                # ???? do NOT fall back, but bail out instead
+                # If we didn't find an attribute-backed history list, fall back to DOM queries
                 if hist is None or not hasattr(hist, "prepListModeHistoryList"):
                     try:
-                        hist = self.app.query_one("#left")
+                        hist = self.app.query_one("#right1")
                     except Exception as e:
                         self.printException(e)
-                        hist = None
+                        try:
+                            hist = self.app.query_one("#left")
+                        except Exception:
+                            hist = None
 
                 if hist is not None and hasattr(hist, "prepListModeHistoryList"):
                     try:
@@ -808,8 +795,10 @@ class FileModeFileList(FileListBase):
                             # fallback: ask app to open history for file
                             if hasattr(self.app, "_open_history_for_file"):
                                 self.app._open_history_for_file(item_name)
+                                # ???? use push_state becase _open_history_for_file no longer sets layout/focus/footer
                                 try:
-                                    self.app.push_focus("#right1")
+                                    tgt = f"#{getattr(hist, 'id', 'right1')}"
+                                    self.app.push_focus(tgt)
                                     self.app.push_footer(self.app.footer_history)
                                 except Exception as e:
                                     self.printException(e)
@@ -821,7 +810,8 @@ class FileModeFileList(FileListBase):
                         if hasattr(self.app, "_open_history_for_file"):
                             self.app._open_history_for_file(item_name)
                             try:
-                                self.app.push_focus("#right1")
+                                tgt = f"#{getattr(hist, 'id', 'right1')}"
+                                self.app.push_focus(tgt)
                                 self.app.push_footer(self.app.footer_history)
                             except Exception as e:
                                 self.printException(e)
@@ -1078,12 +1068,7 @@ class RepoModeFileList(FileListBase):
 
             # Focus the History column (left)
             try:
-                left = None
-                try:
-                    left = self.app.query_one("#left")
-                except Exception as e:
-                    self.printException(e)
-                    left = None
+                left = getattr(self.app, "repo_mode_history_list", None)
                 if left is not None:
                     try:
                         try:
@@ -1172,7 +1157,7 @@ class RepoModeFileList(FileListBase):
         try:
             # Delegate to centralized helper
             try:
-                self.prep_and_show_diff(filename, previous_hash, current_hash)
+                self.prep_and_show_diff(filename, previous_hash, current_hash, self.app.repo_mode_diff_list)
             except Exception as e:
                 self.printException(e, "prep_and_show_diff failed")
 
@@ -1424,7 +1409,7 @@ class HistoryListBase(AppBase):
 class FileModeHistoryList(HistoryListBase):
     """subclass for FileMode HistoryList functionality; see `HistoryListBase` for shared logic."""
 
-    def prepListModeHistoryList(self, file_path: str) -> None:  # FileModeHistoryList
+    def prepFileModeHistoryList(self, file_path: str) -> None:  # FileModeHistoryList
         """Populate this History list with the commit history for a single file.
 
         Accepts a file path (filename relative to `self.app.path`) and
@@ -1716,7 +1701,7 @@ class FileModeHistoryList(HistoryListBase):
         try:
             # Delegate to centralized helper
             try:
-                self.prep_and_show_diff(filename, previous_hash, current_hash)
+                self.prep_and_show_diff(filename, previous_hash, current_hash, self.app.file_mode_diff_list)
             except Exception as e:
                 self.printException(e, "prep_and_show_diff failed")
 
@@ -1878,7 +1863,7 @@ class RepoModeHistoryList(HistoryListBase):
                     self.printException(e)
                 return True
 
-            # Ensure a RepoModeFileList is present at #right1, mount if needed
+            # Ensure a RepoModeFileList instance is available via app attribute and mount it
             try:
                 parent = None
                 try:
@@ -1886,19 +1871,16 @@ class RepoModeHistoryList(HistoryListBase):
                 except Exception:
                     parent = None
 
-                file_list = None
-                try:
-                    file_list = self.app.query_one("#right1")
-                except Exception:
-                    file_list = None
-
+                file_list = getattr(self.app, "repo_mode_file_list", None)
+                # ???? We KNOW there will be one. BAIL if it does not exist
                 if file_list is None:
-                    file_list = RepoModeFileList(id="right1")
                     try:
+                        file_list = RepoModeFileList(id="right1")
                         if parent is not None:
-                            parent.mount(file_list)
+                            self.app._mount_replace(parent, file_list)
                         else:
                             self.app.mount(file_list)
+                        self.app.repo_mode_file_list = file_list
                     except Exception as e:
                         self.printException(e, "mounting right1")
                         try:
@@ -1907,36 +1889,13 @@ class RepoModeHistoryList(HistoryListBase):
                             pass
                         return True
                 else:
-                    # If an existing widget is present but not the repo-mode
-                    # specialized list, try converting it in-place; if that
-                    # fails, remove and create a fresh RepoModeFileList.
-                    if not isinstance(file_list, RepoModeFileList):
-                        try:
-                            file_list.__class__ = RepoModeFileList
-                        except Exception:
-                            try:
-                                file_list.remove()
-                            except Exception:
-                                pass
-                            file_list = RepoModeFileList(id="right1")
-                            try:
-                                if parent is not None:
-                                    parent.mount(file_list)
-                                else:
-                                    self.app.mount(file_list)
-                            except Exception as e:
-                                self.printException(e, "mounting replacement right1")
-                                try:
-                                    self.app.push_screen(_TBDModal("Could not show files for commit diff"))
-                                except Exception:
-                                    pass
-                                return True
+                    # Ensure the attribute-backed widget is mounted into the parent
                     try:
-                        file_list.clear()
+                        if parent is not None:
+                            self.app._mount_replace(parent, file_list)
                     except Exception:
                         pass
 
-                # Delegate population to the RepoModeFileList helper
                 try:
                     file_list.current_commit_sha = current_hash
                     file_list.current_prev_sha = previous_hash
@@ -2148,27 +2107,7 @@ class DiffListBase(AppBase):
                     cur = (cur + 1) % max(1, len(variants))
                     self.app.diff_cmd_index = cur
                     logger.debug(f"DiffList: rotated diff_cmd_index to {cur}, variant={variants[cur]}")
-                    # Update footer to show current variant briefly
-                    try:
-                        footer = self.app.query_one("#footer", Label)
-                        v = variants[cur]
-                        vlabel = v if v else "default"
-                        if self.app.is_diff_fullscreen():
-                            try:
-                                self.app.change_footer(
-                                    Text(f"q(uit)  ?/h(elp)  ↑ ↓   ←/f(ull)  d:{vlabel}", style="bold")
-                                )
-                            except Exception as e:
-                                self.printException(e, "could not change footer")
-                        else:
-                            footer.update(
-                                Text(
-                                    f"q(uit)  ?/h(elp)  ← ↑ ↓   PgUp/PgDn  c(olor)  →/f(ull)  d:{vlabel}", style="bold"
-                                )
-                            )
-                    except Exception as e:
-                        self.printException(e, "could not schedule timer or call_after_refresh")
-
+                    
                     try:
                         title_lbl = self.app.query_one("#right2-title", Label)
                         v = variants[cur]
@@ -2724,20 +2663,48 @@ App {
 
             try:
                 # Always assign display values (None means visible)
+                # Prefer attribute-backed widget references when available
+                # ???? We KNOW that the attributes exist here, so why not just use them?
+                # ???? how will this work if both attributes are assigned, as they should be?
+                # ???? can we set current_history_list and current_file_list attributes, then use that?
+
                 try:
-                    self.query_one("#left").styles.display = left_display
+                    if getattr(self, "log_first", False):
+                        left_wgt = self.repo_mode_history_list
+                    else:
+                        left_wgt = self.file_mode_file_list
+                    if left_wgt is not None:
+                        left_wgt.styles.display = left_display
+                    else:
+                        self.query_one("#left").styles.display = left_display
                 except Exception as e:
                     self.printException(e, "could not set left display in _apply_column_layout")
                 try:
-                    self.query_one("#right1").styles.display = right1_display
+                    if getattr(self, "log_first", False):
+                        r1_wgt = self.repo_mode_file_list
+                    else:
+                        r1_wgt = self.file_mode_history_list
+                    if r1_wgt is not None:
+                        r1_wgt.styles.display = right1_display
+                    else:
+                        self.query_one("#right1").styles.display = right1_display
                 except Exception as e:
                     self.printException(e, "could not set right1 display in _apply_column_layout")
                 try:
-                    self.query_one("#right2").styles.display = right2_display
+                    if getattr(self, "log_first", False):
+                        r2_wgt = self.repo_mode_diff_list
+                    else:
+                        r2_wgt = self.file_mode_diff_list
+                    if r2_wgt is not None:
+                        r2_wgt.styles.display = right2_display
+                    else:
+                        self.query_one("#right2").styles.display = right2_display
                 except Exception as e:
                     self.printException(e, "could not set right2 display in _apply_column_layout")
                 try:
-                    self.query_one("#right3").styles.display = right3_display
+                    # help_list must exist after allocation
+                    self.help_list.styles.display = right3_display
+                    
                 except Exception as e:
                     self.printException(e, "could not set right3 display in _apply_column_layout")
             except Exception as e:
@@ -2973,8 +2940,16 @@ App {
         try:
             txt = self._normalize_footer(value)
             try:
-                footer = self.query_one("#footer", Label)
-                footer.update(txt)
+                # Prefer attribute-backed footer update helper; update label if present
+                footer = None
+                try:
+                    footer = self.query_one("#footer", Label)
+                except Exception:
+                    footer = None
+                if footer is not None:
+                    footer.update(txt)
+                else:
+                    logger.debug("change_footer: footer label not found")
             except Exception as e:
                 self.printException(e, "could not update footer in change_footer")
         except Exception as e:
@@ -3309,6 +3284,35 @@ App {
             # GitHistoryTool footer
             yield Label(self.footer_file, id="footer")
 
+        def _mount_replace(self, parent: Widget, widget: Widget) -> None:  # GitHistoryTool
+            """Remove any existing widget with the same id from `parent` and mount `widget`.
+
+            Safe helper used to centralize replace-or-mount behavior.
+            """
+            try:
+                if parent is None:
+                    return
+                try:
+                    wid = getattr(widget, "id", None)
+                    if wid:
+                        try:
+                            old = parent.query_one(f"#{wid}")
+                            try:
+                                old.remove()
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                except Exception as e:
+                    self.printException(e, "_mount_replace pre-remove")
+
+                try:
+                    parent.mount(widget)
+                except Exception as e:
+                    self.printException(e, "_mount_replace mount failed")
+            except Exception as e:
+                self.printException(e, "_mount_replace outer failure")
+
     async def on_mount(self) -> None:  # GitHistoryTool
         """Mount-time initialization: build repo cache and populate Files.
 
@@ -3316,12 +3320,101 @@ App {
         cache, and sets the initial path listing. If the app was launched with
         a filename, it will also open that file's history.
         """
-        # Query columns generically — types differ when `log_first` is active
+        # Query column containers and mount the seven canonical widgets
         try:
-            left = self.query_one("#left")
+            try:
+                left_col = self.query_one("#left-column")
+            except Exception as e:
+                self.printException(e)
+                left_col = None
+            try:
+                right1_col = self.query_one("#right1-column")
+            except Exception as e:
+                self.printException(e)
+                right1_col = None
+            try:
+                right2_col = self.query_one("#right2-column")
+            except Exception as e:
+                self.printException(e)
+                right2_col = None
+            try:
+                right3_col = self.query_one("#right3-column")
+            except Exception as e:
+                self.printException(e)
+                right3_col = None
+
+            # Create all seven widget instances and keep references.
+            # ???? after that, no need to do the getattr checks anywhere
+            try:
+                # File-mode instances
+                self.file_mode_file_list = FileModeFileList(id="left")
+                self.file_mode_history_list = FileModeHistoryList(id="right1")
+                self.file_mode_diff_list = FileModeDiffList(id="right2")
+                
+                # Repo-mode instances
+                self.repo_mode_history_list = RepoModeHistoryList(id="left")
+                self.repo_mode_file_list = RepoModeFileList(id="right1")
+                self.repo_mode_diff_list = RepoModeDiffList(id="right2")
+                
+                # Help list
+                self.help_list = HelpList(id="right3")
+                
+            except Exception as e:
+                # Allocation of one or more widgets raised an exception; log and abort.
+                
+                raise RuntimeError(f"Critical widget allocation failure: {e}") from e
+                
+
+
+
+            # Mount the appropriate mode widgets into the columns based on startup mode
+            try:
+                if getattr(self, "log_first", False):
+                    # mount repo-mode widgets
+                    try:
+                        if self.repo_mode_history_list is not None and left_col is not None:
+                            self._mount_replace(left_col, self.repo_mode_history_list)
+                    except Exception as e:
+                        self.printException(e)
+                    try:
+                        if self.repo_mode_file_list is not None and right1_col is not None:
+                            self._mount_replace(right1_col, self.repo_mode_file_list)
+                    except Exception as e:
+                        self.printException(e)
+                    try:
+                        if self.repo_mode_diff_list is not None and right2_col is not None:
+                            self._mount_replace(right2_col, self.repo_mode_diff_list)
+                    except Exception as e:
+                        self.printException(e)
+                else:
+                    # mount file-mode widgets
+                    try:
+                        if self.file_mode_file_list is not None and left_col is not None:
+                            self._mount_replace(left_col, self.file_mode_file_list)
+                    except Exception as e:
+                        self.printException(e)
+                    try:
+                        if self.file_mode_history_list is not None and right1_col is not None:
+                            self._mount_replace(right1_col, self.file_mode_history_list)
+                    except Exception as e:
+                        self.printException(e)
+                    try:
+                        if self.file_mode_diff_list is not None and right2_col is not None:
+                            self._mount_replace(right2_col, self.file_mode_diff_list)
+                    except Exception as e:
+                        self.printException(e)
+
+                # Always mount help into right3 when available
+                try:
+                    if self.help_list is not None and right3_col is not None:
+                        self._mount_replace(right3_col, self.help_list)
+                except Exception as e:
+                    self.printException(e)
+            except Exception as e:
+                self.printException(e)
+
         except Exception as e:
             self.printException(e)
-            left = None
         # Eager queries for right1/right2/right3 removed — query these widgets on demand.
         # Ensure the main horizontal fills remaining space so the title remains visible
         try:
@@ -3349,10 +3442,13 @@ App {
         # Force left-only layout at startup (Files or History full-width)
         try:
             try:
-                footer_start = self.footer_history if getattr(self, "log_first", False) else self.footer_file
+                footer_start = self.footer_history if self.log_first else self.footer_file
+                # Resolve the left target id from attributes (direct access)
+                left_widget = self.repo_mode_history_list if self.log_first else self.file_mode_file_list
+                left_target = f"#{left_widget.id}" if left_widget is not None else "#left"
                 self.push_state(
                     "left_fullscreen",
-                    "#left",
+                    left_target,
                     footer_start,
                 )
             except Exception as e:
@@ -3362,24 +3458,26 @@ App {
 
         # Populate the Files column only when present and not in log-first startup
         try:
-            if left is not None and not getattr(self, "log_first", False):
-                # For FileModeFileList instances, call their preparatory method
-                # to populate the listing. Repo-mode variants implement other
-                # population paths.
-                if isinstance(left, FileModeFileList) and hasattr(left, "prepFileModeFileList"):
-                    left.prepFileModeFileList(self.path)
+            if not self.log_first:
+                if self.file_mode_file_list is not None:
+                    try:
+                        self.file_mode_file_list.prepFileModeFileList(self.path)
+                    except Exception as e:
+                        self.printException(e)
         except Exception as e:
             self.printException(e)
 
         # If started in log-first (repo-first) mode, populate repo-wide history
         try:
-            if getattr(self, "log_first", False):
+            if self.log_first:
                 try:
                     self._open_repo_history()
                     try:
                         # focus the history column after populating repo history
-                            self.push_focus("#left")
-                            self.push_footer(self.footer_history)
+                        left_widget = self.repo_mode_history_list
+                        tgt = f"#{left_widget.id}" if left_widget is not None else "#left"
+                        self.push_focus(tgt)
+                        self.push_footer(self.footer_history)
                     except Exception as e:
                         self.printException(e)
                 except Exception as e:
@@ -3390,11 +3488,16 @@ App {
 
         # If launched with a filename, populate and focus its history immediately
         try:
-            if getattr(self, "initial_file", None):
+            if self.initial_file:
                 try:
                     self._open_history_for_file(self.initial_file)
                     try:
-                        self.push_focus("#right1")
+                        if self.log_first:
+                            hist_attr = self.repo_mode_history_list
+                        else:
+                            hist_attr = self.file_mode_history_list
+                        tgt = f"#{hist_attr.id}" if hist_attr is not None else "#right1"
+                        self.push_focus(tgt)
                         self.push_footer(self.footer_history)
                     except Exception as e:
                         self.printException(e)
@@ -3410,11 +3513,29 @@ App {
         Mirrors the behavior used when pressing Right on a file in the Files column.
         """
         try:
-            hist = self.query_one("#right1", ListView)
-            # Prefer the new preparatory API when available on the history widget
-            hist.prepListModeHistoryList(item_name)
-            self.push_layout("left_right_split")
-            hist.index = 0
+            # Prefer stored attribute references to querying the DOM (mode-specific)
+            if self.log_first:
+                hist = self.repo_mode_history_list
+            else:
+                hist = self.file_mode_history_list
+            if hist is None:
+                # ???? this cannot happen. Get rid of getattr checks everywhere after init?
+                try:
+                    hist = self.query_one("#right1", ListView)
+                except Exception:
+                    hist = None
+
+            if hist is not None:
+                # Prefer the new preparatory API when available on the history widget
+                # ???? just call prepListModeHistoryList() or prepRepoModeHistoryList(), depending on log_first
+                try:
+                    hist.prepListModeHistoryList(item_name)
+                except Exception as e:
+                    self.printException(e)
+                try:
+                    hist.index = 0
+                except Exception as e:
+                    self.printException(e)
             # ensure we are not in diff-fullscreen when opening history
             # (no-op: fullscreen is derived from layout_stack)
         except Exception as e:
@@ -3428,81 +3549,37 @@ App {
         try:
             # If we started in log-first mode, the left column already hosts
             # a `RepoModeHistoryList`; populate it rather than mounting a new widget.
-            if getattr(self, "log_first", False):
-                try:
-                    hist = self.query_one("#left")
-                except Exception as e:
-                    self.printException(e)
-                    hist = None
-
+            if self.log_first:
+                hist = self.repo_mode_history_list
                 if hist is not None:
                     try:
-
                         hist.prepRepoModeHistoryList()
-
-                        # Make left column full-width and hide others
-                        self.push_layout("left_fullscreen")
-                        self.query_one("#right3-column").styles.width = "0%"
-                        self.query_one("#right3-column").styles.flex = 0
-
                         hist.index = 0
-
                     except Exception as e:
                         self.printException(e)
-
                     return
 
-            # Replace the existing History widget with a dedicated RepoModeHistoryList
+            # Replace or mount a repo-backed history list into right1 when not log-first
             try:
-                parent = self.query_one("#right1-column")
+                parent = None
                 try:
-                    old = self.query_one("#right1")
-                    try:
-                        old.remove()
-                    except Exception as e:
-                        self.printException(e)
-
+                    parent = self.query_one("#right1-column")
                 except Exception as e:
                     self.printException(e)
-                    old = None
+                    parent = None
 
-                # Mount a repository-backed history list with the same id
-                try:
-                    repo_hist = RepoModeHistoryList(id="right1")
-                    parent.mount(repo_hist)
-                except Exception as e:
-                    self.printException(e)
-                    repo_hist = None
-
-                if repo_hist:
-                    try:
-                        # RepoModeHistoryList implements prepRepoModeHistoryList()
-                        repo_hist.prepRepoModeHistoryList()
-                    except Exception as e:
-                        self.printException(e)
-
-                    # Adjust layout: hide files and other right columns, show history full-width
-                    try:
-                        self._apply_column_layout(
-                            "0%",
-                            "100%",
-                            "0%",
-                            "0%",
-                            left_display=None,
-                            right1_display=None,
-                            right2_display=None,
-                            right3_display=None,
-                        )
-                        self.query_one("#right3-column").styles.width = "0%"
-                        self.query_one("#right3-column").styles.flex = 0
-                        repo_hist.index = 0
-                    except Exception as e:
-                        self.printException(e)
-                    return
-
+                repo_hist = self.repo_mode_history_list
+                # We guarantee attribute allocation at startup; use it directly
+                # RepoModeHistoryList implements prepRepoModeHistoryList()
+                repo_hist.prepRepoModeHistoryList()
+                repo_hist.index = 0
+            
             except Exception as e:
                 self.printException(e)
-                self.push_screen(_TBDModal(str(e)))
+                try:
+                    self.push_screen(_TBDModal(str(e)))
+                except Exception as e:
+                    self.printException(e)
 
         except Exception as e:
             try:
@@ -3517,16 +3594,13 @@ App {
         but does not perform any focus changes; callers may push focus as
         desired.
         """
+        # ???? why is this duplicated from RepoModeHistoryList.prepRepoModeHistoryList()?
+        # ???? why does this exist at all, given _open_repo_history()?
         try:
             # If started in log-first mode, the left column already hosts
             # a `RepoModeHistoryList`; populate it rather than mounting a new widget.
-            if getattr(self, "log_first", False):
-                try:
-                    hist = self.query_one("#left")
-                except Exception as e:
-                    self.printException(e)
-                    hist = None
-
+            if self.log_first:
+                hist = self.repo_mode_history_list
                 if hist is not None:
                     try:
                         hist.prepRepoModeHistoryList()
@@ -3546,42 +3620,24 @@ App {
             # Non-log-first: mount/replace the right1 history widget with
             # a repository-backed history list and populate it.
             try:
-                parent = self.query_one("#right1-column")
-            except Exception as e:
-                self.printException(e)
                 parent = None
-
-            try:
                 try:
-                    old = self.query_one("#right1")
-                    try:
-                        old.remove()
-                    except Exception as e:
-                        self.printException(e)
+                    parent = self.query_one("#right1-column")
                 except Exception as e:
                     self.printException(e)
-                    old = None
+                    parent = None
 
-                repo_hist = None
+                repo_hist = self.repo_mode_history_list
+                if parent is not None:
+                    self._mount_replace(parent, repo_hist)
+                else:
+                    self.mount(repo_hist)
+
+                repo_hist.prepRepoModeHistoryList()
+                # ???? layout should not be here; caller should manage layout/focus
                 try:
-                    repo_hist = RepoModeHistoryList(id="right1")
-                    if parent is not None:
-                        parent.mount(repo_hist)
-                    else:
-                        self.mount(repo_hist)
-                except Exception as e:
-                    self.printException(e)
-                    repo_hist = None
-
-                if repo_hist:
-                    try:
-                        repo_hist.prepRepoModeHistoryList()
-                    except Exception as e:
-                        self.printException(e)
-
-                    try:
-                        # Adjust layout: hide files and other right columns, show history full-width
-                        self._apply_column_layout(
+                    # Adjust layout: hide files and other right columns, show history full-width
+                    self._apply_column_layout(
                             "0%",
                             "100%",
                             "0%",
@@ -3591,15 +3647,15 @@ App {
                             right2_display=None,
                             right3_display=None,
                         )
-                        try:
-                            self.query_one("#right3-column").styles.width = "0%"
-                            self.query_one("#right3-column").styles.flex = 0
-                        except Exception as e:
-                            self.printException(e)
-                        repo_hist.index = 0
+                    try:
+                        self.query_one("#right3-column").styles.width = "0%"
+                        self.query_one("#right3-column").styles.flex = 0
                     except Exception as e:
                         self.printException(e)
-                    return
+                    repo_hist.index = 0
+                except Exception as e:
+                    self.printException(e)
+                return
 
             except Exception as e:
                 self.printException(e)
