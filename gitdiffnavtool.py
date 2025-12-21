@@ -32,6 +32,7 @@ from textual.widgets import (
     ListItem,
     Label,
 )
+from textual.css.query import NoMatches
 
 # Set up logging to help debug key event issues (currently disabled)
 # Uncomment the basicConfig line below to enable logging to tmp/gitdiff_debug.log
@@ -68,14 +69,12 @@ class AppBase(ListView):
         super().__init__(*args, **kwargs)
         self._min_index = 0
         self._populated = False
-        self._nodes = []
         # Common attributes that may be referenced before framework wiring
         # ensures they're present. Setting them here lets callers use
         # direct attribute access aggressively without AttributeError.
-        self.app = None
-        self.id = None
+        # Note: do NOT assign to `self.app` — Textual provides a read-only
+        # `app` property on widgets. The framework will supply it at runtime.
         self._filename = None
-        self.scrollable_content_region = None
         self.current_prev_sha = None
         self.current_commit_sha = None
         self.current_diff_file = None
@@ -1368,11 +1367,13 @@ class HistoryListBase(AppBase):
                         return (None, None, None, None, None, None)
                     current_hash = m1.group(2)
                     previous_hash = m2.group(2)
-                except Exception:
+                except Exception as e:
+                    self.printException(e)
                     return (None, None, None, None, None, None)
 
             return (current_hash, previous_hash, current_line, previous_line, i_newer, i_older)
-        except Exception:
+        except Exception as e:
+            self.printException(e)
             return (None, None, None, None, None, None)
         except Exception as e:
             self.printException(e)
@@ -1841,7 +1842,8 @@ class RepoModeHistoryList(HistoryListBase):
                 parent = None
                 try:
                     parent = self.app.query_one("#right1-column")
-                except Exception:
+                except Exception as e:
+                    self.printException(e)
                     parent = None
 
                 file_list = self.app.repo_mode_file_list
@@ -1856,8 +1858,8 @@ class RepoModeHistoryList(HistoryListBase):
                     self.printException(e, "mounting right1")
                     try:
                         self.app.push_screen(_TBDModal("Could not show files for commit diff"))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                     return True
 
                 try:
@@ -1869,12 +1871,12 @@ class RepoModeHistoryList(HistoryListBase):
 
                 try:
                     file_list.styles.display = None
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
                 try:
                     file_list.index = getattr(file_list, "_min_index", 0) or 0
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
 
                 try:
                     self.app.push_state("left_right_split", f"#{getattr(file_list, 'id', 'right1')}", self.app.footer_file)
@@ -2864,14 +2866,40 @@ App {
 
             def _do():
                 try:
-                    w = self.query_one(target)
-                    w.focus()
-                    try:
-                        logger.debug(f"change_focus: focused {target}")
-                    except Exception as e:
-                        self.printException(e)
+                    # Prefer resolving via known canonical attributes to avoid
+                    # noisy `NoMatches` exceptions from `query_one`.
+                    sel = str(target)
+                    if sel.startswith("#"):
+                        key = sel[1:]
+                    else:
+                        key = sel
+
+                    candidate = None
+                    if key == "left":
+                        candidate = self.repo_mode_history_list if self.log_first else self.file_mode_file_list
+                    elif key == "right1":
+                        candidate = self.repo_mode_file_list if self.log_first else self.file_mode_history_list
+                    elif key == "right2":
+                        candidate = self.repo_mode_diff_list if self.log_first else self.file_mode_diff_list
+                    elif key == "right3":
+                        candidate = self.help_list
+
+                    if candidate is not None:
+                        try:
+                            candidate.focus()
+                            try:
+                                logger.debug(f"change_focus: focused resolved {candidate!r}")
+                            except Exception as e:
+                                self.printException(e)
+                            return
+                        except Exception as e:
+                            self.printException(e, f"could not focus resolved candidate for {target}")
+
+                    # Nothing matched — warn at debug level.
+                    logger.debug(f"change_focus: no matching focus target for {target}")
+                    return
                 except Exception as e:
-                    self.printException(e, f"could not change focus to {target}")
+                    self.printException(e)
 
             try:
                 self.call_after_refresh(_do)
@@ -2899,7 +2927,8 @@ App {
                 footer = None
                 try:
                     footer = self.query_one("#footer", Label)
-                except Exception:
+                except Exception as e:
+                    self.printException(e)
                     footer = None
                 if footer is not None:
                     footer.update(txt)
@@ -2941,7 +2970,8 @@ App {
             try:
                 if not self.footer_stack:
                     return
-            except Exception:
+            except Exception as e:
+                self.printException(e)
                 return
 
             try:
@@ -2990,7 +3020,8 @@ App {
             try:
                 if not self.focus_stack:
                     return
-            except Exception:
+            except Exception as e:
+                self.printException(e)
                 return
 
             try:
@@ -3236,37 +3267,44 @@ App {
                         yield Label(Text("Help", style="bold"), id="right3-title")
                         yield HelpList(id="right3")
 
-            # GitHistoryTool footer
-            yield Label(self.footer_file, id="footer")
+                # GitHistoryTool footer
+                yield Label(self.footer_file, id="footer")
 
-        def _mount_replace(self, parent: Widget, widget: Widget) -> None:  # GitHistoryTool
-            """Remove any existing widget with the same id from `parent` and mount `widget`.
 
-            Safe helper used to centralize replace-or-mount behavior.
-            """
+    def _mount_replace(self, parent: Widget, widget: Widget) -> None:  # GitHistoryTool
+        """Remove any existing widget with the same id from `parent` and mount `widget`.
+
+        Safe helper used to centralize replace-or-mount behavior.
+        """
+        try:
+            if parent is None:
+                logger.debug("_mount_replace: no parent provided")
+                return
             try:
-                if parent is None:
-                    return
-                try:
-                    wid = getattr(widget, "id", None)
-                    if wid:
+                wid = getattr(widget, "id", None)
+                logger.debug(f"_mount_replace: parent={getattr(parent,'id',None)} widget_id={wid} widget_type={type(widget)!r}")
+                if wid:
+                    try:
+                        old = parent.query_one(f"#{wid}")
                         try:
-                            old = parent.query_one(f"#{wid}")
-                            try:
-                                old.remove()
-                            except Exception:
-                                pass
-                        except Exception:
-                            pass
-                except Exception as e:
-                    self.printException(e, "_mount_replace pre-remove")
-
-                try:
-                    parent.mount(widget)
-                except Exception as e:
-                    self.printException(e, "_mount_replace mount failed")
+                            old.remove()
+                            logger.debug(f"_mount_replace: removed old widget with id={wid}")
+                        except Exception as e:
+                            logger.debug(f"_mount_replace: failed to remove old widget id={wid}: {e}")
+                    except Exception as e:
+                        self.printException(e)
+                        logger.debug(f"_mount_replace: no existing child with id={wid} to remove")
             except Exception as e:
-                self.printException(e, "_mount_replace outer failure")
+                self.printException(e, "_mount_replace pre-remove")
+
+            try:
+                logger.debug(f"_mount_replace: mounting widget id={getattr(widget,'id',None)} into parent id={getattr(parent,'id',None)}")
+                parent.mount(widget)
+                logger.debug(f"_mount_replace: mount call completed for id={getattr(widget,'id',None)}")
+            except Exception as e:
+                self.printException(e, "_mount_replace mount failed")
+        except Exception as e:
+            self.printException(e, "_mount_replace outer failure")
 
     async def on_mount(self) -> None:  # GitHistoryTool
         """Mount-time initialization: build repo cache and populate Files.
@@ -3298,25 +3336,89 @@ App {
                 self.printException(e)
                 right3_col = None
 
-            # Create all seven widget instances and keep references.
-            # ???? after that, no need to do the getattr checks anywhere
+            # Resolve references to the seven canonical widgets. Prefer the
+            # composed instances (from `compose`) when present; otherwise
+            # create the missing widget but give it a unique id to avoid
+            # colliding with already-mounted widgets.
             try:
-                # File-mode instances
-                self.file_mode_file_list = FileModeFileList(id="left")
-                self.file_mode_history_list = FileModeHistoryList(id="right1")
-                self.file_mode_diff_list = FileModeDiffList(id="right2")
-                
-                # Repo-mode instances
-                self.repo_mode_history_list = RepoModeHistoryList(id="left")
-                self.repo_mode_file_list = RepoModeFileList(id="right1")
-                self.repo_mode_diff_list = RepoModeDiffList(id="right2")
-                
-                # Help list
-                self.help_list = HelpList(id="right3")
-                
+                # left column: try to resolve whichever canonical widget is composed
+                try:
+                    try:
+                        node = self.query_one("#left", AppBase)
+                        if isinstance(node, FileListBase):
+                            self.file_mode_file_list = node
+                            logger.debug(f"on_mount: left contains FileListBase id={getattr(node,'id',None)}")
+                        elif isinstance(node, HistoryListBase):
+                            self.repo_mode_history_list = node
+                            logger.debug(f"on_mount: left contains HistoryListBase id={getattr(node,'id',None)}")
+                        else:
+                            logger.debug(f"on_mount: left contains unexpected node {type(node)!r}; creating fallbacks")
+                            self.file_mode_file_list = FileModeFileList(id="left-file-mode")
+                            self.repo_mode_history_list = RepoModeHistoryList(id="left-repo-mode")
+                    except Exception as e:
+                        self.printException(e)
+                        self.file_mode_file_list = FileModeFileList(id="left-file-mode")
+                        self.repo_mode_history_list = RepoModeHistoryList(id="left-repo-mode")
+                except Exception as e:
+                    self.printException(e)
+                    self.file_mode_file_list = FileModeFileList(id="left-file-mode")
+                    self.repo_mode_history_list = RepoModeHistoryList(id="left-repo-mode")
+
+                # middle column (right1): try to resolve either HistoryListBase or FileListBase
+                try:
+                    try:
+                        node = self.query_one("#right1", AppBase)
+                        if isinstance(node, HistoryListBase):
+                            self.file_mode_history_list = node
+                            logger.debug(f"on_mount: right1 contains HistoryListBase id={getattr(node,'id',None)}")
+                        elif isinstance(node, FileListBase):
+                            self.repo_mode_file_list = node
+                            logger.debug(f"on_mount: right1 contains FileListBase id={getattr(node,'id',None)}")
+                        else:
+                            logger.debug(f"on_mount: right1 contains unexpected node {type(node)!r}; creating fallbacks")
+                            self.file_mode_history_list = FileModeHistoryList(id="right1-file-mode")
+                            self.repo_mode_file_list = RepoModeFileList(id="right1-repo-mode")
+                    except Exception as e:
+                        self.printException(e)
+                        self.file_mode_history_list = FileModeHistoryList(id="right1-file-mode")
+                        self.repo_mode_file_list = RepoModeFileList(id="right1-repo-mode")
+                except Exception as e:
+                    self.printException(e)
+                    self.file_mode_history_list = FileModeHistoryList(id="right1-file-mode")
+                    self.repo_mode_file_list = RepoModeFileList(id="right1-repo-mode")
+
+                # right column (right2): diff lists
+                try:
+                    self.file_mode_diff_list = self.query_one("#right2", DiffListBase)
+                    logger.debug(
+                        f"on_mount: found composed file_mode_diff_list id={getattr(self.file_mode_diff_list,'id',None)}"
+                    )
+                except Exception as e:
+                    self.printException(e)
+                    self.file_mode_diff_list = FileModeDiffList(id="right2-file-mode")
+                    logger.debug(f"on_mount: created file_mode_diff_list id={getattr(self.file_mode_diff_list,'id',None)}")
+
+                try:
+                    self.repo_mode_diff_list = self.query_one("#right2", DiffListBase)
+                    logger.debug(
+                        f"on_mount: found composed repo_mode_diff_list id={getattr(self.repo_mode_diff_list,'id',None)}"
+                    )
+                except Exception as e:
+                    self.printException(e)
+                    self.repo_mode_diff_list = RepoModeDiffList(id="right2-repo-mode")
+                    logger.debug(f"on_mount: created repo_mode_diff_list id={getattr(self.repo_mode_diff_list,'id',None)}")
+
+                # help column
+                try:
+                    self.help_list = self.query_one("#right3", HelpList)
+                    logger.debug(f"on_mount: found composed help_list id={getattr(self.help_list,'id',None)}")
+                except Exception as e:
+                    self.printException(e)
+                    self.help_list = HelpList(id="right3-help")
+                    logger.debug(f"on_mount: created help_list id={getattr(self.help_list,'id',None)}")
             except Exception as e:
-                # Allocation of one or more widgets raised an exception; log and abort.
-                raise RuntimeError(f"Critical widget allocation failure: {e}") from e
+                # Allocation/resolution raised an exception; log and abort.
+                raise RuntimeError(f"Critical widget allocation/resolution failure: {e}") from e
                 
             # Mount the appropriate mode widgets into the columns based on startup mode
             try:
@@ -3399,7 +3501,7 @@ App {
                 self.push_state(
                     "left_fullscreen",
                     left_target,
-                    footer_history,
+                            self.footer_history,
                 )
             except Exception as e:
                 self.printException(e)
