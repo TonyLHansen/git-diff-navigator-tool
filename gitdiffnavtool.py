@@ -58,6 +58,28 @@ class AppBase(ListView):
         logger.warning(f"WARNING: {className}.{funcName} ({str(e)}): {msg}")
         logger.warning(traceback.format_exc())
 
+    def __init__(self, *args, **kwargs):
+        """Initialize common fallback attributes so direct access is safe.
+
+        We set small defaults for private attributes this code frequently
+        reads via `getattr` so callers can use direct attribute access
+        without risking AttributeError during early lifecycle phases.
+        """
+        super().__init__(*args, **kwargs)
+        self._min_index = 0
+        self._populated = False
+        self._nodes = []
+        # Common attributes that may be referenced before framework wiring
+        # ensures they're present. Setting them here lets callers use
+        # direct attribute access aggressively without AttributeError.
+        self.app = None
+        self.id = None
+        self._filename = None
+        self.scrollable_content_region = None
+        self.current_prev_sha = None
+        self.current_commit_sha = None
+        self.current_diff_file = None
+
     def text_of(self, node) -> str:  # AppBase
         """Extract visible text from a ListItem node's Label/renderable.
 
@@ -104,11 +126,11 @@ class AppBase(ListView):
             if key == "up":
                 try:
                     event.stop()
-                    min_idx = getattr(self, "_min_index", 0) or 0
+                    min_idx = self._min_index or 0
                 except Exception as e:
                     self.printException(e)
                     min_idx = 0
-                cur = getattr(self, "index", None)
+                cur = self.index
                 if cur is None:
                     try:
                         self.index = min_idx
@@ -143,14 +165,17 @@ class AppBase(ListView):
                     except Exception as e:
                         self.printException(e)
 
-                    nodes = getattr(self, "_nodes", [])
+                    nodes = self._nodes
                     if not nodes:
                         return True
 
                     current_index = self.index if self.index is not None else 0
                     visible_height = 0
                     try:
-                        visible_height = int(getattr(self, "scrollable_content_region").height)
+                        region = self.scrollable_content_region
+                        if region is None:
+                            raise AttributeError("no scrollable_content_region")
+                        visible_height = int(getattr(region, "height", 10))
                     except Exception as e:
                         self.printException(e)
                         # fallback to a reasonable page size when not available
@@ -163,7 +188,7 @@ class AppBase(ListView):
 
                     # Pageup: move backward but do not go above the minimum selectable index
                     elif key == "pageup":
-                        min_idx = getattr(self, "_min_index", 0) or 0
+                        min_idx = self._min_index or 0
                         new_index = max(current_index - page_size, min_idx)
 
                     try:
@@ -231,11 +256,11 @@ class AppBase(ListView):
             # Handle Home/End to jump to first/last selectable item
             if key == "home":
                 event.stop()
-                nodes = getattr(self, "_nodes", [])
+                nodes = self._nodes
                 if not nodes:
                     return True
 
-                min_idx = getattr(self, "_min_index", 0) or 0
+                min_idx = self._min_index or 0
                 try:
                     self.call_after_refresh(lambda: setattr(self, "index", min_idx))
                 except Exception as e:
@@ -248,7 +273,7 @@ class AppBase(ListView):
 
             if key == "end":
                 event.stop()
-                nodes = getattr(self, "_nodes", [])
+                nodes = self._nodes
                 if not nodes:
                     return True
 
@@ -362,8 +387,8 @@ class FileListBase(AppBase):
         # (e.g. skip the Key legend row). Use call_after_refresh so the
         # DOM is stable before mutating the selection.
         try:
-            min_idx = getattr(self, "_min_index", 0) or 0
-            cur = getattr(self, "index", None)
+            min_idx = self._min_index or 0
+            cur = self.index
             if cur is None or cur < min_idx:
                 try:
                     # Prefer to set after refresh to avoid race with mount
@@ -389,7 +414,7 @@ class FileListBase(AppBase):
         DOM has been updated by `set_path`.
         """
         try:
-            nodes = getattr(self, "_nodes", [])
+            nodes = self._nodes
             for idx, node in enumerate(nodes):
                 if getattr(node, "_filename", None) == name:
                     try:
@@ -400,7 +425,7 @@ class FileListBase(AppBase):
                     return
             # not found: default to minimum selectable index (skip legend)
             try:
-                self.index = getattr(self, "_min_index", 0) or 0
+                self.index = self._min_index or 0
             except Exception as e:
                 self.printException(e, "exception setting index to 0")
 
@@ -412,10 +437,10 @@ class FileListBase(AppBase):
         """Highlight the first entry in the list after a refresh."""
         try:
             # If there are nodes, set index to 0; otherwise leave unset.
-            nodes = getattr(self, "_nodes", [])
+            nodes = self._nodes
             if nodes:
                 # Respect a minimum selectable index (e.g. skip Key legend)
-                min_idx = getattr(self, "_min_index", 0) or 0
+                min_idx = self._min_index or 0
                 try:
                     self.index = min_idx if min_idx < len(nodes) else 0
                 except Exception as e:
@@ -424,6 +449,94 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, "exception")
             return
+
+    def _child_filename(self, child) -> Optional[str]:
+        """Extract a filename/text value from a ListItem `child`.
+
+        This consolidates repeated logic used by multiple `key_right`
+        handlers: prefer an attached `_filename` attribute, then look
+        for a `Label` with `text` or a renderable `Text`.
+        Returns the extracted string, or `None` if extraction failed
+        (and a modal has been shown when possible).
+        """
+        try:
+            name = getattr(child, "_filename", None)
+            if name is not None:
+                return name
+            lbl = child.query_one(Label)
+            if hasattr(lbl, "text"):
+                return lbl.text
+            renderable = getattr(lbl, "renderable", None)
+            if isinstance(renderable, Text):
+                return renderable.plain
+            if renderable is not None:
+                return str(renderable)
+            return str(lbl)
+        except Exception as exc:
+            try:
+                self.app.push_screen(_TBDModal(str(exc)))
+            except Exception as e:
+                self.printException(e, "exception showing modal fallback")
+                try:
+                    self.app.push_screen(_TBDModal())
+                except Exception as e2:
+                    self.printException(e2)
+            return None
+
+    def _enter_directory(self, new_path: str, highlight_name: Optional[str] = None) -> None:
+        """Change this FileList to show `new_path` and update app state.
+
+        Calls the preparatory method when available (`prepFileModeFileList`),
+        resets selection, optionally highlights `highlight_name` after refresh,
+        updates `self.app.path` and `self.app.displayed_path`, and restores
+        focus to this list.
+        """
+        try:
+            # Use preparatory API when available
+            if hasattr(self, "prepFileModeFileList"):
+                try:
+                    self.prepFileModeFileList(new_path)
+                except Exception as e:
+                    self.printException(e, "changing directory in helper")
+            else:
+                try:
+                    super().set_path(new_path)
+                except Exception as e:
+                    self.printException(e, "fallback set_path failed in helper")
+
+            # After prep, set selection/indices appropriately
+            try:
+                if highlight_name:
+                    try:
+                        self.call_after_refresh(self._highlight_filename, highlight_name)
+                    except Exception as e:
+                        self.printException(e, "exception scheduling highlight in helper")
+                else:
+                    try:
+                        self.index = self._min_index or 0
+                    except Exception as e:
+                        self.printException(e, "exception resetting index in helper")
+            except Exception as e:
+                self.printException(e)
+
+            # update app-level path info
+            try:
+                self.app.path = os.path.abspath(new_path)
+                self.app.displayed_path = self.path
+            except Exception as e:
+                self.printException(e, "exception updating app path info in helper")
+
+            # restore focus to this list
+            try:
+                try:
+                    self.app.change_focus(f"#{self.id or 'left'}")
+                except Exception as e:
+                    self.printException(e)
+            except Exception as e:
+                self.printException(e)
+
+        except Exception as e:
+            self.printException(e, "_enter_directory outer failure")
 
 
 class FileModeFileList(FileListBase):
@@ -452,7 +565,7 @@ class FileModeFileList(FileListBase):
 
             # Refresh repository cache when changing path
             try:
-                app = getattr(self, "app", None)
+                app = self.app
                 if app:
                     try:
                         app.build_repo_cache()
@@ -509,7 +622,7 @@ class FileModeFileList(FileListBase):
                         style = None
                         repo_status = None
                         try:
-                            app = getattr(self, "app", None)
+                            app = self.app
                             if app and getattr(app, "repo_available", False) and app.repo_root:
                                 try:
                                     rel = os.path.relpath(full, app.repo_root)
@@ -639,42 +752,11 @@ class FileModeFileList(FileListBase):
 
                 return True
 
-            # change to parent directory
+            # change to parent directory using shared helper
             try:
-                # Use the preparatory method rather than a removed generic set_path
-                if hasattr(self, "prepFileModeFileList"):
-                    self.prepFileModeFileList(parent)
-                else:
-                    # defensive fallback
-                    super().set_path(parent)
+                self._enter_directory(parent, highlight_name=prev_basename)
             except Exception as e:
-                self.printException(e, "changing to parent in key_left")
-
-            # After the DOM refresh, highlight the directory we came from.
-            try:
-                self.call_after_refresh(self._highlight_filename, prev_basename)
-            except Exception as e:
-                self.printException(e, "exception calling _highlight_filename")
-                try:
-                    # Fallback: set to minimum selectable index (skip legend)
-                    self.index = getattr(self, "_min_index", 0) or 0
-                except Exception as e:
-                    self.printException(e, "exception setting index fallback")
-
-            # update app-level path info
-            try:
-                self.app.path = os.path.abspath(parent)
-                self.app.displayed_path = self.path
-            except Exception as e:
-                self.printException(e, "exception updating app path info")
-
-            try:
-                try:
-                    self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
-                except Exception as e:
-                    self.printException(e)
-            except Exception as e:
-                self.printException(e)
+                self.printException(e, "changing to parent via helper")
 
             return True
 
@@ -694,127 +776,33 @@ class FileModeFileList(FileListBase):
         child = self.highlighted_child
         if child is None:
             return True
-        # Prefer filename attached to the ListItem (set in set_path)
-        item_name = getattr(child, "_filename", None)
+        # Extract the item name using shared helper
+        item_name = self._child_filename(child)
         if item_name is None:
-            try:
-                label = child.query_one(Label)
-                # Label implementations vary: prefer `text`, then `renderable`.
-                if hasattr(label, "text"):
-                    item_name = label.text
-                else:
-                    renderable = getattr(label, "renderable", None)
-                    if isinstance(renderable, Text):
-                        item_name = renderable.plain
-                    elif renderable is not None:
-                        item_name = str(renderable)
-                    else:
-                        item_name = str(label)
-            except Exception as exc:
-                # Fallback: show the exception message in the modal
-                try:
-                    self.app.push_screen(_TBDModal(str(exc)))
-                except Exception as e:
-                    self.printException(e, "exception showing modal fallback")
-                    try:
-                        # Last-resort fallback
-                        self.app.push_screen(_TBDModal())
-                    except Exception as e:
-                        self.printException(e)
-
-                return True
+            return True
 
         if item_name != "..":
             full = os.path.join(self.path, item_name)
             if os.path.isdir(full):
-                # ???? move to a callable method, sharable with ".." handling in key_left?
-                # switch the listing to the selected directory
+                # switch the listing to the selected directory using helper
                 try:
-                    self.prepFileModeFileList(full)
-                    
+                    self._enter_directory(full)
                 except Exception as e:
-                    self.printException(e, "changing directory in key_right")
-                # ensure highlight resets to the minimum selectable item
-                try:
-                    self.index = getattr(self, "_min_index", 0) or 0
-                except Exception as e:
-                    self.printException(e, "exception resetting index")
-
-                # update app-level current path as well
-                try:
-                    self.app.path = os.path.abspath(full)
-                except Exception as e:
-                    self.printException(e, "exception updating app.path")
-
-                # focus back on this list
-                # ???? why would the focus have changed and need to be reset back?
-                try: 
-                    self.app.change_focus(f"#{getattr(self, 'id', 'left')}")
-                except Exception as e:
-                    self.printException(e)
+                    self.printException(e, "changing directory via helper in key_right")
 
                 return True
 
             # Delegate history population to the FileModeHistoryList preparatory API
             try:
-                
-                
-                # Use file-mode history list only (do not mix modes)
-                hist = getattr(self.app, "file_mode_history_list", None)
-                # ???? bail if no history list available
-                # ???? we KNOW it has prepListModeHistoryList because it's FileModeHistoryList
-                # ???? do NOT fall back, but bail out instead
-                # If we didn't find an attribute-backed history list, fall back to DOM queries
-                if hist is None or not hasattr(hist, "prepListModeHistoryList"):
-                    try:
-                        hist = self.app.query_one("#right1")
-                    except Exception as e:
-                        self.printException(e)
-                        try:
-                            hist = self.app.query_one("#left")
-                        except Exception:
-                            hist = None
-
-                if hist is not None and hasattr(hist, "prepListModeHistoryList"):
-                    try:
-                        hist.prepListModeHistoryList(item_name)
-                        try:
-                            # ensure history column is shown and focused
-                                self.app.push_state(
-                                "left_right_split",
-                                "#right1",
-                                self.app.footer_history,
-                            )
-                        except Exception as e:
-                            self.printException(e)
-                    except Exception as e:
-                        self.printException(e, "prepListModeHistoryList failed")
-                        try:
-                            # fallback: ask app to open history for file
-                            if hasattr(self.app, "_open_history_for_file"):
-                                self.app._open_history_for_file(item_name)
-                                # ???? use push_state becase _open_history_for_file no longer sets layout/focus/footer
-                                try:
-                                    tgt = f"#{getattr(hist, 'id', 'right1')}"
-                                    self.app.push_focus(tgt)
-                                    self.app.push_footer(self.app.footer_history)
-                                except Exception as e:
-                                    self.printException(e)
-                        except Exception as e:
-                            self.printException(e, "fallback open history failed")
-                else:
-                    # No preparatory API available; fallback to app helper
-                    try:
-                        if hasattr(self.app, "_open_history_for_file"):
-                            self.app._open_history_for_file(item_name)
-                            try:
-                                tgt = f"#{getattr(hist, 'id', 'right1')}"
-                                self.app.push_focus(tgt)
-                                self.app.push_footer(self.app.footer_history)
-                            except Exception as e:
-                                self.printException(e)
-                    except Exception as e:
-                        self.printException(e, "could not open history for file")
+                # Use the canonical file-mode history widget only (do not mix modes)
+                hist = self.app.file_mode_history_list
+                hist.prepFileModeHistoryList(item_name)
+                # Show history and focus the populated widget using its id
+                try:
+                    tgt = f"#{hist.id}"
+                    self.app.push_state("left_right_split", tgt, self.app.footer_history)
+                except Exception as e:
+                    self.printException(e, "focusing history after prep failed")
 
                 # Ensure the current Files list highlights the selected filename
                 try:
@@ -940,8 +928,13 @@ class RepoModeFileList(FileListBase):
                     try:
                         status = getattr(d, "status", None)
                         marker = delta_map.get(status, " ")
-                        old_path = getattr(getattr(d, "old_file", None), "path", None)
-                        new_path = getattr(getattr(d, "new_file", None), "path", None)
+                        # Safely extract file paths from delta old_file/new_file
+                        old_file = getattr(d, "old_file", None)
+                        new_file = getattr(d, "new_file", None)
+                        if not old_path and not new_path:
+                            logger.warning("delta with no paths", extra={"delta": repr(d), "status": status})
+                        old_path = getattr(old_file, "path", None)
+                        new_path = getattr(new_file, "path", None)
                         display_path = new_path or old_path or ""
                         text = f"{marker} {display_path}"
                         li = ListItem(Label(Text(" " + text)))
@@ -970,7 +963,7 @@ class RepoModeFileList(FileListBase):
 
                 def _append_buffer():
                     try:
-                        if getattr(self, "_populated", False):
+                        if self._populated:
                             return
                         try:
                             key_li = ListItem(
@@ -995,18 +988,18 @@ class RepoModeFileList(FileListBase):
                                 self.printException(e, "appending repo-mode file item")
                                 continue
 
-                        self.index = getattr(self, "_min_index", 0) or 0
+                        self.index = self._min_index or 0
                         try:
                             self.refresh()
                         except Exception as e:
                             self.printException(e, "could not refresh repo-mode file list")
 
                         try:
-                            self.call_after_refresh(lambda: setattr(self, "index", getattr(self, "_min_index", 0) or 0))
+                            self.call_after_refresh(lambda: setattr(self, "index", self._min_index or 0))
                         except Exception as e:
                             self.printException(e, "scheduling index reset after refresh")
                             try:
-                                self.index = getattr(self, "_min_index", 0) or 0
+                                self.index = self._min_index or 0
                             except Exception as e:
                                 self.printException(e, "setting index to _min_index fallback")
                         self._populated = True
@@ -1022,7 +1015,7 @@ class RepoModeFileList(FileListBase):
                         self.printException(e, "scheduling repo-mode append buffer failed")
                         try:
                             # fallback to app-level scheduling
-                            if getattr(self, "app", None):
+                            if self.app:
                                 self.app.call_after_refresh(_append_buffer)
                             else:
                                 _append_buffer()
@@ -1066,7 +1059,7 @@ class RepoModeFileList(FileListBase):
 
             # Focus the History column (left)
             try:
-                left = getattr(self.app, "repo_mode_history_list", None)
+                left = self.app.repo_mode_history_list
                 if left is not None:
                     try:
                         try:
@@ -1096,40 +1089,22 @@ class RepoModeFileList(FileListBase):
         if child is None:
             return True
 
-        # Prefer attached filename
-        filename = getattr(child, "_filename", None)
+        # Extract filename/value from the selected child using shared helper
+        filename = self._child_filename(child)
         if filename is None:
-            try:
-                lbl = child.query_one(Label)
-                if hasattr(lbl, "text"):
-                    filename = lbl.text
-                else:
-                    renderable = getattr(lbl, "renderable", None)
-                    if isinstance(renderable, Text):
-                        filename = renderable.plain
-                    elif renderable is not None:
-                        filename = str(renderable)
-                    else:
-                        filename = str(lbl)
-            except Exception as e:
-                try:
-                    self.app.push_screen(_TBDModal(str(e)))
-                except Exception as e:
-                    self.printException(e, "could not push TBDModal for filename exception")
-
-                return True
+            return True
 
         # Determine commit hashes: prefer per-item hashes then file_list attrs then app-wide
         try:
             previous_hash = (
                 getattr(child, "_hash_prev", None)
-                or getattr(self, "current_prev_sha", None)
-                or getattr(self.app, "current_prev_sha", None)
+                or self.current_prev_sha
+                or self.app.current_prev_sha
             )
             current_hash = (
                 getattr(child, "_hash_curr", None)
-                or getattr(self, "current_commit_sha", None)
-                or getattr(self.app, "current_commit_sha", None)
+                or self.current_commit_sha
+                or self.app.current_commit_sha
             )
         except Exception as e:
             self.printException(e, "exception getting commit hashes")
@@ -1181,10 +1156,10 @@ class HistoryListBase(AppBase):
         will be cleared.
         """
         try:
-            nodes = getattr(self, "_nodes", [])
+            nodes = self._nodes
             if not nodes:
                 return
-            idx = getattr(self, "index", 0) or 0
+            idx = self.index or 0
             if idx < 0 or idx >= len(nodes):
                 return
 
@@ -1284,7 +1259,7 @@ class HistoryListBase(AppBase):
             # ListView won't re-highlight if the index hasn't changed.
             def _apply() -> None:
                 try:
-                    nodes = getattr(self, "_nodes", [])
+                    nodes = self._nodes
                     if not nodes:
                         return
                     target = self.index if self.index is not None else 0
@@ -1352,8 +1327,8 @@ class HistoryListBase(AppBase):
         decide how to present errors to the user.
         """
         try:
-            nodes = getattr(self, "_nodes", [])
-            idx = getattr(self, "index", None)
+            nodes = self._nodes
+            idx = self.index
             if idx is None or idx < 0 or not nodes or idx >= len(nodes):
                 return (None, None, None, None, None, None)
 
@@ -1415,7 +1390,7 @@ class FileModeHistoryList(HistoryListBase):
         working directory. Appends ListItem entries and focuses the widget.
         """
         try:
-            filename = file_path or getattr(self, "_filename", None)
+            filename = file_path or self._filename
             if not filename:
                 return
 
@@ -1429,7 +1404,7 @@ class FileModeHistoryList(HistoryListBase):
                     "--",
                     filename,
                 ],
-                cwd=getattr(self.app, "path", None),
+                cwd=self.app.path,
                 capture_output=True,
                 text=True,
             )
@@ -1448,7 +1423,7 @@ class FileModeHistoryList(HistoryListBase):
             # Optionally insert pseudo entries (STAGED/MODS) then append real commits
             if out:
                 try:
-                    app = getattr(self, "app", None)
+                    app = self.app
                     pseudo_entries: list[str] = []
                     if app and getattr(app, "repo_available", False) and app.repo_root:
                         try:
@@ -1484,7 +1459,7 @@ class FileModeHistoryList(HistoryListBase):
                     display_pseudo = pseudo
                     if pseudo == "STAGED":
                         try:
-                            app = getattr(self, "app", None)
+                            app = self.app
                             display_pseudo = "STAGED"
                             if app and getattr(app, "repo_root", None):
                                 try:
@@ -1617,8 +1592,8 @@ class FileModeHistoryList(HistoryListBase):
         Returns True when the key was handled/consumed.
         """
         # need at least one other item to diff against (either checked or next)
-        idx = getattr(self, "index", None)
-        nodes = getattr(self, "_nodes", [])
+        idx = self.index
+        nodes = self._nodes
         if idx is None or idx < 0 or not nodes:
             try:
                 self.app.push_screen(_TBDModal("No commit to diff with"))
@@ -1680,7 +1655,7 @@ class FileModeHistoryList(HistoryListBase):
                 return True
 
         # determine filename for the history (attached when populated)
-        filename = getattr(self, "_filename", None)
+        filename = self._filename
         if not filename:
             try:
                 self.app.push_screen(_TBDModal("Unknown filename for history"))
@@ -1725,7 +1700,7 @@ class RepoModeHistoryList(HistoryListBase):
         entries with the format: "YYYY-MM-DD <short-hash> <subject>".
         """
         try:
-            app = getattr(self, "app", None)
+            app = self.app
             repo_root = None
             if app:
                 repo_root = getattr(app, "repo_root", None) or getattr(app, "path", None)
@@ -1869,30 +1844,21 @@ class RepoModeHistoryList(HistoryListBase):
                 except Exception:
                     parent = None
 
-                file_list = getattr(self.app, "repo_mode_file_list", None)
-                # ???? We KNOW there will be one. BAIL if it does not exist
-                if file_list is None:
+                file_list = self.app.repo_mode_file_list
+                try:
+                    file_list = RepoModeFileList(id="right1")
+                    if parent is not None:
+                        self.app._mount_replace(parent, file_list)
+                    else:
+                        self.app.mount(file_list)
+                    self.app.repo_mode_file_list = file_list
+                except Exception as e:
+                    self.printException(e, "mounting right1")
                     try:
-                        file_list = RepoModeFileList(id="right1")
-                        if parent is not None:
-                            self.app._mount_replace(parent, file_list)
-                        else:
-                            self.app.mount(file_list)
-                        self.app.repo_mode_file_list = file_list
-                    except Exception as e:
-                        self.printException(e, "mounting right1")
-                        try:
-                            self.app.push_screen(_TBDModal("Could not show files for commit diff"))
-                        except Exception:
-                            pass
-                        return True
-                else:
-                    # Ensure the attribute-backed widget is mounted into the parent
-                    try:
-                        if parent is not None:
-                            self.app._mount_replace(parent, file_list)
+                        self.app.push_screen(_TBDModal("Could not show files for commit diff"))
                     except Exception:
                         pass
+                    return True
 
                 try:
                     file_list.current_commit_sha = current_hash
@@ -1985,7 +1951,7 @@ class DiffListBase(AppBase):
             if diff_out:
                 for line in diff_out.splitlines():
                     try:
-                        if getattr(self.app, "colorize_diff", False):
+                        if self.app.colorize_diff:
                             if line.startswith("+++") or line.startswith("---"):
                                 styled_text = Text(line, style="bold white")
                             elif line.startswith("+"):
@@ -2049,15 +2015,15 @@ class DiffListBase(AppBase):
                 except Exception as e:
                     self.printException(e)
 
-                logger.debug(f"DiffList: c/C pressed, colorize_diff={getattr(self.app, 'colorize_diff', None)}")
+                logger.debug(f"DiffList: c/C pressed, colorize_diff={self.app.colorize_diff}")
                 try:
                     self.app.colorize_diff = not self.app.colorize_diff
                     logger.debug(f"DiffList: toggled to colorize_diff={self.app.colorize_diff}")
 
                     if (
-                        getattr(self.app, "current_commit_sha", None)
-                        and getattr(self.app, "current_prev_sha", None)
-                        and getattr(self.app, "current_diff_file", None)
+                        self.app.current_commit_sha
+                        and self.app.current_prev_sha
+                        and self.app.current_diff_file
                     ):
 
                         logger.debug("DiffList: re-rendering diff with new colorization")
@@ -2098,10 +2064,8 @@ class DiffListBase(AppBase):
                     self.printException(e)
 
                 try:
-                    variants = getattr(
-                        self.app, "diff_variants", [None, "--ignore-space-change", "--diff-algorithm=patience"]
-                    )
-                    cur = getattr(self.app, "diff_cmd_index", 0)
+                    variants = self.app.diff_variants
+                    cur = self.app.diff_cmd_index
                     cur = (cur + 1) % max(1, len(variants))
                     self.app.diff_cmd_index = cur
                     logger.debug(f"DiffList: rotated diff_cmd_index to {cur}, variant={variants[cur]}")
@@ -2115,9 +2079,9 @@ class DiffListBase(AppBase):
                         self.printException(e, "updating right2 title exception")
 
                     if (
-                        getattr(self.app, "current_commit_sha", None)
-                        and getattr(self.app, "current_prev_sha", None)
-                        and getattr(self.app, "current_diff_file", None)
+                        self.app.current_commit_sha
+                        and self.app.current_prev_sha
+                        and self.app.current_diff_file
                     ):
 
                         previous_hash = self.app.current_prev_sha
@@ -2192,7 +2156,7 @@ class DiffListBase(AppBase):
 
             def _apply() -> None:
                 try:
-                    nodes = getattr(self, "_nodes", [])
+                    nodes = self._nodes
                     if not nodes:
                         return
                     target = self.index if self.index is not None else 0
@@ -2662,12 +2626,9 @@ App {
             try:
                 # Always assign display values (None means visible)
                 # Prefer attribute-backed widget references when available
-                # ???? We KNOW that the attributes exist here, so why not just use them?
-                # ???? how will this work if both attributes are assigned, as they should be?
-                # ???? can we set current_history_list and current_file_list attributes, then use that?
 
                 try:
-                    if getattr(self, "log_first", False):
+                    if self.log_first:
                         left_wgt = self.repo_mode_history_list
                     else:
                         left_wgt = self.file_mode_file_list
@@ -2678,7 +2639,7 @@ App {
                 except Exception as e:
                     self.printException(e, "could not set left display in _apply_column_layout")
                 try:
-                    if getattr(self, "log_first", False):
+                    if self.log_first:
                         r1_wgt = self.repo_mode_file_list
                     else:
                         r1_wgt = self.file_mode_history_list
@@ -2689,7 +2650,7 @@ App {
                 except Exception as e:
                     self.printException(e, "could not set right1 display in _apply_column_layout")
                 try:
-                    if getattr(self, "log_first", False):
+                    if self.log_first:
                         r2_wgt = self.repo_mode_diff_list
                     else:
                         r2_wgt = self.file_mode_diff_list
@@ -2838,7 +2799,7 @@ App {
         """Push a new layout onto the layout stack and apply it."""
         try:
             try:
-                logger.debug(f"push_layout: requested={newlayout} before={getattr(self,'layout_stack',None)}")
+                logger.debug(f"push_layout: requested={newlayout} before={self.layout_stack}")
             except Exception as e:
                 self.printException(e)
 
@@ -2858,11 +2819,11 @@ App {
         """Pop the current layout and restore the previous one (if any)."""
         try:
             try:
-                logger.debug(f"pop_layout: stack before pop={getattr(self,'layout_stack',None)}")
+                logger.debug(f"pop_layout: stack before pop={self.layout_stack}")
             except Exception as e:
                 self.printException(e)
             try:
-                if not getattr(self, "layout_stack", None):
+                if not self.layout_stack:
                     return
             except Exception as e:
                 self.printException(e)
@@ -2891,11 +2852,7 @@ App {
         separate attribute so push/pop semantics remain authoritative.
         """
         try:
-            return bool(
-                getattr(self, "layout_stack", None)
-                and self.layout_stack
-                and self.layout_stack[-1][0] == "diff_fullscreen"
-            )
+            return bool(self.layout_stack and self.layout_stack[-1][0] == "diff_fullscreen")
         except Exception as e:
             self.printException(e)
             return False
@@ -2957,7 +2914,7 @@ App {
         """Push a footer message onto the footer stack and set it."""
         try:
             try:
-                logger.debug(f"push_footer: requested={value} before={getattr(self,'footer_stack',None)}")
+                logger.debug(f"push_footer: requested={value} before={self.footer_stack}")
             except Exception as e:
                 self.printException(e)
 
@@ -2978,11 +2935,11 @@ App {
         """Pop the current footer message and restore the previous one."""
         try:
             try:
-                logger.debug(f"pop_footer: stack before pop={getattr(self,'footer_stack',None)}")
+                logger.debug(f"pop_footer: stack before pop={self.footer_stack}")
             except Exception as e:
                 self.printException(e)
             try:
-                if not getattr(self, "footer_stack", None):
+                if not self.footer_stack:
                     return
             except Exception:
                 return
@@ -3007,7 +2964,7 @@ App {
         """Push a new focus target and focus it."""
         try:
             try:
-                logger.debug(f"push_focus: requested={target} before={getattr(self,'focus_stack',None)}")
+                logger.debug(f"push_focus: requested={target} before={self.focus_stack}")
             except Exception as e:
                 self.printException(e)
 
@@ -3027,11 +2984,11 @@ App {
         """Pop the current focus and restore the previous one."""
         try:
             try:
-                logger.debug(f"pop_focus: stack before pop={getattr(self,'focus_stack',None)}")
+                logger.debug(f"pop_focus: stack before pop={self.focus_stack}")
             except Exception as e:
                 self.printException(e)
             try:
-                if not getattr(self, "focus_stack", None):
+                if not self.focus_stack:
                     return
             except Exception:
                 return
@@ -3249,7 +3206,7 @@ App {
             yield Label(Text(self.TITLE, style="bold"), id="title")
             with Horizontal(id="main"):
                 # allow alternate column ordering when starting in log-first mode
-                if getattr(self, "log_first", False):
+                if self.log_first:
                     # History on the left, Files in the middle, Diff on the right
                     with Vertical(id="left-column"):
                         yield Label(Text("History", style="bold"), id="left-title")
@@ -3359,15 +3316,11 @@ App {
                 
             except Exception as e:
                 # Allocation of one or more widgets raised an exception; log and abort.
-                
                 raise RuntimeError(f"Critical widget allocation failure: {e}") from e
                 
-
-
-
             # Mount the appropriate mode widgets into the columns based on startup mode
             try:
-                if getattr(self, "log_first", False):
+                if self.log_first:
                     # mount repo-mode widgets
                     try:
                         if self.repo_mode_history_list is not None and left_col is not None:
@@ -3436,237 +3389,32 @@ App {
             self.build_repo_cache()
         except Exception as e:
             self.printException(e)
-
-        # Force left-only layout at startup (Files or History full-width)
-        try:
+            
+        if self.log_first:
             try:
-                footer_start = self.footer_history if self.log_first else self.footer_file
+                self.repo_mode_history_list.prepRepoModeHistoryList()
                 # Resolve the left target id from attributes (direct access)
                 left_widget = self.repo_mode_history_list if self.log_first else self.file_mode_file_list
                 left_target = f"#{left_widget.id}" if left_widget is not None else "#left"
                 self.push_state(
                     "left_fullscreen",
                     left_target,
-                    footer_start,
+                    footer_history,
                 )
             except Exception as e:
                 self.printException(e)
-        except Exception as e:
-            self.printException(e)
-
-        # Populate the Files column only when present and not in log-first startup
-        try:
-            if not self.log_first:
-                if self.file_mode_file_list is not None:
-                    try:
-                        self.file_mode_file_list.prepFileModeFileList(self.path)
-                    except Exception as e:
-                        self.printException(e)
-        except Exception as e:
-            self.printException(e)
-
-        # If started in log-first (repo-first) mode, populate repo-wide history
-        try:
-            if self.log_first:
-                try:
-                    self._open_repo_history()
-                    try:
-                        # focus the history column after populating repo history
-                        left_widget = self.repo_mode_history_list
-                        tgt = f"#{left_widget.id}" if left_widget is not None else "#left"
-                        self.push_focus(tgt)
-                        self.push_footer(self.footer_history)
-                    except Exception as e:
-                        self.printException(e)
-                except Exception as e:
-                    self.printException(e)
-
-        except Exception as e:
-            self.printException(e)
-
-        # If launched with a filename, populate and focus its history immediately
-        try:
-            if self.initial_file:
-                try:
-                    self._open_history_for_file(self.initial_file)
-                    try:
-                        if self.log_first:
-                            hist_attr = self.repo_mode_history_list
-                        else:
-                            hist_attr = self.file_mode_history_list
-                        tgt = f"#{hist_attr.id}" if hist_attr is not None else "#right1"
-                        self.push_focus(tgt)
-                        self.push_footer(self.footer_history)
-                    except Exception as e:
-                        self.printException(e)
-                except Exception as e:
-                    self.printException(e)
-
-        except Exception as e:
-            self.printException(e)
-
-    def _open_history_for_file(self, item_name: str) -> None:  # GitHistoryTool
-        """Populate the History column for `item_name` and focus it.
-
-        Mirrors the behavior used when pressing Right on a file in the Files column.
-        """
-        try:
-            # Prefer stored attribute references to querying the DOM (mode-specific)
-            if self.log_first:
-                hist = self.repo_mode_history_list
-            else:
-                hist = self.file_mode_history_list
-            if hist is None:
-                # ???? this cannot happen. Get rid of getattr checks everywhere after init?
-                try:
-                    hist = self.query_one("#right1", ListView)
-                except Exception:
-                    hist = None
-
-            if hist is not None:
-                # Prefer the new preparatory API when available on the history widget
-                # ???? just call prepListModeHistoryList() or prepRepoModeHistoryList(), depending on log_first
-                try:
-                    hist.prepListModeHistoryList(item_name)
-                except Exception as e:
-                    self.printException(e)
-                try:
-                    hist.index = 0
-                except Exception as e:
-                    self.printException(e)
-            # ensure we are not in diff-fullscreen when opening history
-            # (no-op: fullscreen is derived from layout_stack)
-        except Exception as e:
+        else:
             try:
-                self.push_screen(_TBDModal(str(e)))
+                self.file_mode_file_list.prepFileModeFileList(self.path)
+                # make sure the stacks contain the initial state
+                self.push_state("left_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
+                if self.initial_file:
+                    self.file_mode_history_list.prepFileModeHistoryList(self.initial_file)
+                    self.push_state("left_right_split", f"#{self.file_mode_history_list.id}", self.footer_history)
+
             except Exception as e:
                 self.printException(e)
 
-    def _open_repo_history(self) -> None:  # GitHistoryTool
-        """Populate the History column with repository-wide commits and focus it."""
-        try:
-            # If we started in log-first mode, the left column already hosts
-            # a `RepoModeHistoryList`; populate it rather than mounting a new widget.
-            if self.log_first:
-                hist = self.repo_mode_history_list
-                if hist is not None:
-                    try:
-                        hist.prepRepoModeHistoryList()
-                        hist.index = 0
-                    except Exception as e:
-                        self.printException(e)
-                    return
-
-            # Replace or mount a repo-backed history list into right1 when not log-first
-            try:
-                parent = None
-                try:
-                    parent = self.query_one("#right1-column")
-                except Exception as e:
-                    self.printException(e)
-                    parent = None
-
-                repo_hist = self.repo_mode_history_list
-                # We guarantee attribute allocation at startup; use it directly
-                # RepoModeHistoryList implements prepRepoModeHistoryList()
-                repo_hist.prepRepoModeHistoryList()
-                repo_hist.index = 0
-            
-            except Exception as e:
-                self.printException(e)
-                try:
-                    self.push_screen(_TBDModal(str(e)))
-                except Exception as e:
-                    self.printException(e)
-
-        except Exception as e:
-            try:
-                self.push_screen(_TBDModal(str(e)))
-            except Exception as e2:
-                self.printException(e2)
-
-    def prepRepoModeHistoryList(self) -> None:  # GitHistoryTool
-        """Prepare or mount a RepoModeHistoryList into the History column.
-
-        This mirrors the mounting/population logic used by `_open_repo_history`
-        but does not perform any focus changes; callers may push focus as
-        desired.
-        """
-        # ???? why is this duplicated from RepoModeHistoryList.prepRepoModeHistoryList()?
-        # ???? why does this exist at all, given _open_repo_history()?
-        try:
-            # If started in log-first mode, the left column already hosts
-            # a `RepoModeHistoryList`; populate it rather than mounting a new widget.
-            if self.log_first:
-                hist = self.repo_mode_history_list
-                if hist is not None:
-                    try:
-                        hist.prepRepoModeHistoryList()
-                        # Make left column full-width and hide others
-                        self.push_layout("left_fullscreen")
-                        try:
-                            self.query_one("#right3-column").styles.width = "0%"
-                            self.query_one("#right3-column").styles.flex = 0
-                        except Exception as e:
-                            self.printException(e)
-                        hist.index = 0
-                    except Exception as e:
-                        self.printException(e)
-
-                    return
-
-            # Non-log-first: mount/replace the right1 history widget with
-            # a repository-backed history list and populate it.
-            try:
-                parent = None
-                try:
-                    parent = self.query_one("#right1-column")
-                except Exception as e:
-                    self.printException(e)
-                    parent = None
-
-                repo_hist = self.repo_mode_history_list
-                if parent is not None:
-                    self._mount_replace(parent, repo_hist)
-                else:
-                    self.mount(repo_hist)
-
-                repo_hist.prepRepoModeHistoryList()
-                # ???? layout should not be here; caller should manage layout/focus
-                try:
-                    # Adjust layout: hide files and other right columns, show history full-width
-                    self._apply_column_layout(
-                            "0%",
-                            "100%",
-                            "0%",
-                            "0%",
-                            left_display=None,
-                            right1_display=None,
-                            right2_display=None,
-                            right3_display=None,
-                        )
-                    try:
-                        self.query_one("#right3-column").styles.width = "0%"
-                        self.query_one("#right3-column").styles.flex = 0
-                    except Exception as e:
-                        self.printException(e)
-                    repo_hist.index = 0
-                except Exception as e:
-                    self.printException(e)
-                return
-
-            except Exception as e:
-                self.printException(e)
-                try:
-                    self.push_screen(_TBDModal(str(e)))
-                except Exception as e:
-                    self.printException(e)
-
-        except Exception as e:
-            try:
-                self.push_screen(_TBDModal(str(e)))
-            except Exception as e2:
-                self.printException(e2)
 
     def on_key(self, event: events.Key) -> None:  # GitHistoryTool
         """Global key handler.
