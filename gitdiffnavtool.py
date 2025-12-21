@@ -730,10 +730,8 @@ class FileModeFileList(FileListBase):
                 # ???? move to a callable method, sharable with ".." handling in key_left?
                 # switch the listing to the selected directory
                 try:
-                    if hasattr(self, "prepFileModeFileList"):
-                        self.prepFileModeFileList(full)
-                    else: # ???? do a complete fail instead -- no fallback
-                        super().set_path(full)
+                    self.prepFileModeFileList(full)
+                    
                 except Exception as e:
                     self.printException(e, "changing directory in key_right")
                 # ensure highlight resets to the minimum selectable item
