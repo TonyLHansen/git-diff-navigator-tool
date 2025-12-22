@@ -1447,6 +1447,10 @@ class FileModeHistoryList(HistoryListBase):
                     self.printException(e, "exception building pseudo entries")
                     pseudo_entries = []
 
+                logger.debug(
+                        f"prepFileModeHistoryList: populated history for {filename} items={len(self._nodes) if hasattr(self,'_nodes') else 'unknown'}"
+                    )
+
                 for pseudo in pseudo_entries:
                     display_pseudo = pseudo
                     if pseudo == "STAGED":
@@ -1550,32 +1554,9 @@ class FileModeHistoryList(HistoryListBase):
         """
         try:
             # Restore focus first, then restore the layout to left_fullscreen
-            try:
-                try:
-                    self.app.pop_focus()
-                except Exception as e:
-                    self.printException(e, "exception popping focus to files on left from history")
-                try:
-                    self.app.pop_footer()
-                except Exception as e:
-                    self.printException(e)
-            except Exception as e:
-                self.printException(e, "focusing files on left")
-
-            try:
-                try:
-                    self.app.pop_layout()
-                except Exception as e:
-                    self.printException(e, "could not pop_layout to restore left_fullscreen from history")
-                try:
-                    self.app.pop_footer()
-                except Exception as e:
-                    self.printException(e)
-            except Exception as e:
-                self.printException(e, "error restoring layout from history left")
-
+            self.app.pop_state()
         except Exception as e:
-            self.printException(e, "focusing files on left")
+            self.printException(e, "exception popping state to files on left from history")
         return True
 
     def key_right(self) -> bool:  # FileModeHistoryList
@@ -1666,6 +1647,9 @@ class FileModeHistoryList(HistoryListBase):
         try:
             # Delegate to centralized helper
             try:
+                logger.debug(
+                    f"FileModeHistoryList.key_right: preparing diff for file={filename} prev={previous_hash} curr={current_hash}"
+                )
                 self.prep_and_show_diff(filename, previous_hash, current_hash, self.app.diff_list, "file_history_diff")
             except Exception as e:
                 self.printException(e, "prep_and_show_diff failed")
@@ -1957,7 +1941,6 @@ class DiffList(AppBase):
 
             self.styles.display = None
             self.index = 0
-            # Do not perform focus changes here; callers should push_focus as needed.
 
         except Exception as exc:
             self.printException(exc, "prepDiffList outer failure")
@@ -2408,7 +2391,7 @@ class HelpList(AppBase):
                     event.stop()
                     self.app.pop_state()
                 except Exception as e:
-                    self.printException(e, "could not pop_footer when dismissing help")
+                    self.printException(e, "could not pop_state when dismissing help")
                 return True
             except Exception as e:
                 self.printException(e)
@@ -2571,7 +2554,8 @@ class GitHistoryTool(App):
         show = None
         hide = "none"
         logger.debug(
-            f"GitHistoryTool._apply_column_layout widths={(left_file_w,left_history_w,right_history_w,right_file_w,diff_w,help_w)}"
+            f"GitHistoryTool._apply_column_layout widths: lf={left_file_w}, lh={left_history_w}, "
+            f"rh={right_history_w}, rf={right_file_w}, d={diff_w}, h={help_w}"
         )
 
         try:
@@ -2673,7 +2657,7 @@ class GitHistoryTool(App):
                 self._apply_column_layout(0, 25, 0, 75, 0, 0)
             elif newlayout == "file_history_diff":
                 # show left-file, left-history, diff
-                self._apply_column_layout(5, 20, 0, 0, 75, 0)
+                self._apply_column_layout(5, 0, 20, 0, 75, 0)
             elif newlayout == "history_file_diff":
                 # show left-history, right-file, diff
                 self._apply_column_layout(0, 5, 0, 20, 75, 0)
@@ -2715,33 +2699,47 @@ class GitHistoryTool(App):
             self.printException(e, f"_stack_push {stack_name}")
             return getattr(self, stack_name, [])
 
-    def _stack_pop(self, stack_name: str) -> list:
+    def _stack_pop(self, stack_name: str) -> tuple[Optional[str], list]:
         """Generic pop helper for refcounted stacks.
 
-        Decrements the top count or removes the top entry; returns the
-        resulting stack.
+        Decrements the top count or removes the top entry; returns a tuple
+        `(popped, stack)` where `popped` is the value that was removed (or
+        the top value prior to decrement), or `None` when the stack was
+        empty. `stack` is the resulting list object after mutation. The
+        underlying attribute named `stack_name` is mutated in-place.
         """
         logger.debug(f"_stack_pop({stack_name})")
         try:
             stack = getattr(self, stack_name, None)
             if not stack:
-                return []
+                return None, []
+            popped = None
             try:
                 name, cnt = stack[-1]
                 if cnt > 1:
+                    # decrement the refcount but the top value remains
                     stack[-1] = (name, cnt - 1)
+                    # popped is the name we observed (top before change)
+                    popped = name
                 else:
-                    stack.pop()
+                    # remove the top entry entirely
+                    popped = stack.pop()[0]
             except Exception as e:
                 self.printException(e)
             try:
                 logger.debug(f"_stack_pop: {stack_name} after pop={stack}")
             except Exception as e:
                 self.printException(e)
-            return stack
+            # return the popped value (the previous top) and the resulting stack
+            if popped is None:
+                # show the stack trace for debugging
+                callers = "".join(traceback.format_stack(limit=10))
+                logger.error("_stack_pop: popped is None unexpectedly; callers:\n%s", callers)
+            return popped, stack
         except Exception as e:
             self.printException(e, f"_stack_pop {stack_name}")
-            return getattr(self, stack_name, [])
+            stack = getattr(self, stack_name, [])
+            return (stack[-1][0] if stack else None), stack
 
     def push_layout(self, newlayout: str) -> None:  # GitHistoryTool
         """Push a new layout onto the layout stack and apply it."""
@@ -2766,34 +2764,43 @@ class GitHistoryTool(App):
 
     def pop_layout(self) -> None:  # GitHistoryTool
         """Pop the current layout and restore the previous one (if any)."""
-        try:
-            logger.debug("pop_layout()")
-            try:
-                logger.debug(f"pop_layout: stack before pop={self.layout_stack}")
-            except Exception as e:
-                self.printException(e)
-            try:
-                if not self.layout_stack:
-                    return
-            except Exception as e:
-                self.printException(e)
-                return
+        logger.debug(f"pop_layout(): stack before pop={self.layout_stack}")
+        if not self.layout_stack:
+            # this should NOT happen and indicates a serious state
+            # show the stack trace for debugging
+            callers = "".join(traceback.format_stack(limit=10))
+            logger.error("pop_layout: layout_stack is empty unexpectedly; callers:\n%s", callers)
+            return
 
+        try:
+            prev, stack = self._stack_pop("layout_stack")
+            # new top after pop (the layout we'll restore)
+            if prev is None:
+                # Unexpected: layout stack emptied. This is a severe state
+                # that indicates mismatched push/pop calls. Emit an explicit
+                # error with a short stack trace to aid diagnosis, and
+                # choose a sensible fallback based on whether the app
+                # started in log-first (repo/history) mode.
+                try:
+                    callers = "".join(traceback.format_stack(limit=10))
+                except Exception:
+                    callers = "(could not capture stack)"
+                logger.error(
+                    "pop_layout: layout_stack emptied unexpectedly; falling back to default layout. log_first=%s\nCallers:\n%s",
+                    getattr(self, "log_first", False),
+                    callers,
+                )
+                prev = "history_fullscreen" if getattr(self, "log_first", False) else "file_fullscreen"
             try:
-                self._stack_pop("layout_stack")
-                prev = self.layout_stack[-1][0] if self.layout_stack else "left_fullscreen"
-                try:
-                    logger.debug(f"pop_layout: applying prev={prev} resulting_stack={self.layout_stack}")
-                except Exception as e:
-                    self.printException(e)
-                try:
-                    self.change_layout(prev)
-                except Exception as e:
-                    self.printException(e, "pop_layout change_layout failed")
+                logger.debug(f"pop_layout: applying prev={prev} resulting_stack={stack}")
             except Exception as e:
-                self.printException(e, "pop_layout inner failure")
+                self.printException(e)
+            try:
+                self.change_layout(prev)
+            except Exception as e:
+                self.printException(e, "pop_layout change_layout failed")
         except Exception as e:
-            self.printException(e, "pop_layout outer failure")
+            self.printException(e, "pop_layout failure")
 
     def is_diff_fullscreen(self) -> bool:  # GitHistoryTool
         """Return True when the current layout is `diff_fullscreen`.
@@ -2909,26 +2916,30 @@ class GitHistoryTool(App):
 
     def pop_footer(self) -> None:  # GitHistoryTool
         """Pop the current footer message and restore the previous one."""
-        try:
-            logger.debug(f"pop_footer: stack before pop={self.footer_stack}")
-            if not self.footer_stack:
-                return
+        logger.debug(f"pop_footer(): stack before pop={self.footer_stack}")
+        if not self.footer_stack:
+            # this should NOT happen and indicates a serious state
+            # show the stack trace for debugging
+            callers = "".join(traceback.format_stack(limit=10))
+            logger.error("pop_footer: footer_stack is empty; cannot pop. Callers:\n%s", callers)
+            return
 
+        try:
+            prev, stack = self._stack_pop("footer_stack")
+            if prev is None:
+                # this is a serious state indicating mismatched push/pop calls
+                logger.error("pop_footer: footer_stack emptied unexpectedly; falling back to empty footer.")
+                prev = Text("Unknown footer state")
             try:
-                self._stack_pop("footer_stack")
-                prev = self.footer_stack[-1][0] if self.footer_stack else self.footer_file
-                try:
-                    logger.debug(f"pop_footer: restoring prev={prev} resulting_stack={self.footer_stack}")
-                except Exception as e:
-                    self.printException(e)
-                try:
-                    self.change_footer(prev)
-                except Exception as e:
-                    self.printException(e, "pop_footer change_footer failed")
+                logger.debug(f"pop_footer: restoring prev={prev} resulting_stack={stack}")
             except Exception as e:
-                self.printException(e, "pop_footer inner failure")
+                self.printException(e)
+            try:
+                self.change_footer(prev)
+            except Exception as e:
+                self.printException(e, "pop_footer change_footer failed")
         except Exception as e:
-            self.printException(e, "pop_footer outer failure")
+            self.printException(e, "pop_footer failure")
 
     def push_focus(self, target: str) -> None:  # GitHistoryTool
         """Push a new focus target and focus it."""
@@ -2949,18 +2960,27 @@ class GitHistoryTool(App):
 
     def pop_focus(self) -> None:  # GitHistoryTool
         """Pop the current focus and restore the previous one."""
+        logger.debug(f"pop_focus(): stack before pop={self.focus_stack}")
+
+        if not self.focus_stack:
+            # this should NOT happen and indicates a serious state
+            # show the stack trace for debugging
+            callers = "".join(traceback.format_stack(limit=10))
+            logger.error("pop_footer: footer_stack is empty; cannot pop. Callers:\n%s", callers)
+            return
+
+        prev, stack = self._stack_pop("focus_stack")
+        if prev is None:
+            # this is a serious state indicating mismatched push/pop calls
+            callers = "".join(traceback.format_stack(limit=10))
+            logger.error("pop_focus: focus_stack emptied unexpectedly; falling back to default focus. log_first=%s. Callers:\n%s", self.log_first, callers)
+            prev = prev if prev is not None else "#left-history-list" if self.log_first else "#left-file-list"
+
+        logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={stack}")
         try:
-            logger.debug(f"pop_focus: stack before pop={self.focus_stack}")
-
-            if not self.focus_stack:
-                return
-
-            self._stack_pop("focus_stack")
-            prev = self.focus_stack[-1][0] if self.focus_stack else "#left-file-list"
-            logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={self.focus_stack}")
             self.change_focus(prev)
         except Exception as e:
-            self.printException(e, "pop_focus outer failure")
+            self.printException(e, "pop_focus change_focus failed")
 
     def push_state(self, layout: Optional[str] = None, focus: Optional[str] = None, footer: Optional[Text | str] = None) -> None:  # GitHistoryTool
         """Push layout, focus, and footer together (app-level helper).
@@ -3245,6 +3265,7 @@ class GitHistoryTool(App):
                 # Resolve the left target id from attributes (direct access)
                 left_widget = self.repo_mode_history_list if self.log_first else self.file_mode_file_list
                 left_target = f"#{left_widget.id}" if left_widget is not None else "#left-file-list"
+                logger.debug(f"on_mount: pushing initial history_fullscreen state (log_first) left_target={left_target}")
                 self.push_state(
                     "history_fullscreen",
                     left_target,
