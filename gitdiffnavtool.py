@@ -2590,47 +2590,56 @@ class GitHistoryTool(App):
     # Layout helpers on the App so widgets can call `self.app.layout_*`.
     def _apply_column_layout(  # GitHistoryTool
         self,
-        widths: list,
-        displays: list,
+        left_file_w: int,
+        left_history_w: int,
+        right_history_w: int,
+        right_file_w: int,
+        diff_w: int,
+        help_w: int,
     ) -> None:
-        (left_file_w, left_history_w, right_history_w, right_file_w, diff_w, help_w) = widths
-        (left_file_display, left_history_display, right_history_display, right_file_display, diff_display, help_display) = displays
-        logger.debug(f"GitHistoryTool._apply_column_layout widths={widths} displays={displays}")
+        # Maintainable visibility tokens:
+        # `show` clears an override (lets the CSS decide),
+        # `hide` forces display:none
+        show = None
+        hide = "none"
+        logger.debug(
+            f"GitHistoryTool._apply_column_layout widths={(left_file_w,left_history_w,right_history_w,right_file_w,diff_w,help_w)}"
+        )
 
         try:
             try:
                 c1 = self.query_one("#left-file-column")
-                c1.styles.width = left_file_w
+                c1.styles.width = f"{left_file_w}%"
                 c1.styles.flex = 0
             except Exception as e:
                 self.printException(e, "could not set left-file-column")
             try:
                 c2 = self.query_one("#left-history-column")
-                c2.styles.width = left_history_w
+                c2.styles.width = f"{left_history_w}%"
                 c2.styles.flex = 0
             except Exception as e:
                 self.printException(e, "could not set left-history-column")
             try:
                 c3 = self.query_one("#right-history-column")
-                c3.styles.width = right_history_w
+                c3.styles.width = f"{right_history_w}%"
                 c3.styles.flex = 0
             except Exception as e:
                 self.printException(e, "could not set right-history-column")
             try:
                 c4 = self.query_one("#right-file-column")
-                c4.styles.width = right_file_w
+                c4.styles.width = f"{right_file_w}%"
                 c4.styles.flex = 0
             except Exception as e:
                 self.printException(e, "could not set right-file-column")
             try:
                 c5 = self.query_one("#diff-column")
-                c5.styles.width = diff_w
+                c5.styles.width = f"{diff_w}%"
                 c5.styles.flex = 0
             except Exception as e:
                 self.printException(e, "could not set diff-column")
             try:
                 c6 = self.query_one("#help-column")
-                c6.styles.width = help_w
+                c6.styles.width = f"{help_w}%"
                 c6.styles.flex = 0
             except Exception as e:
                 self.printException(e, "could not set help-column")
@@ -2638,29 +2647,29 @@ class GitHistoryTool(App):
             try:
                 # Directly set displays on the canonical, already-resolved widgets.
                 try:
-                    self.file_mode_file_list.styles.display = left_file_display
+                    self.file_mode_file_list.styles.display = show if left_file_w else hide
                 except Exception as e:
                     self.printException(e, "could not set left-file-list display in _apply_column_layout")
                 try:
-                    self.repo_mode_history_list.styles.display = left_history_display
+                    self.repo_mode_history_list.styles.display = show if left_history_w else hide
                 except Exception as e:
                     self.printException(e, "could not set left-history-list display in _apply_column_layout")
                 try:
-                    self.file_mode_history_list.styles.display = right_history_display
+                    self.file_mode_history_list.styles.display = show if right_history_w else hide
                 except Exception as e:
                     self.printException(e, "could not set right-history-list display in _apply_column_layout")
                 try:
-                    self.repo_mode_file_list.styles.display = right_file_display
+                    self.repo_mode_file_list.styles.display = show if right_file_w else hide
                 except Exception as e:
                     self.printException(e, "could not set right-file-list display in _apply_column_layout")
                 try:
                     # single canonical diff widget
-                    self.diff_list.styles.display = diff_display
+                    self.diff_list.styles.display = show if diff_w else hide
                 except Exception as e:
                     self.printException(e, "could not set diff-list display in _apply_column_layout")
                 try:
                     # help-list must exist after allocation
-                    self.help_list.styles.display = help_display
+                    self.help_list.styles.display = show if help_w else hide
                 except Exception as e:
                     self.printException(e, "could not set help-list display in _apply_column_layout")
             except Exception as e:
@@ -2684,51 +2693,27 @@ class GitHistoryTool(App):
             hide = "none"
             if newlayout == "file_fullscreen":
                 # show left-file-list only
-                self._apply_column_layout(
-                    ["100%", "0%", "0%", "0%", "0%", "0%"],
-                    [show, hide, hide, hide, hide, hide],
-                )
+                self._apply_column_layout(100, 0, 0, 0, 0, 0)
             elif newlayout == "history_fullscreen":
                 # show left-history-list only
-                self._apply_column_layout(
-                    ["0%", "100%", "0%", "0%", "0%", "0%"],
-                    [hide, show, hide, hide, hide, hide],
-                )
+                self._apply_column_layout(0, 100, 0, 0, 0, 0)
             elif newlayout == "file_history":
-                # left-file-list (25%), left-history-list (25%), others hidden
-                self._apply_column_layout(
-                    ["25%", "0%", "75%", "0%", "0%", "0%"],
-                    [show, show, hide, hide, hide, hide],
-                )
+                # left-file-list (25%), right-history-list (75%), others hidden
+                self._apply_column_layout(25, 0, 75, 0, 0, 0)
             elif newlayout == "history_file":
                 # left-history-list then right-file-list
-                self._apply_column_layout(
-                    ["0%", "25%", "0%", "75%", "0%", "0%"],
-                    [hide, show, hide, show, hide, hide],
-                )
+                self._apply_column_layout(0, 25, 0, 75, 0, 0)
             elif newlayout == "file_history_diff":
                 # show left-file, left-history, diff
-                self._apply_column_layout(
-                    ["5%", "20%", "0%", "0%", "75%", "0%"],
-                    [show, show, hide, hide, show, hide],
-                )
+                self._apply_column_layout(5, 20, 0, 0, 75, 0)
             elif newlayout == "history_file_diff":
                 # show left-history, right-file, diff
-                self._apply_column_layout(
-                    ["0%", "5%", "0%", "20%", "75%", "0%"],
-                    [hide, show, hide, show, show, hide],
-                )
+                self._apply_column_layout(0, 5, 0, 20, 75, 0)
             elif newlayout == "diff_fullscreen":
-                self._apply_column_layout(
-                    ["0%", "0%", "0%", "0%", "100%", "0%"],
-                    [hide, hide, hide, hide, show, hide],
-                )
+                self._apply_column_layout(0, 0, 0, 0, 100, 0)
             elif newlayout == "help_fullscreen":
                 # Show only the Help column
-                self._apply_column_layout(
-                    ["0%", "0%", "0%", "0%", "0%", "100%"],
-                    [hide, hide, hide, hide, hide, show],
-                )
+                self._apply_column_layout(0, 0, 0, 0, 0, 100)
             else:
                 raise ValueError(f"unknown layout: {newlayout}")
         except Exception as e:
