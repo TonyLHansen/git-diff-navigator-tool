@@ -336,15 +336,18 @@ class AppBase(ListView):
         return False
 
     def prep_and_show_diff(
-        self, filename: str, prev: Optional[str], curr: Optional[str], diff_widget
+        self,
+        filename: str,
+        prev: Optional[str],
+        curr: Optional[str],
+        diff_widget: str,
+        layout: str,
     ) -> None:  # AppBase
-        """Helper to populate the shared Diff column and make it visible.
+        """Populate the shared Diff column and make it visible using `layout`.
 
-        This centralizes the common sequence used by multiple callers: find
-        the `#right2` diff widget, call its `prepDiffListBase`, and ensure
-        the app shows the three-column layout with focus and footer set.
+        Caller MUST pass the diff widget instance and the explicit
+        layout name to use (e.g. 'file_history_diff' or 'history_file_diff').
         """
-        # Caller MUST pass the correct diff widget matching the caller's mode.
         try:
             try:
                 diff_widget.prepDiffListBase(filename, prev, curr)
@@ -354,9 +357,9 @@ class AppBase(ListView):
                 except Exception as e:
                     self.printException(e, "could not push TBDModal for diff-fullscreen error")
 
-            # Ensure three-column layout, focus, and footer are applied for diff
+            # Use the explicit layout provided by the caller.
             try:
-                self.app.push_state(f"three_columns", f"#{diff_widget.id}", self.app.footer_diff3)
+                self.app.push_state(layout, f"#{diff_widget.id}", self.app.footer_diff3)
             except Exception as e:
                 self.printException(e, "error ensuring layout/focus for diff")
         except Exception as e:
@@ -799,7 +802,7 @@ class FileModeFileList(FileListBase):
                 # Show history and focus the populated widget using its id
                 try:
                     tgt = f"#{hist.id}"
-                    self.app.push_state("left_right_split", tgt, self.app.footer_history)
+                    self.app.push_state("file_history", tgt, self.app.footer_history)
                 except Exception as e:
                     self.printException(e, "focusing history after prep failed")
 
@@ -1129,7 +1132,7 @@ class RepoModeFileList(FileListBase):
         try:
             # Delegate to centralized helper
             try:
-                self.prep_and_show_diff(filename, previous_hash, current_hash, self.app.repo_mode_diff_list)
+                self.prep_and_show_diff(filename, previous_hash, current_hash, self.app.repo_mode_diff_list, "history_file_diff")
             except Exception as e:
                 self.printException(e, "prep_and_show_diff failed")
 
@@ -1675,7 +1678,7 @@ class FileModeHistoryList(HistoryListBase):
         try:
             # Delegate to centralized helper
             try:
-                self.prep_and_show_diff(filename, previous_hash, current_hash, self.app.file_mode_diff_list)
+                self.prep_and_show_diff(filename, previous_hash, current_hash, self.app.file_mode_diff_list, "file_history_diff")
             except Exception as e:
                 self.printException(e, "prep_and_show_diff failed")
 
@@ -1871,7 +1874,7 @@ class RepoModeHistoryList(HistoryListBase):
                         self.printException(e)
 
                     try:
-                        self.app.push_state("left_right_split", f"#{getattr(file_list, 'id', file_list.id if file_list else 'right-file-list')}", self.app.footer_file)
+                        self.app.push_state("history_file", f"#{getattr(file_list, 'id', file_list.id if file_list else 'right-file-list')}", self.app.footer_file)
                     except Exception as e:
                         self.printException(e)
                 except Exception as e:
@@ -1895,7 +1898,7 @@ class RepoModeHistoryList(HistoryListBase):
                     self.printException(e)
 
                 try:
-                    self.app.push_state("left_right_split", f"#{getattr(file_list, 'id', 'right-file-list')}", self.app.footer_file)
+                    self.app.push_state("history_file", f"#{getattr(file_list, 'id', 'right-file-list')}", self.app.footer_file)
                 except Exception as e:
                     self.printException(e)
             except Exception as e:
@@ -2734,8 +2737,8 @@ class GitHistoryTool(App):
     def change_layout(self, newlayout: str) -> None:  # GitHistoryTool
         """Change column layout using a named layout.
 
-        Valid names: "left_fullscreen", "left_right_split", "three_columns",
-        "diff_fullscreen", "help_fullscreen".
+        Valid names: "left_fullscreen", "file_history", "history_file",
+        "file_history_diff", "history_file_diff", "diff_fullscreen", "help_fullscreen".
         """
         try:
             logger.debug(f"change_layout: newlayout={newlayout}")
@@ -2786,17 +2789,8 @@ class GitHistoryTool(App):
                     diff_display="none",
                     help_display="none",
                 )
-            elif newlayout == "left_right_split":
-                # Compatibility alias used in many callers: choose a concrete
-                # layout depending on startup mode. `log_first` prefers the
-                # history-first arrangement; otherwise prefer files-first.
-                try:
-                    if self.log_first:
-                        self.change_layout("history_file")
-                    else:
-                        self.change_layout("file_history")
-                except Exception as e:
-                    self.printException(e, "left_right_split change failed")
+            # Note: 'left_right_split' alias removed; callers must use explicit
+            # 'file_history' or 'history_file' layouts.
             elif newlayout == "history_file":
                 # left-history-list then right-file-list
                 self._apply_column_layout(
@@ -2845,6 +2839,7 @@ class GitHistoryTool(App):
                     diff_display=None,
                     help_display="none",
                 )
+            # 'three_columns' alias removed; use file_history_diff or history_file_diff
             elif newlayout == "diff_fullscreen":
                 self._apply_column_layout(
                     "0%",
@@ -3577,7 +3572,7 @@ class GitHistoryTool(App):
                 self.push_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
                 if self.initial_file:
                     self.file_mode_history_list.prepFileModeHistoryList(self.initial_file)
-                    self.push_state("left_right_split", f"#{self.file_mode_history_list.id}", self.footer_history)
+                    self.push_state("file_history", f"#{self.file_mode_history_list.id}", self.footer_history)
 
             except Exception as e:
                 self.printException(e)
