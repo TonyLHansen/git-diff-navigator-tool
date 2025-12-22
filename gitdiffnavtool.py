@@ -356,7 +356,7 @@ class AppBase(ListView):
         """
         try:
             try:
-                diff_widget.prepDiffListBase(filename, prev, curr)
+                diff_widget.prepDiffList(filename, prev, curr)
             except Exception as exc:
                 try:
                     self.app.push_screen(_TBDModal(str(exc)))
@@ -1044,11 +1044,10 @@ class RepoModeFileList(FileListBase):
         try:
             # Hide the right1 (Files) column and restore left (History)
             try:
-                # Restore single-column history layout by popping layout
-                self.app.pop_layout()
-                self.app.pop_footer()
+                # Restore previous full state (layout + focus + footer)
+                self.app.pop_state()
             except Exception as e:
-                self.printException(e, "exception popping layout for left-only restore")
+                self.printException(e, "exception popping state for left-only restore")
 
             # Update titles so left shows 'History' and right1 hidden
             try:
@@ -1064,20 +1063,6 @@ class RepoModeFileList(FileListBase):
                 self.printException(e, "exception hiding right-file-title")
 
             # Focus the History column (left)
-            try:
-                left = self.app.repo_mode_history_list
-                if left is not None:
-                    try:
-                        try:
-                            self.app.pop_focus()
-                        except Exception as e:
-                            self.printException(e, "exception popping focus to left history")
-                        try:
-                            self.app.pop_footer()
-                        except Exception as e:
-                            self.printException(e)
-                    except Exception as e:
-                        self.printException(e, "exception focusing left history")
             except Exception as e:
                 self.printException(e, "exception focusing left history")
 
@@ -2005,7 +1990,7 @@ class DiffList(AppBase):
             # Do not perform focus changes here; callers should push_focus as needed.
 
         except Exception as exc:
-            self.printException(exc, "prepDiffListBase outer failure")
+            self.printException(exc, "prepDiffList outer failure")
 
     def more_keys(self, event: events.Key) -> bool:  # DiffList
         """
@@ -2059,9 +2044,9 @@ class DiffList(AppBase):
                         filename = self.app.current_diff_file
 
                         try:
-                            self.prepDiffListBase(filename, previous_hash, current_hash)
+                            self.prepDiffList(filename, previous_hash, current_hash)
                         except Exception as e:
-                            self.printException(e, "prepDiffListBase failed in c/C handler")
+                            self.printException(e, "prepDiffList failed in c/C handler")
 
                         def restore_state():
                             try:
@@ -2116,9 +2101,9 @@ class DiffList(AppBase):
                         saved_index = self.index
 
                         try:
-                            self.prepDiffListBase(filename, previous_hash, current_hash)
+                            self.prepDiffList(filename, previous_hash, current_hash)
                         except Exception as e:
-                            self.printException(e, "prepDiffListBase failed after rotating variant")
+                            self.printException(e, "prepDiffList failed after rotating variant")
 
                         def restore_state():
                             try:
@@ -2766,7 +2751,7 @@ class GitHistoryTool(App):
         Decrements the top count or removes the top entry; returns the
         resulting stack.
         """
-        logger.debug("_stack_pop())")
+        logger.debug(f"_stack_pop({stack_name})")
         try:
             stack = getattr(self, stack_name, None)
             if not stack:
