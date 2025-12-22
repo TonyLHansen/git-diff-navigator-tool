@@ -1811,7 +1811,8 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e)
 
     def key_right(self) -> bool:  # RepoModeHistoryList
-        """Handle Right key: open a `RepoModeFileList` populated with changes between two commits.
+        """
+        Handle Right key: open a `RepoModeFileList` populated with changes between two commits.
 
         Determines the current and comparison commit (checked item or next item),
         computes the tree diff via pygit2, mounts a `RepoModeFileList` at the files
@@ -1828,18 +1829,17 @@ class RepoModeHistoryList(HistoryListBase):
                     self.printException(e)
                 return True
 
+            try:
+                self.app.current_commit_sha = current_hash
+                self.app.current_prev_sha = previous_hash
+            except Exception as e:
+                self.printException(e)
+
             # Ensure a RepoModeFileList instance is available via app attribute and mount it
             try:
                 # Use the already-composed repo_mode_file_list (no remounting).
                 try:
                     file_list = self.app.repo_mode_file_list
-                    if file_list is None:
-                        try:
-                            file_list = self.app.query_one("#right-file-list", RepoModeFileList)
-                        except Exception as e:
-                            self.printException(e)
-                            file_list = None
-
                     if file_list is None:
                         try:
                             self.app.push_screen(_TBDModal("Could not show files for commit diff"))
@@ -1853,10 +1853,6 @@ class RepoModeHistoryList(HistoryListBase):
                         self.printException(e, "prepRepoModeFileList failed")
 
                     try:
-                        file_list.styles.display = None
-                    except Exception as e:
-                        self.printException(e)
-                    try:
                         file_list.index = getattr(file_list, "_min_index", 0) or 0
                     except Exception as e:
                         self.printException(e)
@@ -1868,36 +1864,9 @@ class RepoModeHistoryList(HistoryListBase):
                 except Exception as e:
                     self.printException(e, "unexpected error in key_right")
                     return True
-
-                try:
-                    file_list.current_commit_sha = current_hash
-                    file_list.current_prev_sha = previous_hash
-                    file_list.prepRepoModeFileList(previous_hash, current_hash)
-                except Exception as e:
-                    self.printException(e, "prepRepoModeFileList failed")
-
-                try:
-                    file_list.styles.display = None
-                except Exception as e:
-                    self.printException(e)
-                try:
-                    file_list.index = getattr(file_list, "_min_index", 0) or 0
-                except Exception as e:
-                    self.printException(e)
-
-                try:
-                    self.app.push_state("history_file", f"#{getattr(file_list, 'id', 'right-file-list')}", self.app.footer_file)
-                except Exception as e:
-                    self.printException(e)
             except Exception as e:
                 self.printException(e, "unexpected error in key_right")
                 return True
-
-            try:
-                self.app.current_commit_sha = current_hash
-                self.app.current_prev_sha = previous_hash
-            except Exception as e:
-                self.printException(e)
 
             return True
 
@@ -1923,7 +1892,8 @@ class DiffList(AppBase):
         current_hash: Optional[str],
         variant_index: Optional[int] = None,
     ) -> None:
-        """Populate this Diff list for `filename` between two commit hashes.
+        """
+        Populate this Diff list for `filename` between two commit hashes.
 
         `variant_index` may be provided to select a diff variant from
         `self.app.diff_variants`. This method runs the diff command built
