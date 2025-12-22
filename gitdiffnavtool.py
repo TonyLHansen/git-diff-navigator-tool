@@ -58,6 +58,12 @@ class AppBase(ListView):
         msg = msg if msg else "???"
         logger.warning(f"WARNING: {className}.{funcName} ({str(e)}): {msg}")
         logger.warning(traceback.format_exc())
+        try:
+            # Prefer formatting the traceback attached to the exception instance
+            tb = "".join(traceback.format_exception(type(e), e, getattr(e, "__traceback__", None)))
+            logger.warning(tb)
+        except Exception:
+            pass
 
     def __init__(self, *args, **kwargs):
         """Initialize common fallback attributes so direct access is safe.
@@ -2585,7 +2591,12 @@ class GitHistoryTool(App):
         funcName = sys._getframe(1).f_code.co_name
         msg = msg if msg else "???"
         logger.warning(f"WARNING: {className}.{funcName} ({str(e)}): {msg}")
-        logger.warning(traceback.format_exc())
+        logger.warning(traceback.format_exc()
+        try:
+            tb = "".join(traceback.format_exception(type(e), e, getattr(e, "__traceback__", None)))
+            logger.warning(tb)
+        except Exception:
+            pass
 
     # Layout helpers on the App so widgets can call `self.app.layout_*`.
     def _apply_column_layout(  # GitHistoryTool
@@ -3191,7 +3202,7 @@ class GitHistoryTool(App):
                     yield RepoModeFileList(id="right-file-list")
                 with Vertical(id="diff-column"):
                     yield Label(Text("Diff", style="bold"), id="diff-title")
-                    yield FileModeDiffList(id="diff-list")
+                    yield DiffList(id="diff-list")
                 with Vertical(id="help-column"):
                     yield Label(Text("Help", style="bold"), id="help-title")
                     yield HelpList(id="help-list")
@@ -3207,13 +3218,7 @@ class GitHistoryTool(App):
 
     async def on_mount(self) -> None:  # GitHistoryTool
         """Mount-time initialization: build repo cache and populate Files.
-        try:
-            logger.debug("on_mount: start")
-        except Exception as e:
-        self.printException(e)
-            pass
-
-
+            
         This method configures initial layout sizes, builds the repository
         cache, and sets the initial path listing. If the app was launched with
         a filename, it will also open that file's history.
@@ -3221,54 +3226,32 @@ class GitHistoryTool(App):
         # Resolve references to the six canonical widgets composed in `compose()`
         logger.debug("GitHistoryTool.on_mount()")
         try:
-            try:
-                self.file_mode_file_list = self.query_one("#left-file-list", FileListBase)
-                logger.debug(f"on_mount: found composed file_mode_file_list id={getattr(self.file_mode_file_list,'id',None)}")
-            except Exception as e:
-                self.printException(e)
-                self.file_mode_file_list = FileModeFileList(id="left-file-list")
-                logger.debug(f"on_mount: created file_mode_file_list id={getattr(self.file_mode_file_list,'id',None)}")
+            # Resolve the six canonical widgets composed in `compose()`.
+            # If any composed widget is missing or the query fails, abort
+            # by allowing the exception to propagate to the outer handler
+            # which converts it to a RuntimeError. This avoids creating
+            # stray unmounted fallback widgets that are not in the DOM.
+            self.file_mode_file_list = self.query_one("#left-file-list", FileListBase)
+            logger.debug(f"on_mount: found composed file_mode_file_list id={getattr(self.file_mode_file_list,'id',None)}")
 
-            try:
-                self.file_mode_history_list = self.query_one("#left-history-list", HistoryListBase)
-                logger.debug(f"on_mount: found composed file_mode_history_list id={getattr(self.file_mode_history_list,'id',None)}")
-            except Exception as e:
-                self.printException(e)
-                self.file_mode_history_list = FileModeHistoryList(id="left-history-list")
-                logger.debug(f"on_mount: created file_mode_history_list id={getattr(self.file_mode_history_list,'id',None)}")
+            # left-history-column should be the repository-wide history view
+            self.repo_mode_history_list = self.query_one("#left-history-list", RepoModeHistoryList)
+            logger.debug(f"on_mount: found composed repo_mode_history_list id={getattr(self.repo_mode_history_list,'id',None)}")
 
-            try:
-                self.repo_mode_history_list = self.query_one("#right-history-list", HistoryListBase)
-                logger.debug(f"on_mount: found composed repo_mode_history_list id={getattr(self.repo_mode_history_list,'id',None)}")
-            except Exception as e:
-                self.printException(e)
-                self.repo_mode_history_list = RepoModeHistoryList(id="right-history-list")
-                logger.debug(f"on_mount: created repo_mode_history_list id={getattr(self.repo_mode_history_list,'id',None)}")
+            # right-history-column is the file-scoped history view
+            self.file_mode_history_list = self.query_one("#right-history-list", FileModeHistoryList)
+            logger.debug(f"on_mount: found composed file_mode_history_list id={getattr(self.file_mode_history_list,'id',None)}")
 
-            try:
-                self.repo_mode_file_list = self.query_one("#right-file-list", FileListBase)
-                logger.debug(f"on_mount: found composed repo_mode_file_list id={getattr(self.repo_mode_file_list,'id',None)}")
-            except Exception as e:
-                self.printException(e)
-                self.repo_mode_file_list = RepoModeFileList(id="right-file-list")
-                logger.debug(f"on_mount: created repo_mode_file_list id={getattr(self.repo_mode_file_list,'id',None)}")
+            self.repo_mode_file_list = self.query_one("#right-file-list", FileListBase)
+            logger.debug(f"on_mount: found composed repo_mode_file_list id={getattr(self.repo_mode_file_list,'id',None)}")
 
-            try:
-                self.diff_list = self.query_one("#diff-list", DiffList)
-                logger.debug(f"on_mount: found composed diff_list id={getattr(self.diff_list,'id',None)}")
-            except Exception as e:
-                self.printException(e)
-                self.diff_list = DiffList(id="diff-list")
-                logger.debug(f"on_mount: created diff_list id={getattr(self.diff_list,'id',None)}")
+            self.diff_list = self.query_one("#diff-list", DiffList)
+            logger.debug(f"on_mount: found composed diff_list id={getattr(self.diff_list,'id',None)}")
 
-            try:
-                self.help_list = self.query_one("#help-list", HelpList)
-                logger.debug(f"on_mount: found composed help_list id={getattr(self.help_list,'id',None)}")
-            except Exception as e:
-                self.printException(e)
-                self.help_list = HelpList(id="help-list")
-                logger.debug(f"on_mount: created help_list id={getattr(self.help_list,'id',None)}")
+            self.help_list = self.query_one("#help-list", HelpList)
+            logger.debug(f"on_mount: found composed help_list id={getattr(self.help_list,'id',None)}")
         except Exception as e:
+            # Fail fast: composition did not produce the expected widgets.
             raise RuntimeError(f"Critical widget allocation/resolution failure: {e}") from e
         # Eager queries for right1/right2/right3 removed — query these widgets on demand.
         try:
