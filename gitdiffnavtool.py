@@ -528,7 +528,7 @@ class FileListBase(AppBase):
             # restore focus to this list
             try:
                 try:
-                    self.app.change_focus(f"#{self.id or 'left'}")
+                    self.app.change_focus_resilient(f"#{self.id or 'left-file-list'}")
                 except Exception as e:
                     self.printException(e)
             except Exception as e:
@@ -1895,7 +1895,7 @@ class RepoModeHistoryList(HistoryListBase):
                     self.printException(e)
 
                 try:
-                    self.app.push_state("left_right_split", f"#{getattr(file_list, 'id', 'right1')}", self.app.footer_file)
+                    self.app.push_state("left_right_split", f"#{getattr(file_list, 'id', 'right-file-list')}", self.app.footer_file)
                 except Exception as e:
                     self.printException(e)
             except Exception as e:
@@ -2158,9 +2158,9 @@ class DiffListBase(AppBase):
                 return True
             else:
                 # If diff is visible and not fullscreen, enter fullscreen
-                self.app.push_state(
+                    self.app.push_state(
                     "diff_fullscreen",
-                    "#right2",
+                    "#diff-list",
                     self.app.footer_diff_full,
                 )
 
@@ -3017,13 +3017,21 @@ class GitHistoryTool(App):
                         key = sel
 
                     candidate = None
-                    if key == "left":
+                    # Accept canonical ids (no '#') and the legacy 'left' short-name.
+                    if key in ("left-file-list", "left-history-list"):
+                        if key == "left-file-list":
+                            candidate = self.file_mode_file_list
+                        else:
+                            candidate = self.file_mode_history_list
+                    elif key == "left":
                         candidate = self.repo_mode_history_list if self.log_first else self.file_mode_file_list
-                    elif key == "right1":
-                        candidate = self.repo_mode_file_list if self.log_first else self.file_mode_history_list
-                    elif key == "right2":
+                    elif key == "right-file-list":
+                        candidate = self.repo_mode_file_list
+                    elif key == "right-history-list":
+                        candidate = self.repo_mode_history_list
+                    elif key == "diff-list":
                         candidate = self.repo_mode_diff_list if self.log_first else self.file_mode_diff_list
-                    elif key == "right3":
+                    elif key == "help-list":
                         candidate = self.help_list
 
                     if candidate is not None:
@@ -3050,6 +3058,100 @@ class GitHistoryTool(App):
                 _do()
         except Exception as e:
             self.printException(e, "change_focus outer failure")
+
+    def change_focus_resilient(self, target: str) -> None:  # GitHistoryTool
+        """More resilient focus helper: prefer canonical attributes, then DOM query.
+
+        This avoids noisy query exceptions and ensures a list gets its first
+        item selected when focused.
+        """
+        try:
+            logger.debug(f"change_focus_resilient: target={target}")
+
+            def _do():
+                try:
+                    sel = str(target)
+                    if sel.startswith("#"):
+                        key = sel[1:]
+                    else:
+                        key = sel
+
+                    candidate = None
+                    # Accept canonical ids (no '#') and the legacy 'left' short-name.
+                    if key in ("left-file-list", "left-history-list"):
+                        if key == "left-file-list":
+                            candidate = self.file_mode_file_list
+                        else:
+                            candidate = self.file_mode_history_list
+                    elif key == "left":
+                        candidate = self.repo_mode_history_list if self.log_first else self.file_mode_file_list
+                    elif key == "right-file-list":
+                        candidate = self.repo_mode_file_list
+                    elif key == "right-history-list":
+                        candidate = self.repo_mode_history_list
+                    elif key == "diff-list":
+                        candidate = self.repo_mode_diff_list if self.log_first else self.file_mode_diff_list
+                    elif key == "help-list":
+                        candidate = self.help_list
+
+                    if candidate is not None:
+                        try:
+                            candidate.focus()
+                            try:
+                                logger.debug(f"change_focus_resilient: focused resolved id={getattr(candidate,'id',None)} type={type(candidate)!r}")
+                            except Exception:
+                                pass
+                            try:
+                                if hasattr(candidate, "index") and (getattr(candidate, "index", None) is None or getattr(candidate, "index") < 0):
+                                    candidate.index = 0
+                            except Exception:
+                                pass
+                            return
+                        except Exception as e:
+                            self.printException(e, f"could not focus resolved candidate for {target}")
+
+                    # Fallback to DOM query by id/selector
+                    widget = None
+                    try:
+                        if sel.startswith("#"):
+                            widget = self.query_one(sel)
+                        else:
+                            try:
+                                widget = self.query_one(f"#{key}")
+                            except Exception:
+                                widget = self.query_one(sel)
+                    except Exception as e:
+                        self.printException(e)
+                        widget = None
+
+                    if widget is not None:
+                        try:
+                            widget.focus()
+                            try:
+                                logger.debug(f"change_focus_resilient: focused queried id={getattr(widget,'id',None)} type={type(widget)!r}")
+                            except Exception:
+                                pass
+                            try:
+                                if hasattr(widget, "index") and (getattr(widget, "index", None) is None or getattr(widget, "index") < 0):
+                                    widget.index = 0
+                            except Exception:
+                                pass
+                            return
+                        except Exception as e:
+                            self.printException(e, f"could not focus queried widget for {target}")
+
+                    logger.warning(f"change_focus_resilient: no matching focus target for {target}")
+                except Exception as e:
+                    self.printException(e)
+
+            try:
+                self.call_after_refresh(_do)
+            except Exception as e:
+                self.printException(e)
+                _do()
+        except Exception as e:
+            self.printException(e, "change_focus_resilient outer failure")
+
 
     def _normalize_footer(self, value: Text | str) -> Text:
         try:
@@ -3126,7 +3228,7 @@ class GitHistoryTool(App):
                 self.printException(e, "push_focus stack push failed")
 
             try:
-                self.change_focus(target)
+                self.change_focus_resilient(target)
             except Exception as e:
                 self.printException(e, "push_focus change_focus failed")
         except Exception as e:
@@ -3143,7 +3245,7 @@ class GitHistoryTool(App):
             self._stack_pop("focus_stack")
             prev = self.focus_stack[-1][0] if self.focus_stack else "#left-file-list"
             logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={self.focus_stack}")
-            self.change_focus(prev)
+            self.change_focus_resilient(prev)
         except Exception as e:
             self.printException(e, "pop_focus outer failure")
 
