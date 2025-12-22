@@ -2591,7 +2591,7 @@ class GitHistoryTool(App):
         funcName = sys._getframe(1).f_code.co_name
         msg = msg if msg else "???"
         logger.warning(f"WARNING: {className}.{funcName} ({str(e)}): {msg}")
-        logger.warning(traceback.format_exc()
+        logger.warning(traceback.format_exc())
         try:
             tb = "".join(traceback.format_exception(type(e), e, getattr(e, "__traceback__", None)))
             logger.warning(tb)
