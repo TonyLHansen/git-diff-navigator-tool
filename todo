@@ -194,3 +194,7 @@ into two names, #right1-history-list and #right-file-list. #right2 will be renam
 "history_fullscreen", "file_history", "history_file", "file_history_diff", "history_file_diff", "diff_fullscreen" and "help_fullscreen". file_fullscreen would show left_file_list 100% with everything
 else 0%, history_fullscreen would show left_history_list 100% with everything else 0%, etc. There would be no need to ever remount anything -- just change the visibility and contents.   
 Leave the class structure alone -- key_right and key_left in the classes should still be where the flow of control logic occurs.
+
+
+I changed the function name change_focus_resilient to change_focus and removed the delegating wrapper. Looking at _apply_column_layout, it can be simplified and become more maintainable by 1) removing the displays list 2) changing the widths to numbers (0, 5, 100, etc), 3) setting the widths using f-strings, as in `1.styles.width = f"{left_file_w}%"`, 4) moving the show and hide defintions here 5) setting the display values based on the width, as in `self.file_mode_file_list.styles.display = show if left_file_w else hide`.
+

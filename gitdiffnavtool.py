@@ -379,11 +379,7 @@ class FileListBase(AppBase):
     # populate lists with mode-specific behavior.
 
     def on_focus(self, event: events.Focus) -> None:  # FileListBase
-        """When Files column receives focus, make it full-width and hide others."""
-        # Intentionally do not modify layout or other widgets here.
-        # Layout and focus changes are centralized in `GitHistoryTool`
-        # and in the `key_left`/`key_right` handlers. Keep on_focus
-        # limited to selection/index handling.
+        """When Files column receives focus, do selection/index handling"""
 
         # Ensure selection is at or below the minimum selectable index
         # (e.g. skip the Key legend row). Use call_after_refresh so the
@@ -404,10 +400,6 @@ class FileListBase(AppBase):
 
         except Exception as e:
             self.printException(e, "exception checking/enforcing _min_index on focus")
-
-        # Titles and other UI chrome are managed by the app / key handlers.
-
-        # FileList footer: handled by callers that change layout/focus
 
     def _highlight_filename(self, name: str) -> None:  # FileListBase
         """Highlight the ListItem whose attached `_filename` equals `name`.
@@ -453,7 +445,8 @@ class FileListBase(AppBase):
             return
 
     def _child_filename(self, child) -> Optional[str]:
-        """Extract a filename/text value from a ListItem `child`.
+        """
+        Extract a filename/text value from a ListItem `child`.
 
         This consolidates repeated logic used by multiple `key_right`
         handlers: prefer an attached `_filename` attribute, then look
@@ -486,7 +479,8 @@ class FileListBase(AppBase):
             return None
 
     def _enter_directory(self, new_path: str, highlight_name: Optional[str] = None) -> None:
-        """Change this FileList to show `new_path` and update app state.
+        """
+        Change this FileList to show `new_path` and update app state.
 
         Calls the preparatory method when available (`prepFileModeFileList`),
         resets selection, optionally highlights `highlight_name` after refresh,
@@ -531,7 +525,7 @@ class FileListBase(AppBase):
             # restore focus to this list
             try:
                 try:
-                    self.app.change_focus_resilient(f"#{self.id or 'left-file-list'}")
+                    self.app.change_focus(f"#{self.id}")
                 except Exception as e:
                     self.printException(e)
             except Exception as e:
@@ -542,7 +536,7 @@ class FileListBase(AppBase):
 
 
 class FileModeFileList(FileListBase):
-    """Compatibility subclass; use `FileListBase` for shared logic."""
+    """FileList for FileMode."""
 
     key = (
         "Key:  [yellow]'[yellow on white]\u00a0[/yellow on white]'[/yellow] tracked  U untracked  "
@@ -716,7 +710,8 @@ class FileModeFileList(FileListBase):
             self.printException(e)
 
     def key_left(self) -> bool:  # FileModeFileList
-        """Handle left key behavior for FileModeFileList
+        """
+        Handle left key behavior for FileModeFileList
 
         Returns True when the key was handled/consumed.
         """
@@ -829,7 +824,7 @@ class FileModeFileList(FileListBase):
 
 
 class RepoModeFileList(FileListBase):
-    """File list for repo-first / log-first mode."""
+    """File list for repo-mode / log-first mode."""
 
     key = (
         "Key: [yellow]'[yellow on white]\u00a0[/yellow on white]'[/yellow] tracked  U untracked  "
@@ -1923,12 +1918,12 @@ class RepoModeHistoryList(HistoryListBase):
         return True
 
 
-class DiffListBase(AppBase):
+class DiffList(AppBase):
     """
-    ListView used for the Diff columns.
+    ListView used for the Diff column.
     """
 
-    def prepDiffListBase(  # DiffListBase
+    def prepDiffList(  # DiffList
         self,
         filename: str,
         previous_hash: Optional[str],
@@ -2004,7 +1999,7 @@ class DiffListBase(AppBase):
         except Exception as exc:
             self.printException(exc, "prepDiffListBase outer failure")
 
-    def more_keys(self, event: events.Key) -> bool:  # DiffListBase
+    def more_keys(self, event: events.Key) -> bool:  # DiffList
         """
         Handle left key to move focus back to History;
         handle PgUp/PgDn with visible selection; handle c/C to toggle colorization.
@@ -2138,7 +2133,7 @@ class DiffListBase(AppBase):
 
     # let other keys be handled by default (up/down handled by ListView)
 
-    def key_left(self) -> bool:  # DiffListBase
+    def key_left(self) -> bool:  # DiffList
         """Handle left key behavior for DiffListBase.
 
         Returns True when the key was handled/consumed.
@@ -2149,7 +2144,7 @@ class DiffListBase(AppBase):
             self.printException(e, "unexpected exception in DiffListBase.key_left")
         return True
 
-    def key_right(self) -> bool:  # DiffListBase
+    def key_right(self) -> bool:  # DiffList
         """
         Handle right key behavior for DiffListBase.
         Returns True when the key was handled/consumed.
@@ -2171,10 +2166,9 @@ class DiffListBase(AppBase):
             self.printException(e, "unexpected exception")
         return True
 
-    def on_focus(self, event: events.Focus) -> None:  # DiffListBase
+    def on_focus(self, event: events.Focus) -> None:  # DiffList
         """When the DiffList receives focus, ensure the first item is highlighted."""
         try:
-
             def _apply() -> None:
                 try:
                     nodes = self._nodes
@@ -2202,30 +2196,6 @@ class DiffListBase(AppBase):
                 _apply()
         except Exception as e:
             self.printException(e)
-
-        # Intentionally do not modify layout or other widgets here.
-        # Layout and focus changes are centralized in `GitHistoryTool`
-        # and in the `key_left`/`key_right` handlers. Keep on_focus
-        # limited to selection/index handling and footer updates.
-
-        # DiffList footer: managed by callers that change layout/focus
-
-
-class FileModeDiffList(DiffListBase):
-    """
-    FileMode DiffList subclass; see `DiffListBase` for shared logic.
-    Left arrow moves focus back to History.
-    """
-
-    # Inherit key handlers from DiffListBase (shared behavior)
-
-
-class RepoModeDiffList(DiffListBase):
-    """
-    Diff list for repo-first / log-first mode.
-    """
-
-    # Inherit key handlers from DiffListBase (shared behavior)
 
 
 class _TBDModal(ModalScreen):
@@ -2614,30 +2584,18 @@ class GitHistoryTool(App):
         className = type(self).__name__
         funcName = sys._getframe(1).f_code.co_name
         msg = msg if msg else "???"
-        logger.warning(f"WARNING: {className}.{funcName}: {msg}")
+        logger.warning(f"WARNING: {className}.{funcName} ({str(e)}): {msg}")
         logger.warning(traceback.format_exc())
 
     # Layout helpers on the App so widgets can call `self.app.layout_*`.
     def _apply_column_layout(  # GitHistoryTool
         self,
-        left_file_w: str,
-        left_history_w: str,
-        right_history_w: str,
-        right_file_w: str,
-        diff_w: str,
-        help_w: str,
-        left_file_display=None,
-        left_history_display=None,
-        right_history_display=None,
-        right_file_display=None,
-        diff_display=None,
-        help_display=None,
+        widths: list,
+        displays: list,
     ) -> None:
-        logger.debug(f"GitHistoryTool._apply_column_layout({left_file_w}, {left_history_w}, ")
-        logger.debug(f"    {right_history_w}, {right_file_w}, {diff_w}, {help_w},")
-        logger.debug(f"    {left_file_display}, {left_history_display},")
-        logger.debug(f"    {right_history_display}, {right_file_display},")
-        logger.debug(f"    {diff_display}, {help_display}")
+        (left_file_w, left_history_w, right_history_w, right_file_w, diff_w, help_w) = widths
+        (left_file_display, left_history_display, right_history_display, right_file_display, diff_display, help_display) = displays
+        logger.debug(f"GitHistoryTool._apply_column_layout widths={widths} displays={displays}")
 
         try:
             try:
@@ -2678,49 +2636,26 @@ class GitHistoryTool(App):
                 self.printException(e, "could not set help-column")
 
             try:
-                # left-file-list
+                # Directly set displays on the canonical, already-resolved widgets.
                 try:
-                    lf = self.file_mode_file_list
-                    if lf is not None:
-                        lf.styles.display = left_file_display
-                    else:
-                        self.query_one("#left-file-list").styles.display = left_file_display
+                    self.file_mode_file_list.styles.display = left_file_display
                 except Exception as e:
                     self.printException(e, "could not set left-file-list display in _apply_column_layout")
                 try:
-                    # left-history-list
-                    lh = self.repo_mode_history_list if self.log_first else self.file_mode_history_list
-                    if lh is not None:
-                        lh.styles.display = left_history_display
-                    else:
-                        self.query_one("#left-history-list").styles.display = left_history_display
+                    self.repo_mode_history_list.styles.display = left_history_display
                 except Exception as e:
                     self.printException(e, "could not set left-history-list display in _apply_column_layout")
                 try:
-                    # right-history-list
-                    rh = self.file_mode_history_list if self.log_first else self.repo_mode_history_list
-                    if rh is not None:
-                        rh.styles.display = right_history_display
-                    else:
-                        self.query_one("#right-history-list").styles.display = right_history_display
+                    self.file_mode_history_list.styles.display = right_history_display
                 except Exception as e:
                     self.printException(e, "could not set right-history-list display in _apply_column_layout")
                 try:
-                    # right-file-list
-                    rf = self.repo_mode_file_list
-                    if rf is not None:
-                        rf.styles.display = right_file_display
-                    else:
-                        self.query_one("#right-file-list").styles.display = right_file_display
+                    self.repo_mode_file_list.styles.display = right_file_display
                 except Exception as e:
                     self.printException(e, "could not set right-file-list display in _apply_column_layout")
                 try:
-                    # diff-list
-                    dl = self.repo_mode_diff_list if self.log_first else self.file_mode_diff_list
-                    if dl is not None:
-                        dl.styles.display = diff_display
-                    else:
-                        self.query_one("#diff-list").styles.display = diff_display
+                    # single canonical diff widget
+                    self.diff_list.styles.display = diff_display
                 except Exception as e:
                     self.printException(e, "could not set diff-list display in _apply_column_layout")
                 try:
@@ -2742,134 +2677,57 @@ class GitHistoryTool(App):
         """
         try:
             logger.debug(f"change_layout: newlayout={newlayout}")
+            # Maintainable visibility tokens: 
+            # `show` clears an override (lets the CSS decide), 
+            # `hide` forces display:none
+            show = None
+            hide = "none"
             if newlayout == "file_fullscreen":
                 # show left-file-list only
                 self._apply_column_layout(
-                    "100%",
-                    "0%",
-                    "0%",
-                    "0%",
-                    "0%",
-                    "0%",
-                    left_file_display=None,
-                    left_history_display="none",
-                    right_history_display="none",
-                    right_file_display="none",
-                    diff_display="none",
-                    help_display="none",
+                    ["100%", "0%", "0%", "0%", "0%", "0%"],
+                    [show, hide, hide, hide, hide, hide],
                 )
             elif newlayout == "history_fullscreen":
                 # show left-history-list only
                 self._apply_column_layout(
-                    "0%",
-                    "100%",
-                    "0%",
-                    "0%",
-                    "0%",
-                    "0%",
-                    left_file_display="none",
-                    left_history_display=None,
-                    right_history_display="none",
-                    right_file_display="none",
-                    diff_display="none",
-                    help_display="none",
+                    ["0%", "100%", "0%", "0%", "0%", "0%"],
+                    [hide, show, hide, hide, hide, hide],
                 )
             elif newlayout == "file_history":
                 # left-file-list (25%), left-history-list (25%), others hidden
-                self._apply_column_layout("25%",
-                    "25%",
-                    "0%",
-                    "0%",
-                    "0%",
-                    "0%",
-                    left_file_display=None,
-                    left_history_display=None,
-                    right_history_display="none",
-                    right_file_display="none",
-                    diff_display="none",
-                    help_display="none",
+                self._apply_column_layout(
+                    ["25%", "0%", "75%", "0%", "0%", "0%"],
+                    [show, show, hide, hide, hide, hide],
                 )
-            # Note: 'left_right_split' alias removed; callers must use explicit
-            # 'file_history' or 'history_file' layouts.
             elif newlayout == "history_file":
                 # left-history-list then right-file-list
                 self._apply_column_layout(
-                    "0%",
-                    "25%",
-                    "0%",
-                    "25%",
-                    "0%",
-                    "0%",
-                    left_file_display="none",
-                    left_history_display=None,
-                    right_history_display="none",
-                    right_file_display=None,
-                    diff_display="none",
-                    help_display="none",
+                    ["0%", "25%", "0%", "75%", "0%", "0%"],
+                    [hide, show, hide, show, hide, hide],
                 )
             elif newlayout == "file_history_diff":
                 # show left-file, left-history, diff
                 self._apply_column_layout(
-                    "20%",
-                    "20%",
-                    "0%",
-                    "0%",
-                    "60%",
-                    "0%",
-                    left_file_display=None,
-                    left_history_display=None,
-                    right_history_display="none",
-                    right_file_display="none",
-                    diff_display=None,
-                    help_display="none",
+                    ["5%", "20%", "0%", "0%", "75%", "0%"],
+                    [show, show, hide, hide, show, hide],
                 )
             elif newlayout == "history_file_diff":
                 # show left-history, right-file, diff
                 self._apply_column_layout(
-                    "0%",
-                    "25%",
-                    "0%",
-                    "25%",
-                    "50%",
-                    "0%",
-                    left_file_display="none",
-                    left_history_display=None,
-                    right_history_display="none",
-                    right_file_display=None,
-                    diff_display=None,
-                    help_display="none",
+                    ["0%", "5%", "0%", "20%", "75%", "0%"],
+                    [hide, show, hide, show, show, hide],
                 )
-            # 'three_columns' alias removed; use file_history_diff or history_file_diff
             elif newlayout == "diff_fullscreen":
                 self._apply_column_layout(
-                    "0%",
-                    "0%",
-                    "0%",
-                    "0%",
-                    "100%",
-                    "0%",
-                    left_file_display="none",
-                    left_history_display="none",
-                    right_history_display="none",
-                    right_file_display="none",
-                    diff_display=None,
-                    help_display="none",
+                    ["0%", "0%", "0%", "0%", "100%", "0%"],
+                    [hide, hide, hide, hide, show, hide],
                 )
             elif newlayout == "help_fullscreen":
                 # Show only the Help column
                 self._apply_column_layout(
-                    "0%",
-                    "0%",
-                    "0%",
-                    "0%",
-                    "0%",
-                    "100%",
-                    left_file_display="none",
-                    left_history_display="none",
-                    right_history_display="none",
-                    right_file_display="none",
-                    diff_display="none",
-                    help_display=None,
+                    ["0%", "0%", "0%", "0%", "0%", "100%"],
+                    [hide, hide, hide, hide, hide, show],
                 )
             else:
                 raise ValueError(f"unknown layout: {newlayout}")
@@ -3003,46 +2861,46 @@ class GitHistoryTool(App):
 
             def _do():
                 try:
-                    # Prefer resolving via known canonical attributes to avoid
-                    # noisy `NoMatches` exceptions from `query_one`.
                     sel = str(target)
                     if sel.startswith("#"):
                         key = sel[1:]
                     else:
                         key = sel
 
-                    candidate = None
-                    # Accept canonical ids (no '#') and the legacy 'left' short-name.
-                    if key in ("left-file-list", "left-history-list"):
-                        if key == "left-file-list":
-                            candidate = self.file_mode_file_list
-                        else:
-                            candidate = self.file_mode_history_list
-                    elif key == "left":
-                        candidate = self.repo_mode_history_list if self.log_first else self.file_mode_file_list
+                    widget = None
+                    # Accept canonical ids (no '#')
+                    if key == "left-file-list":
+                        widget = self.file_mode_file_list
+                    elif key == "left-history-list":
+                        widget = self.repo_mode_history_list
                     elif key == "right-file-list":
-                        candidate = self.repo_mode_file_list
+                        widget = self.repo_mode_file_list
                     elif key == "right-history-list":
-                        candidate = self.repo_mode_history_list
+                        widget = self.file_mode_history_list
                     elif key == "diff-list":
-                        candidate = self.repo_mode_diff_list if self.log_first else self.file_mode_diff_list
+                        widget = self.diff_list
                     elif key == "help-list":
-                        candidate = self.help_list
+                        widget = self.help_list
+                    else:
+                        logger.warning(f"change_focus: unknown canonical focus target {target}")
+                        return
 
-                    if candidate is not None:
+                    try:
+                        widget.focus()
                         try:
-                            candidate.focus()
-                            try:
-                                logger.debug(f"change_focus: focused resolved id={getattr(candidate,'id',None)} type={type(candidate)!r}")
-                            except Exception as e:
-                                self.printException(e)
-                            return
-                        except Exception as e:
-                            self.printException(e, f"could not focus resolved candidate for {target}")
+                            logger.debug(f"change_focus: focused resolved id={getattr(widget,'id',None)} type={type(widget)!r}")
+                        except Exception:
+                            pass  
+                        try:
+                            if hasattr(widget, "index") and (getattr(widget, "index", None) is None or getattr(widget, "index") < 0):
+                                widget.index = 0
+                        except Exception:
+                            pass
+                        return
+                    except Exception as e:
+                        self.printException(e, f"could not focus resolved widget for {target}")
 
-                    # Nothing matched — warn at debug level.
                     logger.warning(f"change_focus: no matching focus target for {target}")
-                    return
                 except Exception as e:
                     self.printException(e)
 
@@ -3053,99 +2911,6 @@ class GitHistoryTool(App):
                 _do()
         except Exception as e:
             self.printException(e, "change_focus outer failure")
-
-    def change_focus_resilient(self, target: str) -> None:  # GitHistoryTool
-        """More resilient focus helper: prefer canonical attributes, then DOM query.
-
-        This avoids noisy query exceptions and ensures a list gets its first
-        item selected when focused.
-        """
-        try:
-            logger.debug(f"change_focus_resilient: target={target}")
-
-            def _do():
-                try:
-                    sel = str(target)
-                    if sel.startswith("#"):
-                        key = sel[1:]
-                    else:
-                        key = sel
-
-                    candidate = None
-                    # Accept canonical ids (no '#') and the legacy 'left' short-name.
-                    if key in ("left-file-list", "left-history-list"):
-                        if key == "left-file-list":
-                            candidate = self.file_mode_file_list
-                        else:
-                            candidate = self.file_mode_history_list
-                    elif key == "left":
-                        candidate = self.repo_mode_history_list if self.log_first else self.file_mode_file_list
-                    elif key == "right-file-list":
-                        candidate = self.repo_mode_file_list
-                    elif key == "right-history-list":
-                        candidate = self.repo_mode_history_list
-                    elif key == "diff-list":
-                        candidate = self.repo_mode_diff_list if self.log_first else self.file_mode_diff_list
-                    elif key == "help-list":
-                        candidate = self.help_list
-
-                    if candidate is not None:
-                        try:
-                            candidate.focus()
-                            try:
-                                logger.debug(f"change_focus_resilient: focused resolved id={getattr(candidate,'id',None)} type={type(candidate)!r}")
-                            except Exception:
-                                pass
-                            try:
-                                if hasattr(candidate, "index") and (getattr(candidate, "index", None) is None or getattr(candidate, "index") < 0):
-                                    candidate.index = 0
-                            except Exception:
-                                pass
-                            return
-                        except Exception as e:
-                            self.printException(e, f"could not focus resolved candidate for {target}")
-
-                    # Fallback to DOM query by id/selector
-                    widget = None
-                    try:
-                        if sel.startswith("#"):
-                            widget = self.query_one(sel)
-                        else:
-                            try:
-                                widget = self.query_one(f"#{key}")
-                            except Exception:
-                                widget = self.query_one(sel)
-                    except Exception as e:
-                        self.printException(e)
-                        widget = None
-
-                    if widget is not None:
-                        try:
-                            widget.focus()
-                            try:
-                                logger.debug(f"change_focus_resilient: focused queried id={getattr(widget,'id',None)} type={type(widget)!r}")
-                            except Exception:
-                                pass
-                            try:
-                                if hasattr(widget, "index") and (getattr(widget, "index", None) is None or getattr(widget, "index") < 0):
-                                    widget.index = 0
-                            except Exception:
-                                pass
-                            return
-                        except Exception as e:
-                            self.printException(e, f"could not focus queried widget for {target}")
-
-                    logger.warning(f"change_focus_resilient: no matching focus target for {target}")
-                except Exception as e:
-                    self.printException(e)
-
-            try:
-                self.call_after_refresh(_do)
-            except Exception as e:
-                self.printException(e)
-                _do()
-        except Exception as e:
-            self.printException(e, "change_focus_resilient outer failure")
 
 
     def _normalize_footer(self, value: Text | str) -> Text:
@@ -3223,7 +2988,7 @@ class GitHistoryTool(App):
                 self.printException(e, "push_focus stack push failed")
 
             try:
-                self.change_focus_resilient(target)
+                self.change_focus(target)
             except Exception as e:
                 self.printException(e, "push_focus change_focus failed")
         except Exception as e:
@@ -3240,7 +3005,7 @@ class GitHistoryTool(App):
             self._stack_pop("focus_stack")
             prev = self.focus_stack[-1][0] if self.focus_stack else "#left-file-list"
             logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={self.focus_stack}")
-            self.change_focus_resilient(prev)
+            self.change_focus(prev)
         except Exception as e:
             self.printException(e, "pop_focus outer failure")
 
@@ -3432,13 +3197,13 @@ class GitHistoryTool(App):
                     yield FileModeFileList(id="left-file-list")
                 with Vertical(id="left-history-column"):
                     yield Label(Text("History", style="bold"), id="left-history-title")
-                    yield FileModeHistoryList(id="left-history-list")
+                    yield RepoModeHistoryList(id="left-history-list")
                 with Vertical(id="right-history-column"):
                     yield Label(Text("History", style="bold"), id="right-history-title")
                     yield FileModeHistoryList(id="right-history-list")
                 with Vertical(id="right-file-column"):
                     yield Label(Text("Files", style="bold"), id="right-file-title")
-                    yield FileModeFileList(id="right-file-list")
+                    yield RepoModeFileList(id="right-file-list")
                 with Vertical(id="diff-column"):
                     yield Label(Text("Diff", style="bold"), id="diff-title")
                     yield FileModeDiffList(id="diff-list")
@@ -3504,15 +3269,12 @@ class GitHistoryTool(App):
                 logger.debug(f"on_mount: created repo_mode_file_list id={getattr(self.repo_mode_file_list,'id',None)}")
 
             try:
-                self.file_mode_diff_list = self.query_one("#diff-list", DiffListBase)
-                logger.debug(f"on_mount: found composed file_mode_diff_list id={getattr(self.file_mode_diff_list,'id',None)}")
-                # Use same diff widget for repo/file modes; they share DiffListBase
-                self.repo_mode_diff_list = self.file_mode_diff_list
+                self.diff_list = self.query_one("#diff-list", DiffList)
+                logger.debug(f"on_mount: found composed diff_list id={getattr(self.diff_list,'id',None)}")
             except Exception as e:
                 self.printException(e)
-                self.file_mode_diff_list = FileModeDiffList(id="diff-list")
-                self.repo_mode_diff_list = self.file_mode_diff_list
-                logger.debug(f"on_mount: created file_mode_diff_list id={getattr(self.file_mode_diff_list,'id',None)}")
+                self.diff_list = DiffList(id="diff-list")
+                logger.debug(f"on_mount: created diff_list id={getattr(self.diff_list,'id',None)}")
 
             try:
                 self.help_list = self.query_one("#help-list", HelpList)
