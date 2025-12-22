@@ -934,10 +934,13 @@ class RepoModeFileList(FileListBase):
                         # Safely extract file paths from delta old_file/new_file
                         old_file = getattr(d, "old_file", None)
                         new_file = getattr(d, "new_file", None)
-                        if not old_path and not new_path:
-                            logger.warning("delta with no paths", extra={"delta": repr(d), "status": status})
                         old_path = getattr(old_file, "path", None)
                         new_path = getattr(new_file, "path", None)
+                        if not old_path and not new_path:
+                            logger.warning(
+                                "delta with no paths",
+                                extra={"delta": repr(d), "status": status, "old_path": old_path, "new_path": new_path},
+                            )
                         display_path = new_path or old_path or ""
                         text = f"{marker} {display_path}"
                         li = ListItem(Label(Text(" " + text)))
@@ -1133,10 +1136,9 @@ class RepoModeFileList(FileListBase):
         try:
             # Delegate to centralized helper
             try:
-                self.prep_and_show_diff(filename, previous_hash, current_hash, self.app.repo_mode_diff_list, "history_file_diff")
+                self.prep_and_show_diff(filename, previous_hash, current_hash, self.app.diff_list, "history_file_diff")
             except Exception as e:
                 self.printException(e, "prep_and_show_diff failed")
-
         except Exception as exc:
             self.printException(exc)
             try:
@@ -1679,7 +1681,7 @@ class FileModeHistoryList(HistoryListBase):
         try:
             # Delegate to centralized helper
             try:
-                self.prep_and_show_diff(filename, previous_hash, current_hash, self.app.file_mode_diff_list, "file_history_diff")
+                self.prep_and_show_diff(filename, previous_hash, current_hash, self.app.diff_list, "file_history_diff")
             except Exception as e:
                 self.printException(e, "prep_and_show_diff failed")
 
