@@ -356,7 +356,7 @@ class AppBase(ListView):
 
             # Ensure three-column layout, focus, and footer are applied for diff
             try:
-                self.app.push_state("three_columns", f"#{diff_widget.id}", self.app.footer_diff3)
+                self.app.push_state(f"three_columns", f"#{diff_widget.id}", self.app.footer_diff3)
             except Exception as e:
                 self.printException(e, "error ensuring layout/focus for diff")
         except Exception as e:
@@ -1845,7 +1845,8 @@ class RepoModeHistoryList(HistoryListBase):
                     if file_list is None:
                         try:
                             file_list = self.app.query_one("#right-file-list", RepoModeFileList)
-                        except Exception:
+                        except Exception as e:
+                            self.printException(e)
                             file_list = None
 
                     if file_list is None:
@@ -2496,51 +2497,51 @@ class GitHistoryTool(App):
 
     # CSS: reserve one line for `#title` and let the main Horizontal flex to fill rest
     CSS = """
-/* Disable scrolling on the app itself - only columns should scroll */
-App {
-    overflow: hidden;
-    scrollbar-size: 0 0;
-}
-/* Reserve a one-line title bar for the app name */
-#title {
-    height: 1;
-    padding: 0 1;
-    width: 100%;
-    text-align: center;
-}
-/* Let the layout determine main area height so footer remains visible */
-/* Column widget ids */
-#left-file-list {
-    border: solid white;
-    scrollbar-size-vertical: 1;
-}
-#left-history-list {
-    border: solid white;
-    scrollbar-size-vertical: 1;
-}
-#right-history-list {
-    border: heavy #555555;
-    scrollbar-size-vertical: 1;
-}
-#right-file-list {
-    border: heavy #555555;
-    scrollbar-size-vertical: 1;
-}
-#diff-list {
-    border: heavy #555555;
-    scrollbar-size-vertical: 1;
-}
-#help-list {
-    border: heavy #555555;
-    scrollbar-size-vertical: 1;
-}
-/* footer area: show quit and navigation hints */
-#footer {
-    height: 1;
-    padding: 0 1;
-    text-align: left;
-}
-"""
+        /* Disable scrolling on the app itself - only columns should scroll */
+        App {
+            overflow: hidden;
+            scrollbar-size: 0 0;
+        }
+        /* Reserve a one-line title bar for the app name */
+        #title {
+            height: 1;
+            padding: 0 1;
+            width: 100%;
+            text-align: center;
+        }
+        /* Let the layout determine main area height so footer remains visible */
+        /* Column widget ids */
+        #left-file-list {
+            border: solid white;
+            scrollbar-size-vertical: 1;
+        }
+        #left-history-list {
+            border: solid white;
+            scrollbar-size-vertical: 1;
+        }
+        #right-history-list {
+            border: heavy #555555;
+            scrollbar-size-vertical: 1;
+        }
+        #right-file-list {
+            border: heavy #555555;
+            scrollbar-size-vertical: 1;
+        }
+        #diff-list {
+            border: heavy #555555;
+            scrollbar-size-vertical: 1;
+        }
+        #help-list {
+            border: heavy #555555;
+            scrollbar-size-vertical: 1;
+        }
+        /* footer area: show quit and navigation hints */
+        #footer {
+            height: 1;
+            padding: 0 1;
+            text-align: left;
+        }
+        """
 
     BINDINGS = [("q", "quit", "Quit")]
 
@@ -2555,8 +2556,10 @@ App {
         # Ensure `log_first` is available before `compose` runs in the
         # Textual `App` initialization so the UI can be composed with the
         # correct column ordering when starting in log-first mode.
+        logger.debug("GitHistoryTool.__init__ starts")
         self.log_first: bool = bool(log_first)
         super().__init__(**kwargs)
+        logger.debug("GitHistoryTool.__init__ continues after super().__init()")
         # If the provided path is a file, treat its directory as the app path
         # and remember the filename so we can immediately open its history.
         given = path or os.getcwd()
@@ -2601,6 +2604,7 @@ App {
         self.footer_diff_full: Text = Text("Diff: q(uit)  ?/h(elp)  ←/f(ull) ↑/↓/PgUp/PgDn c(olor) d(iff-type)", style="bold")
         self.footer_help: Text = Text("Help: q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
         # start the app showing repository-wide commit log first when True
+        logger.debug("GitHistoryTool.__init__ ends")
 
     def printException(self, e, msg=None):  # GitHistoryTool
         """Log an exception from the app context (mirrors AppBase.printException)."""
@@ -2626,6 +2630,12 @@ App {
         diff_display=None,
         help_display=None,
     ) -> None:
+        logger.debug(f"GitHistoryTool._apply_column_layout({left_file_w}, {left_history_w}, ")
+        logger.debug(f"    {right_history_w}, {right_file_w}, {diff_w}, {help_w},")
+        logger.debug(f"    {left_file_display}, {left_history_display},")
+        logger.debug(f"    {right_history_display}, {right_file_display},")
+        logger.debug(f"    {diff_display}, {help_display}")
+
         try:
             try:
                 c1 = self.query_one("#left-file-column")
@@ -2763,8 +2773,7 @@ App {
                 )
             elif newlayout == "file_history":
                 # left-file-list (25%), left-history-list (25%), others hidden
-                self._apply_column_layout(
-                    "25%",
+                self._apply_column_layout("25%",
                     "25%",
                     "0%",
                     "0%",
@@ -2777,6 +2786,17 @@ App {
                     diff_display="none",
                     help_display="none",
                 )
+            elif newlayout == "left_right_split":
+                # Compatibility alias used in many callers: choose a concrete
+                # layout depending on startup mode. `log_first` prefers the
+                # history-first arrangement; otherwise prefer files-first.
+                try:
+                    if self.log_first:
+                        self.change_layout("history_file")
+                    else:
+                        self.change_layout("file_history")
+                except Exception as e:
+                    self.printException(e, "left_right_split change failed")
             elif newlayout == "history_file":
                 # left-history-list then right-file-list
                 self._apply_column_layout(
@@ -2868,6 +2888,7 @@ App {
         collapses identical consecutive pushes by incrementing the count,
         and returns the resulting stack.
         """
+        logger.debug(f"_stack_push({stack_name})")
         try:
             stack = getattr(self, stack_name, None)
             if stack is None:
@@ -2894,6 +2915,7 @@ App {
         Decrements the top count or removes the top entry; returns the
         resulting stack.
         """
+        logger.debug("_stack_pop())")
         try:
             stack = getattr(self, stack_name, None)
             if not stack:
@@ -2918,6 +2940,7 @@ App {
     def push_layout(self, newlayout: str) -> None:  # GitHistoryTool
         """Push a new layout onto the layout stack and apply it."""
         try:
+            logger.debug(f"push_layout({newlayout})")
             try:
                 logger.debug(f"push_layout: requested={newlayout} before={self.layout_stack}")
             except Exception as e:
@@ -2938,6 +2961,7 @@ App {
     def pop_layout(self) -> None:  # GitHistoryTool
         """Pop the current layout and restore the previous one (if any)."""
         try:
+            logger.debug("pop_layout()")
             try:
                 logger.debug(f"pop_layout: stack before pop={self.layout_stack}")
             except Exception as e:
@@ -3006,7 +3030,7 @@ App {
                         try:
                             candidate.focus()
                             try:
-                                logger.debug(f"change_focus: focused resolved {candidate!r}")
+                                logger.debug(f"change_focus: focused resolved id={getattr(candidate,'id',None)} type={type(candidate)!r}")
                             except Exception as e:
                                 self.printException(e)
                             return
@@ -3014,7 +3038,7 @@ App {
                             self.printException(e, f"could not focus resolved candidate for {target}")
 
                     # Nothing matched — warn at debug level.
-                    logger.debug(f"change_focus: no matching focus target for {target}")
+                    logger.warning(f"change_focus: no matching focus target for {target}")
                     return
                 except Exception as e:
                     self.printException(e)
@@ -3039,6 +3063,7 @@ App {
     def change_footer(self, value: Text | str) -> None:  # GitHistoryTool
         """Set the footer to `value` (Text or str) immediately."""
         try:
+            logger.debug(f"change_footer({value})")
             txt = self._normalize_footer(value)
             try:
                 # Prefer attribute-backed footer update helper; update label if present
@@ -3060,36 +3085,18 @@ App {
     def push_footer(self, value: Text | str) -> None:  # GitHistoryTool
         """Push a footer message onto the footer stack and set it."""
         try:
-            try:
-                logger.debug(f"push_footer: requested={value} before={self.footer_stack}")
-            except Exception as e:
-                self.printException(e)
-
-            try:
-                txt = self._normalize_footer(value)
-                self._stack_push("footer_stack", txt)
-            except Exception as e:
-                self.printException(e, "push_footer stack push failed")
-
-            try:
-                self.change_footer(self.footer_stack[-1][0])
-            except Exception as e:
-                self.printException(e, "push_footer change_footer failed")
+            logger.debug(f"push_footer: requested={value} before={self.footer_stack}")
+            txt = self._normalize_footer(value)
+            self._stack_push("footer_stack", txt)
+            self.change_footer(self.footer_stack[-1][0])
         except Exception as e:
             self.printException(e, "push_footer outer failure")
 
     def pop_footer(self) -> None:  # GitHistoryTool
         """Pop the current footer message and restore the previous one."""
         try:
-            try:
-                logger.debug(f"pop_footer: stack before pop={self.footer_stack}")
-            except Exception as e:
-                self.printException(e)
-            try:
-                if not self.footer_stack:
-                    return
-            except Exception as e:
-                self.printException(e)
+            logger.debug(f"pop_footer: stack before pop={self.footer_stack}")
+            if not self.footer_stack:
                 return
 
             try:
@@ -3111,10 +3118,7 @@ App {
     def push_focus(self, target: str) -> None:  # GitHistoryTool
         """Push a new focus target and focus it."""
         try:
-            try:
-                logger.debug(f"push_focus: requested={target} before={self.focus_stack}")
-            except Exception as e:
-                self.printException(e)
+            logger.debug(f"push_focus: requested={target} before={self.focus_stack}")
 
             try:
                 self._stack_push("focus_stack", target)
@@ -3131,30 +3135,15 @@ App {
     def pop_focus(self) -> None:  # GitHistoryTool
         """Pop the current focus and restore the previous one."""
         try:
-            try:
-                logger.debug(f"pop_focus: stack before pop={self.focus_stack}")
-            except Exception as e:
-                self.printException(e)
-            try:
-                if not self.focus_stack:
-                    return
-            except Exception as e:
-                self.printException(e)
+            logger.debug(f"pop_focus: stack before pop={self.focus_stack}")
+
+            if not self.focus_stack:
                 return
 
-            try:
-                self._stack_pop("focus_stack")
-                prev = self.focus_stack[-1][0] if self.focus_stack else "#left-file-list"
-                try:
-                    logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={self.focus_stack}")
-                except Exception as e:
-                    self.printException(e)
-                try:
-                    self.change_focus(prev)
-                except Exception as e:
-                    self.printException(e, "pop_focus change_focus failed")
-            except Exception as e:
-                self.printException(e, "pop_focus inner failure")
+            self._stack_pop("focus_stack")
+            prev = self.focus_stack[-1][0] if self.focus_stack else "#left-file-list"
+            logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={self.focus_stack}")
+            self.change_focus(prev)
         except Exception as e:
             self.printException(e, "pop_focus outer failure")
 
@@ -3164,23 +3153,15 @@ App {
         Any parameter may be None to skip that action.
         """
         try:
-            try:
-                if layout:
-                    self.push_layout(layout)
-            except Exception as e:
-                self.printException(e, "push_state push_layout failed")
+            logger.debug(f"push_state({layout})")
+            if layout:
+                self.push_layout(layout)
 
-            try:
-                if focus:
-                    self.push_focus(focus)
-            except Exception as e:
-                self.printException(e, "push_state push_focus failed")
+            if focus:
+                self.push_focus(focus)
 
-            try:
-                if footer is not None:
-                    self.push_footer(footer)
-            except Exception as e:
-                self.printException(e, "push_state push_footer failed")
+            if footer is not None:
+                self.push_footer(footer)
         except Exception as e:
             self.printException(e, "push_state outer failure")
 
@@ -3190,20 +3171,10 @@ App {
         Safe no-op when stacks are empty; logs exceptions.
         """
         try:
-            try:
-                self.pop_footer()
-            except Exception as e:
-                self.printException(e, "pop_state pop_footer failed")
-
-            try:
-                self.pop_focus()
-            except Exception as e:
-                self.printException(e, "pop_state pop_focus failed")
-
-            try:
-                self.pop_layout()
-            except Exception as e:
-                self.printException(e, "pop_state pop_layout failed")
+            logger.debug("pop_state()")
+            self.pop_footer()
+            self.pop_focus()
+            self.pop_layout()
         except Exception as e:
             self.printException(e, "pop_state outer failure")
 
@@ -3276,6 +3247,7 @@ App {
         """
         Discover repository (if any) and build in-memory index/status maps.
         """
+        logger.debug("build_repo_cache()")
         self.repo_available = False
         self.repo_root = None
         self.repo_index_set = set()
@@ -3351,6 +3323,7 @@ App {
 
     def compose(self) -> ComposeResult:  # GitHistoryTool
         """Compose the app UI: title, four-column layout, and footer hints."""
+        logger.debug("compose: start composing UI")
         with Vertical(id="root"):
             yield Label(Text(self.TITLE, style="bold"), id="title")
             with Horizontal(id="main"):
@@ -3376,53 +3349,30 @@ App {
                     yield Label(Text("Help", style="bold"), id="help-title")
                     yield HelpList(id="help-list")
 
-                # GitHistoryTool footer
-                yield Label(self.footer_file, id="footer")
-
-
-    def _mount_replace(self, parent: Widget, widget: Widget) -> None:  # GitHistoryTool
-        """Remove any existing widget with the same id from `parent` and mount `widget`.
-
-        Safe helper used to centralize replace-or-mount behavior.
-        """
+            # GitHistoryTool footer (placed outside  so it always sits below columns)
+        yield Label(self.footer_file, id="footer")
         try:
-            if parent is None:
-                logger.debug("_mount_replace: no parent provided")
-                return
-            try:
-                wid = getattr(widget, "id", None)
-                logger.debug(f"_mount_replace: parent={getattr(parent,'id',None)} widget_id={wid} widget_type={type(widget)!r}")
-                if wid:
-                    try:
-                        old = parent.query_one(f"#{wid}")
-                        try:
-                            old.remove()
-                            logger.debug(f"_mount_replace: removed old widget with id={wid}")
-                        except Exception as e:
-                            logger.debug(f"_mount_replace: failed to remove old widget id={wid}: {e}")
-                    except Exception as e:
-                        self.printException(e)
-                        logger.debug(f"_mount_replace: no existing child with id={wid} to remove")
-            except Exception as e:
-                self.printException(e, "_mount_replace pre-remove")
-
-            try:
-                logger.debug(f"_mount_replace: mounting widget id={getattr(widget,'id',None)} into parent id={getattr(parent,'id',None)}")
-                parent.mount(widget)
-                logger.debug(f"_mount_replace: mount call completed for id={getattr(widget,'id',None)}")
-            except Exception as e:
-                self.printException(e, "_mount_replace mount failed")
+            logger.debug("compose: finished composing UI")
         except Exception as e:
-            self.printException(e, "_mount_replace outer failure")
+            self.printException(e)
+            pass
+
 
     async def on_mount(self) -> None:  # GitHistoryTool
         """Mount-time initialization: build repo cache and populate Files.
+        try:
+            logger.debug("on_mount: start")
+        except Exception as e:
+        self.printException(e)
+            pass
+
 
         This method configures initial layout sizes, builds the repository
         cache, and sets the initial path listing. If the app was launched with
         a filename, it will also open that file's history.
         """
         # Resolve references to the six canonical widgets composed in `compose()`
+        logger.debug("GitHistoryTool.on_mount()")
         try:
             try:
                 self.file_mode_file_list = self.query_one("#left-file-list", FileListBase)
@@ -3477,6 +3427,11 @@ App {
         except Exception as e:
             raise RuntimeError(f"Critical widget allocation/resolution failure: {e}") from e
         # Eager queries for right1/right2/right3 removed — query these widgets on demand.
+        try:
+            logger.debug("on_mount: finished initial widget resolution")
+        except Exception as e:
+            self.printException(e)
+            pass
         # Ensure the main horizontal fills remaining space so the title remains visible
         try:
             # ensure root fills the app and main flexes so footer remains visible
@@ -3610,7 +3565,44 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Ensure logging is cleanly shut down on normal exit or when receiving
+    # termination signals (SIGTERM / SIGINT). Register atexit as a fallback
+    # and signal handlers to call logging.shutdown() before exiting.
+    try:
+        import signal
+        import atexit
+
+        def _term_handler(signum, frame):
+            logger.info(f"Received signal {signum}; shutting down")
+
+            try:
+                atexit.register(logging.shutdown)
+            except Exception as e:
+                logger.warning(f"atexit.register failed: {e}")
+            try:
+                logging.shutdown()
+            except Exception:
+                pass
+            sys.exit(0)
+
+        # Register both TERM and INT so Ctrl-C and `kill` behave the same.
+        signal.signal(signal.SIGTERM, _term_handler)
+        signal.signal(signal.SIGINT, _term_handler)
+
+    except Exception as e:
+        # If signals/atexit can't be configured, continue without them.
+        logger.warning(f"Signal failed: {e}")
+        pass
+
+    try:
+        import atexit as _atexit
+        _atexit.register(logging.shutdown)
+    except Exception as e:
+        logger.warning(f"could not register logging.shutdown: {e}")
+
+    logger.debug(f"invoking GitHistoryTool(path={args.path}, color={not args.no_color}, log_first={args.log_first})")
     app = GitHistoryTool(args.path, colorize_diff=(not args.no_color), log_first=args.log_first)
+    logger.debug("Calling app.run()")
     app.run()
 
 

@@ -1,4 +1,5 @@
 #!/bin/bash
 
 source venv-3.14/bin/activate
+rm -f tmp/debug.log
 ./gitdiffnavtool.py "$@"
