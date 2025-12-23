@@ -1166,13 +1166,6 @@ class RepoModeFileList(FileListBase):
             except Exception as e:
                 self.printException(e, "exception popping state for left-only restore")
 
-            # Update titles so left shows 'History' and right1 hidden
-            try:
-                lbl = self.app.query_one("#left-history-title", Label)
-                lbl.update(Text("History", style="bold"))
-            except Exception as e:
-                self.printException(e, "exception updating left-history-title")
-
         except Exception as e:
             self.printException(e)
         return True
@@ -2228,14 +2221,6 @@ class DiffList(AppBase):
                     self.app.diff_cmd_index = cur
                     logger.debug(f"DiffList: rotated diff_cmd_index to {cur}, variant={variants[cur]}")
 
-                    try:
-                        title_lbl = self.app.query_one("#diff-title", Label)
-                        v = variants[cur]
-                        title_text = "Diff" if not v else f"Diff {v}"
-                        title_lbl.update(Text(title_text, style="bold"))
-                    except Exception as e:
-                        self.printException(e, "updating diff title exception")
-
                     if self.app.current_commit_sha and self.app.current_prev_sha and self.app.current_diff_file:
 
                         previous_hash = self.app.current_prev_sha
@@ -2592,6 +2577,16 @@ class GitHistoryTool(App):
             padding: 0 1;
             text-align: left;
         }
+
+        /* Active title styling: highlighted focused column */
+        #left-file-title.active,
+        #left-history-title.active,
+        #right-history-title.active,
+        #right-file-title.active,
+        #diff-title.active,
+        #help-title.active {
+            text-style: bold reverse;
+        }
         """
 
     BINDINGS = [("q", "quit", "Quit")]
@@ -2896,70 +2891,120 @@ class GitHistoryTool(App):
             logger.debug(f"change_focus: target={target}")
 
             def _do():
+                sel = str(target)
+                if sel.startswith("#"):
+                    key = sel[1:]
+                else:
+                    key = sel
+
+                widget = None
+                label_name = None
+
+                # Reset the known title labels to a neutral bold style so
+                # we can highlight the focused column title afterwards.
                 try:
-                    sel = str(target)
-                    if sel.startswith("#"):
-                        key = sel[1:]
-                    else:
-                        key = sel
-
-                    widget = None
-                    # Accept canonical ids (no '#')
-                    if key == "left-file-list":
-                        widget = self.file_mode_file_list
-                    elif key == "left-history-list":
-                        widget = self.repo_mode_history_list
-                    elif key == "right-file-list":
-                        widget = self.repo_mode_file_list
-                    elif key == "right-history-list":
-                        widget = self.file_mode_history_list
-                    elif key == "diff-list":
-                        widget = self.diff_list
-                    elif key == "help-list":
-                        widget = self.help_list
-                    else:
-                        logger.warning(f"change_focus: unknown canonical focus target {target}")
-                        return
-
-                    try:
-                        widget.focus()
+                    title_ids = [
+                        "left-file-title",
+                        "left-history-title",
+                        "right-history-title",
+                        "right-file-title",
+                        "diff-title",
+                        "help-title",
+                    ]
+                    for tid in title_ids:
                         try:
-                            logger.debug(
-                                f"change_focus: focused resolved id={getattr(widget,'id',None)} type={type(widget)!r}"
-                            )
-                        except Exception:
-                            pass
-                        try:
-                            # When focusing a files column, ensure the top selectable
-                            # entry is visible and highlighted.
+                            lbl = self.query_one(f"#{tid}", Label)
                             try:
-                                if widget in (getattr(self, "file_mode_file_list", None), getattr(self, "repo_mode_file_list", None)):
-                                    try:
-                                        widget.index = getattr(widget, "_min_index", 0) or 0
-                                    except Exception:
-                                        pass
-                                    try:
-                                        widget.scroll_y = 0
-                                    except Exception:
-                                        pass
+                                lbl.set_class(False, "active")
+                            except Exception:
+                                try:
+                                    # fallback older API
+                                    lbl.remove_class("active")
+                                except Exception:
+                                    pass
+                        except Exception:
+                            # missing title label: ignore and continue
+                            pass
+                except Exception:
+                    pass
+
+                # Accept canonical ids (no '#') and capture the title id
+                if key == "left-file-list":
+                    widget = self.file_mode_file_list
+                    label_name = "left-file-title"
+                elif key == "left-history-list":
+                    widget = self.repo_mode_history_list
+                    label_name = "left-history-title"
+                elif key == "right-file-list":
+                    widget = self.repo_mode_file_list
+                    label_name = "right-file-title"
+                elif key == "right-history-list":
+                    widget = self.file_mode_history_list
+                    label_name = "right-history-title"
+                elif key == "diff-list":
+                    widget = self.diff_list
+                    label_name = "diff-title"
+                elif key == "help-list":
+                    widget = self.help_list
+                    label_name = "help-title"
+                else:
+                    logger.warning(f"change_focus: unknown canonical focus target {target}")
+                    return
+
+                try:
+                    widget.focus()
+                    try:
+                        logger.debug(
+                            f"change_focus: focused resolved id={getattr(widget,'id',None)} type={type(widget)!r}"
+                        )
+                    except Exception:
+                        pass
+
+                    # When focusing a files column, ensure the top selectable
+                    # entry is visible and highlighted.
+                    try:
+                        if widget in (getattr(self, "file_mode_file_list", None), getattr(self, "repo_mode_file_list", None)):
+                            try:
+                                widget.index = getattr(widget, "_min_index", 0) or 0
                             except Exception:
                                 pass
-                        except Exception:
-                            pass
-                        try:
-                            if hasattr(widget, "index") and (
-                                getattr(widget, "index", None) is None or getattr(widget, "index") < 0
-                            ):
-                                widget.index = 0
-                        except Exception:
-                            pass
-                        return
-                    except Exception as e:
-                        self.printException(e, f"could not focus resolved widget for {target}")
+                            try:
+                                widget.scroll_y = 0
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
 
-                    logger.warning(f"change_focus: no matching focus target for {target}")
+                    try:
+                        if hasattr(widget, "index") and (
+                            getattr(widget, "index", None) is None or getattr(widget, "index") < 0
+                        ):
+                            widget.index = 0
+                    except Exception:
+                        pass
+
+                    # After focusing, update the corresponding title label
+                    try:
+                        if label_name:
+                            try:
+                                title_lbl = self.query_one(f"#{label_name}", Label)
+                                try:
+                                    title_lbl.set_class(True, "active")
+                                except Exception:
+                                    try:
+                                        title_lbl.add_class("active")
+                                    except Exception:
+                                        pass
+                            except Exception as e:
+                                self.printException(e, f"could not update title label {label_name}")
+                    except Exception:
+                        pass
+
+                    return
                 except Exception as e:
-                    self.printException(e)
+                    self.printException(e, f"could not focus resolved widget for {target}")
+
+                logger.warning(f"change_focus: no matching focus target for {target}")
 
             try:
                 self.call_after_refresh(_do)
