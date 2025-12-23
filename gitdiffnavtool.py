@@ -143,32 +143,9 @@ class AppBase(ListView):
         """
         stop_called = False
 
-        def _stop() -> None:
-            """Call `event.stop()` and record that we did so."""
-            nonlocal stop_called
-            try:
-                event.stop()
-                stop_called = True
-            except Exception as e:
-                self.printException(e)
-
         try:
             key = event.key
             logger.debug("AppBase.on_key: key=%s event_id=%s", key, id(event))
-
-            # Temporary runtime inspection: log available event attributes.
-            if True:
-                try:
-                    names = [n for n in dir(event) if not n.startswith("_")]
-                    info = {}
-                    for n in names:
-                        try:
-                            info[n] = getattr(event, n)
-                        except Exception:
-                            info[n] = "<unreadable>"
-                    logger.debug("AppBase.on_key: event attrs=%s", info)
-                except Exception:
-                    logger.exception("AppBase.on_key: error introspecting event")
 
             # Normalize quit key to lowercase so app-level handler can see it
             if key and key.lower() == "q":
@@ -181,7 +158,11 @@ class AppBase(ListView):
 
             if key == "up":
                 try:
-                    _stop()
+                    try:
+                        event.stop()
+                        stop_called = True
+                    except Exception as e:
+                        self.printException(e)
                     min_idx = self._min_index or 0
                 except Exception as e:
                     self.printException(e)
@@ -203,11 +184,12 @@ class AppBase(ListView):
 
             if key == "down":
                 try:
-                    _stop()
-                except Exception as e:
-                    self.printException(e)
+                    try:
+                        event.stop()
+                        stop_called = True
+                    except Exception as e:
+                        self.printException(e)
 
-                try:
                     self.action_cursor_down()
                 except Exception as e:
                     self.printException(e)
@@ -217,7 +199,11 @@ class AppBase(ListView):
             if key in ("pageup", "pagedown"):
                 try:
                     try:
-                        _stop()
+                        try:
+                            event.stop()
+                            stop_called = True
+                        except Exception as e:
+                            self.printException(e)
                     except Exception as e:
                         self.printException(e)
 
@@ -263,7 +249,11 @@ class AppBase(ListView):
             # Handle Home/End to jump to first/last selectable item
             if key == "home":
                 try:
-                    _stop()
+                    try:
+                        event.stop()
+                        stop_called = True
+                    except Exception as e:
+                        self.printException(e)
                 except Exception as e:
                     self.printException(e)
                 nodes = self._nodes
@@ -283,7 +273,11 @@ class AppBase(ListView):
 
             if key == "end":
                 try:
-                    _stop()
+                    try:
+                        event.stop()
+                        stop_called = True
+                    except Exception as e:
+                        self.printException(e)
                 except Exception as e:
                     self.printException(e)
                 nodes = self._nodes
@@ -305,43 +299,36 @@ class AppBase(ListView):
             # key_left/right/enter in the subclasses
             if key in ("left", "right", "enter"):
                 try:
-                    _stop()
+                    try:
+                        event.stop()
+                        stop_called = True
+                    except Exception as e:
+                        self.printException(e)
                 except Exception as e:
                     self.printException(e)
                 return True
 
             # Not handled here: offer subclass a chance to handle additional keys
+            handled = False
             try:
-                handled = False
-                try:
-                    handled = self.more_keys(event)
-                except Exception as e:
-                    self.printException(e)
-                    handled = False
-                if handled:
-                    return True
+                handled = self.more_keys(event)
             except Exception as e:
-                self.printException(e, "AppBase.more_keys dispatch failure")
+                self.printException(e)
+                handled = False
+            if handled:
+                return True
             return False
 
         except Exception as e:
             self.printException(e, "AppBase.on_key outer failure")
             return False
         finally:
-            try:
-                logger.debug(
-                    "AppBase.on_key EXIT key=%s event_id=%s stop_called=%s",
-                    locals().get("key", None),
-                    id(event) if "event" in locals() else None,
-                    stop_called,
-                )
-            except Exception:
-                try:
-                    logger.debug("AppBase.on_key EXIT (could not log details)")
-                except Exception:
-                    pass
-                except Exception as e:
-                    self.printException(e, "setting index for end key")
+            logger.debug(
+                "AppBase.on_key EXIT key=%s event_id=%s stop_called=%s",
+                locals().get("key", None),
+                id(event) if "event" in locals() else None,
+                stop_called,
+            )
 
     def more_keys(self, event: events.Key) -> bool:  # AppBase
         """Per-mode file list key hook.
@@ -2154,21 +2141,21 @@ class DiffList(AppBase):
                     # either history_file_diff or file_history_diff
                     if self.app.log_first:
                         layout = "history_file_diff"
-                        focus = f"#{getattr(self.app, 'diff_list').id}"
+                        focus = f"#{self.app.diff_list.id}"
                         footer = self.app.footer_diff3
                     else:
                         layout = "file_history_diff"
-                        focus = f"#{getattr(self.app, 'diff_list').id}"
+                        focus = f"#{self.app.diff_list.id}"
                         footer = self.app.footer_diff3
                 else:
                     # not full screen, so returning to either history_file or file_history
                     if self.app.log_first:
                         layout = "history_file"
-                        focus = f"#{getattr(self.app, 'repo_mode_history_list').id}"
-                        footer = self.app.footer_history
+                        focus = f"#{self.app.repo_mode_file_list.id}"
+                        footer = self.app.footer_file
                     else:
                         layout = "file_history"
-                        focus = f"#{getattr(self.app, 'file_mode_history_list').id}"
+                        focus = f"#{self.app.file_mode_history_list.id}"
                         footer = self.app.footer_history
                 logger.debug(f">>>> DiffList.key_left(): restoring layout={layout} focus={focus} footer={footer}")
                 self.app.change_state(layout, focus, footer)
