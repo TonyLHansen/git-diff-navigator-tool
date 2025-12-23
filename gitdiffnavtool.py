@@ -17,6 +17,7 @@ import traceback
 from typing import Optional
 from rich.text import Text
 from rich.align import Align
+from rich.markdown import Markdown
 
 import pygit2
 
@@ -2194,7 +2195,7 @@ Other keys have specific functions as described below.
 
 - Files column: navigable directory listing; directories highlighted with a blue background.
   - Status markers & colors: files are prefixed with a short marker and colored by status:
-    - ` ` (space) tracked & clean — bright white
+    - `'\u00a0'` (space) tracked & clean — bright white
     - `U` untracked — bold yellow
     - `M` modified — yellow
     - `A` staged (index changes) — cyan
@@ -2205,6 +2206,7 @@ Other keys have specific functions as described below.
   - A Right Arrow will
     - (for files) open the History column for the current filename
     - (for directories) navigates to the current directory name.
+
   - A Left Arrow on the directory ".." will navigate to the parent directory.
 
 - History column:
@@ -2231,10 +2233,15 @@ Running
 -------
 Run the application as follows:
 
-`gitdiffnavtool.py [--no-color] [{path}]`
+`gitdiffnavtool.py [--no-color] [--log-first] [path]`
 
 If `--no-color` is provided, the diff output will not be colorized.
-`{path}` is optional — it defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
+
+`[path]` is optional — it defaults to the current working directory. 
+If a filename is provided, the app will open its directory and populate the History column for that file on startup.
+
+If `--log-first` is provided, the app starts with a repository-wide commit log in the History column.
+- Right arrow from the History column opens a Files column showing the changed files for the selected commit.
 """
 
 
@@ -2246,137 +2253,22 @@ class HelpList(AppBase):
 
     def on_mount(self) -> None:  # HelpList
         """Populate help content."""
-        # Split help text into lines and add as list items
-        lines = HELP_TEXT.split("\n")
-        linelen = len(lines)
-        for i, line in enumerate(lines):
-            if i < linelen - 1:
-                if lines[i + 1].startswith("=="):
-                    lines[i] = "<title>" + lines[i].strip()
-                    lines[i + 1] = ""
-                if lines[i + 1].startswith("--"):
-                    lines[i] = "<heading>" + lines[i].strip()
-                    lines[i + 1] = ""
-            lline = line.lstrip()
-            if lline.startswith("-") or lline.startswith("*"):
-                n = len(line) - len(lline)
-                lines[i] = f"<bullet{n//2}>" + lline[1:].strip()
-            elif line and line[0].isspace():
-                n = len(line) - len(lline)
-                lines[i] = f"<indent{n}>" + lline
-
-        # change two ore more consecutive blank lines to a single blank line
-        newlines = []
-        prev_blank = False
-        for line in lines:
-            if line.strip() == "":
-                if not prev_blank:
-                    newlines.append(line)
-                    prev_blank = True
-            else:
-                newlines.append(line)
-                prev_blank = False
-
-        lines = newlines
-
-        # various bullet styles
-        bullets = ["◉", "○", "♦", "◊", "—"]
-
-        for i, line in enumerate(lines):
-            indent = 0
-            al = "left"
-            style = ""
-            if line.startswith("<title>"):
-                # present as a centered bold string; append and skip parsing
-                line = line[7:]
-                style = "bold"
-                lbl = Label(Align(Text(line, style=style), align="center"))
-                lbl.styles.width = "100%"
+        try:
+            # Render HELP_TEXT using Rich's Markdown and add each paragraph as
+            # a separate ListItem so AppBase navigation (pageup/pagedown)
+            # continues to work on the ListView.
+            blocks = [b.strip() for b in re.split(r"\n\s*\n", HELP_TEXT.strip()) if b.strip()]
+            for block in blocks:
+                md = Markdown(block)
+                lbl = Label(md)
                 self.append(ListItem(lbl))
-                continue
-            elif line.startswith("<heading>"):
-                line = line[9:]
-                # present as a left-justified underlined bold string
-                style = "bold underline"
-            elif line.startswith("<bullet"):
-                # determine the number following "<bullet"
-                # present as an indentation of 2*n spaces followed by bullets[n]
-                m = re.match(r"<bullet(\d+)>(.*)", line)
-                if m:
-                    n = int(m.group(1))
-                    indent = 2 * n
-                    line = (" " * indent) + bullets[n % len(bullets)] + " " + m.group(2).lstrip()
-            elif line.startswith("<indent"):
-                # determine the number following "<indent"
-                # present as an indentation of 2*n spaces
-                m = re.match(r"<indent(\d+)>(.*)", line)
-                if m:
-                    n = int(m.group(1))
-                    indent = 2 * n
-                    line = (" " * indent) + m.group(2).lstrip()
-
-            # create a fresh Text for this line so styles never carry over
-            text = Text()
-            inFixed = False
-            inBold = False
-            inItalics = False
-            modes = ["", "", ""]
-            # instead of using split(), cycle through the string one
-            # character at a time and look for both "`", "*" and "_".
-            # When we see a "`", toggle inFixed state.
-            # When we see "*" or "_", toggle bold/italic state.
-            nline = ""
-            for c in line:
-                modeChanged = False
-                # capture previous modes so we flush preceding text with
-                # the styles that were active before the toggle.
-                prev_modes = list(modes)
-                if c == "`":
-                    inFixed = not inFixed
-                    modeChanged = True
-                    if inFixed:
-                        modes[0] = "white on bright_blue"
-                    else:
-                        modes[0] = ""
-                elif c == "*":
-                    inBold = not inBold
-                    modeChanged = True
-                    if inBold:
-                        modes[1] = "bold"
-                    else:
-                        modes[1] = ""
-                elif c == "_":
-                    inItalics = not inItalics
-                    modeChanged = True
-                    if inItalics:
-                        modes[2] = "italic"
-                    else:
-                        modes[2] = ""
-                if modeChanged:
-                    # flush nline with the previous modes (pre-toggle)
-                    if nline != "":
-                        parts = [style] + [m for m in prev_modes if m]
-                        nstyle = " ".join([p for p in parts if p]) or None
-                        text.append(nline, style=nstyle)
-                        nline = ""
-                else:
-                    nline += c
-
-            # flush any remaining nline
-            if nline != "":
-                parts = [style] + [m for m in modes if m]
-                nstyle = " ".join([p for p in parts if p]) or None
-                text.append(nline, style=nstyle)
-
-            if al == "center":
-                lbl = Label(Align(text, align="center"))
-                lbl.styles.width = "100%"
-                self.append(ListItem(lbl))
-            else:
-                self.append(ListItem(Label(text)))
+        except Exception as e:
+            self.printException(e, "HelpList.on_mount failed to render Markdown")
 
     def more_keys(self, event: events.Key) -> bool:  # HelpList
-        """Handle keys - go back to files view on any key.
+        """
+        Handle keys - go back to files view on any key.
+        Navigation (up/down/page)keys are handled by AppBase.
 
         Return True when the key is handled here and should not be processed
         further; otherwise return False to allow default handling.
@@ -2517,11 +2409,11 @@ class GitHistoryTool(App):
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
         self.diff_cmd_index: int = 0
         # Standard footer texts used throughout the app (one per column/type)
-        self.footer_file: Text = Text("File: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn", style="bold")
-        self.footer_history: Text = Text("History: q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn  →  m(ark)", style="bold")
-        self.footer_diff3: Text = Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn →/f(ull) c(olor) d(iff-type)", style="bold")
-        self.footer_diff_full: Text = Text("Diff: q(uit)  ?/h(elp)  ←/f(ull) ↑/↓/PgUp/PgDn c(olor) d(iff-type)", style="bold")
-        self.footer_help: Text = Text("Help: q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
+        self.footer_file: Text = Text("File: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End", style="bold")
+        self.footer_history: Text = Text("History: q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Begin/End  →  m(ark)", style="bold")
+        self.footer_diff3: Text = Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End →/f(ull) c(olor) d(iff-type)", style="bold")
+        self.footer_diff_full: Text = Text("Diff: q(uit)  ?/h(elp)  ←/f(ull) ↑/↓/PgUp/PgDn/Begin/End c(olor) d(iff-type)", style="bold")
+        self.footer_help: Text = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Begin/End  Press any key to return", style="bold")
         # start the app showing repository-wide commit log first when True
         logger.debug("GitHistoryTool.__init__ ends")
 
