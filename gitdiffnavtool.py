@@ -1877,6 +1877,15 @@ class RepoModeHistoryList(HistoryListBase):
                             f"#{getattr(file_list, 'id', file_list.id if file_list else 'right-file-list')}",
                             self.app.footer_file,
                         )
+                        try:
+                            try:
+                                file_list.call_after_refresh(
+                                    lambda: setattr(file_list, "index", getattr(file_list, "_min_index", 0) or 0)
+                                )
+                            except Exception as e:
+                                self.printException(e, "scheduling file_list index reset after change_state")
+                        except Exception as e:
+                            self.printException(e)
                         logger.debug(
                             "RepoModeHistoryList.key_right AFTER change_state: _current_layout=%s _current_focus=%s _current_footer=%s",
                             getattr(self.app, "_current_layout", None),
