@@ -154,8 +154,7 @@ class AppBase(ListView):
 
         try:
             key = event.key
-            callers = get_caller_short()
-            logger.debug("AppBase.on_key: key=%s event_id=%s\ncallers=%s", key, id(event), callers)
+            logger.debug("AppBase.on_key: key=%s event_id=%s", key, id(event))
 
             # Temporary runtime inspection: log available event attributes.
             if True:
@@ -261,55 +260,6 @@ class AppBase(ListView):
                     self.printException(e, "AppBase.page navigation failure")
                 return True
 
-            if key == "left":
-                try:
-                    _stop()
-                except Exception as e:
-                    self.printException(e)
-
-                try:
-                    try:
-                        self.key_left(event)
-                    except Exception as e:
-                        self.printException(e, "key_left exception")
-                except Exception as e:
-                    self.printException(e)
-                return True
-
-            if key == "right":
-                try:
-                    _stop()
-                except Exception as e:
-                    self.printException(e)
-
-                try:
-                    try:
-                        self.key_right(event)
-                    except Exception as e:
-                        self.printException(e, "key_right exception")
-                except Exception as e:
-                    self.printException(e)
-                return True
-
-            if key == "enter":
-                try:
-                    try:
-                        _stop()
-                    except Exception as e:
-                        self.printException(e)
-
-                    try:
-                        try:
-                            self.key_enter()
-                        except Exception as e:
-                            self.printException(e, "key_enter exception")
-                    except Exception as e:
-                        self.printException(e)
-                except Exception as e:
-                    self.printException(e, "enter key handling failure")
-                return True
-
-            # Not handled here
             # Handle Home/End to jump to first/last selectable item
             if key == "home":
                 try:
@@ -351,6 +301,15 @@ class AppBase(ListView):
                         self.printException(e, "setting index for end key")
                 return True
 
+            # these keys are handled at the App level because we have
+            # key_left/right/enter in the subclasses
+            if key in ("left", "right", "enter"):
+                try:
+                    _stop()
+                except Exception as e:
+                    self.printException(e)
+                return True
+
             # Not handled here: offer subclass a chance to handle additional keys
             try:
                 handled = False
@@ -383,100 +342,12 @@ class AppBase(ListView):
                     pass
                 except Exception as e:
                     self.printException(e, "setting index for end key")
-            return True
 
     def more_keys(self, event: events.Key) -> bool:  # AppBase
         """Per-mode file list key hook.
         Return True when the key was handled, False otherwise.
         """
-        return False
-
-    def duplicated_key(self, event: events.Key, name: str) -> bool:  # AppBase
-        """
-        Return True when `event` appears to be a duplicate for `name` based
-        on `event.time`. Stores a small per-widget map `_last_key_times`.
-        """
-        try:
-            curr_time = getattr(event, "time", None)
-            if curr_time is None:
-                return False
-            attr = f"_last_key_{name}_time"
-            last = getattr(self, attr, None)
-            if last == curr_time:
-                logger.debug("%s.duplicated_key: duplicate %s time %r", type(self).__name__, name, curr_time)
-                return True
-            try:
-                setattr(self, attr, curr_time)
-            except Exception:
-                pass
-            return False
-        except Exception:
-            return False
-
-    def key_left(self, event: events.Key) -> bool:  # AppBase
-        """
-        Default left-key handler for widgets that don't override it.
-
-        Subclasses may override this to implement custom behavior. Return
-        True when the key was handled (consumed), False otherwise.
-        """
-        try:
-            callers = get_caller_short()
-            logger.debug(
-                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
-                type(self).__name__,
-                sys._getframe().f_code.co_name,
-                getattr(event, "key", None),
-                getattr(event, "time", None),
-                callers
-            )
-        except Exception:
-            pass
-
-        try:
-            if self.duplicated_key(event, "left"):
-                return True
-        except Exception:
-            pass
-
-        return False
-
-    def key_right(self, event: events.Key) -> bool:  # AppBase
-        """
-        Default right-key handler for widgets that don't override it.
-
-        Subclasses may override this to implement custom behavior. Return
-        True when the key was handled (consumed), False otherwise.
-        """
-        try:
-            callers = get_caller_short()
-            logger.debug(
-                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
-                type(self).__name__,
-                sys._getframe().f_code.co_name,
-                getattr(event, "key", None),
-                getattr(event, "time", None),
-                callers
-            )
-        except Exception:
-            pass
-
-        try:
-            if self.duplicated_key(event, "right"):
-                return True
-        except Exception:
-            pass
-
-        return False
-
-    def key_enter(self) -> bool:  # AppBase
-        """
-        Default Enter-key handler for widgets that don't override it.
-
-        Subclasses may override this to implement custom behavior. Return
-        True when the key was handled (consumed), False otherwise.
-        """
-        return False
+        return True
 
     def prep_and_show_diff(
         self,
@@ -862,27 +733,8 @@ class FileModeFileList(FileListBase):
     def key_left(self, event: events.Key) -> bool:  # FileModeFileList
         """
         Handle left key behavior for FileModeFileList
-
         Returns True when the key was handled/consumed.
         """
-        try:
-            callers = get_caller_short()
-            logger.debug(
-                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
-                type(self).__name__,
-                sys._getframe().f_code.co_name,
-                getattr(event, "key", None),
-                getattr(event, "time", None),
-                callers
-            )
-        except Exception:
-            pass
-        try:
-            if self.duplicated_key(event, "left"):
-                return True
-        except Exception:
-            pass
-
         # If left pressed on the parent entry, go up a directory and
         # highlight the directory we came from.
         child = self.highlighted_child
@@ -937,19 +789,6 @@ class FileModeFileList(FileListBase):
                 3) show file history in the History column.
         Returns True when the key was handled/consumed.
         """
-        try:
-            callers = get_caller_short()
-            logger.debug(
-                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
-                type(self).__name__,
-                sys._getframe().f_code.co_name,
-                getattr(event, "key", None),
-                getattr(event, "time", None),
-                callers
-            )
-        except Exception:
-            pass
-
         # If the highlighted entry is a directory (and not ".."), enter it.
         child = self.highlighted_child
         if child is None:
@@ -1240,30 +1079,15 @@ class RepoModeFileList(FileListBase):
         Returns True to indicate the key was handled.
         """
         try:
-            try:
-                callers = get_caller_short()
-                logger.debug(
-                    "%s.%s: event.key=%r event.time=%r\ncallers=%s",
-                    type(self).__name__,
-                    sys._getframe().f_code.co_name,
-                    getattr(event, "key", None),
-                    getattr(event, "time", None),
-                    callers
-                )
-            except Exception:
-                pass
-            try:
-                if self.duplicated_key(event, "left"):
-                    return True
-            except Exception:
-                pass
             # Hide the right1 (Files) column and restore left (History)
             try:
                 # Restore previous full state (layout + focus + footer)
                 logger.debug(">>>> change_state(): RepoModeFileList.key_left: restoring history_fullscreen layout")
                 try:
                     self.app.change_state(
-                        "history_fullscreen", f"#{self.app.repo_mode_history_list.id}", self.app.footer_history
+                        "history_fullscreen",
+                        f"#{self.app.repo_mode_history_list.id}",
+                        self.app.footer_history,
                     )
                 except Exception as e:
                     self.printException(e, "exception changing state for left-only restore")
@@ -1277,19 +1101,9 @@ class RepoModeFileList(FileListBase):
             except Exception as e:
                 self.printException(e, "exception updating left-history-title")
 
-            try:
-                lbl = self.app.query_one("#right-file-title", Label)
-                lbl.styles.display = None
-            except Exception as e:
-                self.printException(e, "exception hiding right-file-title")
-
-            # Focus the History column (left)
-            except Exception as e:
-                self.printException(e, "exception focusing left history")
-
         except Exception as e:
             self.printException(e)
-        return False
+        return True
 
     def key_right(self, event: events.Key) -> bool:  # RepoModeFileList
         """
@@ -1298,18 +1112,6 @@ class RepoModeFileList(FileListBase):
 
         Returns True when handled.
         """
-        try:
-            callers = get_caller_short()
-            logger.debug(
-                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
-                type(self).__name__,
-                sys._getframe().f_code.co_name,
-                getattr(event, "key", None),
-                getattr(event, "time", None),
-                callers
-            )
-        except Exception:
-            pass
         child = self.highlighted_child
         if child is None:
             return True
@@ -1778,23 +1580,6 @@ class FileModeHistoryList(HistoryListBase):
         Returns True when the key was handled/consumed.
         """
         try:
-            try:
-                callers = get_caller_short()
-                logger.debug(
-                    "%s.%s: event.key=%r event.time=%r\ncallers=%s",
-                    type(self).__name__,
-                    sys._getframe().f_code.co_name,
-                    getattr(event, "key", None),
-                    getattr(event, "time", None),
-                    callers
-                )
-            except Exception:
-                pass
-            try:
-                if self.duplicated_key(event, "left"):
-                    return True
-            except Exception:
-                pass
             # Restore focus first, then restore the layout to left_fullscreen
             logger.debug(">>>> change_state(): FileModeHistoryList.key_left: restoring left fullscreen layout")
             try:
@@ -1811,24 +1596,6 @@ class FileModeHistoryList(HistoryListBase):
 
         Returns True when the key was handled/consumed.
         """
-        try:
-            callers = get_caller_short()
-            logger.debug(
-                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
-                type(self).__name__,
-                sys._getframe().f_code.co_name,
-                getattr(event, "key", None),
-                getattr(event, "time", None),
-                callers
-            )
-        except Exception:
-            pass
-        try:
-            if self.duplicated_key(event, "right"):
-                return True
-        except Exception:
-            pass
-
         # need at least one other item to diff against (either checked or next)
         idx = self.index
         nodes = self._nodes
@@ -2068,37 +1835,6 @@ class RepoModeHistoryList(HistoryListBase):
         diff rendering.
         """
         try:
-            callers = get_caller_short()
-            logger.debug(
-                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
-                type(self).__name__,
-                sys._getframe().f_code.co_name,
-                getattr(event, "key", None),
-                getattr(event, "time", None),
-                callers
-            )
-        except Exception:
-            pass
-
-        try:
-            if self.duplicated_key(event, "right"):
-                return True
-        except Exception:
-            pass
-
-        try:
-            # Entry instrumentation to detect duplicate invocations
-            try:
-                st = "".join(traceback.format_stack(limit=6))
-                logger.debug(
-                    "RepoModeHistoryList.key_right ENTER id=%s widget_id=%s index=%s callers=%s",
-                    id(self),
-                    getattr(self, "id", None),
-                    getattr(self, "index", None),
-                    st.replace("\n", " | ")[:400],
-                )
-            except Exception:
-                pass
             # Use centralized helper to compute the two commit hashes/lines
             current_hash, previous_hash, _, _, _, _ = self.compute_commit_pair_hashes()
             if not current_hash or not previous_hash:
@@ -2155,15 +1891,6 @@ class RepoModeHistoryList(HistoryListBase):
                         logger.debug(
                             f">>>> change_state(history_file): RepoModeHistoryList.key_right: mounting RepoModeFileList id={getattr(file_list,'id',None)} file_list_id={id(file_list)}"
                         )
-                        # log caller stack for this change_state
-                        try:
-                            cstack = "".join(traceback.format_stack(limit=6))
-                            logger.debug(
-                                "RepoModeHistoryList.key_right about to change_state; callers=%s",
-                                cstack.replace("\n", " | ")[:400],
-                            )
-                        except Exception:
-                            pass
                         self.app.change_state(
                             "history_file",
                             f"#{getattr(file_list, 'id', file_list.id if file_list else 'right-file-list')}",
@@ -2416,25 +2143,6 @@ class DiffList(AppBase):
         Returns True when the key was handled/consumed.
         """
         try:
-            callers = get_caller_short()
-            logger.debug(
-                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
-                type(self).__name__,
-                sys._getframe().f_code.co_name,
-                getattr(event, "key", None),
-                getattr(event, "time", None),
-                callers
-            )
-        except Exception:
-            pass
-
-        try:
-            if self.duplicated_key(event, "left"):
-                return True
-        except Exception:
-            pass
-
-        try:
             logger.debug(">>>> DiffList.key_left(): determining state to restore from diff")
             try:
                 # If the Diff is fullscreen, exit fullscreen to the appropriate
@@ -2476,18 +2184,6 @@ class DiffList(AppBase):
         Returns True when the key was handled/consumed.
         """
         try:
-            try:
-                callers = get_caller_short()
-                logger.debug(
-                    "%s.%s: event.key=%r event.time=%r\ncallers=%s",
-                    type(self).__name__,
-                    sys._getframe().f_code.co_name,
-                    getattr(event, "key", None),
-                    getattr(event, "time", None),
-                    callers
-                )
-            except Exception:
-                pass
             # In columnated mode, pressing right expands Diff to fullscreen.
             if self.app.is_diff_fullscreen():
                 # already fullscreen; right arrow does nothing
