@@ -18,6 +18,7 @@ from typing import Optional
 from rich.text import Text
 from rich.align import Align
 from rich.markdown import Markdown
+import inspect
 
 import pygit2
 
@@ -44,11 +45,32 @@ if DOLOGGING:
         level=logging.DEBUG,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+    # Reduce verbosity from markdown-it and submodules (noisy in debug logs)
+    try:
+        logging.getLogger("markdown_it").setLevel(logging.WARNING)
+    except Exception:
+        # Best-effort: don't fail if logger config isn't available
+        pass
 logger = logging.getLogger(__name__)
 
 
+def get_caller_short(limit: int = 6, maxlen: int = 400) -> str:
+    """
+    Return a short single-line caller stack suitable for debug logging.
+
+    Collapses newlines to ' | ' and truncates to `maxlen`. Returns an
+    empty string on any error to avoid interfering with normal execution.
+    """
+    try:
+        s = "".join(traceback.format_stack(limit=limit))
+        return s.replace("\n", " | ")[:maxlen]
+    except Exception:
+        return ""
+
+
 class AppBase(ListView):
-    """A base class for all of our other application Base classes.
+    """
+    A base class for all of our other application Base classes.
     It provides common functionality that everyone needs.
     """
 
@@ -67,7 +89,8 @@ class AppBase(ListView):
             pass
 
     def __init__(self, *args, **kwargs):
-        """Initialize common fallback attributes so direct access is safe.
+        """
+        Initialize common fallback attributes so direct access is safe.
 
         We set small defaults for private attributes this code frequently
         reads via `getattr` so callers can use direct attribute access
@@ -87,7 +110,8 @@ class AppBase(ListView):
         self.current_diff_file = None
 
     def text_of(self, node) -> str:  # AppBase
-        """Extract visible text from a ListItem node's Label/renderable.
+        """
+        Extract visible text from a ListItem node's Label/renderable.
 
         This centralizes the logic used by history lists to parse the
         display text for commits so both FileMode and RepoMode history
@@ -111,14 +135,41 @@ class AppBase(ListView):
             return str(node)
 
     def on_key(self, event: events.Key) -> bool:  # AppBase
-        """Handle common navigation keys for ListView-based widgets.
+        """
+        Handle common navigation keys for ListView-based widgets.
 
         Returns True when the key was handled and should not be processed
         further by subclass handlers.
         """
+        stop_called = False
+
+        def _stop() -> None:
+            """Call `event.stop()` and record that we did so."""
+            nonlocal stop_called
+            try:
+                event.stop()
+                stop_called = True
+            except Exception as e:
+                self.printException(e)
+
         try:
             key = event.key
-            logger.debug(f"AppBase.on_key: key={key}")
+            callers = get_caller_short()
+            logger.debug("AppBase.on_key: key=%s event_id=%s\ncallers=%s", key, id(event), callers)
+
+            # Temporary runtime inspection: log available event attributes.
+            if True:
+                try:
+                    names = [n for n in dir(event) if not n.startswith("_")]
+                    info = {}
+                    for n in names:
+                        try:
+                            info[n] = getattr(event, n)
+                        except Exception:
+                            info[n] = "<unreadable>"
+                    logger.debug("AppBase.on_key: event attrs=%s", info)
+                except Exception:
+                    logger.exception("AppBase.on_key: error introspecting event")
 
             # Normalize quit key to lowercase so app-level handler can see it
             if key and key.lower() == "q":
@@ -131,7 +182,7 @@ class AppBase(ListView):
 
             if key == "up":
                 try:
-                    event.stop()
+                    _stop()
                     min_idx = self._min_index or 0
                 except Exception as e:
                     self.printException(e)
@@ -153,7 +204,7 @@ class AppBase(ListView):
 
             if key == "down":
                 try:
-                    event.stop()
+                    _stop()
                 except Exception as e:
                     self.printException(e)
 
@@ -167,7 +218,7 @@ class AppBase(ListView):
             if key in ("pageup", "pagedown"):
                 try:
                     try:
-                        event.stop()
+                        _stop()
                     except Exception as e:
                         self.printException(e)
 
@@ -212,13 +263,13 @@ class AppBase(ListView):
 
             if key == "left":
                 try:
-                    event.stop()
+                    _stop()
                 except Exception as e:
                     self.printException(e)
 
                 try:
                     try:
-                        self.key_left()
+                        self.key_left(event)
                     except Exception as e:
                         self.printException(e, "key_left exception")
                 except Exception as e:
@@ -227,13 +278,13 @@ class AppBase(ListView):
 
             if key == "right":
                 try:
-                    event.stop()
+                    _stop()
                 except Exception as e:
                     self.printException(e)
 
                 try:
                     try:
-                        self.key_right()
+                        self.key_right(event)
                     except Exception as e:
                         self.printException(e, "key_right exception")
                 except Exception as e:
@@ -243,7 +294,7 @@ class AppBase(ListView):
             if key == "enter":
                 try:
                     try:
-                        event.stop()
+                        _stop()
                     except Exception as e:
                         self.printException(e)
 
@@ -261,7 +312,10 @@ class AppBase(ListView):
             # Not handled here
             # Handle Home/End to jump to first/last selectable item
             if key == "home":
-                event.stop()
+                try:
+                    _stop()
+                except Exception as e:
+                    self.printException(e)
                 nodes = self._nodes
                 if not nodes:
                     return True
@@ -278,7 +332,10 @@ class AppBase(ListView):
                 return True
 
             if key == "end":
-                event.stop()
+                try:
+                    _stop()
+                except Exception as e:
+                    self.printException(e)
                 nodes = self._nodes
                 if not nodes:
                     return True
@@ -311,6 +368,22 @@ class AppBase(ListView):
         except Exception as e:
             self.printException(e, "AppBase.on_key outer failure")
             return False
+        finally:
+            try:
+                logger.debug(
+                    "AppBase.on_key EXIT key=%s event_id=%s stop_called=%s",
+                    locals().get("key", None),
+                    id(event) if "event" in locals() else None,
+                    stop_called,
+                )
+            except Exception:
+                try:
+                    logger.debug("AppBase.on_key EXIT (could not log details)")
+                except Exception:
+                    pass
+                except Exception as e:
+                    self.printException(e, "setting index for end key")
+            return True
 
     def more_keys(self, event: events.Key) -> bool:  # AppBase
         """Per-mode file list key hook.
@@ -318,24 +391,87 @@ class AppBase(ListView):
         """
         return False
 
-    def key_left(self) -> bool:  # AppBase
-        """Default left-key handler for widgets that don't override it.
+    def duplicated_key(self, event: events.Key, name: str) -> bool:  # AppBase
+        """
+        Return True when `event` appears to be a duplicate for `name` based
+        on `event.time`. Stores a small per-widget map `_last_key_times`.
+        """
+        try:
+            curr_time = getattr(event, "time", None)
+            if curr_time is None:
+                return False
+            attr = f"_last_key_{name}_time"
+            last = getattr(self, attr, None)
+            if last == curr_time:
+                logger.debug("%s.duplicated_key: duplicate %s time %r", type(self).__name__, name, curr_time)
+                return True
+            try:
+                setattr(self, attr, curr_time)
+            except Exception:
+                pass
+            return False
+        except Exception:
+            return False
+
+    def key_left(self, event: events.Key) -> bool:  # AppBase
+        """
+        Default left-key handler for widgets that don't override it.
 
         Subclasses may override this to implement custom behavior. Return
         True when the key was handled (consumed), False otherwise.
         """
+        try:
+            callers = get_caller_short()
+            logger.debug(
+                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
+                type(self).__name__,
+                sys._getframe().f_code.co_name,
+                getattr(event, "key", None),
+                getattr(event, "time", None),
+                callers
+            )
+        except Exception:
+            pass
+
+        try:
+            if self.duplicated_key(event, "left"):
+                return True
+        except Exception:
+            pass
+
         return False
 
-    def key_right(self) -> bool:  # AppBase
-        """Default right-key handler for widgets that don't override it.
+    def key_right(self, event: events.Key) -> bool:  # AppBase
+        """
+        Default right-key handler for widgets that don't override it.
 
         Subclasses may override this to implement custom behavior. Return
         True when the key was handled (consumed), False otherwise.
         """
+        try:
+            callers = get_caller_short()
+            logger.debug(
+                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
+                type(self).__name__,
+                sys._getframe().f_code.co_name,
+                getattr(event, "key", None),
+                getattr(event, "time", None),
+                callers
+            )
+        except Exception:
+            pass
+
+        try:
+            if self.duplicated_key(event, "right"):
+                return True
+        except Exception:
+            pass
+
         return False
-    
+
     def key_enter(self) -> bool:  # AppBase
-        """Default Enter-key handler for widgets that don't override it.
+        """
+        Default Enter-key handler for widgets that don't override it.
 
         Subclasses may override this to implement custom behavior. Return
         True when the key was handled (consumed), False otherwise.
@@ -350,7 +486,8 @@ class AppBase(ListView):
         diff_widget: str,
         layout: str,
     ) -> None:  # AppBase
-        """Populate the shared Diff column and make it visible using `layout`.
+        """
+        Populate the shared Diff column and make it visible using `layout`.
 
         Caller MUST pass the diff widget instance and the explicit
         layout name to use (e.g. 'file_history_diff' or 'history_file_diff').
@@ -366,7 +503,10 @@ class AppBase(ListView):
 
             # Use the explicit layout provided by the caller.
             try:
-                self.app.push_state(layout, f"#{diff_widget.id}", self.app.footer_diff3)
+                logger.debug(
+                    f">>>> change_state({layout}) - AppBase.prep_and_show_diff: for diff widget id={diff_widget.id}"
+                )
+                self.app.change_state(layout, f"#{diff_widget.id}", self.app.footer_diff3)
             except Exception as e:
                 self.printException(e, "error ensuring layout/focus for diff")
         except Exception as e:
@@ -374,7 +514,8 @@ class AppBase(ListView):
 
 
 class FileListBase(AppBase):
-    """A ListView showing directory contents. Directories have a blue background.
+    """
+    A ListView showing directory contents. Directories have a blue background.
 
     Navigation: arrow keys (up/down) move selection automatically because ListView
     handles keyboard navigation. The app focuses this widget on mount.
@@ -409,7 +550,8 @@ class FileListBase(AppBase):
             self.printException(e, "exception checking/enforcing _min_index on focus")
 
     def _highlight_filename(self, name: str) -> None:  # FileListBase
-        """Highlight the ListItem whose attached `_filename` equals `name`.
+        """
+        Highlight the ListItem whose attached `_filename` equals `name`.
 
         This is intended to be called via `call_after_refresh` after the
         DOM has been updated by `set_path`.
@@ -551,7 +693,8 @@ class FileModeFileList(FileListBase):
     )
 
     def prepFileModeFileList(self, path: str) -> None:  # FileModeFileList
-        """Prepare and populate this `FileModeFileList` for `path`.
+        """
+        Prepare and populate this `FileModeFileList` for `path`.
 
         Extracted from the previous helper so this instance can populate
         itself when requested.
@@ -716,12 +859,30 @@ class FileModeFileList(FileListBase):
         except Exception as e:
             self.printException(e)
 
-    def key_left(self) -> bool:  # FileModeFileList
+    def key_left(self, event: events.Key) -> bool:  # FileModeFileList
         """
         Handle left key behavior for FileModeFileList
 
         Returns True when the key was handled/consumed.
         """
+        try:
+            callers = get_caller_short()
+            logger.debug(
+                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
+                type(self).__name__,
+                sys._getframe().f_code.co_name,
+                getattr(event, "key", None),
+                getattr(event, "time", None),
+                callers
+            )
+        except Exception:
+            pass
+        try:
+            if self.duplicated_key(event, "left"):
+                return True
+        except Exception:
+            pass
+
         # If left pressed on the parent entry, go up a directory and
         # highlight the directory we came from.
         child = self.highlighted_child
@@ -767,15 +928,28 @@ class FileModeFileList(FileListBase):
         # Left on non-parent: ignore (do nothing)
         return False
 
-    def key_right(self) -> bool:  # FileModeFileList
+    def key_right(self, event: events.Key) -> bool:  # FileModeFileList
         """
         Handle right key behavior for FileModeFileList
-            Either 
+            Either
                 1) ignore "..", or
-                2) enter a directory, or 
+                2) enter a directory, or
                 3) show file history in the History column.
         Returns True when the key was handled/consumed.
         """
+        try:
+            callers = get_caller_short()
+            logger.debug(
+                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
+                type(self).__name__,
+                sys._getframe().f_code.co_name,
+                getattr(event, "key", None),
+                getattr(event, "time", None),
+                callers
+            )
+        except Exception:
+            pass
+
         # If the highlighted entry is a directory (and not ".."), enter it.
         child = self.highlighted_child
         if child is None:
@@ -804,7 +978,10 @@ class FileModeFileList(FileListBase):
                 # Show history and focus the populated widget using its id
                 try:
                     tgt = f"#{hist.id}"
-                    self.app.push_state("file_history", tgt, self.app.footer_history)
+                    logger.debug(
+                        f">>>> change_state(file_history) - FileModeFileList.key_right: for history widget id={hist.id}"
+                    )
+                    self.app.change_state("file_history", tgt, self.app.footer_history)
                 except Exception as e:
                     self.printException(e, "focusing history after prep failed")
 
@@ -841,7 +1018,8 @@ class RepoModeFileList(FileListBase):
     def prepRepoModeFileList(
         self, previous_hash: Optional[str], current_hash: Optional[str]
     ) -> None:  # RepoModeFileList
-        """Populate this RepoModeFileList with files changed between two commits.
+        """
+        Populate this RepoModeFileList with files changed between two commits.
 
         `previous_hash` and `current_hash` are commit-ish identifiers (short
         or full) used to compute the tree diff via pygit2. This method builds
@@ -970,6 +1148,18 @@ class RepoModeFileList(FileListBase):
 
                 def _append_buffer():
                     try:
+                        logger.debug(
+                            "RepoModeFileList._append_buffer ENTER id=%s populated=%s items_buffer_len=%s",
+                            id(self),
+                            getattr(self, "_populated", None),
+                            len(items_buffer),
+                        )
+                        # capture a short caller stack for where the append was scheduled from
+                        try:
+                            c = get_caller_short()
+                            logger.debug("RepoModeFileList._append_buffer()\ncallers=%s", c)
+                        except Exception:
+                            pass
                         if self._populated:
                             return
                         try:
@@ -1010,6 +1200,12 @@ class RepoModeFileList(FileListBase):
                             except Exception as e:
                                 self.printException(e, "setting index to _min_index fallback")
                         self._populated = True
+                        logger.debug(
+                            "RepoModeFileList._append_buffer EXIT id=%s populated=%s node_count=%s",
+                            id(self),
+                            getattr(self, "_populated", None),
+                            len(getattr(self, "_nodes", [])) if getattr(self, "_nodes", None) is not None else None,
+                        )
                         items_buffer.clear()
                     except Exception as e:
                         self.printException(e, "error appending repo-mode buffer")
@@ -1036,17 +1232,41 @@ class RepoModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "prepRepoModeFileList outer failure")
 
-    def key_left(self) -> bool:  # RepoModeFileList
-        """When Left is pressed in the repo-mode Files column, close
+    def key_left(self, event: events.Key) -> bool:  # RepoModeFileList
+        """
+        When Left is pressed in the repo-mode Files column, close
         the Files column and restore the History column to full-width.
 
         Returns True to indicate the key was handled.
         """
         try:
+            try:
+                callers = get_caller_short()
+                logger.debug(
+                    "%s.%s: event.key=%r event.time=%r\ncallers=%s",
+                    type(self).__name__,
+                    sys._getframe().f_code.co_name,
+                    getattr(event, "key", None),
+                    getattr(event, "time", None),
+                    callers
+                )
+            except Exception:
+                pass
+            try:
+                if self.duplicated_key(event, "left"):
+                    return True
+            except Exception:
+                pass
             # Hide the right1 (Files) column and restore left (History)
             try:
                 # Restore previous full state (layout + focus + footer)
-                self.app.pop_state()
+                logger.debug(">>>> change_state(): RepoModeFileList.key_left: restoring history_fullscreen layout")
+                try:
+                    self.app.change_state(
+                        "history_fullscreen", f"#{self.app.repo_mode_history_list.id}", self.app.footer_history
+                    )
+                except Exception as e:
+                    self.printException(e, "exception changing state for left-only restore")
             except Exception as e:
                 self.printException(e, "exception popping state for left-only restore")
 
@@ -1071,12 +1291,25 @@ class RepoModeFileList(FileListBase):
             self.printException(e)
         return False
 
-    def key_right(self) -> bool:  # RepoModeFileList
-        """When Right is pressed on a file in repo-mode, show its diff between
+    def key_right(self, event: events.Key) -> bool:  # RepoModeFileList
+        """
+        When Right is pressed on a file in repo-mode, show its diff between
         the two commits represented by the file list (or per-item hashes).
 
         Returns True when handled.
         """
+        try:
+            callers = get_caller_short()
+            logger.debug(
+                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
+                type(self).__name__,
+                sys._getframe().f_code.co_name,
+                getattr(event, "key", None),
+                getattr(event, "time", None),
+                callers
+            )
+        except Exception:
+            pass
         child = self.highlighted_child
         if child is None:
             return True
@@ -1088,16 +1321,8 @@ class RepoModeFileList(FileListBase):
 
         # Determine commit hashes: prefer per-item hashes then file_list attrs then app-wide
         try:
-            previous_hash = (
-                getattr(child, "_hash_prev", None)
-                or self.current_prev_sha
-                or self.app.current_prev_sha
-            )
-            current_hash = (
-                getattr(child, "_hash_curr", None)
-                or self.current_commit_sha
-                or self.app.current_commit_sha
-            )
+            previous_hash = getattr(child, "_hash_prev", None) or self.current_prev_sha or self.app.current_prev_sha
+            current_hash = getattr(child, "_hash_curr", None) or self.current_commit_sha or self.app.current_commit_sha
         except Exception as e:
             self.printException(e, "exception getting commit hashes")
             previous_hash = None
@@ -1139,7 +1364,8 @@ class HistoryListBase(AppBase):
     """ListView used for the History column."""
 
     def toggle_check_current(self) -> None:  # HistoryListBase
-        """Toggle a single checkmark on the currently selected history item.
+        """
+        Toggle a single checkmark on the currently selected history item.
 
         Only one history ListItem may be checked at a time. The checkmark is
         shown as a leading "✓ " replacing the leading space. If the current
@@ -1276,15 +1502,10 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "_apply setup")
 
-        # Intentionally do not modify layout or other widgets here.
-        # Layout and focus changes are centralized in `GitHistoryTool`
-        # and in the `key_left`/`key_right` handlers. Keep on_focus
-        # limited to selection/index handling and minor widget updates.
-
-        # HistoryListBase footer: managed by callers that change layout/focus
 
     def more_keys(self, event: events.Key) -> bool:  # HistoryListBase
-        """Handle history-specific keys.
+        """
+        Handle history-specific keys.
         Return True when the key was handled (e.g. `m`), False otherwise.
         """
         try:
@@ -1311,7 +1532,8 @@ class HistoryListBase(AppBase):
             return False
 
     def compute_commit_pair_hashes(self):  # HistoryListBase
-        """Compute the pair of commit hashes for a history diff.
+        """
+        Compute the pair of commit hashes for a history diff.
 
         Returns a tuple `(current_hash, previous_hash, current_line, previous_line, i_newer, i_older)`
         or `(None, None, None, None, None, None)` on failure. Callers should
@@ -1376,7 +1598,8 @@ class FileModeHistoryList(HistoryListBase):
     """subclass for FileMode HistoryList functionality; see `HistoryListBase` for shared logic."""
 
     def prepFileModeHistoryList(self, file_path: str) -> None:  # FileModeHistoryList
-        """Populate this History list with the commit history for a single file.
+        """
+        Populate this History list with the commit history for a single file.
 
         Accepts a file path (filename relative to `self.app.path`) and
         populates the widget by running `git log --follow` in the current
@@ -1449,8 +1672,8 @@ class FileModeHistoryList(HistoryListBase):
                     pseudo_entries = []
 
                 logger.debug(
-                        f"prepFileModeHistoryList: populated history for {filename} items={len(self._nodes) if hasattr(self,'_nodes') else 'unknown'}"
-                    )
+                    f"prepFileModeHistoryList: populated history for {filename} items={len(self._nodes) if hasattr(self,'_nodes') else 'unknown'}"
+                )
 
                 for pseudo in pseudo_entries:
                     display_pseudo = pseudo
@@ -1548,23 +1771,64 @@ class FileModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e)
 
-    def key_left(self) -> bool:  # FileModeHistoryList
-        """Handle left key behavior for FileModeHistoryList.
+    def key_left(self, event: events.Key) -> bool:  # FileModeHistoryList
+        """
+        Handle left key behavior for FileModeHistoryList.
 
         Returns True when the key was handled/consumed.
         """
         try:
+            try:
+                callers = get_caller_short()
+                logger.debug(
+                    "%s.%s: event.key=%r event.time=%r\ncallers=%s",
+                    type(self).__name__,
+                    sys._getframe().f_code.co_name,
+                    getattr(event, "key", None),
+                    getattr(event, "time", None),
+                    callers
+                )
+            except Exception:
+                pass
+            try:
+                if self.duplicated_key(event, "left"):
+                    return True
+            except Exception:
+                pass
             # Restore focus first, then restore the layout to left_fullscreen
-            self.app.pop_state()
+            logger.debug(">>>> change_state(): FileModeHistoryList.key_left: restoring left fullscreen layout")
+            try:
+                self.app.change_state("file_fullscreen", f"#{self.app.file_mode_file_list.id}", self.app.footer_file)
+            except Exception as e:
+                self.printException(e, "exception changing state to file_fullscreen from history")
         except Exception as e:
             self.printException(e, "exception popping state to files on left from history")
         return True
 
-    def key_right(self) -> bool:  # FileModeHistoryList
-        """Handle right key behavior for FileModeHistoryList.
+    def key_right(self, event: events.Key) -> bool:  # FileModeHistoryList
+        """
+        Handle right key behavior for FileModeHistoryList.
 
         Returns True when the key was handled/consumed.
         """
+        try:
+            callers = get_caller_short()
+            logger.debug(
+                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
+                type(self).__name__,
+                sys._getframe().f_code.co_name,
+                getattr(event, "key", None),
+                getattr(event, "time", None),
+                callers
+            )
+        except Exception:
+            pass
+        try:
+            if self.duplicated_key(event, "right"):
+                return True
+        except Exception:
+            pass
+
         # need at least one other item to diff against (either checked or next)
         idx = self.index
         nodes = self._nodes
@@ -1669,7 +1933,8 @@ class RepoModeHistoryList(HistoryListBase):
     """RepoMode History list used when `-l/--log-first`"""
 
     def prepRepoModeHistoryList(self) -> None:  # RepoModeHistoryList
-        """Populate this RepoModeHistoryList using the current repository.
+        """
+        Populate this RepoModeHistoryList using the current repository.
 
         This method discovers the repository from the app state (prefer
         `self.app.repo_root` then `self.app.path`) and populates the widget
@@ -1786,8 +2051,6 @@ class RepoModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e)
 
-            # Do not perform focus changes here; callers should push_focus as needed.
-
         except Exception as exc:
             self.printException(exc)
             try:
@@ -1795,7 +2058,7 @@ class RepoModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e)
 
-    def key_right(self) -> bool:  # RepoModeHistoryList
+    def key_right(self, event: events.Key) -> bool:  # RepoModeHistoryList
         """
         Handle Right key: open a `RepoModeFileList` populated with changes between two commits.
 
@@ -1805,6 +2068,37 @@ class RepoModeHistoryList(HistoryListBase):
         diff rendering.
         """
         try:
+            callers = get_caller_short()
+            logger.debug(
+                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
+                type(self).__name__,
+                sys._getframe().f_code.co_name,
+                getattr(event, "key", None),
+                getattr(event, "time", None),
+                callers
+            )
+        except Exception:
+            pass
+
+        try:
+            if self.duplicated_key(event, "right"):
+                return True
+        except Exception:
+            pass
+
+        try:
+            # Entry instrumentation to detect duplicate invocations
+            try:
+                st = "".join(traceback.format_stack(limit=6))
+                logger.debug(
+                    "RepoModeHistoryList.key_right ENTER id=%s widget_id=%s index=%s callers=%s",
+                    id(self),
+                    getattr(self, "id", None),
+                    getattr(self, "index", None),
+                    st.replace("\n", " | ")[:400],
+                )
+            except Exception:
+                pass
             # Use centralized helper to compute the two commit hashes/lines
             current_hash, previous_hash, _, _, _, _ = self.compute_commit_pair_hashes()
             if not current_hash or not previous_hash:
@@ -1833,7 +2127,22 @@ class RepoModeHistoryList(HistoryListBase):
                         return True
 
                     try:
+                        logger.debug(
+                            "RepoModeHistoryList.key_right: calling prepRepoModeFileList on file_list id=%s populated=%s",
+                            id(file_list),
+                            getattr(file_list, "_populated", None),
+                        )
                         file_list.prepRepoModeFileList(previous_hash, current_hash)
+                        logger.debug(
+                            "RepoModeHistoryList.key_right: returned from prepRepoModeFileList id=%s populated=%s node_count=%s",
+                            id(file_list),
+                            getattr(file_list, "_populated", None),
+                            (
+                                len(getattr(file_list, "_nodes", []))
+                                if getattr(file_list, "_nodes", None) is not None
+                                else None
+                            ),
+                        )
                     except Exception as e:
                         self.printException(e, "prepRepoModeFileList failed")
 
@@ -1843,7 +2152,29 @@ class RepoModeHistoryList(HistoryListBase):
                         self.printException(e)
 
                     try:
-                        self.app.push_state("history_file", f"#{getattr(file_list, 'id', file_list.id if file_list else 'right-file-list')}", self.app.footer_file)
+                        logger.debug(
+                            f">>>> change_state(history_file): RepoModeHistoryList.key_right: mounting RepoModeFileList id={getattr(file_list,'id',None)} file_list_id={id(file_list)}"
+                        )
+                        # log caller stack for this change_state
+                        try:
+                            cstack = "".join(traceback.format_stack(limit=6))
+                            logger.debug(
+                                "RepoModeHistoryList.key_right about to change_state; callers=%s",
+                                cstack.replace("\n", " | ")[:400],
+                            )
+                        except Exception:
+                            pass
+                        self.app.change_state(
+                            "history_file",
+                            f"#{getattr(file_list, 'id', file_list.id if file_list else 'right-file-list')}",
+                            self.app.footer_file,
+                        )
+                        logger.debug(
+                            "RepoModeHistoryList.key_right AFTER change_state: _current_layout=%s _current_focus=%s _current_footer=%s",
+                            getattr(self.app, "_current_layout", None),
+                            getattr(self.app, "_current_focus", None),
+                            getattr(self.app, "_current_footer", None),
+                        )
                     except Exception as e:
                         self.printException(e)
                 except Exception as e:
@@ -1853,6 +2184,12 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e, "unexpected error in key_right")
                 return True
 
+            try:
+                logger.debug(
+                    "RepoModeHistoryList.key_right EXIT id=%s widget_id=%s", id(self), getattr(self, "id", None)
+                )
+            except Exception:
+                pass
             return True
 
         except Exception as exc:
@@ -1963,10 +2300,10 @@ class DiffList(AppBase):
                     event.stop()
                     if self.app.is_diff_fullscreen():
                         # when fullscreen, left behavior exits fullscreen
-                        self.key_left()
+                        self.key_left(event)
                     else:
                         # when not fullscreen, right behavior enters fullscreen
-                        self.key_right()
+                        self.key_right(event)
                 except Exception as e:
                     self.printException(e, "exception toggling fullscreen f/F")
                 return True
@@ -1983,11 +2320,7 @@ class DiffList(AppBase):
                     self.app.colorize_diff = not self.app.colorize_diff
                     logger.debug(f"DiffList: toggled to colorize_diff={self.app.colorize_diff}")
 
-                    if (
-                        self.app.current_commit_sha
-                        and self.app.current_prev_sha
-                        and self.app.current_diff_file
-                    ):
+                    if self.app.current_commit_sha and self.app.current_prev_sha and self.app.current_diff_file:
 
                         logger.debug("DiffList: re-rendering diff with new colorization")
                         saved_scroll_y = self.scroll_y
@@ -2032,7 +2365,7 @@ class DiffList(AppBase):
                     cur = (cur + 1) % max(1, len(variants))
                     self.app.diff_cmd_index = cur
                     logger.debug(f"DiffList: rotated diff_cmd_index to {cur}, variant={variants[cur]}")
-                    
+
                     try:
                         title_lbl = self.app.query_one("#diff-title", Label)
                         v = variants[cur]
@@ -2041,11 +2374,7 @@ class DiffList(AppBase):
                     except Exception as e:
                         self.printException(e, "updating diff title exception")
 
-                    if (
-                        self.app.current_commit_sha
-                        and self.app.current_prev_sha
-                        and self.app.current_diff_file
-                    ):
+                    if self.app.current_commit_sha and self.app.current_prev_sha and self.app.current_diff_file:
 
                         previous_hash = self.app.current_prev_sha
                         current_hash = self.app.current_commit_sha
@@ -2080,30 +2409,93 @@ class DiffList(AppBase):
 
     # let other keys be handled by default (up/down handled by ListView)
 
-    def key_left(self) -> bool:  # DiffList
-        """Handle left key behavior for DiffListBase.
+    def key_left(self, event: events.Key) -> bool:  # DiffList
+        """
+        Handle left key behavior for DiffListBase.
 
         Returns True when the key was handled/consumed.
         """
         try:
-            self.app.pop_state()
+            callers = get_caller_short()
+            logger.debug(
+                "%s.%s: event.key=%r event.time=%r\ncallers=%s",
+                type(self).__name__,
+                sys._getframe().f_code.co_name,
+                getattr(event, "key", None),
+                getattr(event, "time", None),
+                callers
+            )
+        except Exception:
+            pass
+
+        try:
+            if self.duplicated_key(event, "left"):
+                return True
+        except Exception:
+            pass
+
+        try:
+            logger.debug(">>>> DiffList.key_left(): determining state to restore from diff")
+            try:
+                # If the Diff is fullscreen, exit fullscreen to the appropriate
+                # history layout depending on whether the app started in
+                # log-first mode. Otherwise, when not fullscreen, also choose
+                # the correct history layout by `log_first`.
+                if self.app.is_diff_fullscreen():
+                    # if full screen, returning to smaller diff_list view,
+                    # either history_file_diff or file_history_diff
+                    if self.app.log_first:
+                        layout = "history_file_diff"
+                        focus = f"#{getattr(self.app, 'diff_list').id}"
+                        footer = self.app.footer_diff3
+                    else:
+                        layout = "file_history_diff"
+                        focus = f"#{getattr(self.app, 'diff_list').id}"
+                        footer = self.app.footer_diff3
+                else:
+                    # not full screen, so returning to either history_file or file_history
+                    if self.app.log_first:
+                        layout = "history_file"
+                        focus = f"#{getattr(self.app, 'repo_mode_history_list').id}"
+                        footer = self.app.footer_history
+                    else:
+                        layout = "file_history"
+                        focus = f"#{getattr(self.app, 'file_mode_history_list').id}"
+                        footer = self.app.footer_history
+                logger.debug(f">>>> DiffList.key_left(): restoring layout={layout} focus={focus} footer={footer}")
+                self.app.change_state(layout, focus, footer)
+            except Exception as e:
+                self.printException(e, "error restoring state from diff")
         except Exception as e:
             self.printException(e, "unexpected exception in DiffListBase.key_left")
         return True
 
-    def key_right(self) -> bool:  # DiffList
+    def key_right(self, event: events.Key) -> bool:  # DiffList
         """
         Handle right key behavior for DiffListBase.
         Returns True when the key was handled/consumed.
         """
         try:
+            try:
+                callers = get_caller_short()
+                logger.debug(
+                    "%s.%s: event.key=%r event.time=%r\ncallers=%s",
+                    type(self).__name__,
+                    sys._getframe().f_code.co_name,
+                    getattr(event, "key", None),
+                    getattr(event, "time", None),
+                    callers
+                )
+            except Exception:
+                pass
             # In columnated mode, pressing right expands Diff to fullscreen.
             if self.app.is_diff_fullscreen():
                 # already fullscreen; right arrow does nothing
                 return True
             else:
                 # If diff is visible and not fullscreen, enter fullscreen
-                    self.app.push_state(
+                logger.debug(">>>> change_state(diff_fullscreen): DiffList.key_right: entering diff fullscreen layout")
+                self.app.change_state(
                     "diff_fullscreen",
                     "#diff-list",
                     self.app.footer_diff_full,
@@ -2116,6 +2508,7 @@ class DiffList(AppBase):
     def on_focus(self, event: events.Focus) -> None:  # DiffList
         """When the DiffList receives focus, ensure the first item is highlighted."""
         try:
+
             def _apply() -> None:
                 try:
                     nodes = self._nodes
@@ -2281,9 +2674,24 @@ class HelpList(AppBase):
             try:
                 try:
                     event.stop()
-                    self.app.pop_state()
+                    logger.debug(
+                        ">>>> HelpList.more_keys: dismissing help, restoring prior layout and focus using restore_state()"
+                    )
+                    try:
+                        self.app.restore_state()
+                    except Exception as e:
+                        # If no saved state, fall back to a sensible default
+                        self.printException(
+                            e, "restore_state failed in HelpList.more_keys; falling back to file_fullscreen"
+                        )
+                        try:
+                            self.app.change_state(
+                                "file_fullscreen", f"#{self.app.file_mode_file_list.id}", self.app.footer_file
+                            )
+                        except Exception as e:
+                            self.printException(e, "fallback change_state failed in HelpList.more_keys")
                 except Exception as e:
-                    self.printException(e, "could not pop_state when dismissing help")
+                    self.printException(e, "could not restore state when dismissing help")
                 return True
             except Exception as e:
                 self.printException(e)
@@ -2294,7 +2702,8 @@ class HelpList(AppBase):
 
 
 class GitHistoryTool(App):
-    """Main Textual application providing the three-column git navigator.
+    """
+    Main Textual application providing the three-column git navigator.
 
     The app composes three columns: `Files`, `History`, and `Diff`. It builds a
     repository cache (using `pygit2`) and handles keyboard
@@ -2359,7 +2768,8 @@ class GitHistoryTool(App):
     def __init__(  # GitHistoryTool
         self, path: Optional[str] = None, colorize_diff: bool = True, log_first: bool = False, **kwargs
     ) -> None:
-        """Initialize the app state.
+        """
+        Initialize the app state.
 
         If `path` names a file, treat its directory as the working path and
         remember the filename to open its history on mount.
@@ -2389,14 +2799,12 @@ class GitHistoryTool(App):
         self.repo_status_map: dict[str, int] = {}
         # per-file index mtime map (path -> mtime seconds)
         self.repo_index_mtime_map: dict[str, float] = {}
-        # column state for restoring after help
-        self.saved_column_state: Optional[dict] = None
-        # footer stack to support push/pop of footer messages. Each entry is (text,count)
-        self.footer_stack: list[tuple[Text | str, int]] = []
-        # layout stack to support push/pop of layouts. Each entry is (name,count)
-        self.layout_stack: list[tuple[str, int]] = []
-        # focus stack to support push/pop of focus targets; start empty. Each entry is (target,count)
-        self.focus_stack: list[tuple[str, int]] = []
+        # Current layout/focus/footer tracking for single-value save/restore
+        self._current_layout: Optional[str] = None
+        self._current_focus: Optional[str] = None
+        self._current_footer: Optional[Text] = None
+        # single-slot saved state used by save_state/restore_state
+        self._saved_state: Optional[tuple[Optional[str], Optional[str], Optional[Text]]] = None
         # colorization state and current diff info
         self.colorize_diff = colorize_diff
         self.current_commit_sha: Optional[str] = None
@@ -2410,9 +2818,15 @@ class GitHistoryTool(App):
         self.diff_cmd_index: int = 0
         # Standard footer texts used throughout the app (one per column/type)
         self.footer_file: Text = Text("File: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End", style="bold")
-        self.footer_history: Text = Text("History: q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Begin/End  →  m(ark)", style="bold")
-        self.footer_diff3: Text = Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End →/f(ull) c(olor) d(iff-type)", style="bold")
-        self.footer_diff_full: Text = Text("Diff: q(uit)  ?/h(elp)  ←/f(ull) ↑/↓/PgUp/PgDn/Begin/End c(olor) d(iff-type)", style="bold")
+        self.footer_history: Text = Text(
+            "History: q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Begin/End  →  m(ark)", style="bold"
+        )
+        self.footer_diff3: Text = Text(
+            "Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End →/f(ull) c(olor) d(iff-type)", style="bold"
+        )
+        self.footer_diff_full: Text = Text(
+            "Diff: q(uit)  ?/h(elp)  ←/f(ull) ↑/↓/PgUp/PgDn/Begin/End c(olor) d(iff-type)", style="bold"
+        )
         self.footer_help: Text = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Begin/End  Press any key to return", style="bold")
         # start the app showing repository-wide commit log first when True
         logger.debug("GitHistoryTool.__init__ ends")
@@ -2523,15 +2937,16 @@ class GitHistoryTool(App):
             self.printException(e, "error applying column layout")
 
     def change_layout(self, newlayout: str) -> None:  # GitHistoryTool
-        """Change column layout using a named layout.
+        """
+        Change column layout using a named layout.
 
         Valid names: "left_fullscreen", "file_history", "history_file",
         "file_history_diff", "history_file_diff", "diff_fullscreen", "help_fullscreen".
         """
         try:
             logger.debug(f"change_layout: newlayout={newlayout}")
-            # Maintainable visibility tokens: 
-            # `show` clears an override (lets the CSS decide), 
+            # Maintainable visibility tokens:
+            # `show` clears an override (lets the CSS decide),
             # `hide` forces display:none
             show = None
             hide = "none"
@@ -2560,151 +2975,89 @@ class GitHistoryTool(App):
                 self._apply_column_layout(0, 0, 0, 0, 0, 100)
             else:
                 raise ValueError(f"unknown layout: {newlayout}")
+            # record current layout for save/restore semantics
+            try:
+                self._current_layout = newlayout
+            except Exception:
+                pass
         except Exception as e:
             self.printException(e, f"change_layout {newlayout}")
 
-    def _stack_push(self, stack_name: str, value) -> list:
-        """Generic push helper for refcounted stacks.
-
-        Ensures the named attribute exists as a list of (value,count) tuples,
-        collapses identical consecutive pushes by incrementing the count,
-        and returns the resulting stack.
-        """
-        logger.debug(f"_stack_push({stack_name})")
-        try:
-            stack = getattr(self, stack_name, None)
-            if stack is None:
-                stack = []
-                setattr(self, stack_name, stack)
-            # If top matches, increment its count
-            if stack and stack[-1][0] == value:
-                name, cnt = stack[-1]
-                stack[-1] = (name, cnt + 1)
-            else:
-                stack.append((value, 1))
-            try:
-                logger.debug(f"_stack_push: {stack_name} after push={stack}")
-            except Exception as e:
-                self.printException(e)
-            return stack
-        except Exception as e:
-            self.printException(e, f"_stack_push {stack_name}")
-            return getattr(self, stack_name, [])
-
-    def _stack_pop(self, stack_name: str) -> tuple[Optional[str], list]:
-        """Generic pop helper for refcounted stacks.
-
-        Decrements the top count or removes the top entry; returns a tuple
-        `(popped, stack)` where `popped` is the value that was removed (or
-        the top value prior to decrement), or `None` when the stack was
-        empty. `stack` is the resulting list object after mutation. The
-        underlying attribute named `stack_name` is mutated in-place.
-        """
-        logger.debug(f"_stack_pop({stack_name})")
-        try:
-            stack = getattr(self, stack_name, None)
-            if not stack:
-                return None, []
-            popped = None
-            try:
-                name, cnt = stack[-1]
-                if cnt > 1:
-                    # decrement the refcount but the top value remains
-                    stack[-1] = (name, cnt - 1)
-                    # popped is the name we observed (top before change)
-                    popped = name
-                else:
-                    # remove the top entry entirely
-                    popped = stack.pop()[0]
-            except Exception as e:
-                self.printException(e)
-            try:
-                logger.debug(f"_stack_pop: {stack_name} after pop={stack}")
-            except Exception as e:
-                self.printException(e)
-            # return the popped value (the previous top) and the resulting stack
-            if popped is None:
-                # show the stack trace for debugging
-                callers = "".join(traceback.format_stack(limit=10))
-                logger.error("_stack_pop: popped is None unexpectedly; callers:\n%s", callers)
-            return popped, stack
-        except Exception as e:
-            self.printException(e, f"_stack_pop {stack_name}")
-            stack = getattr(self, stack_name, [])
-            return (stack[-1][0] if stack else None), stack
-
-    def push_layout(self, newlayout: str) -> None:  # GitHistoryTool
-        """Push a new layout onto the layout stack and apply it."""
-        try:
-            logger.debug(f"push_layout({newlayout})")
-            try:
-                logger.debug(f"push_layout: requested={newlayout} before={self.layout_stack}")
-            except Exception as e:
-                self.printException(e)
-
-            try:
-                self._stack_push("layout_stack", newlayout)
-            except Exception as e:
-                self.printException(e, "push_layout stack push failed")
-
-            try:
-                self.change_layout(newlayout)
-            except Exception as e:
-                self.printException(e, "push_layout change_layout failed")
-        except Exception as e:
-            self.printException(e, "push_layout outer failure")
-
-    def pop_layout(self) -> None:  # GitHistoryTool
-        """Pop the current layout and restore the previous one (if any)."""
-        logger.debug(f"pop_layout(): stack before pop={self.layout_stack}")
-        if not self.layout_stack:
-            # this should NOT happen and indicates a serious state
-            # show the stack trace for debugging
-            callers = "".join(traceback.format_stack(limit=10))
-            logger.error("pop_layout: layout_stack is empty unexpectedly; callers:\n%s", callers)
-            return
-
-        try:
-            prev, stack = self._stack_pop("layout_stack")
-            # new top after pop (the layout we'll restore)
-            if prev is None:
-                # Unexpected: layout stack emptied. This is a severe state
-                # that indicates mismatched push/pop calls. Emit an explicit
-                # error with a short stack trace to aid diagnosis, and
-                # choose a sensible fallback based on whether the app
-                # started in log-first (repo/history) mode.
-                try:
-                    callers = "".join(traceback.format_stack(limit=10))
-                except Exception:
-                    callers = "(could not capture stack)"
-                logger.error(
-                    "pop_layout: layout_stack emptied unexpectedly; falling back to default layout. log_first=%s\nCallers:\n%s",
-                    getattr(self, "log_first", False),
-                    callers,
-                )
-                prev = "history_fullscreen" if getattr(self, "log_first", False) else "file_fullscreen"
-            try:
-                logger.debug(f"pop_layout: applying prev={prev} resulting_stack={stack}")
-            except Exception as e:
-                self.printException(e)
-            try:
-                self.change_layout(prev)
-            except Exception as e:
-                self.printException(e, "pop_layout change_layout failed")
-        except Exception as e:
-            self.printException(e, "pop_layout failure")
-
     def is_diff_fullscreen(self) -> bool:  # GitHistoryTool
-        """Return True when the current layout is `diff_fullscreen`.
+        """
+        Return True when the current layout is `diff_fullscreen`.
 
-        This derives fullscreen state from the layout stack rather than a
-        separate attribute so push/pop semantics remain authoritative.
+        Uses the tracked `_current_layout` value instead of a stack.
         """
         try:
-            return bool(self.layout_stack and self.layout_stack[-1][0] == "diff_fullscreen")
+            ret = bool(self._current_layout == "diff_fullscreen")
+            logger.debug(f"is_diff_fullscreen: returning {ret} for current_layout={self._current_layout}")
+            return ret
         except Exception as e:
             self.printException(e)
             return False
+
+    def change_state(
+        self, layout: Optional[str] = None, focus: Optional[str] = None, footer: Optional[Text | str] = None
+    ) -> None:
+        """Change to the provided layout/focus/footer immediately.
+
+        This replaces the previous push_state behavior by directly applying
+        the requested layout, focus, and footer using existing helpers.
+        """
+        try:
+            logger.debug(f"change_state(layout={layout}, focus={focus}, footer={footer}) - applying requested changes")
+
+            # Always apply requested changes unconditionally. Deduplication of
+            # duplicate key events is handled at the key-handler layer using
+            # the event.time value.
+            if layout is not None:
+                try:
+                    self.change_layout(layout)
+                except Exception as e:
+                    self.printException(e, "change_state.change_layout failed")
+            if focus is not None:
+                try:
+                    self.change_focus(focus)
+                except Exception as e:
+                    self.printException(e, "change_state.change_focus failed")
+            if footer is not None:
+                try:
+                    self.change_footer(footer)
+                except Exception as e:
+                    self.printException(e, "change_state.change_footer failed")
+        except Exception as e:
+            self.printException(e, "change_state outer failure")
+
+    def save_state(self) -> None:
+        """Save the current single-value state (layout, focus, footer).
+
+        This is a single-slot save; calling multiple times overwrites the slot.
+        """
+        try:
+            self._saved_state = (self._current_layout, self._current_focus, self._current_footer)
+            logger.debug(f"save_state: saved={self._saved_state}")
+        except Exception as e:
+            self.printException(e, "save_state failed")
+
+    def restore_state(self) -> None:
+        """Restore the state saved by `save_state`.
+
+        Raises RuntimeError if no saved state exists.
+        """
+        try:
+            if self._saved_state is None:
+                raise RuntimeError("restore_state called without a prior save_state")
+            layout, focus, footer = self._saved_state
+            logger.debug(f"restore_state: restoring layout={layout} focus={focus} footer={footer}")
+            try:
+                self.change_state(layout, focus, footer)
+            except Exception as e:
+                self.printException(e, "restore_state.change_state failed")
+            # clear saved slot after restore
+            self._saved_state = None
+        except Exception as e:
+            self.printException(e, "restore_state failed")
 
     def change_focus(self, target: str) -> None:  # GitHistoryTool
         """Change focus to the given widget id (safely)."""
@@ -2740,11 +3093,15 @@ class GitHistoryTool(App):
                     try:
                         widget.focus()
                         try:
-                            logger.debug(f"change_focus: focused resolved id={getattr(widget,'id',None)} type={type(widget)!r}")
+                            logger.debug(
+                                f"change_focus: focused resolved id={getattr(widget,'id',None)} type={type(widget)!r}"
+                            )
                         except Exception:
-                            pass  
+                            pass
                         try:
-                            if hasattr(widget, "index") and (getattr(widget, "index", None) is None or getattr(widget, "index") < 0):
+                            if hasattr(widget, "index") and (
+                                getattr(widget, "index", None) is None or getattr(widget, "index") < 0
+                            ):
                                 widget.index = 0
                         except Exception:
                             pass
@@ -2763,7 +3120,19 @@ class GitHistoryTool(App):
                 _do()
         except Exception as e:
             self.printException(e, "change_focus outer failure")
-
+        try:
+            # record the desired focus target for save/restore semantics
+            sel = str(target)
+            if sel.startswith("#"):
+                key = sel[1:]
+            else:
+                key = sel
+            try:
+                self._current_focus = f"#{key}"
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _normalize_footer(self, value: Text | str) -> Text:
         try:
@@ -2793,120 +3162,17 @@ class GitHistoryTool(App):
                     logger.debug("change_footer: footer label not found")
             except Exception as e:
                 self.printException(e, "could not update footer in change_footer")
+            try:
+                # record current footer value for save/restore semantics
+                self._current_footer = txt
+            except Exception:
+                pass
         except Exception as e:
             self.printException(e, "change_footer outer failure")
 
-    def push_footer(self, value: Text | str) -> None:  # GitHistoryTool
-        """Push a footer message onto the footer stack and set it."""
-        try:
-            logger.debug(f"push_footer: requested={value} before={self.footer_stack}")
-            txt = self._normalize_footer(value)
-            self._stack_push("footer_stack", txt)
-            self.change_footer(self.footer_stack[-1][0])
-        except Exception as e:
-            self.printException(e, "push_footer outer failure")
-
-    def pop_footer(self) -> None:  # GitHistoryTool
-        """Pop the current footer message and restore the previous one."""
-        logger.debug(f"pop_footer(): stack before pop={self.footer_stack}")
-        if not self.footer_stack:
-            # this should NOT happen and indicates a serious state
-            # show the stack trace for debugging
-            callers = "".join(traceback.format_stack(limit=10))
-            logger.error("pop_footer: footer_stack is empty; cannot pop. Callers:\n%s", callers)
-            return
-
-        try:
-            prev, stack = self._stack_pop("footer_stack")
-            if prev is None:
-                # this is a serious state indicating mismatched push/pop calls
-                logger.error("pop_footer: footer_stack emptied unexpectedly; falling back to empty footer.")
-                prev = Text("Unknown footer state")
-            try:
-                logger.debug(f"pop_footer: restoring prev={prev} resulting_stack={stack}")
-            except Exception as e:
-                self.printException(e)
-            try:
-                self.change_footer(prev)
-            except Exception as e:
-                self.printException(e, "pop_footer change_footer failed")
-        except Exception as e:
-            self.printException(e, "pop_footer failure")
-
-    def push_focus(self, target: str) -> None:  # GitHistoryTool
-        """Push a new focus target and focus it."""
-        try:
-            logger.debug(f"push_focus: requested={target} before={self.focus_stack}")
-
-            try:
-                self._stack_push("focus_stack", target)
-            except Exception as e:
-                self.printException(e, "push_focus stack push failed")
-
-            try:
-                self.change_focus(target)
-            except Exception as e:
-                self.printException(e, "push_focus change_focus failed")
-        except Exception as e:
-            self.printException(e, "push_focus outer failure")
-
-    def pop_focus(self) -> None:  # GitHistoryTool
-        """Pop the current focus and restore the previous one."""
-        logger.debug(f"pop_focus(): stack before pop={self.focus_stack}")
-
-        if not self.focus_stack:
-            # this should NOT happen and indicates a serious state
-            # show the stack trace for debugging
-            callers = "".join(traceback.format_stack(limit=10))
-            logger.error("pop_footer: footer_stack is empty; cannot pop. Callers:\n%s", callers)
-            return
-
-        prev, stack = self._stack_pop("focus_stack")
-        if prev is None:
-            # this is a serious state indicating mismatched push/pop calls
-            callers = "".join(traceback.format_stack(limit=10))
-            logger.error("pop_focus: focus_stack emptied unexpectedly; falling back to default focus. log_first=%s. Callers:\n%s", self.log_first, callers)
-            prev = prev if prev is not None else "#left-history-list" if self.log_first else "#left-file-list"
-
-        logger.debug(f"pop_focus: restoring prev={prev} resulting_stack={stack}")
-        try:
-            self.change_focus(prev)
-        except Exception as e:
-            self.printException(e, "pop_focus change_focus failed")
-
-    def push_state(self, layout: Optional[str] = None, focus: Optional[str] = None, footer: Optional[Text | str] = None) -> None:  # GitHistoryTool
-        """Push layout, focus, and footer together (app-level helper).
-
-        Any parameter may be None to skip that action.
-        """
-        try:
-            logger.debug(f"push_state({layout})")
-            if layout:
-                self.push_layout(layout)
-
-            if focus:
-                self.push_focus(focus)
-
-            if footer is not None:
-                self.push_footer(footer)
-        except Exception as e:
-            self.printException(e, "push_state outer failure")
-
-    def pop_state(self) -> None:
-        """Pop footer, focus, and layout together (reverse of push_state).
-
-        Safe no-op when stacks are empty; logs exceptions.
-        """
-        try:
-            logger.debug("pop_state()")
-            self.pop_footer()
-            self.pop_focus()
-            self.pop_layout()
-        except Exception as e:
-            self.printException(e, "pop_state outer failure")
-
     def build_diff_cmd(self, prev: str | None, curr: str | None, fname: str) -> list[str]:  # GitHistoryTool
-        """Construct the git diff command honoring the currently selected variant.
+        """
+        Construct the git diff command honoring the currently selected variant.
 
         The variant (if not None) is inserted right after `git diff` so that
         options like `--ignore-space-change` and `--diff-algorithm=patience`
@@ -3084,10 +3350,10 @@ class GitHistoryTool(App):
             self.printException(e)
             pass
 
-
     async def on_mount(self) -> None:  # GitHistoryTool
-        """Mount-time initialization: build repo cache and populate Files.
-            
+        """
+        Mount-time initialization: build repo cache and populate Files.
+
         This method configures initial layout sizes, builds the repository
         cache, and sets the initial path listing. If the app was launched with
         a filename, it will also open that file's history.
@@ -3101,18 +3367,26 @@ class GitHistoryTool(App):
             # which converts it to a RuntimeError. This avoids creating
             # stray unmounted fallback widgets that are not in the DOM.
             self.file_mode_file_list = self.query_one("#left-file-list", FileListBase)
-            logger.debug(f"on_mount: found composed file_mode_file_list id={getattr(self.file_mode_file_list,'id',None)}")
+            logger.debug(
+                f"on_mount: found composed file_mode_file_list id={getattr(self.file_mode_file_list,'id',None)}"
+            )
 
             # left-history-column should be the repository-wide history view
             self.repo_mode_history_list = self.query_one("#left-history-list", RepoModeHistoryList)
-            logger.debug(f"on_mount: found composed repo_mode_history_list id={getattr(self.repo_mode_history_list,'id',None)}")
+            logger.debug(
+                f"on_mount: found composed repo_mode_history_list id={getattr(self.repo_mode_history_list,'id',None)}"
+            )
 
             # right-history-column is the file-scoped history view
             self.file_mode_history_list = self.query_one("#right-history-list", FileModeHistoryList)
-            logger.debug(f"on_mount: found composed file_mode_history_list id={getattr(self.file_mode_history_list,'id',None)}")
+            logger.debug(
+                f"on_mount: found composed file_mode_history_list id={getattr(self.file_mode_history_list,'id',None)}"
+            )
 
             self.repo_mode_file_list = self.query_one("#right-file-list", FileListBase)
-            logger.debug(f"on_mount: found composed repo_mode_file_list id={getattr(self.repo_mode_file_list,'id',None)}")
+            logger.debug(
+                f"on_mount: found composed repo_mode_file_list id={getattr(self.repo_mode_file_list,'id',None)}"
+            )
 
             self.diff_list = self.query_one("#diff-list", DiffList)
             logger.debug(f"on_mount: found composed diff_list id={getattr(self.diff_list,'id',None)}")
@@ -3130,9 +3404,9 @@ class GitHistoryTool(App):
             pass
         # Ensure the main horizontal fills remaining space so the title remains visible
         try:
-            # ensure root fills the app and main flexes so footer remains visible
+            # ensure root flexes so footer remains visible (do not force 100% height)
             root = self.query_one("#root")
-            root.styles.height = "100%"
+            root.styles.height = None
             root.styles.flex = 1
         except Exception as e:
             self.printException(e)
@@ -3150,15 +3424,17 @@ class GitHistoryTool(App):
             self.build_repo_cache()
         except Exception as e:
             self.printException(e)
-            
+
         if self.log_first:
             try:
                 self.repo_mode_history_list.prepRepoModeHistoryList()
                 # Resolve the left target id from attributes (direct access)
                 left_widget = self.repo_mode_history_list if self.log_first else self.file_mode_file_list
                 left_target = f"#{left_widget.id}" if left_widget is not None else "#left-file-list"
-                logger.debug(f"on_mount: pushing initial history_fullscreen state (log_first) left_target={left_target}")
-                self.push_state(
+                logger.debug(
+                    f"on_mount: setting initial history_fullscreen state (log_first) left_target={left_target}"
+                )
+                self.change_state(
                     "history_fullscreen",
                     left_target,
                     self.footer_history,
@@ -3167,7 +3443,9 @@ class GitHistoryTool(App):
                     logger.debug(f"on_mount(log_first): footer_stack={self.footer_stack}")
                     try:
                         f = self.query_one("#footer", Label)
-                        logger.debug(f"on_mount(log_first): footer label content={getattr(f,'renderable',None)} id={getattr(f,'id',None)}")
+                        logger.debug(
+                            f"on_mount(log_first): footer label content={getattr(f,'renderable',None)} id={getattr(f,'id',None)}"
+                        )
                     except Exception as e:
                         self.printException(e, "could not query footer after push_state in log_first")
                 except Exception:
@@ -3177,27 +3455,29 @@ class GitHistoryTool(App):
         else:
             try:
                 self.file_mode_file_list.prepFileModeFileList(self.path)
-                # make sure the stacks contain the initial state
-                self.push_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
+                # initialize current state to file_fullscreen
+                self.change_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
                 try:
                     logger.debug(f"on_mount(file-first): footer_stack={self.footer_stack}")
                     try:
                         f = self.query_one("#footer", Label)
-                        logger.debug(f"on_mount(file-first): footer label content={getattr(f,'renderable',None)} id={getattr(f,'id',None)}")
+                        logger.debug(
+                            f"on_mount(file-first): footer label content={getattr(f,'renderable',None)} id={getattr(f,'id',None)}"
+                        )
                     except Exception as e:
                         self.printException(e, "could not query footer after push_state in file-first")
                 except Exception:
                     pass
                 if self.initial_file:
                     self.file_mode_history_list.prepFileModeHistoryList(self.initial_file)
-                    self.push_state("file_history", f"#{self.file_mode_history_list.id}", self.footer_history)
+                    self.change_state("file_history", f"#{self.file_mode_history_list.id}", self.footer_history)
 
             except Exception as e:
                 self.printException(e)
 
-
     def on_key(self, event: events.Key) -> None:  # GitHistoryTool
-        """Global key handler.
+        """
+        Global key handler.
 
         - Accept uppercase `Q` as a quit key in addition to lowercase `q`.
         """
@@ -3244,15 +3524,19 @@ class GitHistoryTool(App):
                     self.printException(e)
 
                 try:
-                    # Simply push the help fullscreen layout and focus the help widget
+                    # Save current state and show the help fullscreen layout
                     try:
-                        self.push_state(
+                        self.save_state()
+                    except Exception as e:
+                        self.printException(e, "save_state failed before showing help")
+                    try:
+                        self.change_state(
                             "help_fullscreen",
                             "#help-list",
                             Text("q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold"),
                         )
                     except Exception as e:
-                        self.printException(e)                        
+                        self.printException(e, "change_state failed showing help")
                 except Exception as e:
                     self.printException(e)
 
@@ -3311,6 +3595,7 @@ def main() -> None:
 
     try:
         import atexit as _atexit
+
         _atexit.register(logging.shutdown)
     except Exception as e:
         logger.warning(f"could not register logging.shutdown: {e}")
