@@ -3163,6 +3163,15 @@ class GitHistoryTool(App):
                     left_target,
                     self.footer_history,
                 )
+                try:
+                    logger.debug(f"on_mount(log_first): footer_stack={self.footer_stack}")
+                    try:
+                        f = self.query_one("#footer", Label)
+                        logger.debug(f"on_mount(log_first): footer label content={getattr(f,'renderable',None)} id={getattr(f,'id',None)}")
+                    except Exception as e:
+                        self.printException(e, "could not query footer after push_state in log_first")
+                except Exception:
+                    pass
             except Exception as e:
                 self.printException(e)
         else:
@@ -3170,6 +3179,15 @@ class GitHistoryTool(App):
                 self.file_mode_file_list.prepFileModeFileList(self.path)
                 # make sure the stacks contain the initial state
                 self.push_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
+                try:
+                    logger.debug(f"on_mount(file-first): footer_stack={self.footer_stack}")
+                    try:
+                        f = self.query_one("#footer", Label)
+                        logger.debug(f"on_mount(file-first): footer label content={getattr(f,'renderable',None)} id={getattr(f,'id',None)}")
+                    except Exception as e:
+                        self.printException(e, "could not query footer after push_state in file-first")
+                except Exception:
+                    pass
                 if self.initial_file:
                     self.file_mode_history_list.prepFileModeHistoryList(self.initial_file)
                     self.push_state("file_history", f"#{self.file_mode_history_list.id}", self.footer_history)
