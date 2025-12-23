@@ -971,7 +971,6 @@ class RepoModeFileList(FileListBase):
 
             # Append buffer after refresh to avoid mount races
             try:
-
                 def _append_buffer():
                     try:
                         logger.debug(
@@ -981,11 +980,6 @@ class RepoModeFileList(FileListBase):
                             len(items_buffer),
                         )
                         # capture a short caller stack for where the append was scheduled from
-                        try:
-                            c = get_caller_short()
-                            logger.debug("RepoModeFileList._append_buffer()\ncallers=%s", c)
-                        except Exception:
-                            pass
                         if self._populated:
                             return
                         try:
