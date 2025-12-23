@@ -880,94 +880,171 @@ class RepoModeFileList(FileListBase):
                     self.printException(e, "appending no repository item")
                 return
 
-            # Resolve commit-ish to objects when possible
-            try:
-                curr_obj = None
-                prev_obj = None
-                if current_hash:
+            # If either side references pseudo tokens (STAGED/MODS), build items from working/index state
+            if (previous_hash in ("STAGED", "MODS")) or (current_hash in ("STAGED", "MODS")):
+                try:
+                    items_buffer: list = []
+                    # Determine repo root for git commands
+                    repo_root = repo.workdir or getattr(self.app, "repo_root", None)
+
+                    # Gather staged and unstaged files
                     try:
-                        curr_obj = repo.get(current_hash)
+                        staged_proc = subprocess.run(
+                            ["git", "diff", "--name-only", "--cached"], cwd=repo_root, capture_output=True, text=True
+                        )
+                        staged_files = [s for s in staged_proc.stdout.splitlines() if s.strip()]
                     except Exception as e:
-                        self.printException
+                        self.printException(e, "getting staged files")
+                        staged_files = []
+                    try:
+                        unstaged_proc = subprocess.run(["git", "diff", "--name-only"], cwd=repo_root, capture_output=True, text=True)
+                        unstaged_files = [s for s in unstaged_proc.stdout.splitlines() if s.strip()]
+                    except Exception as e:
+                        self.printException(e, "getting unstaged files")
+                        unstaged_files = []
+
+                    # Compute MODS per user rules
+                    try:
+                        if staged_files:
+                            mods_files = [f for f in staged_files if f in unstaged_files]
+                        else:
+                            # fall back to modified files since top commit
+                            try:
+                                top_proc = subprocess.run(["git", "ls-tree", "-r", "--name-only", "HEAD"], cwd=repo_root, capture_output=True, text=True)
+                                top_files = [s for s in top_proc.stdout.splitlines() if s.strip()]
+                            except Exception as e:
+                                self.printException(e, "getting top commit files")
+                                top_files = []
+                            try:
+                                changed_proc = subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=repo_root, capture_output=True, text=True)
+                                changed_files = [s for s in changed_proc.stdout.splitlines() if s.strip()]
+                            except Exception as e:
+                                self.printException(e, "getting changed files vs HEAD")
+                                changed_files = []
+                            mods_files = [f for f in top_files if f in changed_files]
+                    except Exception as e:
+                        self.printException(e, "computing mods files")
+                        mods_files = []
+
+                    files_set = set()
+                    if previous_hash == "STAGED" or current_hash == "STAGED":
+                        files_set.update(staged_files)
+                    if previous_hash == "MODS" or current_hash == "MODS":
+                        files_set.update(mods_files)
+
+                    if not files_set:
+                        items_buffer.append(ListItem(Label(Text(" No changed files"))))
+                    else:
+                        for display_path in sorted(files_set):
+                            try:
+                                text = f"  {display_path}"
+                                li = ListItem(Label(Text(text)))
+                                li._filename = display_path
+                                li._old_filename = None
+                                li._new_filename = None
+                                li._hash_prev = previous_hash
+                                li._hash_curr = current_hash
+                                items_buffer.append(li)
+                            except Exception as e:
+                                self.printException(e, "building pseudo file list item")
+                                continue
+                except Exception as exc:
+                    self.printException(exc, "building pseudo-mode file list")
+                    try:
+                        self.append(ListItem(Label(Text(f" Error building file list: {exc}"))))
+                    except Exception as e:
+                        self.printException(e)
+                    return
+            else:
+                # Resolve commit-ish to objects when possible
+                try:
+                    curr_obj = None
+                    prev_obj = None
+                    if current_hash:
                         try:
-                            curr_obj = repo.revparse_single(current_hash)
+                            curr_obj = repo.get(current_hash)
                         except Exception as e:
-                            self.printException(e, "resolving current_hash in repo-mode prep")
-                            curr_obj = None
-                if previous_hash:
-                    try:
-                        prev_obj = repo.get(previous_hash)
-                    except Exception as e:
-                        self.printException(e, "resolving previous_hash in repo-mode prep")
+                            self.printException
+                            try:
+                                curr_obj = repo.revparse_single(current_hash)
+                            except Exception as e:
+                                self.printException(e, "resolving current_hash in repo-mode prep")
+                                curr_obj = None
+                    if previous_hash:
                         try:
-                            prev_obj = repo.revparse_single(previous_hash)
+                            prev_obj = repo.get(previous_hash)
                         except Exception as e:
                             self.printException(e, "resolving previous_hash in repo-mode prep")
-                            prev_obj = None
+                            try:
+                                prev_obj = repo.revparse_single(previous_hash)
+                            except Exception as e:
+                                self.printException(e, "resolving previous_hash in repo-mode prep")
+                                prev_obj = None
 
-                curr_tree = getattr(curr_obj, "tree", None)
-                prev_tree = getattr(prev_obj, "tree", None)
+                    curr_tree = getattr(curr_obj, "tree", None)
+                    prev_tree = getattr(prev_obj, "tree", None)
 
-                if prev_tree is None and curr_tree is not None:
-                    diff = repo.diff(None, curr_tree)
-                elif curr_tree is None and prev_tree is not None:
-                    diff = repo.diff(prev_tree, None)
-                else:
-                    diff = repo.diff(prev_tree, curr_tree)
-            except Exception as exc:
-                self.printException(exc, "computing repo diff for repo-mode file list")
-                try:
-                    self.append(ListItem(Label(Text(f" Error computing diff: {exc}"))))
-                except Exception as e:
-                    self.printException(e, "appending error computing diff item")
-                return
-
-            # Build items buffer from diff deltas
-            try:
-                delta_map = {
-                    getattr(pygit2, "GIT_DELTA_ADDED", 0): "A",
-                    getattr(pygit2, "GIT_DELTA_MODIFIED", 0): "M",
-                    getattr(pygit2, "GIT_DELTA_DELETED", 0): "D",
-                    getattr(pygit2, "GIT_DELTA_RENAMED", 0): "R",
-                    getattr(pygit2, "GIT_DELTA_TYPECHANGE", 0): "T",
-                }
-                items_buffer: list = []
-                for d in getattr(diff, "deltas", diff):
+                    if prev_tree is None and curr_tree is not None:
+                        diff = repo.diff(None, curr_tree)
+                    elif curr_tree is None and prev_tree is not None:
+                        diff = repo.diff(prev_tree, None)
+                    else:
+                        diff = repo.diff(prev_tree, curr_tree)
+                except Exception as exc:
+                    self.printException(exc, "computing repo diff for repo-mode file list")
                     try:
-                        status = getattr(d, "status", None)
-                        marker = delta_map.get(status, " ")
-                        # Safely extract file paths from delta old_file/new_file
-                        old_file = getattr(d, "old_file", None)
-                        new_file = getattr(d, "new_file", None)
-                        old_path = getattr(old_file, "path", None)
-                        new_path = getattr(new_file, "path", None)
-                        if not old_path and not new_path:
-                            logger.warning(
-                                "delta with no paths",
-                                extra={"delta": repr(d), "status": status, "old_path": old_path, "new_path": new_path},
-                            )
-                        display_path = new_path or old_path or ""
-                        text = f"{marker} {display_path}"
-                        li = ListItem(Label(Text(" " + text)))
-                        li._change_type = marker
-                        li._filename = display_path
-                        li._old_filename = old_path
-                        li._new_filename = new_path
-                        li._hash_prev = previous_hash
-                        li._hash_curr = current_hash
-                        items_buffer.append(li)
+                        self.append(ListItem(Label(Text(f" Error computing diff: {exc}"))))
                     except Exception as e:
-                        self.printException(e, "building repo-mode list item")
-                        continue
-                if not items_buffer:
-                    items_buffer.append(ListItem(Label(Text(" No changed files between selected commits"))))
-            except Exception as e:
-                self.printException(e, "building items buffer for repo-mode file list")
+                        self.printException(e, "appending error computing diff item")
+                    return
+
+            # Build items buffer from diff deltas (skip if already built for pseudo tokens)
+            if "items_buffer" not in locals():
                 try:
-                    self.append(ListItem(Label(Text(f" Error building file list: {e}"))))
-                except Exception as e2:
-                    self.printException(e2, "appending error building file list item")
-                return
+                    delta_map = {
+                        getattr(pygit2, "GIT_DELTA_ADDED", 0): "A",
+                        getattr(pygit2, "GIT_DELTA_MODIFIED", 0): "M",
+                        getattr(pygit2, "GIT_DELTA_DELETED", 0): "D",
+                        getattr(pygit2, "GIT_DELTA_RENAMED", 0): "R",
+                        getattr(pygit2, "GIT_DELTA_TYPECHANGE", 0): "T",
+                    }
+                    items_buffer: list = []
+                    for d in getattr(diff, "deltas", diff):
+                        try:
+                            status = getattr(d, "status", None)
+                            marker = delta_map.get(status, " ")
+                            # Safely extract file paths from delta old_file/new_file
+                            old_file = getattr(d, "old_file", None)
+                            new_file = getattr(d, "new_file", None)
+                            old_path = getattr(old_file, "path", None)
+                            new_path = getattr(new_file, "path", None)
+                            if not old_path and not new_path:
+                                logger.warning(
+                                    "delta with no paths",
+                                    extra={"delta": repr(d), "status": status, "old_path": old_path, "new_path": new_path},
+                                )
+                            display_path = new_path or old_path or ""
+                            text = f"{marker} {display_path}"
+                            li = ListItem(Label(Text(" " + text)))
+                            li._change_type = marker
+                            li._filename = display_path
+                            li._old_filename = old_path
+                            li._new_filename = new_path
+                            li._hash_prev = previous_hash
+                            li._hash_curr = current_hash
+                            items_buffer.append(li)
+                        except Exception as e:
+                            self.printException(e, "building repo-mode list item")
+                            continue
+                    if not items_buffer:
+                        items_buffer.append(ListItem(Label(Text(" No changed files between selected commits"))))
+                except Exception as e:
+                    self.printException(e, "building items buffer for repo-mode file list")
+                    try:
+                        self.append(ListItem(Label(Text(f" Error building file list: {e}"))))
+                    except Exception as e2:
+                        self.printException(e2, "appending error building file list item")
+                    return
 
             # Append buffer after refresh to avoid mount races
             try:
@@ -1012,11 +1089,25 @@ class RepoModeFileList(FileListBase):
                             self.printException(e, "could not refresh repo-mode file list")
 
                         try:
-                            self.call_after_refresh(lambda: setattr(self, "index", self._min_index or 0))
+                            def _set_index_and_scroll():
+                                try:
+                                    self.index = self._min_index or 0
+                                    try:
+                                        self.scroll_y = 0
+                                    except Exception:
+                                        pass
+                                except Exception as e:
+                                    self.printException(e, "setting index/scroll in _append_buffer")
+
+                            self.call_after_refresh(_set_index_and_scroll)
                         except Exception as e:
                             self.printException(e, "scheduling index reset after refresh")
                             try:
                                 self.index = self._min_index or 0
+                                try:
+                                    self.scroll_y = 0
+                                except Exception:
+                                    pass
                             except Exception as e:
                                 self.printException(e, "setting index to _min_index fallback")
                         self._populated = True
@@ -1762,6 +1853,40 @@ class RepoModeHistoryList(HistoryListBase):
 
                 return
 
+            # Optionally insert pseudo entries (STAGED/MODS) at the top
+            try:
+                pseudo_entries: list[str] = []
+                try:
+                    staged_proc = subprocess.run(
+                        ["git", "diff", "--name-only", "--cached"], cwd=repo.workdir, capture_output=True, text=True
+                    )
+                    staged_files = [s for s in staged_proc.stdout.splitlines() if s.strip()]
+                    unstaged_proc = subprocess.run(["git", "diff", "--name-only"], cwd=repo.workdir, capture_output=True, text=True)
+                    unstaged_files = [s for s in unstaged_proc.stdout.splitlines() if s.strip()]
+                    has_staged = bool(staged_files)
+                    has_unstaged = bool(unstaged_files)
+                    if has_unstaged and has_staged:
+                        pseudo_entries = ["MODS", "STAGED"]
+                    elif has_staged:
+                        pseudo_entries = ["STAGED"]
+                    elif has_unstaged:
+                        pseudo_entries = ["MODS"]
+                except Exception as e:
+                    self.printException(e, "exception detecting staged/unstaged for pseudo entries")
+                    pseudo_entries = []
+
+                for pseudo in pseudo_entries:
+                    try:
+                        display_pseudo = pseudo
+                        pli = ListItem(Label(Text(" " + display_pseudo)))
+                        pli._hash = pseudo
+                        pli._raw_text = display_pseudo
+                        self.append(pli)
+                    except Exception as e:
+                        self.printException(e, "appending pseudo history entry")
+            except Exception:
+                pass
+
             # Append commits in order (walker yields by time desc)
             for c in commits:
                 try:
@@ -1878,14 +2003,34 @@ class RepoModeHistoryList(HistoryListBase):
                             self.app.footer_file,
                         )
                         try:
-                            try:
-                                file_list.call_after_refresh(
-                                    lambda: setattr(file_list, "index", getattr(file_list, "_min_index", 0) or 0)
-                                )
-                            except Exception as e:
-                                self.printException(e, "scheduling file_list index reset after change_state")
+                            def _set_file_index_and_scroll():
+                                try:
+                                    file_list.index = getattr(file_list, "_min_index", 0) or 0
+                                    try:
+                                        file_list.scroll_y = 0
+                                    except Exception:
+                                        pass
+                                except Exception as e:
+                                    self.printException(e, "setting file_list index/scroll after change_state")
+
+                            file_list.call_after_refresh(_set_file_index_and_scroll)
                         except Exception as e:
-                            self.printException(e)
+                            self.printException(e, "scheduling file_list index reset after change_state")
+
+                        try:
+                            def _app_set_file_index_and_scroll():
+                                try:
+                                    file_list.index = getattr(file_list, "_min_index", 0) or 0
+                                    try:
+                                        file_list.scroll_y = 0
+                                    except Exception:
+                                        pass
+                                except Exception as e:
+                                    self.printException(e, "app-level setting file_list index/scroll after change_state")
+
+                            self.app.call_after_refresh(_app_set_file_index_and_scroll)
+                        except Exception as e:
+                            self.printException(e, "scheduling app-level file_list index reset after change_state")
                         logger.debug(
                             "RepoModeHistoryList.key_right AFTER change_state: _current_layout=%s _current_focus=%s _current_footer=%s",
                             getattr(self.app, "_current_layout", None),
@@ -2782,6 +2927,23 @@ class GitHistoryTool(App):
                             logger.debug(
                                 f"change_focus: focused resolved id={getattr(widget,'id',None)} type={type(widget)!r}"
                             )
+                        except Exception:
+                            pass
+                        try:
+                            # When focusing a files column, ensure the top selectable
+                            # entry is visible and highlighted.
+                            try:
+                                if widget in (getattr(self, "file_mode_file_list", None), getattr(self, "repo_mode_file_list", None)):
+                                    try:
+                                        widget.index = getattr(widget, "_min_index", 0) or 0
+                                    except Exception:
+                                        pass
+                                    try:
+                                        widget.scroll_y = 0
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
                         except Exception:
                             pass
                         try:

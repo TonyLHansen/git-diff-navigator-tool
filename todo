@@ -205,3 +205,5 @@ add MODS and STAGED pseudo- commits
 
 add labels to the state setting
 
+alternate between log-first mode and non-log-first mode
+
