@@ -110,7 +110,6 @@ class AppBase(ListView):
         self.current_commit_sha = None
         self.current_diff_file = None
 
-    # (index property wrapper removed — restored to ListView native behavior)
 
     def text_of(self, node) -> str:  # AppBase
         """
@@ -173,8 +172,6 @@ class AppBase(ListView):
                 cur = self.index
                 if cur is None:
                     try:
-                        logger.debug("setting index=%s in pagination handler for %s", min_idx, getattr(self, 'id', None))
-                        logger.debug("on_focus: setting index=%s for %s", min_idx, getattr(self, 'id', None))
                         self.index = min_idx
                     except Exception as e:
                         self.printException(e)
@@ -243,7 +240,6 @@ class AppBase(ListView):
                     except Exception as e:
                         self.printException(e)
                         try:
-                            logger.debug("setting index=%s in page movement for %s", new_index, getattr(self, 'id', None))
                             self.index = new_index
                         except Exception as e:
                             self.printException(e, "setting index for pageup")
@@ -272,7 +268,6 @@ class AppBase(ListView):
                 except Exception as e:
                     self.printException(e)
                     try:
-                        logger.debug("setting index=%s in home/end handler for %s", min_idx, getattr(self, 'id', None))
                         self.index = min_idx
                     except Exception as e:
                         self.printException(e, "setting index for home key")
@@ -297,7 +292,6 @@ class AppBase(ListView):
                 except Exception as e:
                     self.printException(e)
                     try:
-                        logger.debug("setting index=%s in end handler for %s", last_idx, getattr(self, 'id', None))
                         self.index = last_idx
                     except Exception as e:
                         self.printException(e, "setting index for end key")
@@ -402,20 +396,15 @@ class FileListBase(AppBase):
             min_idx = self._min_index or 0
             cur = self.index
             if cur is None or cur < min_idx:
-                try:
-                    # Prefer to set after refresh to avoid race with mount
-                    try:
-                        self.call_after_refresh(lambda: (logger.debug("FileListBase.on_focus: setting index=%s for %s", min_idx, getattr(self, 'id', None)), setattr(self, "index", min_idx)))
-                    except Exception:
-                        # fallback direct set
-                        logger.debug("FileListBase.on_focus: direct setting index=%s for %s", min_idx, getattr(self, 'id', None))
-                        setattr(self, "index", min_idx)
-                except Exception as e:
-                    self.printException(e, "exception scheduling index set after refresh")
-                    try:
-                        self.index = min_idx
-                    except Exception as e2:
-                        self.printException(e2, "exception enforcing min index on focus")
+                self.call_after_refresh(lambda: setattr(self, "index", min_idx))
+            else:
+                self.index = min_idx
+        except Exception as e:
+            self.printException(e, "exception scheduling index set after refresh")
+            try:
+                self.index = min_idx
+            except Exception as e2:
+                self.printException(e2, "exception enforcing min index on focus")
 
         except Exception as e:
             self.printException(e, "exception checking/enforcing _min_index on focus")
@@ -431,12 +420,9 @@ class FileListBase(AppBase):
             nodes = self._nodes
             for idx, node in enumerate(nodes):
                 if getattr(node, "_filename", None) == name:
-                    try:
-                        logger.debug("FileListBase._highlight_filename: setting index=%s for %s (match %s)", idx, getattr(self, 'id', None), name)
-                        logger.debug("_highlight_filename: setting index=%s for %s (match %s)", idx, getattr(self, 'id', None), name)
-                        self.index = idx
-                    except Exception as e:
-                        self.printException(e, "exception setting index")
+                    self.index = idx
+                    logger.debug("FileListBase._highlight_filename: setting index=%s for %s (match %s)", idx, getattr(self, 'id', None), name)
+                # Removed the inner try-except as it was not necessary here
 
                     return
             # not found: default to minimum selectable index (skip legend)
@@ -456,18 +442,12 @@ class FileListBase(AppBase):
             # If there are nodes, set index to 0; otherwise leave unset.
             nodes = self._nodes
             if nodes:
-                # Respect a minimum selectable index (e.g. skip Key legend)
                 min_idx = self._min_index or 0
-                try:
-                    target_idx = min_idx if min_idx < len(nodes) else 0
-                    logger.debug("FileListBase._highlight_top: setting index=%s for %s", target_idx, getattr(self, 'id', None))
-                    logger.debug("RepoModeFileList._append_buffer: setting index=%s for %s", target_idx, getattr(self, 'id', None))
-                    self.index = target_idx
-                except Exception as e:
-                    self.printException(e)
-                    logger.debug("FileListBase._highlight_top: fallback setting index=0 for %s", getattr(self, 'id', None))
-                    logger.debug("FileModeHistoryList.prepFileModeHistoryList: setting index=0 for %s", getattr(self, 'id', None))
-                    self.index = 0
+                target_idx = min_idx if min_idx < len(nodes) else 0
+                self.index = target_idx
+                logger.debug("FileListBase._highlight_top: setting index=%s for %s", target_idx, getattr(self, 'id', None))
+            else:
+                self.index = 0  # Fallback to setting index to 0 if no nodes
         except Exception as e:
             self.printException(e, "exception")
             return
@@ -518,15 +498,9 @@ class FileListBase(AppBase):
         try:
             # Use preparatory API when available
             if hasattr(self, "prepFileModeFileList"):
-                try:
-                    self.prepFileModeFileList(new_path)
-                except Exception as e:
-                    self.printException(e, "changing directory in helper")
+                self.prepFileModeFileList(new_path)
             else:
-                try:
-                    super().set_path(new_path)
-                except Exception as e:
-                    self.printException(e, "fallback set_path failed in helper")
+                super().set_path(new_path)
 
             # After prep, set selection/indices appropriately
             try:
@@ -1121,8 +1095,8 @@ class RepoModeFileList(FileListBase):
                                     self.index = target_idx2
                                     try:
                                         self.scroll_y = 0
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        self.printException(e, "RepoModeFileList._set_index_and_scroll: setting scroll_y failed")
                                 except Exception as e:
                                     self.printException(e, "setting index/scroll in _append_buffer")
 
@@ -1134,8 +1108,9 @@ class RepoModeFileList(FileListBase):
                                 self.index = self._min_index or 0
                                 try:
                                     self.scroll_y = 0
-                                except Exception:
-                                    pass
+                                except Exception as e2:
+                                    self.printException(e2, "RepoModeFileList helper: resetting scroll_y failed")
+
                             except Exception as e:
                                 self.printException(e, "setting index to _min_index fallback")
                         self._populated = True
@@ -1159,8 +1134,10 @@ class RepoModeFileList(FileListBase):
                                         logger.debug("RepoModeFileList._append_buffer: immediate highlight succeeded for %s", fname)
                                     except Exception as _e2:
                                         logger.debug("RepoModeFileList._append_buffer: immediate highlight failed: %s", _e2)
+                                        self.printException(_e2, "RepoModeFileList immediate highlight failed")
                         except Exception as _e:
                             logger.debug("RepoModeFileList._append_buffer: highlight scheduling outer exception: %s", _e)
+                            self.printException(_e, "RepoModeFileList highlight scheduling outer exception")
 
                         items_buffer.clear()
                     except Exception as e:
@@ -1671,11 +1648,11 @@ class FileModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e)
 
-                try:
-                    logger.debug("setting index=0 in prepFileModeHistoryList for %s", getattr(self, 'id', None))
-                    self.index = 0
-                except Exception as e:
-                    self.printException(e)
+            try:
+                logger.debug("setting index=0 in prepFileModeHistoryList for %s", getattr(self, 'id', None))
+                self.index = 0
+            except Exception as e:
+                self.printException(e)
 
         except Exception as exc:
             self.printException(exc)
@@ -1723,6 +1700,7 @@ class FileModeHistoryList(HistoryListBase):
                                             logger.debug("FileModeHistoryList.key_left: highlighted %s in left-file-list", fname)
                                         except Exception as _e:
                                             logger.debug("FileModeHistoryList.key_left: highlight failed: %s", _e)
+                                            self.printException(_e, "FileModeHistoryList highlight failed")
                                         return
                             # Not found yet: re-schedule after refresh
                             try:
@@ -1732,6 +1710,7 @@ class FileModeHistoryList(HistoryListBase):
                                 _wait_and_highlight_left()
                         except Exception as _e:
                             logger.debug("FileModeHistoryList.key_left: wait-and-highlight outer exception: %s", _e)
+                            self.printException(_e, "FileModeHistoryList wait-and-highlight outer exception")
 
                     try:
                         self.app.call_after_refresh(_wait_and_highlight_left)
@@ -1739,6 +1718,7 @@ class FileModeHistoryList(HistoryListBase):
                         _wait_and_highlight_left()
             except Exception as _e:
                 logger.debug("FileModeHistoryList.key_left: scheduling highlight outer exception: %s", _e)
+                self.printException(_e, "FileModeHistoryList scheduling highlight outer exception")
         except Exception as e:
             self.printException(e, "exception popping state to files on left from history")
         return True
@@ -1965,8 +1945,8 @@ class RepoModeHistoryList(HistoryListBase):
                         self.append(pli)
                     except Exception as e:
                         self.printException(e, "appending pseudo history entry")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             # Append commits in order (walker yields by time desc)
             for c in commits:
@@ -2089,8 +2069,8 @@ class RepoModeHistoryList(HistoryListBase):
                                     file_list.index = getattr(file_list, "_min_index", 0) or 0
                                     try:
                                         file_list.scroll_y = 0
-                                    except Exception:
-                                        pass
+                                    except Exception as e2:
+                                        self.printException(e2, "setting file_list scroll_y after change_state")
                                 except Exception as e:
                                     self.printException(e, "setting file_list index/scroll after change_state")
 
@@ -2104,8 +2084,8 @@ class RepoModeHistoryList(HistoryListBase):
                                     file_list.index = getattr(file_list, "_min_index", 0) or 0
                                     try:
                                         file_list.scroll_y = 0
-                                    except Exception:
-                                        pass
+                                    except Exception as e2:
+                                        self.printException(e2, "setting file_list scroll_y after change_state")
                                 except Exception as e:
                                     self.printException(e, "app-level setting file_list index/scroll after change_state")
 
@@ -2131,8 +2111,8 @@ class RepoModeHistoryList(HistoryListBase):
                 logger.debug(
                     "RepoModeHistoryList.key_right EXIT id=%s widget_id=%s", id(self), getattr(self, "id", None)
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
             return True
 
         except Exception as exc:
@@ -2892,8 +2872,8 @@ class GitHistoryTool(App):
             # record current layout for save/restore semantics
             try:
                 self._current_layout = newlayout
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e, "setting _current_layout in change_layout")
         except Exception as e:
             self.printException(e, f"change_layout {newlayout}")
 
@@ -3013,8 +2993,8 @@ class GitHistoryTool(App):
                         except Exception:
                             # missing title label: ignore and continue
                             pass
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e, "change_focus resetting title label classes failed")
 
                 # Accept canonical ids (no '#') and capture the title id
                 if key == "left-file-list":
@@ -3041,12 +3021,9 @@ class GitHistoryTool(App):
 
                 try:
                     widget.focus()
-                    try:
-                        logger.debug(
-                            f"change_focus: focused resolved id={getattr(widget,'id',None)} type={type(widget)!r}"
-                        )
-                    except Exception:
-                        pass
+                    logger.debug(
+                        f"change_focus: focused resolved id={getattr(widget,'id',None)} type={type(widget)!r}"
+                    )
 
                     # When focusing a files column, prefer to highlight the
                     # currently-selected diff file (if any). Fall back to the
@@ -3064,44 +3041,38 @@ class GitHistoryTool(App):
                             if cur_idx is None or cur_idx < min_idx:
                                 fname = getattr(self, "current_diff_file", None)
                                 if fname:
+                                    logger.debug("change_focus: scheduling highlight of %s in %s (no existing valid index)", fname, getattr(widget, 'id', None))
                                     try:
-                                        logger.debug("change_focus: scheduling highlight of %s in %s (no existing valid index)", fname, getattr(widget, 'id', None))
+                                        widget.call_after_refresh(lambda: widget._highlight_filename(fname))
+                                    except Exception as e:
                                         try:
-                                            widget.call_after_refresh(lambda: widget._highlight_filename(fname))
-                                        except Exception:
+                                            self.call_after_refresh(lambda: widget._highlight_filename(fname))
+                                        except Exception as e2:
                                             try:
-                                                self.call_after_refresh(lambda: widget._highlight_filename(fname))
-                                            except Exception:
-                                                try:
-                                                    widget._highlight_filename(fname)
-                                                except Exception:
-                                                    pass
-                                    except Exception:
-                                        pass
+                                                widget._highlight_filename(fname)
+                                            except Exception as e3:
+                                                self.printException(e3, "change_focus: immediate highlight failed")
                                 else:
+                                    logger.debug("change_focus: setting index to min_idx=%s for %s (no existing valid index)", min_idx, getattr(widget, 'id', None))
                                     try:
-                                        logger.debug("change_focus: setting index to min_idx=%s for %s (no existing valid index)", min_idx, getattr(widget, 'id', None))
                                         widget.index = min_idx
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        self.printException(e, "change_focus: setting widget.index failed")
                             # Always try to reset scroll to top to make selection visible.
                             try:
                                 widget.scroll_y = 0
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                    except Exception:
-                        pass
+                            except Exception as e:
+                                self.printException(e, "change_focus: setting scroll_y failed")
+                    except Exception as e:
+                        self.printException(e, "change_focus: error handling file widget selection")
 
                     try:
                         if hasattr(widget, "index") and (
                             getattr(widget, "index", None) is None or getattr(widget, "index") < 0
                         ):
                             widget.index = 0
-                    except Exception:
-                        pass
-
+                    except Exception as e:
+                        self.printException(e, "change_focus: normalizing widget.index failed")
                     # After focusing, update the corresponding title label
                     try:
                         if label_name:
@@ -3109,15 +3080,15 @@ class GitHistoryTool(App):
                                 title_lbl = self.query_one(f"#{label_name}", Label)
                                 try:
                                     title_lbl.set_class(True, "active")
-                                except Exception:
+                                except Exception as e:
                                     try:
                                         title_lbl.add_class("active")
-                                    except Exception:
-                                        pass
+                                    except Exception as e2:
+                                        self.printException(e2, f"could not add_class on title label {label_name}")
                             except Exception as e:
                                 self.printException(e, f"could not update title label {label_name}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e, "change_focus: updating title label failed")
 
                     return
                 except Exception as e:
@@ -3141,10 +3112,10 @@ class GitHistoryTool(App):
                 key = sel
             try:
                 self._current_focus = f"#{key}"
-            except Exception:
-                pass
-        except Exception:
-            pass
+            except Exception as e:
+                self.printException(e, "setting _current_focus in change_focus")
+        except Exception as e2:
+            self.printException(e2, "outer failure in change_focus setting _current_focus")
 
     def _normalize_footer(self, value: Text | str) -> Text:
         try:
@@ -3177,8 +3148,8 @@ class GitHistoryTool(App):
             try:
                 # record current footer value for save/restore semantics
                 self._current_footer = txt
-            except Exception:
-                pass
+            except Exception as e2:
+                self.printException(e2, "setting _current_footer in change_footer")
         except Exception as e:
             self.printException(e, "change_footer outer failure")
 
@@ -3211,7 +3182,8 @@ class GitHistoryTool(App):
                         break
                     if h and prev_hash and (h.startswith(prev_hash) or prev_hash.startswith(h)):
                         prev_idx = i
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "_choose_hash_in_history iterating nodes")
                     continue
 
             try:
@@ -3220,19 +3192,19 @@ class GitHistoryTool(App):
                     # ensure not checked
                     try:
                         nodes[cur_idx]._checked = False
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e, "_choose_hash_in_history setting _checked False")
                 elif prev_idx is not None:
                     history_widget.index = prev_idx
                     try:
                         # mark previous as checked
                         nodes[prev_idx]._checked = True
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e, "_choose_hash_in_history setting _checked True")
                 else:
                     history_widget.index = 0
-            except Exception:
-                pass
+            except Exception as e2:
+                self.printException(e2, "_choose_hash_in_history setting index")
         except Exception as e:
             self.printException(e, "_choose_hash_in_history")
 
@@ -3242,11 +3214,12 @@ class GitHistoryTool(App):
                 return
             try:
                 filelist_widget.call_after_refresh(lambda: filelist_widget._highlight_filename(filename))
-            except Exception:
+            except Exception as e:
+                self
                 try:
                     filelist_widget._highlight_filename(filename)
-                except Exception:
-                    pass
+                except Exception as e2:
+                    self.printException(e2, "_highlight_filename_in_filelist inner failure")
         except Exception as e:
             self.printException(e, "_highlight_filename_in_filelist")
 
@@ -3528,10 +3501,10 @@ class GitHistoryTool(App):
                         )
                     except Exception as e:
                         self.printException(e, "could not query footer after push_state in log_first")
-                except Exception:
-                    pass
-            except Exception as e:
-                self.printException(e)
+                except Exception as e2:
+                    self.printException(e2, "outer failure after push_state in log_first")
+            except Exception as e3:
+                self.printException(e3, "outer failure after push_state in log_first")
         else:
             try:
                 self.file_mode_file_list.prepFileModeFileList(self.path)
@@ -3546,8 +3519,8 @@ class GitHistoryTool(App):
                         )
                     except Exception as e:
                         self.printException(e, "could not query footer after push_state in file-first")
-                except Exception:
-                    pass
+                except Exception as e2:
+                    self.printException(e2, "outer failure after push_state in file-first")
                 if self.initial_file:
                     self.file_mode_history_list.prepFileModeHistoryList(self.initial_file)
                     self.change_state("file_history", f"#{self.file_mode_history_list.id}", self.footer_history)
@@ -3639,7 +3612,8 @@ class GitHistoryTool(App):
                     # Toggle global flag
                     try:
                         self.log_first = not bool(self.log_first)
-                    except Exception:
+                    except Exception as e2:
+                        self.printException(e2, "toggling log_first flag")
                         self.log_first = not getattr(self, "log_first", False)
 
                     # Left-side toggle
@@ -3650,14 +3624,14 @@ class GitHistoryTool(App):
                                 # ensure history is populated
                                 try:
                                     self.repo_mode_history_list.prepRepoModeHistoryList()
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    self.printException(e, "toggle: prepRepoModeHistoryList failed")
                                 self.change_state("history_fullscreen", f"#{self.repo_mode_history_list.id}", self.footer_history)
                                 try:
                                     # ensure top item visible
                                     self.repo_mode_history_list.index = 0
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    self.printException(e, "toggle: setting repo_mode_history_list.index failed")
                             except Exception as e:
                                 self.printException(e, "switching to left-history-list")
                         else:
@@ -3665,27 +3639,27 @@ class GitHistoryTool(App):
                             try:
                                 self.change_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
                                 try:
-                                        fname = getattr(self, "current_diff_file", None)
-                                        if fname:
+                                    fname = getattr(self, "current_diff_file", None)
+                                    if fname:
+                                        logger.debug("toggle(left): scheduling highlight for left-file-list %s", fname)
+                                        try:
+                                            self.file_mode_file_list.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(fname))
+                                        except Exception as e:
                                             try:
-                                                logger.debug("toggle(left): scheduling highlight for left-file-list %s", fname)
+                                                self.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(fname))
+                                            except Exception as e2:
                                                 try:
-                                                    self.file_mode_file_list.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(fname))
-                                                except Exception:
-                                                    try:
-                                                        self.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(fname))
-                                                    except Exception:
-                                                        try:
-                                                            self.file_mode_file_list._highlight_filename(fname)
-                                                        except Exception:
-                                                            pass
-                                            except Exception:
-                                                pass
-                                        else:
-                                            self.file_mode_file_list.index = getattr(self.file_mode_file_list, "_min_index", 0) or 0
+                                                    self.file_mode_file_list._highlight_filename(fname)
+                                                except Exception as e3:
+                                                    self.printException(e3, "toggle(left): immediate highlight failed")
+                                    else:
+                                        self.file_mode_file_list.index = getattr(self.file_mode_file_list, "_min_index", 0) or 0
+                                        try:
                                             self.file_mode_file_list.scroll_y = 0
-                                except Exception:
-                                    pass
+                                        except Exception as e:
+                                            self.printException(e, "toggle(left): setting scroll_y failed")
+                                except Exception as e:
+                                    self.printException(e, "switching to left-file-list")
                             except Exception as e:
                                 self.printException(e, "switching to left-file-list")
 
@@ -3698,7 +3672,8 @@ class GitHistoryTool(App):
                                 try:
                                     # use the file-scoped history when toggling the right-side
                                     curr_hash, prev_hash, *_ = self.file_mode_history_list.compute_commit_pair_hashes()
-                                except Exception:
+                                except Exception as e:
+                                    self.printException(e, "toggle: compute_commit_pair_hashes failed")
                                     curr_hash = getattr(self, "current_commit_sha", None)
                                     prev_hash = getattr(self, "current_prev_sha", None)
 
@@ -3710,14 +3685,17 @@ class GitHistoryTool(App):
                                         logger.debug("toggle: prepRepoModeHistoryList returned (len=%s)", len(getattr(self.repo_mode_history_list, "_nodes", []) or []))
                                     except Exception as _e:
                                         logger.debug("toggle: prepRepoModeHistoryList raised: %s", _e)
+                                        self.printException(_e, "toggle: prepRepoModeHistoryList raised")
                                     try:
                                         logger.debug("toggle: choosing hashes in repo history curr=%s prev=%s", curr_hash, prev_hash)
                                         self._choose_hash_in_history(self.repo_mode_history_list, curr_hash, prev_hash)
                                         logger.debug("toggle: _choose_hash_in_history completed")
                                     except Exception as _e:
                                         logger.debug("toggle: _choose_hash_in_history raised: %s", _e)
+                                        self.printException(_e, "toggle: _choose_hash_in_history raised")
                                 except Exception as _e:
                                     logger.debug("toggle: repo history selection outer exception: %s", _e)
+                                    self.printException(_e, "toggle: repo history selection outer exception")
 
                                 # prepare the repo-mode file list for the selected pair
                                 try:
@@ -3726,6 +3704,7 @@ class GitHistoryTool(App):
                                     logger.debug("toggle: prepRepoModeFileList invoked; _populated=%s", getattr(self.repo_mode_file_list, "_populated", None))
                                 except Exception as _e:
                                     logger.debug("toggle: prepRepoModeFileList raised: %s", _e)
+                                    self.printException(_e, "toggle: prepRepoModeFileList raised")
 
                                 # focus right-file-list and show files for selected history
                                 try:
@@ -3734,6 +3713,7 @@ class GitHistoryTool(App):
                                     logger.debug("toggle: change_state completed, current_focus=%s", getattr(self, "_current_focus", None))
                                 except Exception as _e:
                                     logger.debug("toggle: change_state raised: %s", _e)
+                                    self.printException(_e, "toggle: change_state raised")
 
                                 # highlight current file in right-file-list
                                 try:
@@ -3741,20 +3721,31 @@ class GitHistoryTool(App):
                                     if fname:
                                         def _wait_and_highlight():
                                             try:
-                                                logger.debug("toggle: _wait_and_highlight checking _populated=%s", getattr(self.repo_mode_file_list, "_populated", None))
+                                                logger.debug(
+                                                    "toggle: _wait_and_highlight checking _populated=%s",
+                                                    getattr(self.repo_mode_file_list, "_populated", None),
+                                                )
                                                 # If repo_mode_file_list has finished populating, schedule the highlight
                                                 if getattr(self.repo_mode_file_list, "_populated", False):
                                                     try:
                                                         logger.debug("toggle: scheduling call_after_refresh to highlight %s", fname)
-                                                        self.repo_mode_file_list.call_after_refresh(lambda: (logger.debug("toggle: inside call_after_refresh highlighting %s", fname), self.repo_mode_file_list._highlight_filename(fname)))
+                                                        self.repo_mode_file_list.call_after_refresh(
+                                                            lambda: (
+                                                                logger.debug("toggle: inside call_after_refresh highlighting %s", fname),
+                                                                self.repo_mode_file_list._highlight_filename(fname),
+                                                            )
+                                                        )
                                                     except Exception as _e:
                                                         logger.debug("toggle: call_after_refresh highlight failed: %s", _e)
+                                                        self.printException(_e, "toggle: call_after_refresh highlight failed")
                                                         try:
                                                             self.repo_mode_file_list._highlight_filename(fname)
                                                             logger.debug("toggle: fallback immediate highlight succeeded for %s", fname)
                                                         except Exception as _e2:
                                                             logger.debug("toggle: fallback immediate highlight failed: %s", _e2)
+                                                            self.printException(_e2, "toggle: fallback immediate highlight failed")
                                                     return
+
                                                 # otherwise, re-schedule this checker after refresh
                                                 try:
                                                     logger.debug("toggle: _populated False, re-scheduling _wait_and_highlight")
@@ -3765,20 +3756,20 @@ class GitHistoryTool(App):
                                                     _wait_and_highlight()
                                             except Exception as _e:
                                                 logger.debug("toggle: _wait_and_highlight outer exception: %s", _e)
+                                                self.printException(_e, "toggle: _wait_and_highlight outer exception")
 
                                         try:
                                             # start the wait/check loop
                                             self.call_after_refresh(_wait_and_highlight)
-                                        except Exception:
+                                        except Exception as _e:
                                             # fallback: try immediate highlight
+                                            self.printException(_e, "toggle: scheduling _wait_and_highlight failed, falling back to immediate highlight")
                                             try:
                                                 self.repo_mode_file_list._highlight_filename(fname)
-                                            except Exception:
-                                                pass
-                                except Exception:
-                                    pass
-                            except Exception as e:
-                                self.printException(e, "switching right-history -> right-file")
+                                            except Exception as _e2:
+                                                self.printException(_e2, "toggle: immediate highlight failed in fallback")
+                                except Exception as e:
+                                    self.printException(e, "switching right-history -> right-file")
                         else:
                             # going from right-file -> right-history
                             try:
@@ -3795,15 +3786,15 @@ class GitHistoryTool(App):
                                 # focus right-history and show history for current file
                                 try:
                                     self.change_state("file_history", f"#{self.file_mode_history_list.id}", self.footer_history)
-                                except Exception:
-                                    pass
+                                except Exception as e2:
+                                    self.printException(e2, "toggle: change_state to file_history failed")
 
                                 # highlight current file in left-file-list
                                 try:
                                     if getattr(self, "current_diff_file", None):
                                         self.file_mode_file_list.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(getattr(self, "current_diff_file", None)))
-                                except Exception:
-                                    pass
+                                except Exception as e2:
+                                    self.printException(e2, "toggle: highlighting current file in left-file-list failed")
                             except Exception as e:
                                 self.printException(e, "switching right-file -> right-history")
 
