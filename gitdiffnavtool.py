@@ -3625,31 +3625,8 @@ class GitHistoryTool(App):
                             self.printException(e, "switching to left-history-list")
 
                     elif cur_key == "left-history-list":
-                        # switch to left-file view
                         try:
-                            self.change_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
-                            try:
-                                fname = getattr(self, "current_diff_file", None)
-                                if fname:
-                                    logger.debug("toggle(left): scheduling highlight for left-file-list %s", fname)
-                                    try:
-                                        self.file_mode_file_list.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(fname))
-                                    except Exception as e:
-                                        try:
-                                            self.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(fname))
-                                        except Exception as e2:
-                                            try:
-                                                self.file_mode_file_list._highlight_filename(fname)
-                                            except Exception as e3:
-                                                self.printException(e3, "toggle(left): immediate highlight failed")
-                                else:
-                                    self.file_mode_file_list.index = getattr(self.file_mode_file_list, "_min_index", 0) or 0
-                                    try:
-                                        self.file_mode_file_list.scroll_y = 0
-                                    except Exception as e:
-                                        self.printException(e, "toggle(left): setting scroll_y failed")
-                            except Exception as e:
-                                self.printException(e, "switching to left-file-list")
+                            self._toggle_left_history_to_file()
                         except Exception as e:
                             self.printException(e, "switching to left-file-list")
 
@@ -3875,7 +3852,38 @@ class GitHistoryTool(App):
         except Exception as e:
             self.printException(e, "_toggle_left_file_to_history outer failure")
 
-    # exit_diff_fullscreen removed: fullscreen state is derived from layout_stack
+    def _toggle_left_history_to_file(self) -> None:
+        """Switch from left-history-list to left-file-list (extracted helper)."""
+        try:
+            try:
+                self.change_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
+                try:
+                    fname = getattr(self, "current_diff_file", None)
+                    if fname:
+                        logger.debug("toggle(left): scheduling highlight for left-file-list %s", fname)
+                        try:
+                            self.file_mode_file_list.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(fname))
+                        except Exception:
+                            try:
+                                self.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(fname))
+                            except Exception:
+                                try:
+                                    self.file_mode_file_list._highlight_filename(fname)
+                                except Exception as e3:
+                                    self.printException(e3, "toggle(left): immediate highlight failed")
+                    else:
+                        self.file_mode_file_list.index = getattr(self.file_mode_file_list, "_min_index", 0) or 0
+                        try:
+                            self.file_mode_file_list.scroll_y = 0
+                        except Exception as e:
+                            self.printException(e, "toggle(left): setting scroll_y failed")
+                except Exception as e:
+                    self.printException(e, "switching to left-file-list")
+            except Exception as e:
+                self.printException(e, "switching to left-file-list")
+        except Exception as e:
+            self.printException(e, "_toggle_left_history_to_file outer failure")
+
 
 
 def main() -> None:
