@@ -3639,74 +3639,8 @@ class GitHistoryTool(App):
                             self.printException(e, "switching right-history -> right-file")
 
                     elif cur_key == "right-file-list":
-                        # going from right-file -> right-history
                         try:
-                            # prepare the file-mode history for the current file
-                            try:
-                                fname = getattr(self, "current_diff_file", None)
-                                # If no app-level current file, try to derive it from
-                                # the currently-selected entry in the repo-mode file list.
-                                if not fname:
-                                    try:
-                                        idx = getattr(self.repo_mode_file_list, "index", None)
-                                        if idx is None or idx < getattr(self.repo_mode_file_list, "_min_index", 0) or idx >= len(getattr(self.repo_mode_file_list, "_nodes", []) or []):
-                                            idx = getattr(self.repo_mode_file_list, "_min_index", 0) or 0
-                                        nodes = getattr(self.repo_mode_file_list, "_nodes", []) or []
-                                        if nodes and 0 <= idx < len(nodes):
-                                            node = nodes[idx]
-                                            try:
-                                                # Use the FileListBase helper to extract filename
-                                                fname = self.repo_mode_file_list._child_filename(node)
-                                            except Exception as _e:
-                                                self.printException(_e, "toggle: extracting filename from repo_mode_file_list node failed")
-                                    except Exception as _e:
-                                        self.printException(_e, "toggle: deriving filename from repo_mode_file_list failed")
-
-                                if fname:
-                                    # Record the current file on the app so subsequent
-                                    # highlight/prep operations can reference it.
-                                    try:
-                                        self.current_diff_file = fname
-                                        try:
-                                            self.app.current_diff_file = fname
-                                        except Exception:
-                                            pass
-                                    except Exception:
-                                        pass
-                                    logger.debug("toggle: prepping file-mode history for fname=%s", fname)
-                                    self.file_mode_history_list.prepFileModeHistoryList(fname)
-                                    logger.debug("toggle: prepFileModeHistoryList returned (len=%s)", len(getattr(self.file_mode_history_list, "_nodes", []) or []))
-                                else:
-                                    logger.debug("toggle: no filename available to prep file-mode history; file-mode history will be empty")
-                            except Exception as _e:
-                                self.printException(_e, "toggle: prepFileModeHistoryList raised")
-
-                            # Ensure the left Files column is populated before showing
-                            # the file_history layout so the Files column has content.
-                            try:
-                                if hasattr(self, "file_mode_file_list"):
-                                    # Prep using current displayed path when available
-                                    try:
-                                        prep_path = getattr(self, "displayed_path", None) or getattr(self, "path", None) or "."
-                                        logger.debug("toggle: prepping left file list for file_history using path=%s", prep_path)
-                                        self.file_mode_file_list.prepFileModeFileList(prep_path)
-                                    except Exception as _e:
-                                        self.printException(_e, "toggle: prepping left-file-list failed")
-                            except Exception as e:
-                                self.printException(e, "toggle: ensuring left-file-list prep failed")
-
-                            # focus right-history and show history for current file
-                            try:
-                                self.change_state("file_history", f"#{self.file_mode_history_list.id}", self.footer_history)
-                            except Exception as e2:
-                                self.printException(e2, "toggle: change_state to file_history failed")
-
-                            # highlight current file in left-file-list
-                            try:
-                                if getattr(self, "current_diff_file", None):
-                                    self.file_mode_file_list.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(getattr(self, "current_diff_file", None)))
-                            except Exception as e2:
-                                self.printException(e2, "toggle: highlighting current file in left-file-list failed")
+                            self._toggle_right_file_to_history()
                         except Exception as e:
                             self.printException(e, "switching right-file -> right-history")
 
@@ -3755,23 +3689,50 @@ class GitHistoryTool(App):
         """Switch from left-history-list to left-file-list (extracted helper)."""
         try:
             try:
+                # Ensure the left file list is populated for the currently
+                # displayed path so highlighting/indexing can be applied.
+                try:
+                    prep_path = getattr(self, "displayed_path", None) or getattr(self, "path", None) or "."
+                    logger.debug("toggle(left): prepping left-file-list for path=%s", prep_path)
+                    self.file_mode_file_list.prepFileModeFileList(prep_path)
+                    logger.debug(
+                        "toggle(left): prepFileModeFileList returned; _populated=%s",
+                        getattr(self.file_mode_file_list, "_populated", None),
+                    )
+                except Exception as _e:
+                    self.printException(_e, "toggle(left): prepping left-file-list failed")
+
+                # Switch to the file fullscreen layout and focus the left file list
                 self.change_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
+
                 try:
                     fname = getattr(self, "current_diff_file", None)
                     if fname:
+                        try:
+                            # Keep app-level current_diff_file in sync
+                            try:
+                                self.current_diff_file = fname
+                                try:
+                                    self.app.current_diff_file = fname
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+
                         logger.debug("toggle(left): scheduling highlight for left-file-list %s", fname)
                         try:
-                            self.file_mode_file_list.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(fname))
-                        except Exception:
-                            try:
-                                self.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(fname))
-                            except Exception:
-                                try:
-                                    self.file_mode_file_list._highlight_filename(fname)
-                                except Exception as e3:
-                                    self.printException(e3, "toggle(left): immediate highlight failed")
+                            # Use centralized helper which already handles call_after_refresh
+                            self._highlight_filename_in_filelist(self.file_mode_file_list, fname)
+                        except Exception as e3:
+                            self.printException(e3, "toggle(left): highlight failed")
                     else:
-                        self.file_mode_file_list.index = getattr(self.file_mode_file_list, "_min_index", 0) or 0
+                        # No current filename: ensure a selectable index and reset scroll
+                        try:
+                            self.file_mode_file_list.index = getattr(self.file_mode_file_list, "_min_index", 0) or 0
+                        except Exception as e:
+                            self.printException(e, "toggle(left): setting index failed")
                         try:
                             self.file_mode_file_list.scroll_y = 0
                         except Exception as e:
@@ -3877,6 +3838,69 @@ class GitHistoryTool(App):
                 self.printException(e, "switching right-history -> right-file")
         except Exception as e:
             self.printException(e, "_toggle_right_history_to_file outer failure")
+
+    def _toggle_right_file_to_history(self) -> None:
+        """Switch from right-file-list to right-history-list."""
+        try:
+            try:
+                fname = getattr(self, "current_diff_file", None)
+                # If no app-level current file, try to derive it from the
+                # currently-selected entry in the repo-mode file list.
+                if not fname:
+                    try:
+                        idx = getattr(self.repo_mode_file_list, "index", None)
+                        if idx is None or idx < getattr(self.repo_mode_file_list, "_min_index", 0) or idx >= len(getattr(self.repo_mode_file_list, "_nodes", []) or []):
+                            idx = getattr(self.repo_mode_file_list, "_min_index", 0) or 0
+                        nodes = getattr(self.repo_mode_file_list, "_nodes", []) or []
+                        if nodes and 0 <= idx < len(nodes):
+                            node = nodes[idx]
+                            try:
+                                fname = self.repo_mode_file_list._child_filename(node)
+                            except Exception as _e:
+                                self.printException(_e, "toggle: extracting filename from repo_mode_file_list node failed")
+                    except Exception as _e:
+                        self.printException(_e, "toggle: deriving filename from repo_mode_file_list failed")
+
+                if fname:
+                    try:
+                        self.current_diff_file = fname
+                        try:
+                            self.app.current_diff_file = fname
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    logger.debug("toggle: prepping file-mode history for fname=%s", fname)
+                    self.file_mode_history_list.prepFileModeHistoryList(fname)
+                    logger.debug("toggle: prepFileModeHistoryList returned (len=%s)", len(getattr(self.file_mode_history_list, "_nodes", []) or []))
+                else:
+                    logger.debug("toggle: no filename available to prep file-mode history; file-mode history will be empty")
+            except Exception as _e:
+                self.printException(_e, "toggle: prepFileModeHistoryList raised")
+
+            try:
+                if hasattr(self, "file_mode_file_list"):
+                    try:
+                        prep_path = getattr(self, "displayed_path", None) or getattr(self, "path", None) or "."
+                        logger.debug("toggle: prepping left file list for file_history using path=%s", prep_path)
+                        self.file_mode_file_list.prepFileModeFileList(prep_path)
+                    except Exception as _e:
+                        self.printException(_e, "toggle: prepping left-file-list failed")
+            except Exception as e:
+                self.printException(e, "toggle: ensuring left-file-list prep failed")
+
+            try:
+                self.change_state("file_history", f"#{self.file_mode_history_list.id}", self.footer_history)
+            except Exception as e2:
+                self.printException(e2, "toggle: change_state to file_history failed")
+
+            try:
+                if getattr(self, "current_diff_file", None):
+                    self.file_mode_file_list.call_after_refresh(lambda: self.file_mode_file_list._highlight_filename(getattr(self, "current_diff_file", None)))
+            except Exception as e2:
+                self.printException(e2, "toggle: highlighting current file in left-file-list failed")
+        except Exception as e:
+            self.printException(e, "switching right-file -> right-history")
 
 
 

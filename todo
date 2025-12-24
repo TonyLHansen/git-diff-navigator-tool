@@ -218,3 +218,8 @@ the current hashes should end up chosen in the left-history-list and the current
 the current hashes should end up chosen in the right-history-list and the current file should be selected and highlighted in the left-file-list.
 *) "chosen" means that the current hash will be selected and highlighted. 
 If the previous hash is not the next hash in the list, then the previous hash will be checked.
+
+
+Now let's add support for the Diff column being visible. If in list_
+
+the _wait_and_highlight_left loop should not be necessary any more
