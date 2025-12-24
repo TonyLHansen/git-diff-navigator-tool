@@ -207,3 +207,14 @@ add labels to the state setting
 
 alternate between log-first mode and non-log-first mode
 
+now let's add a m/M mode switching command.
+It
+*) toggles the self.app.log_first attribute, 
+*) switches between the layout left-file-list and left-history-list view, or between the layout right-history-list and right-file-list. 
+*) when switching between left-file-list and left-history-list, it should just switch views and set the top item as current and highlighted
+*) when going from right-history-list view to right-file-list view, 
+the current hashes should end up chosen in the left-history-list and the current file should be selected and highlighted in the right-file-list.
+*) when going from right-file-list view to right-history-list view,
+the current hashes should end up chosen in the right-history-list and the current file should be selected and highlighted in the left-file-list.
+*) "chosen" means that the current hash will be selected and highlighted. 
+If the previous hash is not the next hash in the list, then the previous hash will be checked.
