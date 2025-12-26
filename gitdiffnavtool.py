@@ -3730,36 +3730,7 @@ class GitHistoryTool(App):
 
                 # Switch to the file fullscreen layout and focus the left file list
                 self.change_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
-
-                try:
-                    fname = getattr(self, "current_diff_file", None)
-                    if fname:
-                        try:
-                            # Keep app-level current_diff_file in sync
-                            try:
-                                self.current_diff_file = fname
-                                try:
-                                    self.app.current_diff_file = fname
-                                except Exception:
-                                    pass
-                            except Exception:
-                                pass
-                        except Exception:
-                            pass
-
-                        logger.debug("toggle(left): prep requested filename highlight %s", fname)
-                    else:
-                        # No current filename: ensure a selectable index and reset scroll
-                        try:
-                            self.file_mode_file_list.index = getattr(self.file_mode_file_list, "_min_index", 0) or 0
-                        except Exception as e:
-                            self.printException(e, "toggle(left): setting index failed")
-                        try:
-                            self.file_mode_file_list.scroll_y = 0
-                        except Exception as e:
-                            self.printException(e, "toggle(left): setting scroll_y failed")
-                except Exception as e:
-                    self.printException(e, "switching to left-file-list")
+                return
             except Exception as e:
                 self.printException(e, "switching to left-file-list")
         except Exception as e:
