@@ -406,10 +406,7 @@ class FileListBase(AppBase):
             try:
                 self.index = min_idx
             except Exception as e2:
-                self.printException(e2, "exception enforcing min index on focus")
-
-        except Exception as e:
-            self.printException(e, "exception checking/enforcing _min_index on focus")
+                self.printException(e2, "exception checking/enforcing _min_index on focus")
 
     def _highlight_filename(self, name: str) -> None:  # FileListBase
         """
@@ -556,6 +553,13 @@ class FileModeFileList(FileListBase):
         """
         try:
             path = os.path.abspath(path)
+            # If caller passed a file path, treat it as a request to highlight
+            # that filename: use its containing directory as the list path.
+            if os.path.isfile(path):
+                hl = os.path.basename(path)
+                path = os.path.dirname(path) or "."
+            else:
+                hl = None
             self.path = path
             # keep the app aware of the full path currently displayed
             try:
@@ -703,15 +707,27 @@ class FileModeFileList(FileListBase):
                     continue
 
             try:
-                self.call_after_refresh(self._highlight_top)
+                if hl:
+                    try:
+                        self.call_after_refresh(lambda: self._highlight_filename(hl))
+                    except Exception as e:
+                        self.printException(e, "prepFileModeFileList: scheduling highlight failed")
+                        try:
+                            self._highlight_filename(hl)
+                        except Exception as e:
+                            self.printException(e, "prepFileModeFileList: immediate highlight failed")
+                else:
+                    try:
+                        self.call_after_refresh(self._highlight_top)
+                    except Exception as e:
+                        self.printException(e)
+                        try:
+                            logger.debug("setting index=%s in change_focus fallback for %s", getattr(self, "_min_index", 0) or 0, getattr(self, 'id', None))
+                            self.index = getattr(self, "_min_index", 0) or 0
+                        except Exception as e2:
+                            self.printException(e2, "immediate _highlight_top fallback failed")
             except Exception as e:
                 self.printException(e)
-                try:
-                    logger.debug("setting index=%s in change_focus fallback for %s", getattr(self, "_min_index", 0) or 0, getattr(self, 'id', None))
-                    self.index = getattr(self, "_min_index", 0) or 0
-                except Exception as e:
-                    self.printException(e)
-
         except Exception as e:
             self.printException(e)
 
@@ -3238,7 +3254,7 @@ class GitHistoryTool(App):
             try:
                 filelist_widget.call_after_refresh(lambda: filelist_widget._highlight_filename(filename))
             except Exception as e:
-                self
+                
                 try:
                     filelist_widget._highlight_filename(filename)
                 except Exception as e2:
@@ -3519,12 +3535,22 @@ class GitHistoryTool(App):
                 self.printException(e3, "outer failure after push_state in log_first")
         else:
             try:
-                self.file_mode_file_list.prepFileModeFileList(self.path)
-                # initialize current state to file_fullscreen
-                self.change_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
+                # If we were given an initial file, prep the file-list with
+                # the full file path so `prepFileModeFileList` will highlight
+                # the requested filename inside the list. Otherwise prep the
+                # directory path as usual.
                 if self.initial_file:
+                    try:
+                        full = os.path.join(self.path, self.initial_file)
+                    except Exception:
+                        full = self.path
+                    self.file_mode_file_list.prepFileModeFileList(full)
                     self.file_mode_history_list.prepFileModeHistoryList(self.initial_file)
+                    # initialize current state to file_history
                     self.change_state("file_history", f"#{self.file_mode_history_list.id}", self.footer_history)
+                else:
+                    self.file_mode_file_list.prepFileModeFileList(self.path)
+                    self.change_state("file_fullscreen", f"#{self.file_mode_file_list.id}", self.footer_file)
 
             except Exception as e:
                 self.printException(e)
@@ -3721,12 +3747,7 @@ class GitHistoryTool(App):
                         except Exception:
                             pass
 
-                        logger.debug("toggle(left): scheduling highlight for left-file-list %s", fname)
-                        try:
-                            # Use centralized helper which already handles call_after_refresh
-                            self._highlight_filename_in_filelist(self.file_mode_file_list, fname)
-                        except Exception as e3:
-                            self.printException(e3, "toggle(left): highlight failed")
+                        logger.debug("toggle(left): prep requested filename highlight %s", fname)
                     else:
                         # No current filename: ensure a selectable index and reset scroll
                         try:
