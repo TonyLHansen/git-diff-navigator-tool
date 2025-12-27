@@ -54,6 +54,11 @@ if DOLOGGING:
         pass
 logger = logging.getLogger(__name__)
 
+# Highlight color used for selected items. Change this constant to alter
+# selected-item background across CSS and runtime updates (e.g. light yellow).
+HIGHLIGHT_BG = "#f1c40f"
+HIGHLIGHT_STYLE = f"white on {HIGHLIGHT_BG}"
+
 
 def get_caller_short(limit: int = 6, maxlen: int = 400) -> str:
     """
@@ -536,7 +541,7 @@ class FileListBase(AppBase):
                     except Exception:
                         pass
                     try:
-                        child.styles.background = "#44475a"
+                        child.styles.background = HIGHLIGHT_BG
                         child.styles.color = "white"
                     except Exception:
                         pass
@@ -547,10 +552,19 @@ class FileListBase(AppBase):
                         except Exception:
                             pass
                         try:
-                            clbl.styles.background = "#44475a"
+                            clbl.styles.background = HIGHLIGHT_BG
                             clbl.styles.color = "white"
                         except Exception:
                             pass
+                        try:
+                            # Ensure any renderable-level background/style is removed
+                            # so the explicit widget style shows consistently.
+                            raw_text = getattr(clbl.renderable, "plain", None) or str(clbl.renderable)
+                            clbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
+                        except Exception:
+                            pass
+                            logger.debug("FileListBase.watch_index: applied renderable update for child=%r label_renderable=%r", getattr(child, '_filename', None), getattr(clbl, 'renderable', None))
+                        
                     except Exception:
                         pass
                     # remember for next change
@@ -622,24 +636,37 @@ class FileListBase(AppBase):
                     item.add_class("highlight")
                 except Exception:
                     pass
+
                 try:
-                    item.styles.background = "#44475a"
+                    item.styles.background = HIGHLIGHT_BG
                     item.styles.color = "white"
                 except Exception:
                     pass
+
                 try:
                     lbl = item.query_one(Label)
+                except Exception:
+                    lbl = None
+
+                if lbl is not None:
                     try:
                         lbl.add_class("highlight")
                     except Exception:
                         pass
                     try:
-                        lbl.styles.background = "#44475a"
+                        lbl.styles.background = HIGHLIGHT_BG
                         lbl.styles.color = "white"
                     except Exception:
                         pass
-                except Exception:
-                    pass
+                    try:
+                        raw_text = getattr(lbl.renderable, "plain", None) or str(lbl.renderable)
+                        lbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
+                    except Exception:
+                        pass
+                    try:
+                        logger.debug("FileListBase.on_list_view_highlighted: applied renderable update for item=%r label_renderable=%r", getattr(item, '_filename', None), getattr(lbl, 'renderable', None))
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -1767,7 +1794,7 @@ class HistoryListBase(AppBase):
                 except Exception:
                     pass
                 try:
-                    item.styles.background = "#44475a"
+                    item.styles.background = HIGHLIGHT_BG
                     item.styles.color = "white"
                 except Exception:
                     pass
@@ -1778,8 +1805,17 @@ class HistoryListBase(AppBase):
                     except Exception:
                         pass
                     try:
-                        lbl.styles.background = "#44475a"
+                        lbl.styles.background = HIGHLIGHT_BG
                         lbl.styles.color = "white"
+                    except Exception:
+                        pass
+                    try:
+                        raw_text = getattr(lbl.renderable, "plain", None) or str(lbl.renderable)
+                        lbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
+                    except Exception:
+                        pass
+                    try:
+                        logger.debug("HistoryListBase.on_list_view_highlighted: applied renderable update for item=%r label_renderable=%r", getattr(item, '_hash', None), getattr(lbl, 'renderable', None))
                     except Exception:
                         pass
                 except Exception:
@@ -2964,15 +3000,27 @@ class GitHistoryTool(App):
         }
         /* Explicit highlight class for programmatic highlights */
         ListItem.highlight {
-            background: #44475a;
+            background: __HIGHLIGHT_BG__;
             color: white;
         }
-        ListItem.highlight > Label,
+        /* Ensure highlight looks the same whether the ListView is focused or not */
+        ListView:focus > ListItem.highlight,
+        ListView > ListItem.highlight {
+            background: __HIGHLIGHT_BG__ !important;
+            color: white !important;
+            text-style: bold;
+        }
+
+        ListView:focus > ListItem.highlight > Label,
+        ListView > ListItem.highlight > Label,
         Label.highlight {
-            background: #44475a;
-            color: white;
+            background: __HIGHLIGHT_BG__ !important;
+            color: white !important;
+            text-style: bold;
         }
         """
+        # Replace CSS placeholder with the actual highlight color constant
+        # (replacement will be applied at module level after class definition)
 
     BINDINGS = [("q", "quit", "Quit")]
 
@@ -4244,6 +4292,11 @@ def main() -> None:
         logger.warning(f"could not register logging.shutdown: {e}")
 
     logger.debug(f"invoking GitHistoryTool(path={args.path}, color={not args.no_color}, log_first={args.log_first})")
+    # Apply CSS placeholder replacement now that the class exists
+    try:
+        GitHistoryTool.CSS = GitHistoryTool.CSS.replace("__HIGHLIGHT_BG__", HIGHLIGHT_BG)
+    except Exception:
+        pass
     app = GitHistoryTool(args.path, colorize_diff=(not args.no_color), log_first=args.log_first)
     logger.debug("Calling app.run()")
     app.run()

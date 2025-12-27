@@ -223,3 +223,7 @@ If the previous hash is not the next hash in the list, then the previous hash wi
 Now let's add support for the Diff column being visible. If in list_
 
 the _wait_and_highlight_left loop should not be necessary any more
+
+
+FileListBase._enter_directory() looks like it is more complicated now that it needs to be,
+given that prepFileModeFileList() does so much more now
