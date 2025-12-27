@@ -49,9 +49,9 @@ if DOLOGGING:
     # Reduce verbosity from markdown-it and submodules (noisy in debug logs)
     try:
         logging.getLogger("markdown_it").setLevel(logging.WARNING)
-    except Exception:
+    except Exception as e:
         # Best-effort: don't fail if logger config isn't available
-        pass
+        logger.debug("configure markdown_it logger failed: %s", e)
 logger = logging.getLogger(__name__)
 
 # Highlight color used for selected items. Change this constant to alter
@@ -91,8 +91,8 @@ class AppBase(ListView):
             # Prefer formatting the traceback attached to the exception instance
             tb = "".join(traceback.format_exception(type(e), e, getattr(e, "__traceback__", None)))
             logger.warning(tb)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("printException: failed to format exception traceback: %s", e)
 
     def __init__(self, *args, **kwargs):
         """
@@ -139,6 +139,31 @@ class AppBase(ListView):
         except Exception as e:
             self.printException(e, "extracting text")
             return str(node)
+
+    def _extract_label_text(self, lbl) -> str:  # AppBase
+        """
+        Safely extract visible text from a `Label` widget or its renderable.
+
+        This handles cases where `Label` may not expose a `renderable`
+        attribute and falls back to `lbl.text` or `str(lbl)`.
+        """
+        try:
+            # Prefer an explicit renderable (Text) when present
+            renderable = getattr(lbl, "renderable", None)
+            if isinstance(renderable, Text):
+                return renderable.plain
+            if renderable is not None:
+                return str(renderable)
+            # Fall back to label text attribute if available
+            if hasattr(lbl, "text"):
+                return getattr(lbl, "text")
+            return str(lbl)
+        except Exception as e:
+            try:
+                self.printException(e, "extracting label text")
+            except Exception:
+                logger.debug("_extract_label_text fallback logging failed: %s", e)
+            return str(lbl)
 
     def on_key(self, event: events.Key) -> bool:  # AppBase
         """
@@ -414,10 +439,11 @@ class FileListBase(AppBase):
             try:
                 try:
                     self.call_after_refresh(self.refresh)
-                except Exception:
+                except Exception as e:
+                    self.printException(e)
                     self.refresh()
-            except Exception:
-                pass
+            except Exception as e2:
+                self.printException(e2, "exception refreshing after focus")
 
     def _highlight_filename(self, name: str) -> None:  # FileListBase
         """
@@ -481,28 +507,30 @@ class FileListBase(AppBase):
                 return
             try:
                 child = self.highlighted_child
-            except Exception:
+            except Exception as e:
+                self.printException(e)
                 child = None
 
             filename = None
             if child is not None:
                 try:
                     filename = getattr(child, "_filename", None) or self._child_filename(child)
-                except Exception:
+                except Exception as e:
+                    self.printException(e)
                     filename = getattr(child, "_filename", None)
 
             try:
                 if filename:
                     try:
                         self.app.current_diff_file = filename
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                     logger.debug("FileListBase.watch_index: resolved filename=%r for id=%r", filename, getattr(self, 'id', None))
                 # keep app.displayed_path in sync with the widget's path
                 try:
                     self.app.displayed_path = getattr(self, "path", getattr(self.app, "path", None))
-                except Exception:
-                    pass
+                except Exception as e2:
+                    self.printException(e2, "setting displayed_path failed")
             except Exception as e:
                 self.printException(e, "watch_index updating app state failed")
 
@@ -513,65 +541,66 @@ class FileListBase(AppBase):
                 if prev is not None and prev is not child:
                     try:
                         prev.remove_class("highlight")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                     try:
                         prev.styles.background = None
                         prev.styles.color = None
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                     try:
                         plbl = prev.query_one(Label)
                         try:
                             plbl.remove_class("highlight")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
                         try:
                             plbl.styles.background = None
                             plbl.styles.color = None
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
+                        except Exception as e:
+                            self.printException(e)
+                    except Exception as e:
+                        self.printException(e)
 
                 # Apply highlight to the current child
                 if child is not None:
                     try:
                         child.add_class("highlight")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                     try:
                         child.styles.background = HIGHLIGHT_BG
                         child.styles.color = "white"
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                     try:
                         clbl = child.query_one(Label)
                         try:
                             clbl.add_class("highlight")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
                         try:
                             clbl.styles.background = HIGHLIGHT_BG
                             clbl.styles.color = "white"
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
                         try:
                             # Ensure any renderable-level background/style is removed
                             # so the explicit widget style shows consistently.
-                            raw_text = getattr(clbl.renderable, "plain", None) or str(clbl.renderable)
-                            clbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
-                        except Exception:
-                            pass
+                            raw_text = self._extract_label_text(clbl)
+                            # Avoid updating the Label's content with a widget repr
+                            if raw_text and not raw_text.startswith("Label(") and "classes=" not in raw_text:
+                                clbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
+                        except Exception as e:
+                            self.printException(e)
                             logger.debug("FileListBase.watch_index: applied renderable update for child=%r label_renderable=%r", getattr(child, '_filename', None), getattr(clbl, 'renderable', None))
-                        
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                     # remember for next change
                     try:
                         self._last_highlighted = child
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
             except Exception as e:
                 self.printException(e, "watch_index: applying highlight styles failed")
             except Exception as e:
@@ -589,7 +618,8 @@ class FileListBase(AppBase):
 
             try:
                 filename = getattr(item, "_filename", None) or self._child_filename(item)
-            except Exception:
+            except Exception as e:
+                self.printException(e)
                 filename = getattr(item, "_filename", None)
 
             logger.debug("FileListBase.on_list_view_highlighted: item filename=%r id=%r", filename, getattr(self, 'id', None))
@@ -597,22 +627,23 @@ class FileListBase(AppBase):
             if filename:
                 try:
                     self.app.current_diff_file = filename
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
 
             try:
                 self.app.displayed_path = getattr(self, "path", getattr(self.app, "path", None))
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             # Ensure the widget refreshes so classes/styles take effect
             try:
                 try:
                     self.call_after_refresh(self.refresh)
-                except Exception:
+                except Exception as e2:
+                    self.printException(e2)
                     self.refresh()
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
             # Clear previous manual styles/classes
             try:
@@ -620,66 +651,69 @@ class FileListBase(AppBase):
                     if n is not item:
                         try:
                             n.remove_class("highlight")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
                         try:
                             n.styles.background = None
                             n.styles.color = None
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                        except Exception as e:
+                            self.printException(e)
+            except Exception as e2:
+                self.printException(e2)
 
             # Apply visible highlight to item and inner label
             try:
                 try:
                     item.add_class("highlight")
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
 
                 try:
                     item.styles.background = HIGHLIGHT_BG
                     item.styles.color = "white"
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
 
                 try:
                     lbl = item.query_one(Label)
-                except Exception:
+                except Exception as e:
+                    self.printException(e)
                     lbl = None
 
                 if lbl is not None:
                     try:
                         lbl.add_class("highlight")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                     try:
                         lbl.styles.background = HIGHLIGHT_BG
                         lbl.styles.color = "white"
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e)
                     try:
-                        raw_text = getattr(lbl.renderable, "plain", None) or str(lbl.renderable)
-                        lbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
-                    except Exception:
-                        pass
+                        raw_text = self._extract_label_text(lbl)
+                        if raw_text and not raw_text.startswith("Label(") and "classes=" not in raw_text:
+                            lbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
+                    except Exception as e:
+                        self.printException(e)
                     try:
                         logger.debug("FileListBase.on_list_view_highlighted: applied renderable update for item=%r label_renderable=%r", getattr(item, '_filename', None), getattr(lbl, 'renderable', None))
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    except Exception as e:
+                        self.printException(e)
+            except Exception as e:
+                self.printException(e)
 
             try:
                 try:
                     self.call_after_refresh(self.refresh)
-                except Exception:
+                except Exception as e:
+                    self.printException(e)
                     self.refresh()
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
-        except Exception as e:
-            self.printException(e, "on_list_view_highlighted failure")
+        except Exception as e2:
+            self.printException(e2, "on_list_view_highlighted failure")
 
     def _child_filename(self, child) -> Optional[str]:
         """
@@ -727,8 +761,8 @@ class FileListBase(AppBase):
             if key in ("m", "M"):
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e)
                 try:
                     self.toggle_check_current()
                 except Exception as e:
@@ -750,42 +784,46 @@ class FileListBase(AppBase):
         focus to this list.
         """
         try:
-            # Use preparatory API when available
-            if hasattr(self, "prepFileModeFileList"):
-                self.prepFileModeFileList(new_path)
-            else:
-                super().set_path(new_path)
-
-            # After prep, set selection/indices appropriately
+            # Compute a canonical directory path to expose to the app and widget.
             try:
-                if highlight_name:
-                    try:
-                        self.call_after_refresh(self._highlight_filename, highlight_name)
-                    except Exception as e:
-                        self.printException(e, "exception scheduling highlight in helper")
+                abs_new = os.path.abspath(new_path)
+                if os.path.isfile(abs_new):
+                    dirpath = os.path.dirname(abs_new) or "."
                 else:
-                    try:
-                        self.index = self._min_index or 0
-                    except Exception as e:
-                        self.printException(e, "exception resetting index in helper")
+                    dirpath = abs_new
             except Exception as e:
-                self.printException(e)
+                self.printException(e, "computing canonical dirpath")
+                dirpath = new_path
 
-            # update app-level path info
-            try:
-                self.app.path = os.path.abspath(new_path)
-                self.app.displayed_path = self.path
-            except Exception as e:
-                self.printException(e, "exception updating app path info in helper")
+            # Remember previous app path so we can restore on failure
+            prev_app_path = getattr(self.app, "path", None)
+            prev_displayed = getattr(self.app, "displayed_path", None)
 
-            # restore focus to this list
+            # Update widget/app path info early so preparatory APIs can rely on it
             try:
+                self.path = dirpath
                 try:
-                    self.app.change_focus(f"#{self.id}")
+                    self.app.path = dirpath
+                    self.app.displayed_path = self.path
                 except Exception as e:
-                    self.printException(e)
+                    self.printException(e, "setting app path/displayed_path in helper")
             except Exception as e:
-                self.printException(e)
+                self.printException(e, "setting widget path in helper")
+
+            # Use preparatory API when available (it may depend on app.path)
+            try:
+                self.prepFileModeFileList(new_path)
+            except Exception as e:
+                # restore previous app path values on failure
+                try:
+                    if prev_app_path is not None:
+                        self.app.path = prev_app_path
+                    if prev_displayed is not None:
+                        self.app.displayed_path = prev_displayed
+                except Exception:
+                    pass
+                self.printException(e, "preparatory set_path/prepFileModeFileList failed")
+                return
 
         except Exception as e:
             self.printException(e, "_enter_directory outer failure")
@@ -1778,58 +1816,62 @@ class HistoryListBase(AppBase):
                     if n is not item:
                         try:
                             n.remove_class("highlight")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
                         try:
                             n.styles.background = None
                             n.styles.color = None
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                        except Exception as e:
+                            self.printException(e)
+            except Exception as e2:
+                self.printException(e2)
 
-            try:
                 try:
-                    item.add_class("highlight")
-                except Exception:
-                    pass
-                try:
-                    item.styles.background = HIGHLIGHT_BG
-                    item.styles.color = "white"
-                except Exception:
-                    pass
-                try:
-                    lbl = item.query_one(Label)
                     try:
-                        lbl.add_class("highlight")
-                    except Exception:
-                        pass
+                        item.add_class("highlight")
+                    except Exception as e:
+                        self.printException(e)
                     try:
-                        lbl.styles.background = HIGHLIGHT_BG
-                        lbl.styles.color = "white"
-                    except Exception:
-                        pass
+                        item.styles.background = HIGHLIGHT_BG
+                        item.styles.color = "white"
+                    except Exception as e:
+                        self.printException(e)
                     try:
-                        raw_text = getattr(lbl.renderable, "plain", None) or str(lbl.renderable)
-                        lbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
-                    except Exception:
-                        pass
-                    try:
-                        logger.debug("HistoryListBase.on_list_view_highlighted: applied renderable update for item=%r label_renderable=%r", getattr(item, '_hash', None), getattr(lbl, 'renderable', None))
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-            except Exception:
-                pass
+                        lbl = item.query_one(Label)
+                        try:
+                            lbl.add_class("highlight")
+                        except Exception as e:
+                            self.printException(e)
+                        try:
+                            lbl.styles.background = HIGHLIGHT_BG
+                            lbl.styles.color = "white"
+                        except Exception as e:
+                            self.printException(e)
+                        try:
+                            raw_text = self._extract_label_text(lbl)
+                            if raw_text and not raw_text.startswith("Label(") and "classes=" not in raw_text:
+                                lbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
+                        except Exception as e:
+                            self.printException(e)
+                        try:
+                            logger.debug("HistoryListBase.on_list_view_highlighted: applied renderable update for item=%r label_renderable=%r", getattr(item, '_hash', None), getattr(lbl, 'renderable', None))
+                        except Exception as e:
+                            self.printException(e)
+                    except Exception as e:
+                        self.printException(e)
+                except Exception as e:
+                    self.printException(e)
+            except Exception as e2:
+                self.printException(e2)
 
             try:
                 try:
                     self.call_after_refresh(self.refresh)
-                except Exception:
+                except Exception as e:
+                    self.printException(e)
                     self.refresh()
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e)
 
         except Exception as e:
             self.printException(e, "on_list_view_highlighted outer failure")
@@ -3018,9 +3060,8 @@ class GitHistoryTool(App):
             color: white !important;
             text-style: bold;
         }
-        """
+        """.replace("__HIGHLIGHT_BG__", HIGHLIGHT_BG)
         # Replace CSS placeholder with the actual highlight color constant
-        # (replacement will be applied at module level after class definition)
 
     BINDINGS = [("q", "quit", "Quit")]
 
@@ -4292,11 +4333,6 @@ def main() -> None:
         logger.warning(f"could not register logging.shutdown: {e}")
 
     logger.debug(f"invoking GitHistoryTool(path={args.path}, color={not args.no_color}, log_first={args.log_first})")
-    # Apply CSS placeholder replacement now that the class exists
-    try:
-        GitHistoryTool.CSS = GitHistoryTool.CSS.replace("__HIGHLIGHT_BG__", HIGHLIGHT_BG)
-    except Exception:
-        pass
     app = GitHistoryTool(args.path, colorize_diff=(not args.no_color), log_first=args.log_first)
     logger.debug("Calling app.run()")
     app.run()
