@@ -406,6 +406,13 @@ class FileListBase(AppBase):
                 self.index = min_idx
             except Exception as e2:
                 self.printException(e2, "exception checking/enforcing _min_index on focus")
+            try:
+                try:
+                    self.call_after_refresh(self.refresh)
+                except Exception:
+                    self.refresh()
+            except Exception:
+                pass
 
     def _highlight_filename(self, name: str) -> None:  # FileListBase
         """
@@ -461,6 +468,192 @@ class FileListBase(AppBase):
             self.printException(e, "exception")
             return
 
+    def watch_index(self, old_index: Optional[int], new_index: Optional[int]) -> None:  # FileListBase
+        """Watch for selection/index changes and update app filename/path."""
+        try:
+            logger.debug("FileListBase.watch_index: old=%r new=%r id=%r", old_index, new_index, getattr(self, 'id', None))
+            if new_index is None:
+                return
+            try:
+                child = self.highlighted_child
+            except Exception:
+                child = None
+
+            filename = None
+            if child is not None:
+                try:
+                    filename = getattr(child, "_filename", None) or self._child_filename(child)
+                except Exception:
+                    filename = getattr(child, "_filename", None)
+
+            try:
+                if filename:
+                    try:
+                        self.app.current_diff_file = filename
+                    except Exception:
+                        pass
+                    logger.debug("FileListBase.watch_index: resolved filename=%r for id=%r", filename, getattr(self, 'id', None))
+                # keep app.displayed_path in sync with the widget's path
+                try:
+                    self.app.displayed_path = getattr(self, "path", getattr(self.app, "path", None))
+                except Exception:
+                    pass
+            except Exception as e:
+                self.printException(e, "watch_index updating app state failed")
+
+            # Apply visible highlight class/styles to the highlighted child
+            try:
+                # Clear previous highlighted node (if any)
+                prev = getattr(self, "_last_highlighted", None)
+                if prev is not None and prev is not child:
+                    try:
+                        prev.remove_class("highlight")
+                    except Exception:
+                        pass
+                    try:
+                        prev.styles.background = None
+                        prev.styles.color = None
+                    except Exception:
+                        pass
+                    try:
+                        plbl = prev.query_one(Label)
+                        try:
+                            plbl.remove_class("highlight")
+                        except Exception:
+                            pass
+                        try:
+                            plbl.styles.background = None
+                            plbl.styles.color = None
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+
+                # Apply highlight to the current child
+                if child is not None:
+                    try:
+                        child.add_class("highlight")
+                    except Exception:
+                        pass
+                    try:
+                        child.styles.background = "#44475a"
+                        child.styles.color = "white"
+                    except Exception:
+                        pass
+                    try:
+                        clbl = child.query_one(Label)
+                        try:
+                            clbl.add_class("highlight")
+                        except Exception:
+                            pass
+                        try:
+                            clbl.styles.background = "#44475a"
+                            clbl.styles.color = "white"
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    # remember for next change
+                    try:
+                        self._last_highlighted = child
+                    except Exception:
+                        pass
+            except Exception as e:
+                self.printException(e, "watch_index: applying highlight styles failed")
+            except Exception as e:
+                self.printException(e, "watch_index updating app state failed")
+        except Exception as e:
+            self.printException(e, "watch_index outer failure")
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:  # FileListBase
+        """Handle ListView.Highlighted messages to keep app filename/path in sync."""
+        try:
+            item = getattr(event, "item", None)
+            if item is None:
+                logger.debug("FileListBase.on_list_view_highlighted: no item")
+                return
+
+            try:
+                filename = getattr(item, "_filename", None) or self._child_filename(item)
+            except Exception:
+                filename = getattr(item, "_filename", None)
+
+            logger.debug("FileListBase.on_list_view_highlighted: item filename=%r id=%r", filename, getattr(self, 'id', None))
+
+            if filename:
+                try:
+                    self.app.current_diff_file = filename
+                except Exception:
+                    pass
+
+            try:
+                self.app.displayed_path = getattr(self, "path", getattr(self.app, "path", None))
+            except Exception:
+                pass
+
+            # Ensure the widget refreshes so classes/styles take effect
+            try:
+                try:
+                    self.call_after_refresh(self.refresh)
+                except Exception:
+                    self.refresh()
+            except Exception:
+                pass
+
+            # Clear previous manual styles/classes
+            try:
+                for n in getattr(self, "_nodes", []) or []:
+                    if n is not item:
+                        try:
+                            n.remove_class("highlight")
+                        except Exception:
+                            pass
+                        try:
+                            n.styles.background = None
+                            n.styles.color = None
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            # Apply visible highlight to item and inner label
+            try:
+                try:
+                    item.add_class("highlight")
+                except Exception:
+                    pass
+                try:
+                    item.styles.background = "#44475a"
+                    item.styles.color = "white"
+                except Exception:
+                    pass
+                try:
+                    lbl = item.query_one(Label)
+                    try:
+                        lbl.add_class("highlight")
+                    except Exception:
+                        pass
+                    try:
+                        lbl.styles.background = "#44475a"
+                        lbl.styles.color = "white"
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            try:
+                try:
+                    self.call_after_refresh(self.refresh)
+                except Exception:
+                    self.refresh()
+            except Exception:
+                pass
+
+        except Exception as e:
+            self.printException(e, "on_list_view_highlighted failure")
+
     def _child_filename(self, child) -> Optional[str]:
         """
         Extract a filename/text value from a ListItem `child`.
@@ -494,6 +687,31 @@ class FileListBase(AppBase):
                 except Exception as e2:
                     self.printException(e2)
             return None
+
+    def more_keys(self, event: events.Key) -> bool:  # HistoryListBase
+        """
+        Handle history-specific keys: mark/space to toggle a check on the
+        currently highlighted history item. Return True when handled.
+        """
+        try:
+            key = event.key
+            logger.debug(f"HistoryListBase.more_keys: key={key}")
+
+            if key in ("m", "M"):
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+                try:
+                    self.toggle_check_current()
+                except Exception as e:
+                    self.printException(e, "toggle_check_current failed")
+                return True
+
+            return False
+        except Exception as e:
+            self.printException(e, "HistoryListBase.more_keys outer failure")
+            return False
 
     def _enter_directory(self, new_path: str, highlight_name: Optional[str] = None) -> None:
         """
@@ -1439,82 +1657,19 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "exception in outer block")
 
-    def on_focus(self, event: events.Focus) -> None:  # HistoryListBase
-        """When the HistoryListBase receives focus, ensure the first item is highlighted."""
-        try:
-            # Force a re-apply of the highlight after focus; sometimes the
-            # ListView won't re-highlight if the index hasn't changed.
-            def _apply() -> None:
-                try:
-                    nodes = self._nodes
-                    if not nodes:
-                        return
-                    target = self.index if self.index is not None else 0
-                    # clear then restore to force watch_index
-                    try:
-                        self.index = None
-                    except Exception as e:
-                        self.printException(e, "clearing index")
-                    try:
-                        self.index = target
-                    except Exception as e:
-                        self.printException(e, "restoring index target")
-
-                except Exception as e:
-                    self.printException(e, "nodes processing")
-                    return
-
-            try:
-                self.call_after_refresh(_apply)
-            except Exception as e:
-                self.printException(e, "call_after_refresh")
-                _apply()
-        except Exception as e:
-            self.printException(e, "_apply setup")
-
-    def more_keys(self, event: events.Key) -> bool:  # HistoryListBase
-        """
-        Handle history-specific keys.
-        Return True when the key was handled (e.g. `m`), False otherwise.
-        """
-        try:
-            key = event.key
-            logger.debug(f"HistoryListBase.more_keys: key={key}")
-
-            # Mark/unmark the file referenced by this history view
-            if key and key.lower() == "":
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e)
-
-                try:
-                    self.toggle_check_current()
-                except Exception as e:
-                    self.printException(e, "toggle check")
-                return True
-
-            # Other keys: not handled here
-            return False
-        except Exception as e:
-            self.printException(e)
-            return False
-
     def compute_commit_pair_hashes(self):  # HistoryListBase
-        """
-        Compute the pair of commit hashes for a history diff.
+        """Compute the pair of commit hashes and lines for the current selection.
 
-        Returns a tuple `(current_hash, previous_hash, current_line, previous_line, i_newer, i_older)`
-        or `(None, None, None, None, None, None)` on failure. Callers should
-        decide how to present errors to the user.
+        Returns (current_hash, previous_hash, current_line, previous_line, i_newer, i_older)
+        or (None, None, None, None, None, None) on failure.
         """
         try:
-            nodes = self._nodes
-            idx = self.index
-            if idx is None or idx < 0 or not nodes or idx >= len(nodes):
+            idx = getattr(self, "index", None)
+            nodes = getattr(self, "_nodes", []) or []
+            if idx is None or idx < 0 or not nodes:
                 return (None, None, None, None, None, None)
 
-            # Find any checked item
+            # find any checked item
             checked_idx = None
             for i, node in enumerate(nodes):
                 if getattr(node, "_checked", False):
@@ -1522,7 +1677,6 @@ class HistoryListBase(AppBase):
                     break
 
             if checked_idx is None or checked_idx == idx:
-                # default to current vs next (older)
                 if idx >= len(nodes) - 1:
                     return (None, None, None, None, None, None)
                 i_newer = idx
@@ -1551,16 +1705,98 @@ class HistoryListBase(AppBase):
                     current_hash = m1.group(2)
                     previous_hash = m2.group(2)
                 except Exception as e:
-                    self.printException(e)
+                    self.printException(e, "compute_commit_pair_hashes parse failed")
                     return (None, None, None, None, None, None)
 
             return (current_hash, previous_hash, current_line, previous_line, i_newer, i_older)
         except Exception as e:
-            self.printException(e)
+            self.printException(e, "compute_commit_pair_hashes outer failure")
             return (None, None, None, None, None, None)
+
+    def on_focus(self, event: events.Focus) -> None:  # HistoryListBase
+        """When this HistoryList receives focus, ensure a valid selection index."""
+        try:
+            min_idx = self._min_index or 0
+            cur = getattr(self, "index", None)
+            if cur is None or cur < min_idx:
+                try:
+                    self.call_after_refresh(lambda: setattr(self, "index", min_idx))
+                except Exception:
+                    try:
+                        self.index = min_idx
+                    except Exception:
+                        pass
         except Exception as e:
-            self.printException(e)
-            return False
+            self.printException(e, "HistoryListBase.on_focus outer failure")
+
+            item = getattr(event, "item", None)
+            logger.debug("HistoryListBase.on_list_view_highlighted: item=%r id=%r", getattr(item, '_hash', None) if item else None, getattr(self, 'id', None))
+
+            try:
+                cur_hash, prev_hash, *_ = self.compute_commit_pair_hashes()
+            except Exception as e:
+                self.printException(e, "on_list_view_highlighted: compute_commit_pair_hashes failed")
+                cur_hash = getattr(self.app, "current_commit_sha", None)
+                prev_hash = getattr(self.app, "current_prev_sha", None)
+
+            try:
+                self.app.current_commit_sha = cur_hash
+                self.app.current_prev_sha = prev_hash
+            except Exception:
+                pass
+
+            # Ensure the highlighted item shows visibly; add highlight class and styles
+            try:
+                for n in getattr(self, "_nodes", []) or []:
+                    if n is not item:
+                        try:
+                            n.remove_class("highlight")
+                        except Exception:
+                            pass
+                        try:
+                            n.styles.background = None
+                            n.styles.color = None
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            try:
+                try:
+                    item.add_class("highlight")
+                except Exception:
+                    pass
+                try:
+                    item.styles.background = "#44475a"
+                    item.styles.color = "white"
+                except Exception:
+                    pass
+                try:
+                    lbl = item.query_one(Label)
+                    try:
+                        lbl.add_class("highlight")
+                    except Exception:
+                        pass
+                    try:
+                        lbl.styles.background = "#44475a"
+                        lbl.styles.color = "white"
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            try:
+                try:
+                    self.call_after_refresh(self.refresh)
+                except Exception:
+                    self.refresh()
+            except Exception:
+                pass
+
+        except Exception as e:
+            self.printException(e, "on_list_view_highlighted outer failure")
 
 
 class FileModeHistoryList(HistoryListBase):
@@ -2725,6 +2961,16 @@ class GitHistoryTool(App):
         #diff-title.active,
         #help-title.active {
             text-style: bold reverse;
+        }
+        /* Explicit highlight class for programmatic highlights */
+        ListItem.highlight {
+            background: #44475a;
+            color: white;
+        }
+        ListItem.highlight > Label,
+        Label.highlight {
+            background: #44475a;
+            color: white;
         }
         """
 
