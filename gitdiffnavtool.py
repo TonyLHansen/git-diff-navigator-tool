@@ -24,6 +24,30 @@ HIGHLIGHT_REPOLIST_STYLE = f"white on {HIGHLIGHT_REPOLIST_BG}"
 # Enable debug logging to tmp/debug.log when True
 DOLOGGING = False
 
+# Inline CSS used by the Textual App (can be edited in-place)
+INLINE_CSS = """
+/* gitdiffnavtool inline CSS */
+
+/* Title labels */
+#left-file-title, #left-history-title, #right-history-title, #right-file-title, #diff-title, #help-title {
+    padding: 1 1;
+    background: $surface;
+    color: $text;
+}
+
+.title.active {
+    background: $accent-darken-1;
+    color: white;
+    text-style: bold;
+}
+
+/* Simple column spacing */
+ListView {
+    padding: 0 1;
+}
+
+"""
+
 from rich.text import Text
 from textual import events
 from textual.app import App
@@ -627,7 +651,7 @@ class GitHistoryNavTool(App):
     state save/restore stubs and a repo-cache builder.
     """
 
-    CSS_PATH = None
+    CSS = INLINE_CSS
 
     def compose(self):
         # Compose the canonical six-column layout (left->right):
