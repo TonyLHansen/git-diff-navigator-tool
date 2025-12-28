@@ -56,8 +56,8 @@ logger = logging.getLogger(__name__)
 
 # Highlight color used for selected items. Change this constant to alter
 # selected-item background across CSS and runtime updates (e.g. light yellow).
-HIGHLIGHT_BG = "#f1c40f"
-HIGHLIGHT_STYLE = f"white on {HIGHLIGHT_BG}"
+FILELIST_HIGHLIGHT_BG = "#f1c40f"
+FILELIST_HIGHLIGHT_STYLE = f"white on {FILELIST_HIGHLIGHT_BG}"
 
 
 def get_caller_short(limit: int = 6, maxlen: int = 400) -> str:
@@ -569,7 +569,7 @@ class FileListBase(AppBase):
                     except Exception as e:
                         self.printException(e)
                     try:
-                        child.styles.background = HIGHLIGHT_BG
+                        child.styles.background = FILELIST_HIGHLIGHT_BG
                         child.styles.color = "white"
                     except Exception as e:
                         self.printException(e)
@@ -580,7 +580,7 @@ class FileListBase(AppBase):
                         except Exception as e:
                             self.printException(e)
                         try:
-                            clbl.styles.background = HIGHLIGHT_BG
+                            clbl.styles.background = FILELIST_HIGHLIGHT_BG
                             clbl.styles.color = "white"
                         except Exception as e:
                             self.printException(e)
@@ -590,7 +590,7 @@ class FileListBase(AppBase):
                             raw_text = self._extract_label_text(clbl)
                             # Avoid updating the Label's content with a widget repr
                             if raw_text and not raw_text.startswith("Label(") and "classes=" not in raw_text:
-                                clbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
+                                clbl.update(Text(raw_text, style=FILELIST_HIGHLIGHT_STYLE))
                         except Exception as e:
                             self.printException(e)
                             logger.debug("FileListBase.watch_index: applied renderable update for child=%r label_renderable=%r", getattr(child, '_filename', None), getattr(clbl, 'renderable', None))
@@ -669,7 +669,7 @@ class FileListBase(AppBase):
                     self.printException(e)
 
                 try:
-                    item.styles.background = HIGHLIGHT_BG
+                    item.styles.background = FILELIST_HIGHLIGHT_BG
                     item.styles.color = "white"
                 except Exception as e:
                     self.printException(e)
@@ -686,14 +686,14 @@ class FileListBase(AppBase):
                     except Exception as e:
                         self.printException(e)
                     try:
-                        lbl.styles.background = HIGHLIGHT_BG
+                        lbl.styles.background = FILELIST_HIGHLIGHT_BG
                         lbl.styles.color = "white"
                     except Exception as e:
                         self.printException(e)
                     try:
                         raw_text = self._extract_label_text(lbl)
                         if raw_text and not raw_text.startswith("Label(") and "classes=" not in raw_text:
-                            lbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
+                            lbl.update(Text(raw_text, style=FILELIST_HIGHLIGHT_STYLE))
                     except Exception as e:
                         self.printException(e)
                     try:
@@ -1832,7 +1832,7 @@ class HistoryListBase(AppBase):
                     except Exception as e:
                         self.printException(e)
                     try:
-                        item.styles.background = HIGHLIGHT_BG
+                        item.styles.background = FILELIST_HIGHLIGHT_BG
                         item.styles.color = "white"
                     except Exception as e:
                         self.printException(e)
@@ -1843,14 +1843,14 @@ class HistoryListBase(AppBase):
                         except Exception as e:
                             self.printException(e)
                         try:
-                            lbl.styles.background = HIGHLIGHT_BG
+                            lbl.styles.background = FILELIST_HIGHLIGHT_BG
                             lbl.styles.color = "white"
                         except Exception as e:
                             self.printException(e)
                         try:
                             raw_text = self._extract_label_text(lbl)
                             if raw_text and not raw_text.startswith("Label(") and "classes=" not in raw_text:
-                                lbl.update(Text(raw_text, style=HIGHLIGHT_STYLE))
+                                lbl.update(Text(raw_text, style=FILELIST_HIGHLIGHT_STYLE))
                         except Exception as e:
                             self.printException(e)
                         try:
@@ -3060,7 +3060,7 @@ class GitHistoryTool(App):
             color: white !important;
             text-style: bold;
         }
-        """.replace("__HIGHLIGHT_BG__", HIGHLIGHT_BG)
+        """.replace("__HIGHLIGHT_BG__", FILELIST_HIGHLIGHT_BG)
         # Replace CSS placeholder with the actual highlight color constant
 
     BINDINGS = [("q", "quit", "Quit")]
