@@ -595,6 +595,74 @@ class HelpList(AppBase):
             self.printException(e, "HelpList.key_enter failed")
 
 
+# Canonical widget IDs
+ID_FILELIST = "file-list"
+ID_HISTORY = "history-list"
+ID_DIFF = "diff-list"
+ID_HELP = "help-list"
+
+
+from textual.app import App
+from textual.containers import Horizontal
+from textual.widgets import Footer, Header
+
+
+class GitHistoryNavTool(App):
+    """Main Textual application wiring the lists together.
+
+    This is a minimal implementation for regen Step 6: it composes the
+    previously defined widgets, mounts a header/footer, and provides simple
+    state save/restore stubs and a repo-cache builder.
+    """
+
+    CSS_PATH = None
+
+    def compose(self):
+        # Compose the main three-pane layout: files, history, diff
+        file_list = FileModeFileList(id=ID_FILELIST)
+        history = FileModeHistoryList(id=ID_HISTORY)
+        diff = DiffList(id=ID_DIFF)
+        yield Header()
+        yield Horizontal(file_list, history, diff)
+        yield Footer()
+
+    async def on_mount(self) -> None:
+        try:
+            # Build light repo cache (stub); real discovery in a later step
+            self.build_repo_cache()
+            # initial prep placeholders
+            file_w = self.query_one(f"#{ID_FILELIST}", FileModeFileList)
+            history_w = self.query_one(f"#{ID_HISTORY}", FileModeHistoryList)
+            diff_w = self.query_one(f"#{ID_DIFF}", DiffList)
+            try:
+                file_w.prepFileModeFileList(path=".")
+            except Exception:
+                pass
+        except Exception as e:
+            printException(e, "on_mount failed")
+
+    def build_repo_cache(self) -> None:
+        # Stub: populate lightweight repo metadata for the UI. Later replaced.
+        try:
+            self.repo_cache = {}
+        except Exception as e:
+            printException(e, "build_repo_cache failed")
+
+    def save_state(self) -> dict:
+        try:
+            return {"dummy": True}
+        except Exception as e:
+            printException(e, "save_state failed")
+            return {}
+
+    def restore_state(self, state: dict | None = None) -> None:
+        try:
+            # no-op for now
+            return None
+        except Exception as e:
+            printException(e, "restore_state failed")
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)

@@ -1,0 +1,31 @@
+[MASTER]
+disable=invalid-name
+[MESSAGES CONTROL]
+max-line-length=120
+max-attributes=50
+max-locals=30
+max-branches=30
+max-statements=100
+max-nested-blocks=10
+max-args=10
+disable=multiple-statements,
+    broad-except,
+    wrong-import-position,
+    unspecified-encoding
+[REPORTS]
+output-format=parseable
+[VARIABLES]
+[TYPECHECK]
+[MISCELLANEOUS]
+[SIMILARITIES]
+[FORMAT]
+indent-string='    '
+[BASIC]
+#constant-rgx=^[a-zA-Z][A-Z0-9a-z_]*$
+const-rgx=^[a-zA-Z][A-Z0-9a-z_]*$
+[ELIF]
+[LOGGING]
+[DESIGN]
+[IMPORTS]
+[CLASSES]
+[EXCEPTIONS]
