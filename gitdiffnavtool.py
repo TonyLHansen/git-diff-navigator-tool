@@ -503,6 +503,98 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
+HELP_TEXT = """
+gitdiffnavtool help
+
+- Navigation: up/down/pageup/pagedown/home/end
+- Open/enter: right
+- Back/close: left
+- Diff color toggle: c
+- Save diff: d
+- Find in diff: f
+"""
+
+
+class DiffList(AppBase):
+    """List view for showing diffs.
+
+    `prepDiffList` is a stub here; later steps will call `git diff` or pygit2
+    and colorize output. Key handlers toggle colorization and expose actions.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._colorized = True
+
+    def prepDiffList(self, filename: str, prev: str | None, curr: str | None, variant_index: int | None = None) -> None:
+        try:
+            self.clear()
+            # Stubbed example diff lines
+            lines = [
+                f"diff --git a/{filename} b/{filename}",
+                "@@ -1,3 +1,3 @@",
+                "-old line",
+                "+new line",
+                " context line",
+            ]
+            for ln in lines:
+                try:
+                    self.append(ListItem(Label(Text(ln))))
+                except Exception:
+                    pass
+            self._populated = True
+            self._filename = filename
+        except Exception as e:
+            self.printException(e, "prepDiffList failed")
+
+    def key_c(self) -> None:
+        try:
+            self._colorized = not getattr(self, "_colorized", True)
+            logger.debug("DiffList colorized=%s", self._colorized)
+            # Re-render could be done here; stubbed for now
+        except Exception as e:
+            self.printException(e, "DiffList.key_c failed")
+
+    def key_d(self) -> None:
+        try:
+            logger.debug("DiffList.key_d: save diff for %s", getattr(self, "_filename", None))
+        except Exception as e:
+            self.printException(e, "DiffList.key_d failed")
+
+    def key_f(self) -> None:
+        try:
+            logger.debug("DiffList.key_f: find in diff")
+        except Exception as e:
+            self.printException(e, "DiffList.key_f failed")
+
+
+class HelpList(AppBase):
+    """Renders help text as list rows and allows restoring previous state."""
+
+    def prepHelp(self) -> None:
+        try:
+            self.clear()
+            for ln in HELP_TEXT.strip().splitlines():
+                try:
+                    self.append(ListItem(Label(Text(ln))))
+                except Exception:
+                    pass
+            self._populated = True
+        except Exception as e:
+            self.printException(e, "prepHelp failed")
+
+    def key_enter(self) -> None:
+        try:
+            app = getattr(self, "app", None)
+            if app and hasattr(app, "restore_state"):
+                try:
+                    app.restore_state()
+                except Exception as e:
+                    self.printException(e, "HelpList.restore_state failed")
+        except Exception as e:
+            self.printException(e, "HelpList.key_enter failed")
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)

@@ -227,3 +227,10 @@ the _wait_and_highlight_left loop should not be necessary any more
 
 FileListBase._enter_directory() looks like it is more complicated now that it needs to be,
 given that prepFileModeFileList() does so much more now
+
+
+
+using the info in program-structure.md, create a new file regen.md appropriate as input to copilot.
+its purpose is to generate a new version of gitdiffnavtool.py from scratch.
+it should do it as a set of steps with pause points for testing purposes and validation.
+Tell me how to instruct copilot to follow its instructions
