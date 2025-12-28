@@ -148,17 +148,42 @@ Git interactions
 
  - Runtime control: `_apply_column_layout` sets the percent widths and `styles.display` on the canonical widgets (e.g. `self.file_mode_file_list.styles.display = show if left_file_w else hide`). See 'Interplay and lifecycle' for guidance on scheduling DOM-dependent index/highlight updates.
 
-Canonical IDs map
-- A compact mapping of the canonical widget ids → containing column to make refactors and lookups simpler:
+Canonical widget mapping
 
-  - `#left-file-list` → `left-file-column` (contains `left-file-title`, `FileModeFileList`)
-  - `#left-history-list` → `left-history-column` (contains `left-history-title`, `RepoModeHistoryList`)
-  - `#right-history-list` → `right-history-column` (contains `right-history-title`, `FileModeHistoryList`)
-  - `#right-file-list` → `right-file-column` (contains `right-file-title`, `RepoModeFileList`)
-  - `#diff-list` → `diff-column` (contains `diff-title`, `DiffList`)
-  - `#help-list` → `help-column` (contains `help-title`, `HelpList`)
-  - Title labels:
-    - `#left-file-title`, `#left-history-title`, `#right-history-title`, `#right-file-title`, `#diff-title`, `#help-title`
+The app uses six canonical widgets, each with a canonical column name, title label CSS id, and widget class:
+
+```text
+column_name: "left-file-list":
+label_name: "left-file-title"
+class: FileModeFileList
+
+widget: repo_mode_history_list
+column_name: "left-history-list":
+label_name: "left-history-title"
+class: RepoModeHistoryList
+
+widget: repo_mode_file_list
+column_name: "right-file-list":
+label_name: "right-file-title"
+class: RepoModeFileList
+
+widget: file_mode_history_list
+column_name: "right-history-list":
+label_name: "right-history-title"
+class: FileModeHistoryList
+
+widget: diff_list
+column_name: "diff-list":
+label_name: "diff-title"
+class: DiffList
+
+widget: help_list
+column_name: "help-list":
+label_name: "help-title"
+class: HelpList
+```
+
+Mapping guarantees: each `prep*` method writes into its canonical widget id so scheduling highlights and restores can rely on fixed ids (e.g. `prepFileModeFileList` populates `#left-file-list`).
 
 Keymap table
 - A compact key → scope → action table to make implementing `key_` methods straightforward:

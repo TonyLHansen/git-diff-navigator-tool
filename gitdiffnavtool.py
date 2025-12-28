@@ -26,8 +26,9 @@ DOLOGGING = False
 
 from rich.text import Text
 from textual import events
-from textual.widgets import ListView, Label, ListItem
-from textual.widgets import ListItem
+from textual.app import App
+from textual.containers import Horizontal
+from textual.widgets import ListView, Label, ListItem, Footer, Header
 
 
 # --- Logging setup --------------------------------------------------------
@@ -595,16 +596,27 @@ class HelpList(AppBase):
             self.printException(e, "HelpList.key_enter failed")
 
 
-# Canonical widget IDs
-ID_FILELIST = "file-list"
-ID_HISTORY = "history-list"
-ID_DIFF = "diff-list"
-ID_HELP = "help-list"
+# Canonical widget and label IDs (six canonical widgets)
+LEFT_FILE_LIST_ID = "left-file-list"
+LEFT_FILE_TITLE = "left-file-title"
+
+LEFT_HISTORY_LIST_ID = "left-history-list"
+LEFT_HISTORY_TITLE = "left-history-title"
+
+RIGHT_FILE_LIST_ID = "right-file-list"
+RIGHT_FILE_TITLE = "right-file-title"
+
+RIGHT_HISTORY_LIST_ID = "right-history-list"
+RIGHT_HISTORY_TITLE = "right-history-title"
+
+DIFF_LIST_ID = "diff-list"
+DIFF_TITLE = "diff-title"
+
+HELP_LIST_ID = "help-list"
+HELP_TITLE = "help-title"
 
 
-from textual.app import App
-from textual.containers import Horizontal
-from textual.widgets import Footer, Header
+# (imports consolidated at top)
 
 
 class GitHistoryNavTool(App):
@@ -618,12 +630,46 @@ class GitHistoryNavTool(App):
     CSS_PATH = None
 
     def compose(self):
-        # Compose the main three-pane layout: files, history, diff
-        file_list = FileModeFileList(id=ID_FILELIST)
-        history = FileModeHistoryList(id=ID_HISTORY)
-        diff = DiffList(id=ID_DIFF)
+        # Compose the canonical six-column layout (left->right):
+        # left-file-column (FileModeFileList), left-history-column (RepoModeHistoryList),
+        # right-history-column (FileModeHistoryList), right-file-column (RepoModeFileList),
+        # diff-column (DiffList), help-column (HelpList)
         yield Header()
-        yield Horizontal(file_list, history, diff)
+
+        left_file_label = Label(Text("Files"), id=LEFT_FILE_TITLE)
+        left_file = FileModeFileList(id=LEFT_FILE_LIST_ID)
+
+        left_history_label = Label(Text("Repo History"), id=LEFT_HISTORY_TITLE)
+        left_history = RepoModeHistoryList(id=LEFT_HISTORY_LIST_ID)
+
+        right_history_label = Label(Text("File History"), id=RIGHT_HISTORY_TITLE)
+        right_history = FileModeHistoryList(id=RIGHT_HISTORY_LIST_ID)
+
+        right_file_label = Label(Text("Repo Files"), id=RIGHT_FILE_TITLE)
+        right_file = RepoModeFileList(id=RIGHT_FILE_LIST_ID)
+
+        diff_label = Label(Text("Diff"), id=DIFF_TITLE)
+        diff = DiffList(id=DIFF_LIST_ID)
+
+        help_label = Label(Text("Help"), id=HELP_TITLE)
+        help_w = HelpList(id=HELP_LIST_ID)
+
+        # Place labels and corresponding widgets into the horizontal layout in column order
+        yield Horizontal(
+            left_file_label,
+            left_file,
+            left_history_label,
+            left_history,
+            right_history_label,
+            right_history,
+            right_file_label,
+            right_file,
+            diff_label,
+            diff,
+            help_label,
+            help_w,
+        )
+
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -631,9 +677,9 @@ class GitHistoryNavTool(App):
             # Build light repo cache (stub); real discovery in a later step
             self.build_repo_cache()
             # initial prep placeholders
-            file_w = self.query_one(f"#{ID_FILELIST}", FileModeFileList)
-            history_w = self.query_one(f"#{ID_HISTORY}", FileModeHistoryList)
-            diff_w = self.query_one(f"#{ID_DIFF}", DiffList)
+            file_w = self.query_one(f"#{LEFT_FILE_LIST_ID}", FileModeFileList)
+            history_w = self.query_one(f"#{RIGHT_HISTORY_LIST_ID}", FileModeHistoryList)
+            diff_w = self.query_one(f"#{DIFF_LIST_ID}", DiffList)
             try:
                 file_w.prepFileModeFileList(path=".")
             except Exception:

@@ -19,6 +19,39 @@ How to use this with Copilot (instructions to the AI)
 - When producing code, only output the file contents (or apply patches) requested by the step. Do not bundle unrelated changes.
 - Keep generated code minimal and well-structured, following `program-structure.md` conventions (constants, AppBase, FileListBase, HistoryListBase, DiffList, HelpList, GitHistoryNavTool, canonical ids, use of `call_after_refresh`, centralized logging via `printException`).
 
+Canonical widget mapping (six canonical widgets):
+
+```text
+column_name: "left-file-list":
+label_name: "left-file-title"
+class: FileModeFileList
+
+widget: repo_mode_history_list
+column_name: "left-history-list":
+label_name: "left-history-title"
+class: RepoModeHistoryList
+
+widget: repo_mode_file_list
+column_name: "right-file-list":
+label_name: "right-file-title"
+class: RepoModeFileList
+
+widget: file_mode_history_list
+column_name: "right-history-list":
+label_name: "right-history-title"
+class: FileModeHistoryList
+
+widget: diff_list
+column_name: "diff-list":
+label_name: "diff-title"
+class: DiffList
+
+widget: help_list
+column_name: "help-list":
+label_name: "help-title"
+class: HelpList
+```
+
 Prerequisites (environment notes)
 - Target Python >= 3.11; the workspace already contains a `venv-3.14`.
 - Assume `textual`, `rich`, and `pygit2` are available in the environment where the app will be run.
