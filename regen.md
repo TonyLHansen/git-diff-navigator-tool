@@ -102,6 +102,7 @@ Plan (steps with pause points)
    - Subclass `textual.app.App` and implement `compose()`, `on_mount()`, `build_repo_cache()` (pygit2 discovery can be stubbed to work without a repo), `_apply_column_layout`, `change_state`, `change_focus`, `save_state`, `restore_state`, `build_diff_cmd`.
    - Wire canonical widget ids and title labels; create footer Text objects referenced by `change_state` calls.
    - Implement CLI-driven startup mode (`--repo-first`) behavior: call initial `prep*` methods accordingly.
+   - Startup layout: `on_mount()` must set the initial layout according to the `repo_first` flag. When `repo_first` is True the app MUST call `change_layout("history_fullscreen")` so the UI starts in repository-history-first mode; otherwise it MUST call `change_layout("file_fullscreen")`. This guarantees deterministic startup presentation and matches `program-structure.md` expectations.
    - PAUSE: present the main App class and stop.
    - Tests/validation: py_compile; run a dry startup `python gitdiffnavtool.py --no-color .` (user should run in terminal). App should start without immediate exceptions (TUI not validated here).
 

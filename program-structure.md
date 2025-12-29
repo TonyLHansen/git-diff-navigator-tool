@@ -146,6 +146,32 @@ Git interactions
 
 - Mapping guarantees: the output produced by each preparatory/populate method is rendered into its canonical column/widget id so other code can rely on fixed ids when scheduling highlights or restoring selection. For example, `prepFileModeFileList` always populates the widget at `#left-file-list`, and `prepRepoModeFileList` always appends into `#right-file-list`.
 
+Layout control: `_apply_column_layout` and `change_layout`
+- The app implements two helpers to control column widths and visibility:
+  - `_apply_column_layout(left_file_w, left_history_w, right_history_w, right_file_w, diff_w, help_w)` — sets each column container's `styles.width` to "{width}%" and `styles.flex` to 0. If a width is 0, the corresponding canonical widget's `styles.display` is set to `"none"`; otherwise `styles.display` is set to `None` so the CSS determines visibility.
+  - `change_layout(newlayout)` — convenience mapping defining named layouts and calling `_apply_column_layout` with specific width tuples. Implemented layouts and widths:
+
+```python
+if newlayout == "file_fullscreen":
+  self._apply_column_layout(100, 0, 0, 0, 0, 0)
+elif newlayout == "history_fullscreen":
+  self._apply_column_layout(0, 100, 0, 0, 0, 0)
+elif newlayout == "file_history":
+  self._apply_column_layout(25, 0, 75, 0, 0, 0)
+elif newlayout == "history_file":
+  self._apply_column_layout(0, 25, 0, 75, 0, 0)
+elif newlayout == "file_history_diff":
+  self._apply_column_layout(5, 0, 20, 0, 75, 0)
+elif newlayout == "history_file_diff":
+  self._apply_column_layout(0, 5, 0, 20, 75, 0)
+elif newlayout == "diff_fullscreen":
+  self._apply_column_layout(0, 0, 0, 0, 100, 0)
+elif newlayout == "help_fullscreen":
+  self._apply_column_layout(0, 0, 0, 0, 0, 100)
+```
+
+These helpers make layout changes deterministic and testable; use `change_layout(...)` from app-level handlers and `call_after_refresh(...)` when scheduling DOM-dependent highlight/index updates immediately after layout changes.
+
  - Runtime control: `_apply_column_layout` sets the percent widths and `styles.display` on the canonical widgets (e.g. `self.file_mode_file_list.styles.display = show if left_file_w else hide`). See 'Interplay and lifecycle' for guidance on scheduling DOM-dependent index/highlight updates.
 
 Canonical widget mapping

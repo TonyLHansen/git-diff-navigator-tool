@@ -157,7 +157,7 @@ class AppBase(ListView):
 
     def key_up(self) -> None:
         try:
-            min_idx = getattr(self, "_min_index", 0) or 0
+            min_idx = self._min_index or 0
             cur = self.index
             if cur is None:
                 try:
@@ -218,7 +218,7 @@ class AppBase(ListView):
             except Exception:
                 visible_height = 10
             page_size = max(1, visible_height // 2)
-            min_idx = getattr(self, "_min_index", 0) or 0
+            min_idx = self._min_index or 0
             new_index = max(current_index - page_size, min_idx)
             try:
                 self.call_after_refresh(lambda: setattr(self, "index", new_index))
@@ -232,7 +232,7 @@ class AppBase(ListView):
 
     def key_home(self) -> None:
         try:
-            min_idx = getattr(self, "_min_index", 0) or 0
+            min_idx = self._min_index or 0
             try:
                 self.call_after_refresh(lambda: setattr(self, "index", min_idx))
             except Exception:
@@ -281,7 +281,7 @@ class FileListBase(AppBase):
         # When focused, ensure index is valid.
         try:
             if self.index is None:
-                self.index = getattr(self, "_min_index", 0) or 0
+                self.index = self._min_index or 0
         except Exception as e:
             self.printException(e, "FileListBase.on_focus")
 
@@ -308,10 +308,10 @@ class FileListBase(AppBase):
 
     def _highlight_top(self) -> None:
         try:
-            self.call_after_refresh(lambda: setattr(self, "index", getattr(self, "_min_index", 0) or 0))
+            self.call_after_refresh(lambda: setattr(self, "index", self._min_index or 0))
         except Exception:
             try:
-                self.index = getattr(self, "_min_index", 0) or 0
+                self.index = self._min_index or 0
             except Exception as e:
                 self.printException(e, "_highlight_top failed")
 
@@ -574,7 +574,7 @@ class DiffList(AppBase):
 
     def key_c(self) -> None:
         try:
-            self._colorized = not getattr(self, "_colorized", True)
+            self._colorized = not self._colorized
             logger.debug("DiffList colorized=%s", self._colorized)
             # Re-render could be done here; stubbed for now
         except Exception as e:
@@ -582,7 +582,7 @@ class DiffList(AppBase):
 
     def key_d(self) -> None:
         try:
-            logger.debug("DiffList.key_d: save diff for %s", getattr(self, "_filename", None))
+            logger.debug("DiffList.key_d: save diff for %s", self._filename)
         except Exception as e:
             self.printException(e, "DiffList.key_d failed")
 
@@ -610,7 +610,7 @@ class HelpList(AppBase):
 
     def key_enter(self) -> None:
         try:
-            app = getattr(self, "app", None)
+            app = self.app
             if app and hasattr(app, "restore_state"):
                 try:
                     app.restore_state()
@@ -709,8 +709,28 @@ class GitHistoryNavTool(App):
                 raise RuntimeError(f"widget resolution failed in on_mount: {e}") from e
 
             # initial prep placeholders (populate left file list)
+            # Start in history_fullscreen when repo_first is True; otherwise
+            # start in file_fullscreen. This guarantees consistent initial
+            # layouts for both modes and keeps layout logic centralized.
             try:
-                self.file_mode_file_list.prepFileModeFileList(path=self.path or ".")
+                if self.repo_first:
+                    self.change_layout("history_fullscreen")
+                else:
+                    self.change_layout("file_fullscreen")
+            except Exception:
+                pass
+
+            # Populate the canonical left file list when starting in file mode.
+            try:
+                if not self.repo_first:
+                    self.file_mode_file_list.prepFileModeFileList(path=self.path or ".")
+                else:
+                    # If starting in repo-first mode, pre-populate the left
+                    # repository-history widget so the UI shows commits immediately.
+                    try:
+                        self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".")
+                    except Exception:
+                        pass
             except Exception:
                 pass
         except Exception as e:
