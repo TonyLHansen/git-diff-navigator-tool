@@ -105,6 +105,14 @@ Plan (steps with pause points)
    - PAUSE: present the main App class and stop.
    - Tests/validation: py_compile; run a dry startup `python gitdiffnavtool.py --no-color .` (user should run in terminal). App should start without immediate exceptions (TUI not validated here).
 
+   Additions/implementation notes (recent revisions):
+   - The `GitHistoryNavTool` constructor should accept CLI values and set them on the app instance: `__init__(self, path: str = '.', no_color: bool = False, repo_first: bool = False, **kwargs)` so the app can inspect startup options during `on_mount()`.
+   - Inline CSS is stored in the module as `INLINE_CSS` and assigned to the app via `GitHistoryNavTool.CSS = INLINE_CSS` (no external `CSS_PATH`).
+   - `compose()` should build the six canonical widgets and title labels (left-file, left-history, right-history, right-file, diff, help) using the canonical ids described elsewhere (e.g. `left-file-list`, `left-file-title`, etc.).
+   - `on_mount()` should resolve widgets by their canonical ids (querying `#left-file-list`, `#right-history-list`, `#diff-list`, ...) and call the appropriate `prep*` methods (for the initial path or repo-first flow).
+   - `main()` should instantiate the app passing CLI args into the constructor and call `app.run()` (example: `GitHistoryNavTool(path=args.path, no_color=args.no_color, repo_first=args.repo_first).run()`).
+   - Tests/validation: in addition to `py_compile`, verify that `main()` starts the app via `python3 gitdiffnavtool.py --no-color .` and that the app's `path`, `no_color`, and `repo_first` attributes reflect the CLI flags.
+
 7) Replace stubs with real git/pygit2 interactions
    - Implement file-system listing, repo status map, `prepFileModeFileList` full implementation, `prepFileModeHistoryList` using `git log --follow`, `prepRepoModeHistoryList` using pygit2 walker or `git log`, and `prepRepoModeFileList` using pygit2/tree diff or `git diff --name-only` for pseudo-hashes.
    - Implement `build_diff_cmd` and `prepDiffList` to call `git diff` and colorize output by line prefix. Respect `DOLOGGING` and limit debug output in logs.

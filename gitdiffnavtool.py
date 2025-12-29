@@ -51,7 +51,7 @@ ListView {
 from rich.text import Text
 from textual import events
 from textual.app import App
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.widgets import ListView, Label, ListItem, Footer, Header
 
 
@@ -653,46 +653,42 @@ class GitHistoryNavTool(App):
 
     CSS = INLINE_CSS
 
+    def __init__(self, path: str = ".", no_color: bool = False, repo_first: bool = False, **kwargs):
+        # Accept CLI options here so the app can inspect them during mount
+        super().__init__(**kwargs)
+        try:
+            self.path = path
+            self.no_color = no_color
+            self.repo_first = repo_first
+            # placeholders for runtime state
+            self.repo_cache = None
+            self._saved_state = None
+            self._current_layout = None
+        except Exception as e:
+            printException(e, "GitHistoryNavTool.__init__ failed")
+
     def compose(self):
-        # Compose the canonical six-column layout (left->right):
-        # left-file-column (FileModeFileList), left-history-column (RepoModeHistoryList),
-        # right-history-column (FileModeHistoryList), right-file-column (RepoModeFileList),
-        # diff-column (DiffList), help-column (HelpList)
+        # Compose the canonical six-column layout using Vertical columns
         yield Header()
-
-        left_file_label = Label(Text("Files"), id=LEFT_FILE_TITLE)
-        left_file = FileModeFileList(id=LEFT_FILE_LIST_ID)
-
-        left_history_label = Label(Text("Repo History"), id=LEFT_HISTORY_TITLE)
-        left_history = RepoModeHistoryList(id=LEFT_HISTORY_LIST_ID)
-
-        right_history_label = Label(Text("File History"), id=RIGHT_HISTORY_TITLE)
-        right_history = FileModeHistoryList(id=RIGHT_HISTORY_LIST_ID)
-
-        right_file_label = Label(Text("Repo Files"), id=RIGHT_FILE_TITLE)
-        right_file = RepoModeFileList(id=RIGHT_FILE_LIST_ID)
-
-        diff_label = Label(Text("Diff"), id=DIFF_TITLE)
-        diff = DiffList(id=DIFF_LIST_ID)
-
-        help_label = Label(Text("Help"), id=HELP_TITLE)
-        help_w = HelpList(id=HELP_LIST_ID)
-
-        # Place labels and corresponding widgets into the horizontal layout in column order
-        yield Horizontal(
-            left_file_label,
-            left_file,
-            left_history_label,
-            left_history,
-            right_history_label,
-            right_history,
-            right_file_label,
-            right_file,
-            diff_label,
-            diff,
-            help_label,
-            help_w,
-        )
+        with Horizontal(id="main"):
+            with Vertical(id="left-file-column"):
+                yield Label(Text("Files"), id=LEFT_FILE_TITLE)
+                yield FileModeFileList(id=LEFT_FILE_LIST_ID)
+            with Vertical(id="left-history-column"):
+                yield Label(Text("History"), id=LEFT_HISTORY_TITLE)
+                yield RepoModeHistoryList(id=LEFT_HISTORY_LIST_ID)
+            with Vertical(id="right-history-column"):
+                yield Label(Text("History"), id=RIGHT_HISTORY_TITLE)
+                yield FileModeHistoryList(id=RIGHT_HISTORY_LIST_ID)
+            with Vertical(id="right-file-column"):
+                yield Label(Text("Files"), id=RIGHT_FILE_TITLE)
+                yield RepoModeFileList(id=RIGHT_FILE_LIST_ID)
+            with Vertical(id="diff-column"):
+                yield Label(Text("Diff"), id=DIFF_TITLE)
+                yield DiffList(id=DIFF_LIST_ID)
+            with Vertical(id="help-column"):
+                yield Label(Text("Help"), id=HELP_TITLE)
+                yield HelpList(id=HELP_LIST_ID)
 
         yield Footer()
 
@@ -700,12 +696,21 @@ class GitHistoryNavTool(App):
         try:
             # Build light repo cache (stub); real discovery in a later step
             self.build_repo_cache()
-            # initial prep placeholders
-            file_w = self.query_one(f"#{LEFT_FILE_LIST_ID}", FileModeFileList)
-            history_w = self.query_one(f"#{RIGHT_HISTORY_LIST_ID}", FileModeHistoryList)
-            diff_w = self.query_one(f"#{DIFF_LIST_ID}", DiffList)
+            # Resolve and store references to the six canonical widgets
             try:
-                file_w.prepFileModeFileList(path=".")
+                self.file_mode_file_list = self.query_one(f"#{LEFT_FILE_LIST_ID}", FileModeFileList)
+                self.repo_mode_history_list = self.query_one(f"#{LEFT_HISTORY_LIST_ID}", RepoModeHistoryList)
+                self.file_mode_history_list = self.query_one(f"#{RIGHT_HISTORY_LIST_ID}", FileModeHistoryList)
+                self.repo_mode_file_list = self.query_one(f"#{RIGHT_FILE_LIST_ID}", RepoModeFileList)
+                self.diff_list = self.query_one(f"#{DIFF_LIST_ID}", DiffList)
+                self.help_list = self.query_one(f"#{HELP_LIST_ID}", HelpList)
+            except Exception as e:
+                # composition must match expected ids
+                raise RuntimeError(f"widget resolution failed in on_mount: {e}") from e
+
+            # initial prep placeholders (populate left file list)
+            try:
+                self.file_mode_file_list.prepFileModeFileList(path=self.path or ".")
             except Exception:
                 pass
         except Exception as e:
@@ -717,6 +722,121 @@ class GitHistoryNavTool(App):
             self.repo_cache = {}
         except Exception as e:
             printException(e, "build_repo_cache failed")
+
+    def _apply_column_layout(
+        self,
+        left_file_w: int,
+        left_history_w: int,
+        right_history_w: int,
+        right_file_w: int,
+        diff_w: int,
+        help_w: int,
+    ) -> None:
+        """Set column widths and visibility for the six canonical columns.
+
+        If a width is zero the column is hidden (styles.display set to "none").
+        Otherwise `styles.width` is set to "{width}%" and `styles.display` is cleared.
+        """
+        show = None
+        hide = "none"
+        try:
+            # set container widths
+            try:
+                c = self.query_one("#left-file-column")
+                c.styles.width = f"{left_file_w}%"
+                c.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set left-file-column")
+            try:
+                c = self.query_one("#left-history-column")
+                c.styles.width = f"{left_history_w}%"
+                c.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set left-history-column")
+            try:
+                c = self.query_one("#right-history-column")
+                c.styles.width = f"{right_history_w}%"
+                c.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set right-history-column")
+            try:
+                c = self.query_one("#right-file-column")
+                c.styles.width = f"{right_file_w}%"
+                c.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set right-file-column")
+            try:
+                c = self.query_one("#diff-column")
+                c.styles.width = f"{diff_w}%"
+                c.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set diff-column")
+            try:
+                c = self.query_one("#help-column")
+                c.styles.width = f"{help_w}%"
+                c.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set help-column")
+
+            # set widget visibility based on widths
+            try:
+                try:
+                    self.file_mode_file_list.styles.display = show if left_file_w else hide
+                except Exception as e:
+                    self.printException(e, "could not set left-file-list display")
+                try:
+                    self.repo_mode_history_list.styles.display = show if left_history_w else hide
+                except Exception as e:
+                    self.printException(e, "could not set left-history-list display")
+                try:
+                    self.file_mode_history_list.styles.display = show if right_history_w else hide
+                except Exception as e:
+                    self.printException(e, "could not set right-history-list display")
+                try:
+                    self.repo_mode_file_list.styles.display = show if right_file_w else hide
+                except Exception as e:
+                    self.printException(e, "could not set right-file-list display")
+                try:
+                    self.diff_list.styles.display = show if diff_w else hide
+                except Exception as e:
+                    self.printException(e, "could not set diff-list display")
+                try:
+                    self.help_list.styles.display = show if help_w else hide
+                except Exception as e:
+                    self.printException(e, "could not set help-list display")
+            except Exception as e:
+                self.printException(e, "could not assign displays in _apply_column_layout")
+        except Exception as e:
+            self.printException(e, "error applying column layout")
+
+    def change_layout(self, newlayout: str) -> None:
+        """Change column layout using a named layout."""
+        try:
+            logger.debug(f"change_layout: newlayout={newlayout}")
+            if newlayout == "file_fullscreen":
+                self._apply_column_layout(100, 0, 0, 0, 0, 0)
+            elif newlayout == "history_fullscreen":
+                self._apply_column_layout(0, 100, 0, 0, 0, 0)
+            elif newlayout == "file_history":
+                self._apply_column_layout(25, 0, 75, 0, 0, 0)
+            elif newlayout == "history_file":
+                self._apply_column_layout(0, 25, 0, 75, 0, 0)
+            elif newlayout == "file_history_diff":
+                self._apply_column_layout(5, 0, 20, 0, 75, 0)
+            elif newlayout == "history_file_diff":
+                self._apply_column_layout(0, 5, 0, 20, 75, 0)
+            elif newlayout == "diff_fullscreen":
+                self._apply_column_layout(0, 0, 0, 0, 100, 0)
+            elif newlayout == "help_fullscreen":
+                self._apply_column_layout(0, 0, 0, 0, 0, 100)
+            else:
+                raise ValueError(f"unknown layout: {newlayout}")
+            try:
+                self._current_layout = newlayout
+            except Exception as e:
+                self.printException(e, "setting _current_layout in change_layout")
+        except Exception as e:
+            self.printException(e, f"change_layout {newlayout}")
 
     def save_state(self) -> dict:
         try:
@@ -737,15 +857,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
-    # For step 1 we only validate CLI wiring and logging setup.
-    logger.debug("Starting scaffold main; args=%s", args)
-    print("gitdiffnavtool scaffold (step 1) - parsed args:")
-    print(f"  path={args.path!r}")
-    print(f"  no_color={args.no_color}")
-    print(f"  repo_first={args.repo_first}")
-
-    # future steps will construct and run the Textual App here
-    return 0
+    # Wire CLI into the Textual app and run it.
+    try:
+        logger.debug("Starting GitHistoryNavTool; args=%s", args)
+        app = GitHistoryNavTool(path=args.path, no_color=args.no_color, repo_first=args.repo_first)
+        # Run the textual app (blocks until exit)
+        app.run()
+        return 0
+    except Exception as e:
+        printException(e, "fatal error running GitHistoryNavTool")
+        return 2
 
 
 if __name__ == "__main__":
