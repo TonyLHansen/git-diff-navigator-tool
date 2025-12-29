@@ -75,11 +75,13 @@ def printException(e: Exception, msg: Optional[str] = None) -> None:
         short_msg = msg or ""
         logger.warning("%s: %s", short_msg, e)
         logger.warning(traceback.format_exc())
-    except Exception:
-        # Last-resort fallback to stderr
+    except Exception as e2:
+        # Last-resort fallback to stderr — avoid recursive logging
         try:
             sys.stderr.write(f"printException fallback: {e}\n")
+            sys.stderr.write(f"secondary exception: {e2}\n")
         except Exception:
+            # If even stderr fails, give up quietly
             pass
 
 class AppBase(ListView):
@@ -107,9 +109,10 @@ class AppBase(ListView):
             short = msg or ""
             logger.warning(f"{className}.{funcName}: {short} - {e}")
             logger.warning(traceback.format_exc())
-        except Exception:
+        except Exception as e_fallback:
             # Fall back to module-level printer
             printException(e, msg)
+            printException(e_fallback, "AppBase.printException fallback")
 
     def text_of(self, node) -> str:
         """Extract visible text from a ListItem's Label or renderable."""
@@ -127,10 +130,7 @@ class AppBase(ListView):
                 return str(renderable)
             return str(lbl)
         except Exception as e:
-            try:
-                self.printException(e, "extracting text")
-            except Exception:
-                logger.debug("text_of fallback failed: %s", e)
+            self.printException(e, "extracting text")
             return str(node)
 
     def _extract_label_text(self, lbl) -> str:
@@ -145,10 +145,7 @@ class AppBase(ListView):
                 return getattr(lbl, "text")
             return str(lbl)
         except Exception as e:
-            try:
-                self.printException(e, "extracting label text")
-            except Exception:
-                logger.debug("_extract_label_text fallback failed: %s", e)
+            self.printException(e, "extracting label text")
             return str(lbl)
 
     # Key handlers: prefer `key_` methods on widgets instead of an `on_key` dispatcher.
@@ -192,17 +189,18 @@ class AppBase(ListView):
             try:
                 region = self.scrollable_content_region
                 visible_height = int(getattr(region, "height", 10))
-            except Exception:
+            except Exception as e:
+                self.printException(e, "key_page_down: measuring region height failed")
                 visible_height = 10
             page_size = max(1, visible_height // 2)
             new_index = min(current_index + page_size, len(nodes) - 1)
             try:
                 self.call_after_refresh(lambda: setattr(self, "index", new_index))
-            except Exception:
+            except Exception as e:
                 try:
                     self.index = new_index
-                except Exception as e:
-                    self.printException(e, "setting index for page down")
+                except Exception as e2:
+                    self.printException(e2, "setting index for page down")
         except Exception as e:
             self.printException(e, "key_page_down failed")
 
@@ -215,18 +213,19 @@ class AppBase(ListView):
             try:
                 region = self.scrollable_content_region
                 visible_height = int(getattr(region, "height", 10))
-            except Exception:
+            except Exception as e:
+                self.printException(e, "key_page_up: measuring region height failed")
                 visible_height = 10
             page_size = max(1, visible_height // 2)
             min_idx = self._min_index or 0
             new_index = max(current_index - page_size, min_idx)
             try:
                 self.call_after_refresh(lambda: setattr(self, "index", new_index))
-            except Exception:
+            except Exception as e:
                 try:
                     self.index = new_index
-                except Exception as e:
-                    self.printException(e, "setting index for page up")
+                except Exception as e2:
+                    self.printException(e2, "setting index for page up")
         except Exception as e:
             self.printException(e, "key_page_up failed")
 
@@ -235,11 +234,11 @@ class AppBase(ListView):
             min_idx = self._min_index or 0
             try:
                 self.call_after_refresh(lambda: setattr(self, "index", min_idx))
-            except Exception:
+            except Exception as e:
                 try:
                     self.index = min_idx
-                except Exception as e:
-                    self.printException(e, "home key set index failed")
+                except Exception as e2:
+                    self.printException(e2, "home key set index failed")
         except Exception as e:
             self.printException(e, "key_home failed")
 
@@ -251,11 +250,11 @@ class AppBase(ListView):
             last_idx = max(0, len(nodes) - 1)
             try:
                 self.call_after_refresh(lambda: setattr(self, "index", last_idx))
-            except Exception:
+            except Exception as e:
                 try:
                     self.index = last_idx
-                except Exception as e:
-                    self.printException(e, "end key set index failed")
+                except Exception as e2:
+                    self.printException(e2, "end key set index failed")
         except Exception as e:
             self.printException(e, "key_end failed")
 
@@ -292,12 +291,13 @@ class FileListBase(AppBase):
             for i, node in enumerate(nodes):
                 try:
                     text = self.text_of(node)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "_highlight_filename: extracting text failed")
                     text = str(node)
                 if text == filename:
                     try:
                         self.call_after_refresh(lambda: setattr(self, "index", i))
-                    except Exception:
+                    except Exception as e2:
                         try:
                             self.index = i
                         except Exception as e:
@@ -309,38 +309,40 @@ class FileListBase(AppBase):
     def _highlight_top(self) -> None:
         try:
             self.call_after_refresh(lambda: setattr(self, "index", self._min_index or 0))
-        except Exception:
+        except Exception as e:
             try:
+                # call_after_refresh failed; fall back to direct index set
                 self.index = self._min_index or 0
-            except Exception as e:
-                self.printException(e, "_highlight_top failed")
+            except Exception as e2:
+                self.printException(e2, "_highlight_top failed")
+            self.printException(e, "_highlight_top: call_after_refresh failed")
 
     def watch_index(self, old, new) -> None:
         # Placeholder watch — concrete subclasses may override
         try:
             logger.debug("FileListBase index changed %r -> %r", old, new)
-        except Exception:
-            pass
+        except Exception as e:
+            self.printException(e, "FileListBase.watch_index failed")
 
     def on_list_view_highlighted(self, event) -> None:
         # Textual-specific hook placeholder for when highlighting changes.
         try:
             logger.debug("list view highlighted: %s", event)
-        except Exception:
-            pass
+        except Exception as e:
+            self.printException(e, "FileListBase.on_list_view_highlighted failed")
 
     def _child_filename(self, node) -> str:
         try:
             return self.text_of(node)
-        except Exception:
+        except Exception as e:
             return str(node)
 
     def _enter_directory(self, filename: str) -> None:
         # Default: log and do nothing. Subclasses should override to change mode.
         try:
             logger.debug("enter directory requested: %s", filename)
-        except Exception:
-            pass
+        except Exception as e:
+            self.printException(e, "FileListBase._enter_directory failed")
 
 
 class FileModeFileList(FileListBase):
@@ -361,8 +363,8 @@ class FileModeFileList(FileListBase):
             for it in items:
                 try:
                     self.append(it)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e, "prepFileModeFileList append failed")
             self._populated = True
             self._filename = path
         except Exception as e:
@@ -400,8 +402,8 @@ class RepoModeFileList(FileListBase):
             for it in items:
                 try:
                     self.append(it)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e, "prepRepoModeFileList append failed")
             self._populated = True
         except Exception as e:
             self.printException(e, "prepRepoModeFileList failed")
@@ -436,8 +438,8 @@ class HistoryListBase(AppBase):
             setattr(item, "_raw_text", text)
             try:
                 self.append(item)
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e, "HistoryListBase._add_row append failed")
         except Exception as e:
             self.printException(e, "HistoryListBase._add_row failed")
 
@@ -457,8 +459,8 @@ class HistoryListBase(AppBase):
                 text = self._extract_label_text(lbl)
                 prefix = "[x] " if not current else "[ ] "
                 lbl.update(Text(prefix + text))
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e, "HistoryListBase.toggle_check_current label update failed")
         except Exception as e:
             self.printException(e, "toggle_check_current failed")
 
@@ -487,8 +489,8 @@ class HistoryListBase(AppBase):
     def on_list_view_highlighted(self, event) -> None:
         try:
             logger.debug("history highlighted: %s", event)
-        except Exception:
-            pass
+        except Exception as e:
+            self.printException(e, "HistoryListBase.on_list_view_highlighted failed")
 
 
 class FileModeHistoryList(HistoryListBase):
@@ -565,8 +567,8 @@ class DiffList(AppBase):
             for ln in lines:
                 try:
                     self.append(ListItem(Label(Text(ln))))
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e, "prepDiffList append failed")
             self._populated = True
             self._filename = filename
         except Exception as e:
@@ -602,8 +604,8 @@ class HelpList(AppBase):
             for ln in HELP_TEXT.strip().splitlines():
                 try:
                     self.append(ListItem(Label(Text(ln))))
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e, "prepHelp append failed")
             self._populated = True
         except Exception as e:
             self.printException(e, "prepHelp failed")
@@ -717,8 +719,8 @@ class GitHistoryNavTool(App):
                     self.change_layout("history_fullscreen")
                 else:
                     self.change_layout("file_fullscreen")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e, "on_mount: change_layout failed")
 
             # Populate the canonical left file list when starting in file mode.
             try:
@@ -729,10 +731,10 @@ class GitHistoryNavTool(App):
                     # repository-history widget so the UI shows commits immediately.
                     try:
                         self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".")
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    except Exception as e:
+                        self.printException(e, "on_mount: prepRepoModeHistoryList failed")
+            except Exception as e:
+                self.printException(e, "on_mount: initial prep failed")
         except Exception as e:
             printException(e, "on_mount failed")
 
