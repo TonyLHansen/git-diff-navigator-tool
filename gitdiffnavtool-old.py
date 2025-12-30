@@ -51,7 +51,7 @@ if DOLOGGING:
         logging.getLogger("markdown_it").setLevel(logging.WARNING)
     except Exception as e:
         # Best-effort: don't fail if logger config isn't available
-        logger.debug("configure markdown_it logger failed: %s", e)
+        print(f"configure markdown_it logger failed: {e}", file=sys.stderr)
 logger = logging.getLogger(__name__)
 
 # Highlight color used for selected items. Change this constant to alter

@@ -19,6 +19,8 @@ CLI entry
 - Options:
   - `-C/--no-color`: start with diff colorization off.
   - `-r/--repo-first`: start in repo-first (repo-history-first) mode.
+  - `-d/--debug FILE`: write debug logs to FILE (enables detailed logging).
+  - `-R/--repo-hash HASH`: specify a repo commit hash; may be provided up to two times. Using `-R` implies `--repo-first`. When provided the hashes initialize the repo-mode view: one hash sets the current commit; two hashes set previous and current commit for diffs.
   - `path` (positional, optional): directory or file. If file, app starts in its directory and preloads its history.
 - Signals: SIGINT/SIGTERM handled to call `logging.shutdown` and exit.
 - Diff colorization can be toggled at runtime (c/C).

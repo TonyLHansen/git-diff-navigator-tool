@@ -1053,6 +1053,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("path", nargs="?", default=".", help="directory or file to open")
     p.add_argument("-C", "--no-color", dest="no_color", action="store_true", help="start with diff colorization off")
     p.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
+    p.add_argument("-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)")
+    p.add_argument(
+        "-R",
+        "--repo-hash",
+        dest="repo_hash",
+        action="append",
+        metavar="HASH",
+        help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
+    )
     return p
 
 
@@ -1189,13 +1198,15 @@ class GitHistoryNavTool(App):
 
     CSS = INLINE_CSS
 
-    def __init__(self, path: str = ".", no_color: bool = False, repo_first: bool = False, **kwargs):
+    def __init__(self, path: str = ".", no_color: bool = False, repo_first: bool = False, repo_hashes: list | None = None, **kwargs):
         # Accept CLI options here so the app can inspect them during mount
         super().__init__(**kwargs)
         try:
             self.path = path
             self.no_color = no_color
             self.repo_first = repo_first
+            # optional repo hash initialization (list of 1 or 2 hashes)
+            self.repo_hashes = repo_hashes or []
             # placeholders for runtime state
             self.repo_cache = None
             self._saved_state = None
@@ -1318,6 +1329,36 @@ class GitHistoryNavTool(App):
                             self.printException(e, "on_mount: repo history highlight failed")
                     except Exception as e:
                         self.printException(e, "on_mount: prepRepoModeHistoryList failed")
+                    # If repo hashes were provided on the command line, use them
+                    try:
+                        rh = getattr(self, "repo_hashes", None) or []
+                        if rh:
+                            # Normalize to up to two values: previous, current
+                            prev = None
+                            curr = None
+                            if len(rh) == 1:
+                                curr = rh[0]
+                            else:
+                                prev = rh[0]
+                                curr = rh[1]
+                            try:
+                                self.current_prev_sha = prev
+                                self.current_commit_sha = curr
+                            except Exception:
+                                pass
+                            try:
+                                # If starting in repo-first mode, populate the repo file list
+                                # with the specified hashes so the UI reflects them immediately.
+                                if self.repo_first:
+                                    try:
+                                        self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
+                                    except Exception:
+                                        pass
+                            except Exception as e:
+                                self.printException(e, "on_mount: initializing repo hashes failed")
+                    except Exception as e:
+                        self.printException(e, "on_mount: initializing repo hashes failed")
+                    
             except Exception as e:
                 self.printException(e, "on_mount: initial prep failed")
         except Exception as e:
@@ -1482,11 +1523,34 @@ class GitHistoryNavTool(App):
 def main(argv: Optional[list[str]] = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-
-    # Wire CLI into the Textual app and run it.
+    # Configure logging if debug file requested
     try:
+        if getattr(args, "debug", None):
+            try:
+                os.makedirs(os.path.dirname(args.debug) or "", exist_ok=True)
+            except Exception:
+                pass
+            logging.basicConfig(
+                filename=args.debug,
+                level=logging.DEBUG,
+                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            )
+            logging.getLogger().setLevel(logging.DEBUG)
+            logger.debug("Debug logging enabled -> %s", args.debug)
+
+        # If repo-hash provided, validate count and imply repo-first
+        repo_hashes = None
+        if getattr(args, "repo_hash", None):
+            repo_hashes = args.repo_hash
+            if len(repo_hashes) > 2:
+                printException(ValueError("--repo-hash may be specified at most twice"), "argument error")
+                return 2
+            # imply repo-first when -R used
+            args.repo_first = True
+
+        # Wire CLI into the Textual app and run it.
         logger.debug("Starting GitHistoryNavTool; args=%s", args)
-        app = GitHistoryNavTool(path=args.path, no_color=args.no_color, repo_first=args.repo_first)
+        app = GitHistoryNavTool(path=args.path, no_color=args.no_color, repo_first=args.repo_first, repo_hashes=repo_hashes)
         # Run the textual app (blocks until exit)
         app.run()
         return 0
