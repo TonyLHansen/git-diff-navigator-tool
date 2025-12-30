@@ -59,8 +59,6 @@ from textual import events
 from textual.app import App
 from textual.containers import Horizontal, Vertical
 from textual.widgets import ListView, Label, ListItem, Footer, Header
-
-
 # --- Logging setup --------------------------------------------------------
 if DOLOGGING:
     try:
@@ -325,6 +323,23 @@ class AppBase(ListView):
         except Exception as e:
             self.printException(e, "_highlight_match failed")
 
+    def _highlight_top(self) -> None:
+        """Schedule highlighting of the logical top item for this widget.
+
+        Centralized implementation so subclasses don't need to duplicate
+        the call_after_refresh/fallback pattern. Uses `self._min_index`
+        when available.
+        """
+        try:
+            top = self._min_index or 0
+            try:
+                self.call_after_refresh(lambda: self._activate_index(top))
+            except Exception:
+                # Fall back to direct activation if scheduling fails
+                self._activate_index(top)
+        except Exception as e:
+            self.printException(e, "AppBase._highlight_top failed")
+
     # Key handlers: prefer `key_` methods on widgets instead of an `on_key` dispatcher.
     # Implement navigation handlers as `key_*` methods so subclasses may override
     # them individually and keep key logic co-located with widget state.
@@ -552,16 +567,7 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, "_highlight_filename failed")
 
-    def _highlight_top(self) -> None:
-        try:
-            self.call_after_refresh(lambda: self._activate_index(self._min_index or 0))
-        except Exception as e:
-            # call_after_refresh failed; fall back to direct activation
-            try:
-                self._activate_index(self._min_index or 0)
-            except Exception as e2:
-                self.printException(e2, "_highlight_top failed")
-            self.printException(e, "_highlight_top: call_after_refresh failed")
+    
 
     def watch_index(self, old, new) -> None:
         # Placeholder watch — concrete subclasses may override
@@ -767,21 +773,6 @@ class HistoryListBase(AppBase):
             logger.debug("history highlighted: %s", event)
         except Exception as e:
             self.printException(e, "HistoryListBase.on_list_view_highlighted failed")
-
-    def _highlight_top(self) -> None:
-        """Schedule highlighting of the top item for history lists.
-
-        Use `self._min_index` so subclasses can adjust the logical top.
-        """
-        try:
-            top = self._min_index or 0
-            self.call_after_refresh(lambda: self._activate_index(top))
-        except Exception as e:
-            try:
-                self._activate_index(self._min_index or 0)
-            except Exception as e2:
-                self.printException(e2, "HistoryListBase._highlight_top fallback failed")
-            self.printException(e, "HistoryListBase._highlight_top failed")
 
 
 class FileModeHistoryList(HistoryListBase):
