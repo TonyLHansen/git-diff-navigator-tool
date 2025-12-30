@@ -122,6 +122,8 @@ class AppBase(ListView):
         # (used by page up / page down handlers to make the jump more
         # visually noticeable).
         self._page_scroll = False
+        # Ensure common attributes exist so code can access them directly
+        # Rely on ListView to provide `children`, `_nodes`, `index`, and `app`.
 
     def printException(self, e: Exception, msg: Optional[str] = None) -> None:
         try:
@@ -177,7 +179,7 @@ class AppBase(ListView):
         try:
             # Prefer the public `children` live view when available so callers
             # observe the current DOM without allocating a snapshot.
-            n = getattr(self, "children", None)
+            n = self.children
             return n if n else []
         except Exception:
             return []
@@ -421,7 +423,7 @@ class AppBase(ListView):
 
     def key_page_down(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("key_page_down invoked: index=%r nodes=%r", getattr(self, 'index', None), len(self.nodes()))
+            logger.debug("key_page_down invoked: index=%r nodes=%r", self.index, len(self.nodes()))
             if event is not None:
                 try:
                     event.stop()
@@ -459,21 +461,21 @@ class AppBase(ListView):
     # aliases that delegate to the canonical handlers so keys are handled.
     def key_pageup(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pageup invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(self.nodes()))
+            logger.debug("alias key_pageup invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), self.index, len(self.nodes()))
         except Exception:
             pass
         return self.key_page_down(event)
 
     def key_pagedown(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pagedown invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(self.nodes()))
+            logger.debug("alias key_pagedown invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), self.index, len(self.nodes()))
         except Exception:
             pass
         return self.key_page_down(event)
 
     def key_page_up(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("key_page_up invoked: index=%r nodes=%r", getattr(self, 'index', None), len(self.nodes()))
+            logger.debug("key_page_up invoked: index=%r nodes=%r", self.index, len(self.nodes()))
             if event is not None:
                 try:
                     event.stop()
@@ -506,14 +508,14 @@ class AppBase(ListView):
 
     def key_pageup(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pageup invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(self.nodes()))
+            logger.debug("alias key_pageup invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), self.index, len(self.nodes()))
         except Exception:
             pass
         return self.key_page_up(event)
 
     def key_pagedown(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pagedown invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(self.nodes()))
+            logger.debug("alias key_pagedown invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), self.index, len(self.nodes()))
         except Exception:
             pass
         return self.key_page_down(event)
@@ -670,11 +672,10 @@ class FileModeFileList(FileListBase):
 
             self.path = path
             try:
-                if hasattr(self, "app"):
-                    try:
-                        self.app.displayed_path = self.path
-                    except Exception:
-                        pass
+                try:
+                    self.app.displayed_path = self.path
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -739,14 +740,14 @@ class FileModeFileList(FileListBase):
                     repo_status = None
                     style = None
                     try:
-                        app = getattr(self, "app", None)
-                        if app and getattr(app, "repo_available", False) and getattr(app, "repo_root", None):
+                        app = self.app
+                        if app.repo_available and app.repo_root:
                             try:
                                 rel = os.path.relpath(full, app.repo_root)
                             except Exception:
                                 rel = None
                             if rel and not rel.startswith(".."):
-                                flags = app.repo_status_map.get(rel, 0) if getattr(app, "repo_status_map", None) is not None else 0
+                                flags = app.repo_status_map.get(rel, 0) if app.repo_status_map is not None else 0
                                 try:
                                     if pygit2 and isinstance(flags, int):
                                         if flags & getattr(pygit2, "GIT_STATUS_CONFLICTED", 0):
@@ -875,22 +876,46 @@ class RepoModeFileList(FileListBase):
     def prepRepoModeFileList(self, prev_hash: str | None, curr_hash: str | None) -> None:
         try:
             self.clear()
-            # Generate many changed files with synthetic commit hashes
+            repo_root = getattr(self.app, "repo_root", None)
+            if not repo_root:
+                # nothing to show; fallback to empty synthetic list
+                self._populated = True
+                self._highlight_top()
+                return
+
+            # Build git diff command to list changed files between the two refs
             try:
-                for i in range(1, 121):
-                    hprev = (prev_hash or "pv")[:7]
-                    hcurr = (curr_hash or "cr")[:7]
-                    name = f"changed_file_{i:04d}.py ({hprev}/{hcurr})"
-                    item = ListItem(Label(Text(name)))
+                cmd = ["git", "-C", repo_root, "diff", "--name-status"]
+                if prev_hash and curr_hash:
+                    cmd += [prev_hash, curr_hash]
+                elif curr_hash:
+                    # diff against working tree (curr only) or HEAD
+                    cmd += [curr_hash]
+                # run command
+                out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+                for ln in out.splitlines():
+                    if not ln:
+                        continue
                     try:
-                        setattr(item, "_raw_text", name)
-                        # attach a fake hash for matching tests
-                        setattr(item, "_hash", f"{i:040d}" )
-                        self.append(item)
+                        parts = ln.split("\t", 1)
+                        status = parts[0]
+                        path = parts[1] if len(parts) > 1 else parts[0]
+                        display = f"{status} {path}"
+                        item = ListItem(Label(Text(display)))
+                        try:
+                            item._raw_text = path
+                            item._is_dir = False
+                            self.append(item)
+                        except Exception as e:
+                            self.printException(e, "prepRepoModeFileList append failed")
                     except Exception as e:
-                        self.printException(e, "prepRepoModeFileList append failed")
+                        self.printException(e, "prepRepoModeFileList parsing line failed")
+            except subprocess.CalledProcessError:
+                # Fallback: no diff output
+                pass
             except Exception as e:
-                self.printException(e, "prepRepoModeFileList generation failed")
+                self.printException(e, "prepRepoModeFileList git diff failed")
+
             self._populated = True
             # Highlight based on provided hashes (prefer curr_hash)
             try:
@@ -964,7 +989,7 @@ class HistoryListBase(AppBase):
         try:
             if idx is None:
                 idx = self.index or 0
-            nodes = getattr(self, "_nodes", None) or []
+            nodes = self._nodes or []
             if not nodes:
                 return (None, None)
             # Current commit is at idx; previous is idx+1 (newer->older ordering varies)
@@ -996,13 +1021,43 @@ class FileModeHistoryList(HistoryListBase):
     def prepFileModeHistoryList(self, path: str) -> None:
         try:
             self.clear()
-            # Generate many synthetic commits for the file history
-            try:
-                for i in range(1, 121):
-                    h = f"{i:040x}"[-20:]
-                    self._add_row(f"commit {i} - update {path}", h)
-            except Exception as e:
-                self.printException(e, "prepFileModeHistoryList generation failed")
+            # If repository available, call git log --follow for the path
+            repo_root = getattr(self.app, "repo_root", None)
+            if repo_root:
+                try:
+                    cmd = [
+                        "git",
+                        "-C",
+                        repo_root,
+                        "log",
+                        "--follow",
+                        "--pretty=format:%H\t%ad\t%s",
+                        "--date=short",
+                        "--",
+                        path,
+                    ]
+                    out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+                    for ln in out.splitlines():
+                        try:
+                            parts = ln.split("\t", 2)
+                            h = parts[0]
+                            text = parts[1] + " " + (parts[2] if len(parts) > 2 else "")
+                            self._add_row(text, h)
+                        except Exception as e:
+                            self.printException(e, "prepFileModeHistoryList parse failed")
+                except subprocess.CalledProcessError:
+                    # no history or git failed; fall back to synthetic
+                    pass
+                except Exception as e:
+                    self.printException(e, "prepFileModeHistoryList git log failed")
+            else:
+                # Fallback synthetic commits for non-repo dirs
+                try:
+                    for i in range(1, 121):
+                        h = f"{i:040x}"[-20:]
+                        self._add_row(f"commit {i} - update {path}", h)
+                except Exception as e:
+                    self.printException(e, "prepFileModeHistoryList generation failed")
             self._populated = True
             # Default to highlighting top commit for file history
             try:
@@ -1019,13 +1074,31 @@ class RepoModeHistoryList(HistoryListBase):
     def prepRepoModeHistoryList(self, repo_path: str | None = None) -> None:
         try:
             self.clear()
-            # Generate many synthetic repo commits for testing navigation
-            try:
-                for i in range(1, 121):
-                    h = f"{i:040x}"[-20:]
-                    self._add_row(f"repo commit {i} - change", h)
-            except Exception as e:
-                self.printException(e, "prepRepoModeHistoryList generation failed")
+            # Use git log to populate repo-wide history when possible
+            repo_root = repo_path or getattr(self.app, "repo_root", None)
+            if repo_root:
+                try:
+                    cmd = ["git", "-C", repo_root, "log", "--pretty=format:%H\t%ad\t%s", "--date=short", "-n", "200"]
+                    out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+                    for ln in out.splitlines():
+                        try:
+                            parts = ln.split("\t", 2)
+                            h = parts[0]
+                            text = parts[1] + " " + (parts[2] if len(parts) > 2 else "")
+                            self._add_row(text, h)
+                        except Exception as e:
+                            self.printException(e, "prepRepoModeHistoryList parse failed")
+                except subprocess.CalledProcessError:
+                    pass
+                except Exception as e:
+                    self.printException(e, "prepRepoModeHistoryList git log failed")
+            else:
+                try:
+                    for i in range(1, 121):
+                        h = f"{i:040x}"[-20:]
+                        self._add_row(f"repo commit {i} - change", h)
+                except Exception as e:
+                    self.printException(e, "prepRepoModeHistoryList generation failed")
             self._populated = True
             # Default to highlighting top commit for repo history
             try:
@@ -1064,19 +1137,54 @@ class DiffList(AppBase):
     def prepDiffList(self, filename: str, prev: str | None, curr: str | None, variant_index: int | None = None) -> None:
         try:
             self.clear()
-            # Stubbed example diff lines
-            lines = [
-                f"diff --git a/{filename} b/{filename}",
-                "@@ -1,3 +1,3 @@",
-                "-old line",
-                "+new line",
-                " context line",
-            ]
-            for ln in lines:
+            app = self.app
+            repo_root = app.repo_root if app else None
+            workdir = repo_root or (app.path if app else None)
+            cmd = None
+            try:
                 try:
-                    self.append(ListItem(Label(Text(ln))))
-                except Exception as e:
-                    self.printException(e, "prepDiffList append failed")
+                    cmd = app.build_diff_cmd(filename, prev, curr, variant_index)
+                except Exception:
+                    # fallback basic diff
+                    if repo_root:
+                        cmd = ["git", "-C", repo_root, "diff"]
+                    else:
+                        cmd = ["git", "diff"]
+                    if prev and curr:
+                        cmd += [prev, curr]
+                    if filename:
+                        cmd += ["--", filename]
+                out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+            except subprocess.CalledProcessError:
+                out = ""
+            except Exception as e:
+                self.printException(e, "prepDiffList: running git diff failed")
+                out = ""
+
+            # Colorize lines by prefix and append to list
+            try:
+                for ln in out.splitlines() or []:
+                    try:
+                        style = None
+                        if ln.startswith("+") and not ln.startswith("+++"):
+                            style = "green"
+                        elif ln.startswith("-") and not ln.startswith("---"):
+                            style = "red"
+                        elif ln.startswith("@@"):
+                            style = "magenta"
+                        elif ln.startswith("diff --git") or ln.startswith("index "):
+                            style = "bold white"
+                        else:
+                            style = None
+                        if style:
+                            self.append(ListItem(Label(Text(ln, style=style))))
+                        else:
+                            self.append(ListItem(Label(Text(ln))))
+                    except Exception as e:
+                        self.printException(e, "prepDiffList append failed")
+            except Exception as e:
+                self.printException(e, "prepDiffList processing output failed")
+
             self._populated = True
             self._filename = filename
             try:
@@ -1129,11 +1237,10 @@ class HelpList(AppBase):
     def key_enter(self) -> None:
         try:
             app = self.app
-            if app and hasattr(app, "restore_state"):
-                try:
-                    app.restore_state()
-                except Exception as e:
-                    self.printException(e, "HelpList.restore_state failed")
+            try:
+                app.restore_state()
+            except Exception as e:
+                self.printException(e, "HelpList.restore_state failed")
         except Exception as e:
             self.printException(e, "HelpList.key_enter failed")
 
@@ -1182,6 +1289,10 @@ class GitHistoryNavTool(App):
             self.repo_hashes = repo_hashes or []
             # placeholders for runtime state
             self.repo_cache = None
+            # repo-related defaults so methods can access them directly
+            self.repo_available = False
+            self.repo_root = None
+            self.repo_status_map = {}
             self._saved_state = None
             self._current_layout = None
         except Exception as e:
@@ -1304,7 +1415,7 @@ class GitHistoryNavTool(App):
                         self.printException(e, "on_mount: prepRepoModeHistoryList failed")
                     # If repo hashes were provided on the command line, use them
                     try:
-                        rh = getattr(self, "repo_hashes", None) or []
+                        rh = self.repo_hashes or []
                         if rh:
                             # Normalize to up to two values: previous, current
                             prev = None
@@ -1332,6 +1443,15 @@ class GitHistoryNavTool(App):
                     except Exception as e:
                         self.printException(e, "on_mount: initializing repo hashes failed")
                     
+                    # Ensure help content is prepared so help is immediately available
+                    try:
+                        if getattr(self, "help_list", None) is not None:
+                            try:
+                                self.help_list.prepHelp()
+                            except Exception as e:
+                                self.printException(e, "on_mount: prepHelp failed")
+                    except Exception:
+                        pass
             except Exception as e:
                 self.printException(e, "on_mount: initial prep failed")
         except Exception as e:
@@ -1359,12 +1479,148 @@ class GitHistoryNavTool(App):
         """Uppercase Q also quits."""
         return self.key_q(event)
 
-    def build_repo_cache(self) -> None:
-        # Stub: populate lightweight repo metadata for the UI. Later replaced.
+    def key_h(self, event: events.Key | None = None) -> None:
+        """Show help: save state, prepare help, then display help fullscreen.
+
+        This records the single-slot state, ensures help content is prepared,
+        and switches layout/focus/footer to the help configuration.
+        """
         try:
-            self.repo_cache = {}
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+            logger.debug("key_h invoked: saving state and showing help")
+            try:
+                self.save_state()
+            except Exception as e:
+                self.printException(e, "key_h: save_state failed")
+            # Help text is static and prepopulated during on_mount; no need
+            # to call prepHelp() again here.
+
+            try:
+                footer_txt = Text("Help: press Enter to return")
+                self.change_state("help_fullscreen", f"#{HELP_LIST_ID}", footer_txt)
+            except Exception as e:
+                self.printException(e, "key_h: change_state failed")
         except Exception as e:
-            printException(e, "build_repo_cache failed")
+            self.printException(e, "key_h outer failure")
+
+    def key_H(self, event: events.Key | None = None) -> None:
+        return self.key_h(event)
+
+    def key_question(self, event: events.Key | None = None) -> None:
+        # Some terminals map '?' to 'question'
+        return self.key_h(event)
+
+    def build_repo_cache(self) -> None:
+        # Populate lightweight repo metadata for the UI using pygit2 when
+        # available, otherwise fall back to calling `git` on the command line.
+        try:
+            self.repo_available = False
+            self.repo_root = None
+            self.repo_status_map = {}
+            # Try pygit2 discovery first
+            if pygit2:
+                try:
+                    repo_path = pygit2.discover_repository(self.path or ".")
+                    if repo_path:
+                        # pygit2 returns path to the .git directory
+                        self.repo_root = os.path.abspath(os.path.dirname(repo_path))
+                        repo = pygit2.Repository(repo_path)
+                        self.repo_available = True
+                        status_map = {}
+                        try:
+                            statuses = repo.status()
+                            # statuses is a dict: path -> flags
+                            for fpath, flags in statuses.items():
+                                try:
+                                    if flags & pygit2.GIT_STATUS_CONFLICTED:
+                                        st = "conflicted"
+                                    elif flags & pygit2.GIT_STATUS_IGNORED:
+                                        st = "ignored"
+                                    elif flags & (
+                                        pygit2.GIT_STATUS_INDEX_NEW
+                                        | pygit2.GIT_STATUS_INDEX_MODIFIED
+                                        | pygit2.GIT_STATUS_INDEX_DELETED
+                                    ):
+                                        st = "staged"
+                                    elif flags & pygit2.GIT_STATUS_WT_DELETED:
+                                        st = "wt_deleted"
+                                    elif flags & pygit2.GIT_STATUS_WT_MODIFIED:
+                                        st = "modified"
+                                    elif flags & pygit2.GIT_STATUS_WT_NEW:
+                                        st = "untracked"
+                                    else:
+                                        st = "tracked_clean"
+                                except Exception:
+                                    st = "tracked_clean"
+                                status_map[fpath] = st
+                        except Exception:
+                            status_map = {}
+                        self.repo_status_map = status_map
+                except Exception:
+                    # pygit2 discovery failed; fall back to git CLI below
+                    pass
+
+            if not self.repo_available:
+                # Try CLI-based discovery
+                try:
+                    topo = subprocess.check_output(
+                        ["git", "-C", self.path or ".", "rev-parse", "--show-toplevel"],
+                        stderr=subprocess.DEVNULL,
+                        text=True,
+                    ).strip()
+                    if topo:
+                        self.repo_root = topo
+                        self.repo_available = True
+                        status_map = {}
+                        try:
+                            out = subprocess.check_output(
+                                ["git", "-C", self.repo_root, "status", "--porcelain"],
+                                text=True,
+                                stderr=subprocess.DEVNULL,
+                            )
+                            for ln in out.splitlines():
+                                if not ln:
+                                    continue
+                                code = ln[:2]
+                                path = ln[3:]
+                                st = "tracked_clean"
+                                try:
+                                    if code == "??":
+                                        st = "untracked"
+                                    elif code == "!!":
+                                        st = "ignored"
+                                    elif "U" in code:
+                                        st = "conflicted"
+                                    elif code[0] != " ":
+                                        # index has a change
+                                        st = "staged"
+                                    elif code[1] != " ":
+                                        # working tree has change
+                                        if code[1] == "D":
+                                            st = "wt_deleted"
+                                        else:
+                                            st = "modified"
+                                except Exception:
+                                    st = "tracked_clean"
+                                status_map[path] = st
+                        except Exception:
+                            status_map = {}
+                        self.repo_status_map = status_map
+                except Exception:
+                    self.repo_available = False
+
+            # store a small cache dict for future use
+            self.repo_cache = {
+                "root": self.repo_root,
+                "available": self.repo_available,
+                "status_map": self.repo_status_map,
+            }
+        except Exception as e:
+            self.printException(e, "build_repo_cache failed")
 
     def _apply_column_layout(
         self,
@@ -1449,6 +1705,35 @@ class GitHistoryNavTool(App):
         except Exception as e:
             self.printException(e, "error applying column layout")
 
+    def build_diff_cmd(self, filename: str | None, prev: str | None, curr: str | None, variant_index: int | None = None) -> list[str]:
+        """Return a git diff command list for the given filenames and commit-ish pair.
+
+        This is a small helper used by `DiffList.prepDiffList` to centralize
+        how diffs are constructed. It returns an argv list suitable for
+        `subprocess.check_output`.
+        """
+        try:
+            repo_root = self.repo_root
+            if repo_root:
+                cmd = ["git", "-C", repo_root, "diff"]
+            else:
+                cmd = ["git", "diff"]
+
+            # If both refs provided, diff between them; if only curr provided,
+            # diff that ref against working tree; if neither provided, diff
+            # working tree against HEAD.
+            if prev and curr:
+                cmd += [prev, curr]
+            elif curr and not prev:
+                cmd += [curr]
+
+            if filename:
+                cmd += ["--", filename]
+            return cmd
+        except Exception as e:
+            self.printException(e, "build_diff_cmd failed")
+            return ["git", "diff"]
+
     def change_layout(self, newlayout: str) -> None:
         """Change column layout using a named layout."""
         try:
@@ -1477,20 +1762,218 @@ class GitHistoryNavTool(App):
                 self.printException(e, "setting _current_layout in change_layout")
         except Exception as e:
             self.printException(e, f"change_layout {newlayout}")
+    def change_state(
+        self, layout: Optional[str] = None, focus: Optional[str] = None, footer: Optional[Text | str] = None
+    ) -> None:
+        """Change to the provided layout/focus/footer immediately.
 
-    def save_state(self) -> dict:
+        This applies the requested layout, focus, and footer using existing
+        helpers and records the current values for save/restore semantics.
+        """
         try:
-            return {"dummy": True}
-        except Exception as e:
-            printException(e, "save_state failed")
-            return {}
+            logger.debug(f"change_state(layout={layout}, focus={focus}, footer={footer}) - applying requested changes")
 
-    def restore_state(self, state: dict | None = None) -> None:
-        try:
-            # no-op for now
-            return None
+            if layout is not None:
+                try:
+                    self.change_layout(layout)
+                except Exception as e:
+                    self.printException(e, "change_state.change_layout failed")
+            if focus is not None:
+                try:
+                    self.change_focus(focus)
+                except Exception as e:
+                    self.printException(e, "change_state.change_focus failed")
+            if footer is not None:
+                try:
+                    self.change_footer(footer)
+                except Exception as e:
+                    self.printException(e, "change_state.change_footer failed")
+
+            # change_layout/change_focus/change_footer are responsible for
+            # recording their own current values; do not duplicate here.
+
         except Exception as e:
-            printException(e, "restore_state failed")
+            self.printException(e, "change_state outer failure")
+
+    def save_state(self) -> None:
+        """Save the current single-value state (layout, focus, footer).
+
+        This is a single-slot save; calling multiple times overwrites the slot.
+        """
+        try:
+            self._saved_state = (getattr(self, "_current_layout", None), getattr(self, "_current_focus", None), getattr(self, "_current_footer", None))
+            logger.debug(f"save_state: saved={self._saved_state}")
+        except Exception as e:
+            self.printException(e, "save_state failed")
+
+    def restore_state(self) -> None:
+        """Restore the state saved by `save_state`.
+
+        Raises RuntimeError if no saved state exists.
+        """
+        try:
+            s = self._saved_state
+            if s is None:
+                raise RuntimeError("restore_state called without a prior save_state")
+
+            layout, focus, footer = s
+
+            logger.debug(f"restore_state: restoring layout={layout} focus={focus} footer={footer}")
+            try:
+                self.change_state(layout, focus, footer)
+            except Exception as e:
+                self.printException(e, "restore_state.change_state failed")
+
+            # clear saved slot after restore
+            try:
+                self._saved_state = None
+            except Exception:
+                pass
+        except Exception as e:
+            self.printException(e, "restore_state failed")
+
+    def change_focus(self, target: str) -> None:
+        """Change focus to the given widget id (safely).
+
+        Records the desired focus id for save/restore semantics.
+        """
+        try:
+            def _do():
+                sel = str(target)
+                if sel.startswith("#"):
+                    key = sel[1:]
+                else:
+                    key = sel
+
+                widget = None
+                label_name = None
+
+                # Reset title label classes
+                try:
+                    title_ids = [
+                        LEFT_FILE_TITLE,
+                        LEFT_HISTORY_TITLE,
+                        RIGHT_HISTORY_TITLE,
+                        RIGHT_FILE_TITLE,
+                        DIFF_TITLE,
+                        HELP_TITLE,
+                    ]
+                    for tid in title_ids:
+                        try:
+                            lbl = self.query_one(f"#{tid}", Label)
+                            try:
+                                lbl.set_class(False, "active")
+                            except Exception:
+                                try:
+                                    lbl.remove_class("active")
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                except Exception as e:
+                    self.printException(e, "change_focus resetting title label classes failed")
+
+                if key == LEFT_FILE_LIST_ID:
+                    widget = getattr(self, "file_mode_file_list", None)
+                    label_name = LEFT_FILE_TITLE
+                elif key == LEFT_HISTORY_LIST_ID:
+                    widget = getattr(self, "repo_mode_history_list", None)
+                    label_name = LEFT_HISTORY_TITLE
+                elif key == RIGHT_FILE_LIST_ID:
+                    widget = getattr(self, "repo_mode_file_list", None)
+                    label_name = RIGHT_FILE_TITLE
+                elif key == RIGHT_HISTORY_LIST_ID:
+                    widget = getattr(self, "file_mode_history_list", None)
+                    label_name = RIGHT_HISTORY_TITLE
+                elif key == DIFF_LIST_ID:
+                    widget = getattr(self, "diff_list", None)
+                    label_name = DIFF_TITLE
+                elif key == HELP_LIST_ID:
+                    widget = getattr(self, "help_list", None)
+                    label_name = HELP_TITLE
+                else:
+                    logger.warning(f"change_focus: unknown canonical focus target {target}")
+                    return
+
+                try:
+                    if widget is not None:
+                        try:
+                            self.set_focus(widget)
+                        except Exception:
+                            try:
+                                widget.focus()
+                            except Exception:
+                                pass
+                        # best-effort normalize index/scroll for file lists
+                        try:
+                            if hasattr(widget, "index"):
+                                idx = getattr(widget, "index", None)
+                                if idx is None:
+                                    widget.index = getattr(widget, "_min_index", 0) or 0
+                        except Exception:
+                            pass
+
+                except Exception as e:
+                    self.printException(e, f"could not focus resolved widget for {target}")
+
+                # Update title label
+                try:
+                    if label_name:
+                        try:
+                            title_lbl = self.query_one(f"#{label_name}", Label)
+                            try:
+                                title_lbl.set_class(True, "active")
+                            except Exception:
+                                try:
+                                    title_lbl.add_class("active")
+                                except Exception:
+                                    pass
+                        except Exception as e:
+                            self.printException(e, f"could not update title label {label_name}")
+                except Exception as e:
+                    self.printException(e, "change_focus: updating title label failed")
+
+            try:
+                self.call_after_refresh(_do)
+            except Exception:
+                _do()
+
+            # record desired focus target for save/restore
+            try:
+                sel = str(target)
+                if sel.startswith("#"):
+                    key = sel
+                else:
+                    key = f"#{sel}"
+                self._current_focus = key
+            except Exception as e:
+                self.printException(e, "change_focus recording _current_focus failed")
+        except Exception as e:
+            self.printException(e, "change_focus outer failure")
+
+    def change_footer(self, value: Text | str) -> None:
+        """Set the footer to `value` (Text or str) immediately and record it."""
+        try:
+            txt = value if isinstance(value, Text) else Text(str(value))
+            try:
+                footer = None
+                try:
+                    footer = self.query_one("#footer", Label)
+                except Exception:
+                    footer = None
+                if footer is not None:
+                    try:
+                        footer.update(txt)
+                    except Exception:
+                        pass
+            except Exception as e:
+                self.printException(e, "could not update footer in change_footer")
+            try:
+                self._current_footer = txt
+            except Exception as e:
+                self.printException(e, "change_footer recording _current_footer failed")
+        except Exception as e:
+            self.printException(e, "change_footer outer failure")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

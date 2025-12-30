@@ -350,6 +350,7 @@ Error / logging expectations
 Assumptions and axioms
 - Axioms: follow the canonical guidance in "Error / logging expectations" (no bare `except:`; use `self.printException` for unexpected errors), prefer scheduled callbacks for DOM-dependent work (see 'Interplay and lifecycle') over polling, and use single-slot `save_state`/`restore_state` for temporary overlays.
 - Axiom: attributes produced by `argparse` may be accessed directly on the parsed `Namespace` (e.g. `args.debug`, `args.repo_hash`). Do not use `getattr(args, ...)` for arguments parsed by `argparse`.
+ - Axiom: attributes defined in an object's `__init__` must be accessed directly as `self.attr` (do not use `getattr(self, 'attr', ...)` for attributes you initialize in `__init__`).
 - Highlight constants: `HIGHLIGHT_FILELIST_BG`/`HIGHLIGHT_FILELIST_STYLE` for FileList classes, and `HIGHLIGHT_REPOLIST_BG`/`HIGHLIGHT_REPOLIST_STYLE` for RepoList classes.
 - Other assumptions: help rendered as Markdown; pseudo entries `STAGED`/`MODS` represent staged and unstaged changes; consistent highlight styling applied to ListItem and inner Label; layouts controlled by named states and `change_state` is immediate (no stack).
 
