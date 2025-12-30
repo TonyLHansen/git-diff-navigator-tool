@@ -22,8 +22,7 @@ HIGHLIGHT_FILELIST_STYLE = f"white on {HIGHLIGHT_FILELIST_BG}"
 HIGHLIGHT_REPOLIST_BG = "#3333CC"
 HIGHLIGHT_REPOLIST_STYLE = f"white on {HIGHLIGHT_REPOLIST_BG}"
 
-# Enable debug logging to tmp/debug.log when True
-DOLOGGING = True
+# Debug logging is configured at runtime via CLI; remove global flag
 
 # Optional pygit2 support — best-effort import to enable repo status checks
 try:
@@ -80,17 +79,7 @@ from textual.widgets import ListView, Label, ListItem, Footer, Header
 
 
 # --- Logging setup --------------------------------------------------------
-if DOLOGGING:
-    try:
-        os.makedirs("tmp", exist_ok=True)
-    except Exception:
-        pass
-    logging.basicConfig(
-        filename="tmp/debug.log",
-        level=logging.DEBUG,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-    logging.getLogger().setLevel(logging.DEBUG)
+# NOTE: logging is configured in `main()` when `--debug` is passed.
 
 logger = logging.getLogger(__name__)
 
@@ -1048,21 +1037,7 @@ class RepoModeHistoryList(HistoryListBase):
             self.printException(e, "prepRepoModeHistoryList failed")
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="gitdiffnavtool.py")
-    p.add_argument("path", nargs="?", default=".", help="directory or file to open")
-    p.add_argument("-C", "--no-color", dest="no_color", action="store_true", help="start with diff colorization off")
-    p.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
-    p.add_argument("-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)")
-    p.add_argument(
-        "-R",
-        "--repo-hash",
-        dest="repo_hash",
-        action="append",
-        metavar="HASH",
-        help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
-    )
-    return p
+# `build_arg_parser` moved next to `main()` to keep CLI wiring centralized.
 
 
 HELP_TEXT = """
@@ -1519,6 +1494,22 @@ class GitHistoryNavTool(App):
         except Exception as e:
             printException(e, "restore_state failed")
 
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="gitdiffnavtool.py")
+    p.add_argument("path", nargs="?", default=".", help="directory or file to open")
+    p.add_argument("-C", "--no-color", dest="no_color", action="store_true", help="start with diff colorization off")
+    p.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
+    p.add_argument("-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)")
+    p.add_argument(
+        "-R",
+        "--repo-hash",
+        dest="repo_hash",
+        action="append",
+        metavar="HASH",
+        help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
+    )
+    return p
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = build_arg_parser()
