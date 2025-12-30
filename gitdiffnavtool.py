@@ -59,6 +59,8 @@ from textual import events
 from textual.app import App
 from textual.containers import Horizontal, Vertical
 from textual.widgets import ListView, Label, ListItem, Footer, Header
+
+
 # --- Logging setup --------------------------------------------------------
 if DOLOGGING:
     try:
@@ -110,6 +112,10 @@ class AppBase(ListView):
         self.current_prev_sha = None
         self.current_commit_sha = None
         self.current_diff_file = None
+        # When True the next watch_index-triggered scroll should animate
+        # (used by page up / page down handlers to make the jump more
+        # visually noticeable).
+        self._page_scroll = False
 
     def printException(self, e: Exception, msg: Optional[str] = None) -> None:
         try:
@@ -262,22 +268,37 @@ class AppBase(ListView):
                         # Use a lambda so `call_after_refresh` calls a single-arg
                         # callable and we don't accidentally pass extra positional
                         # args that cause TypeError in scroll_to_widget.
+                        animate = False
+                        try:
+                            animate = bool(getattr(self, "_page_scroll", False))
+                        except Exception:
+                            animate = False
+                        logger.debug("watch_index: scroll animate=%s for index %s", animate, new)
                         if hasattr(self, "scroll_to_widget"):
                             try:
-                                logger.debug("watch_index: scheduling scroll_to_widget for index %s", new)
-                                self.call_after_refresh(lambda: self.scroll_to_widget(node_new, animate=False))
+                                self.call_after_refresh(lambda: self.scroll_to_widget(node_new, animate=animate))
                             except Exception as e:
-                                self.printException(e, "watch_index: scroll_to_widget animate=False failed")
+                                self.printException(e, "watch_index: scroll_to_widget(animate=) failed")
                                 try:
                                     self.call_after_refresh(lambda: self.scroll_to_widget(node_new))
                                 except Exception as e2:
                                     self.printException(e2, "watch_index: scroll_to_widget(node_new) fallback failed")
                         else:
                             try:
+                                # Some nodes expose scroll_visible; attempt to call
+                                # it (non-animated) as a fallback.
                                 logger.debug("watch_index: scheduling node_new.scroll_visible for index %s", new)
                                 self.call_after_refresh(lambda: getattr(node_new, "scroll_visible", lambda *a, **k: None)(True))
                             except Exception as e:
                                 self.printException(e, "watch_index: node_new.scroll_visible failed")
+                        # Reset the page_scroll flag after scheduling
+                        try:
+                            if getattr(self, "_page_scroll", False):
+                                self._page_scroll = False
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        self.printException(e, "watch_index: scrolling new node failed")
                     except Exception as e:
                         self.printException(e, "watch_index: scrolling new node failed")
                 except Exception as e:
@@ -403,6 +424,11 @@ class AppBase(ListView):
             # visual highlight immediately instead of relying on scheduled calls.
             # Use _activate_index which schedules the index change after refresh
             try:
+                # Mark that this was a page-scroll so watch_index uses animation
+                try:
+                    self._page_scroll = True
+                except Exception:
+                    pass
                 self._activate_index(new_index)
             except Exception as e:
                 self.printException(e, "key_page_down: activate failed")
@@ -449,6 +475,10 @@ class AppBase(ListView):
             new_index = max(current_index - page_size, min_idx)
             # Use _activate_index which schedules the index change after refresh
             try:
+                try:
+                    self._page_scroll = True
+                except Exception:
+                    pass
                 self._activate_index(new_index)
             except Exception as e:
                 self.printException(e, "key_page_up: activate failed")
