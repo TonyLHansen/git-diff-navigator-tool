@@ -22,7 +22,6 @@ HIGHLIGHT_FILELIST_STYLE = f"white on {HIGHLIGHT_FILELIST_BG}"
 HIGHLIGHT_REPOLIST_BG = "#3333CC"
 HIGHLIGHT_REPOLIST_STYLE = f"white on {HIGHLIGHT_REPOLIST_BG}"
 
-# Debug logging is configured at runtime via CLI; remove global flag
 
 # Optional pygit2 support — best-effort import to enable repo status checks
 try:
@@ -1037,7 +1036,6 @@ class RepoModeHistoryList(HistoryListBase):
             self.printException(e, "prepRepoModeHistoryList failed")
 
 
-# `build_arg_parser` moved next to `main()` to keep CLI wiring centralized.
 
 
 HELP_TEXT = """
@@ -1516,7 +1514,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     # Configure logging if debug file requested
     try:
-        if getattr(args, "debug", None):
+        if args.debug:
             try:
                 os.makedirs(os.path.dirname(args.debug) or "", exist_ok=True)
             except Exception:
@@ -1531,7 +1529,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         # If repo-hash provided, validate count and imply repo-first
         repo_hashes = None
-        if getattr(args, "repo_hash", None):
+        if args.repo_hash:
             repo_hashes = args.repo_hash
             if len(repo_hashes) > 2:
                 printException(ValueError("--repo-hash may be specified at most twice"), "argument error")

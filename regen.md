@@ -62,6 +62,7 @@ Plan (steps with pause points)
    - Create `gitdiffnavtool.py` header, imports, logging setup and constants block:
      - `HIGHLIGHT_FILELIST_BG`, `HIGHLIGHT_FILELIST_STYLE`, `HIGHLIGHT_REPOLIST_BG`, `HIGHLIGHT_REPOLIST_STYLE`, `DOLOGGING`
    - Add `__main__` guard and an argparse CLI stub with `--no-color`, `--repo-first`, `-d/--debug FILE` and `-R/--repo-hash HASH` (repeatable up to twice). `-R` implies `--repo-first` and the provided hashes will be passed to the app to initialize repo-mode selections. Also include positional `path`.
+   - Axiom: attributes produced by `argparse` may be accessed directly on the parsed `Namespace` (e.g. `args.debug`, `args.repo_hash`); do not use `getattr` to read argparse outputs.
    - Add small `logger = logging.getLogger(__name__)` and `printException` module helper used when `self` is not available.
    - PAUSE: output the new `gitdiffnavtool.py` file and stop.
    - Tests/validation: run `python -m py_compile gitdiffnavtool.py` (or equivalent). Expect: no syntax errors.
