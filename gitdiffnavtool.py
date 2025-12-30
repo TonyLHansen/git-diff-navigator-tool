@@ -163,6 +163,23 @@ class AppBase(ListView):
             self.printException(e, "extracting label text")
             return str(lbl)
 
+    def nodes(self):
+        """Return the underlying nodes list or an empty list if unset.
+
+        Uses getattr to tolerate Textual internals not being present yet.
+        """
+        try:
+            # Prefer the public `children` live view when available so callers
+            # observe the current DOM without allocating a snapshot.
+            n = getattr(self, "children", None)
+            if n:
+                return n
+            # Fall back to the internal _nodes sequence when children isn't set.
+            n = getattr(self, "_nodes", None)
+            return n if n else []
+        except Exception:
+            return []
+
     def _activate_index(self, new_index: int) -> None:
         """Set the active/selected index and update ListItem 'active' class.
 
@@ -170,7 +187,7 @@ class AppBase(ListView):
         and schedules the index change with `call_after_refresh` when possible.
         """
         try:
-            nodes = getattr(self, "_nodes", None) or []
+            nodes = self.nodes()
             if not nodes:
                 return
             old = self.index
@@ -215,7 +232,7 @@ class AppBase(ListView):
         inline styles here overrides the default selection background.
         """
         try:
-            nodes = getattr(self, "_nodes", None) or []
+            nodes = self.nodes()
             if not nodes:
                 return
             # determine repo vs file highlight colors
@@ -270,7 +287,7 @@ class AppBase(ListView):
                         # args that cause TypeError in scroll_to_widget.
                         animate = False
                         try:
-                            animate = bool(getattr(self, "_page_scroll", False))
+                            animate = bool(self._page_scroll)
                         except Exception:
                             animate = False
                         logger.debug("watch_index: scroll animate=%s for index %s", animate, new)
@@ -293,7 +310,7 @@ class AppBase(ListView):
                                 self.printException(e, "watch_index: node_new.scroll_visible failed")
                         # Reset the page_scroll flag after scheduling
                         try:
-                            if getattr(self, "_page_scroll", False):
+                            if self._page_scroll:
                                 self._page_scroll = False
                         except Exception:
                             pass
@@ -314,7 +331,7 @@ class AppBase(ListView):
         `_hash`, or node text equality. For hashes allow prefix matching.
         """
         try:
-            nodes = getattr(self, "_nodes", None) or []
+            nodes = self.nodes()
             if not nodes:
                 return
             if match:
@@ -392,7 +409,7 @@ class AppBase(ListView):
                 except Exception as e:
                     self.printException(e, "key_down: event.stop failed")
             cur = self.index or (self._min_index or 0)
-            nodes = getattr(self, "_nodes", None) or []
+            nodes = self.nodes()
             if not nodes:
                 return
             new_index = min(len(nodes) - 1, cur + 1)
@@ -402,13 +419,13 @@ class AppBase(ListView):
 
     def key_page_down(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("key_page_down invoked: index=%r nodes=%r", getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+            logger.debug("key_page_down invoked: index=%r nodes=%r", getattr(self, 'index', None), len(self.nodes()))
             if event is not None:
                 try:
                     event.stop()
                 except Exception as e:
                     self.printException(e, "key_page_down: event.stop failed")
-            nodes = getattr(self, "_nodes", None) or []
+            nodes = self.nodes()
             if not nodes:
                 return
             current_index = self.index or 0
@@ -440,27 +457,27 @@ class AppBase(ListView):
     # aliases that delegate to the canonical handlers so keys are handled.
     def key_pageup(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pageup invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+            logger.debug("alias key_pageup invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(self.nodes()))
         except Exception:
             pass
         return self.key_page_down(event)
 
     def key_pagedown(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pagedown invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+            logger.debug("alias key_pagedown invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(self.nodes()))
         except Exception:
             pass
         return self.key_page_down(event)
 
     def key_page_up(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("key_page_up invoked: index=%r nodes=%r", getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+            logger.debug("key_page_up invoked: index=%r nodes=%r", getattr(self, 'index', None), len(self.nodes()))
             if event is not None:
                 try:
                     event.stop()
                 except Exception as e:
                     self.printException(e, "key_page_up: event.stop failed")
-            nodes = getattr(self, "_nodes", None) or []
+            nodes = self.nodes()
             if not nodes:
                 return
             current_index = self.index or 0
@@ -487,14 +504,14 @@ class AppBase(ListView):
 
     def key_pageup(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pageup invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+            logger.debug("alias key_pageup invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(self.nodes()))
         except Exception:
             pass
         return self.key_page_up(event)
 
     def key_pagedown(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pagedown invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+            logger.debug("alias key_pagedown invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(self.nodes()))
         except Exception:
             pass
         return self.key_page_down(event)
@@ -577,7 +594,7 @@ class FileListBase(AppBase):
     def _highlight_filename(self, filename: str) -> None:
         """Find the first node matching `filename` and move the index there."""
         try:
-            nodes = getattr(self, "_nodes", None) or []
+            nodes = self.nodes()
             for i, node in enumerate(nodes):
                 try:
                     text = self.text_of(node)
@@ -673,7 +690,7 @@ class FileModeFileList(FileListBase):
         # Enter directory or open history for the selected file.
         try:
             idx = self.index or 0
-            nodes = getattr(self, "_nodes", None) or []
+            nodes = self.nodes()
             if 0 <= idx < len(nodes):
                 filename = self._child_filename(nodes[idx])
                 self._enter_directory(filename)
@@ -727,7 +744,7 @@ class RepoModeFileList(FileListBase):
         # Open diff view for selected file (stub)
         try:
             idx = self.index or 0
-            nodes = getattr(self, "_nodes", None) or []
+            nodes = self.nodes()
             if 0 <= idx < len(nodes):
                 filename = self._child_filename(nodes[idx])
                 logger.debug("RepoModeFileList open diff for %s", filename)
@@ -758,7 +775,7 @@ class HistoryListBase(AppBase):
         try:
             if idx is None:
                 idx = self.index or 0
-            nodes = getattr(self, "_nodes", None) or []
+            nodes = self.nodes()
             if not (0 <= idx < len(nodes)):
                 return
             node = nodes[idx]
