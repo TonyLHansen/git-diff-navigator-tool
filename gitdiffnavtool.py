@@ -102,6 +102,7 @@ def printException(e: Exception, msg: Optional[str] = None) -> None:
             # If even stderr fails, give up quietly
             pass
 
+
 class AppBase(ListView):
     """Base widget class for list-like components providing shared helpers.
 
@@ -198,9 +199,7 @@ class AppBase(ListView):
             old = self.index
             # determine highlight colors based on widget type (repo vs file)
             try:
-                is_repo_mode = (
-                    isinstance(self, RepoModeFileList) or isinstance(self, RepoModeHistoryList)
-                )
+                is_repo_mode = isinstance(self, RepoModeFileList) or isinstance(self, RepoModeHistoryList)
             except Exception as e:
                 # If classes aren't available, default to file highlight
                 self.printException(e, "_activate_index: repo-mode detection failed")
@@ -242,9 +241,7 @@ class AppBase(ListView):
                 return
             # determine repo vs file highlight colors
             try:
-                is_repo_mode = (
-                    isinstance(self, RepoModeFileList) or isinstance(self, RepoModeHistoryList)
-                )
+                is_repo_mode = isinstance(self, RepoModeFileList) or isinstance(self, RepoModeHistoryList)
             except Exception as e:
                 self.printException(e, "watch_index: repo-mode detection failed")
                 is_repo_mode = False
@@ -282,7 +279,9 @@ class AppBase(ListView):
                         node_new.styles.background = highlight_bg
                         node_new.styles.color = text_color
                         node_new.styles.text_style = "bold"
-                        logger.debug("watch_index: applied highlight to new index %s text=%s", new, self.text_of(node_new))
+                        logger.debug(
+                            "watch_index: applied highlight to new index %s text=%s", new, self.text_of(node_new)
+                        )
                     except Exception as e:
                         self.printException(e, "watch_index: applying new highlight failed")
                     # Ensure the newly-highlighted node is scrolled into view.
@@ -310,7 +309,9 @@ class AppBase(ListView):
                                 # Some nodes expose scroll_visible; attempt to call
                                 # it (non-animated) as a fallback.
                                 logger.debug("watch_index: scheduling node_new.scroll_visible for index %s", new)
-                                self.call_after_refresh(lambda: getattr(node_new, "scroll_visible", lambda *a, **k: None)(True))
+                                self.call_after_refresh(
+                                    lambda: getattr(node_new, "scroll_visible", lambda *a, **k: None)(True)
+                                )
                             except Exception as e:
                                 self.printException(e, "watch_index: node_new.scroll_visible failed")
                         # Reset the page_scroll flag after scheduling
@@ -462,14 +463,24 @@ class AppBase(ListView):
     # aliases that delegate to the canonical handlers so keys are handled.
     def key_pageup(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pageup invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), self.index, len(self.nodes()))
+            logger.debug(
+                "alias key_pageup invoked: key=%r index=%r nodes=%r",
+                getattr(event, "key", None),
+                self.index,
+                len(self.nodes()),
+            )
         except Exception:
             pass
         return self.key_page_down(event)
 
     def key_pagedown(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pagedown invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), self.index, len(self.nodes()))
+            logger.debug(
+                "alias key_pagedown invoked: key=%r index=%r nodes=%r",
+                getattr(event, "key", None),
+                self.index,
+                len(self.nodes()),
+            )
         except Exception:
             pass
         return self.key_page_down(event)
@@ -509,14 +520,24 @@ class AppBase(ListView):
 
     def key_pageup(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pageup invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), self.index, len(self.nodes()))
+            logger.debug(
+                "alias key_pageup invoked (alt): key=%r index=%r nodes=%r",
+                getattr(event, "key", None),
+                self.index,
+                len(self.nodes()),
+            )
         except Exception:
             pass
         return self.key_page_up(event)
 
     def key_pagedown(self, event: events.Key | None = None) -> None:
         try:
-            logger.debug("alias key_pagedown invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), self.index, len(self.nodes()))
+            logger.debug(
+                "alias key_pagedown invoked (alt): key=%r index=%r nodes=%r",
+                getattr(event, "key", None),
+                self.index,
+                len(self.nodes()),
+            )
         except Exception:
             pass
         return self.key_page_down(event)
@@ -618,8 +639,6 @@ class FileListBase(AppBase):
                     return
         except Exception as e:
             self.printException(e, "_highlight_filename failed")
-
-    
 
     def watch_index(self, old, new) -> None:
         # Placeholder watch — concrete subclasses may override
@@ -1131,8 +1150,6 @@ class RepoModeHistoryList(HistoryListBase):
             self.printException(e, "prepRepoModeHistoryList failed")
 
 
-
-
 HELP_TEXT = """
 gitdiffnavtool help
 
@@ -1300,7 +1317,14 @@ class GitHistoryNavTool(App):
 
     CSS = INLINE_CSS
 
-    def __init__(self, path: str = ".", no_color: bool = False, repo_first: bool = False, repo_hashes: list | None = None, **kwargs):
+    def __init__(
+        self,
+        path: str = ".",
+        no_color: bool = False,
+        repo_first: bool = False,
+        repo_hashes: list | None = None,
+        **kwargs,
+    ):
         # Accept CLI options here so the app can inspect them during mount
         super().__init__(**kwargs)
         try:
@@ -1464,7 +1488,7 @@ class GitHistoryNavTool(App):
                                 self.printException(e, "on_mount: initializing repo hashes failed")
                     except Exception as e:
                         self.printException(e, "on_mount: initializing repo hashes failed")
-                    
+
                     # Ensure help content is prepared so help is immediately available
                     try:
                         if getattr(self, "help_list", None) is not None:
@@ -1727,7 +1751,9 @@ class GitHistoryNavTool(App):
         except Exception as e:
             self.printException(e, "error applying column layout")
 
-    def build_diff_cmd(self, filename: str | None, prev: str | None, curr: str | None, variant_index: int | None = None) -> list[str]:
+    def build_diff_cmd(
+        self, filename: str | None, prev: str | None, curr: str | None, variant_index: int | None = None
+    ) -> list[str]:
         """Return a git diff command list for the given filenames and commit-ish pair.
 
         This is a small helper used by `DiffList.prepDiffList` to centralize
@@ -1784,6 +1810,7 @@ class GitHistoryNavTool(App):
                 self.printException(e, "setting _current_layout in change_layout")
         except Exception as e:
             self.printException(e, f"change_layout {newlayout}")
+
     def change_state(
         self, layout: Optional[str] = None, focus: Optional[str] = None, footer: Optional[Text | str] = None
     ) -> None:
@@ -1823,7 +1850,11 @@ class GitHistoryNavTool(App):
         This is a single-slot save; calling multiple times overwrites the slot.
         """
         try:
-            self._saved_state = (getattr(self, "_current_layout", None), getattr(self, "_current_focus", None), getattr(self, "_current_footer", None))
+            self._saved_state = (
+                getattr(self, "_current_layout", None),
+                getattr(self, "_current_focus", None),
+                getattr(self, "_current_footer", None),
+            )
             logger.debug(f"save_state: saved={self._saved_state}")
         except Exception as e:
             self.printException(e, "save_state failed")
@@ -1860,6 +1891,7 @@ class GitHistoryNavTool(App):
         Records the desired focus id for save/restore semantics.
         """
         try:
+
             def _do():
                 sel = str(target)
                 if sel.startswith("#"):
@@ -2003,7 +2035,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("path", nargs="?", default=".", help="directory or file to open")
     p.add_argument("-C", "--no-color", dest="no_color", action="store_true", help="start with diff colorization off")
     p.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
-    p.add_argument("-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)")
+    p.add_argument(
+        "-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)"
+    )
     p.add_argument(
         "-R",
         "--repo-hash",
@@ -2013,6 +2047,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
     )
     return p
+
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = build_arg_parser()
@@ -2044,7 +2079,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         # Wire CLI into the Textual app and run it.
         logger.debug("Starting GitHistoryNavTool; args=%s", args)
-        app = GitHistoryNavTool(path=args.path, no_color=args.no_color, repo_first=args.repo_first, repo_hashes=repo_hashes)
+        app = GitHistoryNavTool(
+            path=args.path, no_color=args.no_color, repo_first=args.repo_first, repo_hashes=repo_hashes
+        )
         # Run the textual app (blocks until exit)
         app.run()
         return 0
