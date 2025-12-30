@@ -97,6 +97,12 @@ Plan (steps with pause points)
 5) Implement `DiffList` and `HelpList`
    - `DiffList(AppBase)` with `prepDiffList(filename, prev, curr, variant_index=None)`, colorization toggle, `key_c`, `key_d`, `key_f` handlers, and safe rendering into the ListView (append ListItem(Label(Text(...))))
    - `HelpList(AppBase)` should render `HELP_TEXT` as Rich Markdown blocks split into ListItems and implement a `key_` handler to restore state via `self.app.restore_state()`.
+
+      Help screen specifics:
+      - The help content is static and should be prepopulated during `GitHistoryNavTool.on_mount()` by calling `self.help_list.prepHelp()` so it is ready immediately when requested.
+      - The app-level help key handlers (`key_h`, `key_H`, `key_question`) must call `self.save_state()` then `self.change_state("help_fullscreen", "#help-list", footer_text)` to show the help overlay and focus the `HelpList`. Do not call `prepHelp()` from within the key handler — help is prepared at mount time.
+      - The help footer should be a `rich.Text` object (e.g. `Text("Help: press Enter to return")`).
+      - `HelpList.key_enter()` should call `self.app.restore_state()` to return to the prior UI state.
    - PAUSE: present these classes and stop.
    - Tests/validation: py_compile and inspect that `prepDiffList` runs for a small synthetic diff string.
 
@@ -113,6 +119,7 @@ Plan (steps with pause points)
    - Inline CSS is stored in the module as `INLINE_CSS` and assigned to the app via `GitHistoryNavTool.CSS = INLINE_CSS` (no external `CSS_PATH`).
    - `compose()` should build the six canonical widgets and title labels (left-file, left-history, right-history, right-file, diff, help) using the canonical ids described elsewhere (e.g. `left-file-list`, `left-file-title`, etc.).
    - `on_mount()` should resolve widgets by their canonical ids (querying `#left-file-list`, `#right-history-list`, `#diff-list`, ...) and call the appropriate `prep*` methods (for the initial path or repo-first flow).
+   - `on_mount()` must also prepopulate the help content by calling `self.help_list.prepHelp()` after resolving the canonical `HelpList` widget so help is immediately available without runtime prep.
    - Implement navigation key handlers so the UI is testable with the stub data:
       - Add implementations for `up`, `down`, `pageup`, `pagedown`, `home`, and `end` that change the currently-selected item in the active list widget and update its visible highlight.
       - Implement this at the `AppBase`/`FileListBase`/`RepoListBase` level (via `key_*` methods) so concrete lists inherit correct behavior.

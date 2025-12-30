@@ -322,6 +322,13 @@ Headers and footers
 Help rendering
 - HELP_TEXT is markdown; rendered via Rich Markdown in HelpList, split into blocks and appended to ListView so paging keys work.
 
+Help screen behavior
+- The help text is static and is prepared once during application startup (`on_mount`) so the `HelpList` is populated and ready immediately.
+- Invoking help: pressing `h`, `H`, or `?` is handled at the app level. The app must call `save_state()` before switching to the help overlay, then call `change_state("help_fullscreen", "#help-list", footer_text)` to show the help column, focus the help widget, and set a contextual footer.
+- The help footer should be a `rich.Text` object such as `Text("Help: press Enter to return")` so it renders consistently with other footers.
+- Do NOT call `prepHelp()` from the help key handler — help is prepopulated during `on_mount` and is static for the session.
+- Exiting help: `HelpList.key_enter()` (or any key in practice) should call `self.app.restore_state()` to return to the previously-saved single-slot state. This relies on the single-slot `save_state()` / `restore_state()` semantics used for transient overlays.
+
 Library usage
 - Textual: layout via `Vertical`/`Horizontal`, widgets `ListView`, `ListItem`, `Label`, focus/events (use `call_after_refresh` for DOM-dependent work; see 'Interplay and lifecycle'), CSS styling for highlight/borders.
 - Rich: `Text` for styled text, `Markdown` for help rendering, `Align` (not heavily used), color styles for statuses and highlights.
