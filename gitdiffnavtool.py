@@ -172,10 +172,6 @@ class AppBase(ListView):
             # Prefer the public `children` live view when available so callers
             # observe the current DOM without allocating a snapshot.
             n = getattr(self, "children", None)
-            if n:
-                return n
-            # Fall back to the internal _nodes sequence when children isn't set.
-            n = getattr(self, "_nodes", None)
             return n if n else []
         except Exception:
             return []
@@ -1142,6 +1138,28 @@ class GitHistoryNavTool(App):
                 self.printException(e, "on_mount: initial prep failed")
         except Exception as e:
             printException(e, "on_mount failed")
+
+    def key_q(self, event: events.Key | None = None) -> None:
+        """Quit the application on `q` keypress (synonym for ^Q)."""
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+            logger.debug("key_q invoked; exiting app")
+            try:
+                # App.exit() is the Textual API to stop the app.
+                self.exit()
+            except Exception:
+                # Fallback to raising SystemExit
+                raise SystemExit(0)
+        except Exception as e:
+            self.printException(e, "key_q failed")
+
+    def key_Q(self, event: events.Key | None = None) -> None:
+        """Uppercase Q also quits."""
+        return self.key_q(event)
 
     def build_repo_cache(self) -> None:
         # Stub: populate lightweight repo metadata for the UI. Later replaced.
