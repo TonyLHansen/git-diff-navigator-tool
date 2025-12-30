@@ -75,6 +75,7 @@ from textual import events
 from textual.app import App
 from textual.containers import Horizontal, Vertical
 from textual.widgets import ListView, Label, ListItem, Footer, Header
+import subprocess
 
 
 # --- Logging setup --------------------------------------------------------
@@ -953,7 +954,10 @@ class HistoryListBase(AppBase):
 
     def _add_row(self, text: str, commit_hash: str | None) -> None:
         try:
-            item = ListItem(Label(Text(text)))
+            # Visible rows are prefixed with two spaces for alignment; keep
+            # `_raw_text` as the original value for metadata and matching.
+            display_text = f"  {text}"
+            item = ListItem(Label(Text(display_text)))
             # Attach helpful metadata for later lookup
             setattr(item, "_hash", commit_hash)
             setattr(item, "_raw_text", text)
@@ -971,17 +975,37 @@ class HistoryListBase(AppBase):
             nodes = self.nodes()
             if not (0 <= idx < len(nodes)):
                 return
-            node = nodes[idx]
-            current = getattr(node, "_checked", False)
-            setattr(node, "_checked", not current)
-            # Optionally mutate label to show a marker
+            # Enforce single-mark semantics: mark the selected item (M ) and
+            # unmark all others. If the selected item was already marked, clear it.
             try:
-                lbl = node.query_one(Label)
-                text = self._extract_label_text(lbl)
-                prefix = "[x] " if not current else "[ ] "
-                lbl.update(Text(prefix + text))
+                selected_node = nodes[idx]
+                was_marked = getattr(selected_node, "_checked", False)
+                # If it was marked, unmark everything; otherwise mark selected and unmark others
+                for i, node in enumerate(nodes):
+                    try:
+                        is_selected = i == idx
+                        if was_marked:
+                            setattr(node, "_checked", False)
+                        else:
+                            setattr(node, "_checked", is_selected)
+
+                        # Update label renderable
+                        try:
+                            lbl = node.query_one(Label)
+                            raw = getattr(node, "_raw_text", "")
+                            if getattr(node, "_checked", False):
+                                # Marked: prefix with 'M ' and apply contrasting style
+                                marked_txt = Text(f"M {raw}", style="bold white on red")
+                                lbl.update(marked_txt)
+                            else:
+                                # Unmarked: two-space prefix (already applied during add), plain style
+                                lbl.update(Text(f"  {raw}"))
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
             except Exception as e:
-                self.printException(e, "HistoryListBase.toggle_check_current label update failed")
+                self.printException(e, "HistoryListBase.toggle_check_current update failed")
         except Exception as e:
             self.printException(e, "toggle_check_current failed")
 
@@ -1081,24 +1105,22 @@ class RepoModeHistoryList(HistoryListBase):
                     cmd = ["git", "-C", repo_root, "log", "--pretty=format:%H\t%ad\t%s", "--date=short", "-n", "200"]
                     out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
                     for ln in out.splitlines():
+                        if not ln:
+                            continue
                         try:
                             parts = ln.split("\t", 2)
-                            h = parts[0]
-                            text = parts[1] + " " + (parts[2] if len(parts) > 2 else "")
-                            self._add_row(text, h)
+                            commit_hash = parts[0]
+                            date_stamp = parts[1] if len(parts) > 1 else ""
+                            msg = parts[2] if len(parts) > 2 else ""
+                            short_hash = commit_hash[:12]
+                            text = f"{date_stamp} {short_hash} {msg}"
+                            self._add_row(text, commit_hash)
                         except Exception as e:
                             self.printException(e, "prepRepoModeHistoryList parse failed")
                 except subprocess.CalledProcessError:
                     pass
                 except Exception as e:
                     self.printException(e, "prepRepoModeHistoryList git log failed")
-            else:
-                try:
-                    for i in range(1, 121):
-                        h = f"{i:040x}"[-20:]
-                        self._add_row(f"repo commit {i} - change", h)
-                except Exception as e:
-                    self.printException(e, "prepRepoModeHistoryList generation failed")
             self._populated = True
             # Default to highlighting top commit for repo history
             try:
