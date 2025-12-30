@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import traceback
 from typing import Optional
@@ -18,11 +19,11 @@ from typing import Optional
 HIGHLIGHT_FILELIST_BG = "#f1c40f"
 HIGHLIGHT_FILELIST_STYLE = f"white on {HIGHLIGHT_FILELIST_BG}"
 
-HIGHLIGHT_REPOLIST_BG = "#44475a"
+HIGHLIGHT_REPOLIST_BG = "#3333CC"
 HIGHLIGHT_REPOLIST_STYLE = f"white on {HIGHLIGHT_REPOLIST_BG}"
 
 # Enable debug logging to tmp/debug.log when True
-DOLOGGING = False
+DOLOGGING = True
 
 # Inline CSS used by the Textual App (can be edited in-place)
 INLINE_CSS = """
@@ -46,8 +47,13 @@ ListView {
     padding: 0 1;
 }
 
-"""
+/* Highlight active list item */
+ListItem.active {
+    background: $accent-darken-1;
+    color: white;
+}
 
+"""
 from rich.text import Text
 from textual import events
 from textual.app import App
@@ -57,11 +63,16 @@ from textual.widgets import ListView, Label, ListItem, Footer, Header
 
 # --- Logging setup --------------------------------------------------------
 if DOLOGGING:
+    try:
+        os.makedirs("tmp", exist_ok=True)
+    except Exception:
+        pass
     logging.basicConfig(
         filename="tmp/debug.log",
         level=logging.DEBUG,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+    logging.getLogger().setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
@@ -148,41 +159,220 @@ class AppBase(ListView):
             self.printException(e, "extracting label text")
             return str(lbl)
 
+    def _activate_index(self, new_index: int) -> None:
+        """Set the active/selected index and update ListItem 'active' class.
+
+        Deactivates the previously-active item, activates the new item,
+        and schedules the index change with `call_after_refresh` when possible.
+        """
+        try:
+            nodes = getattr(self, "_nodes", None) or []
+            if not nodes:
+                return
+            old = self.index
+            # determine highlight colors based on widget type (repo vs file)
+            try:
+                is_repo_mode = (
+                    isinstance(self, RepoModeFileList) or isinstance(self, RepoModeHistoryList)
+                )
+            except Exception as e:
+                # If classes aren't available, default to file highlight
+                self.printException(e, "_activate_index: repo-mode detection failed")
+                is_repo_mode = False
+
+            if is_repo_mode:
+                highlight_bg = HIGHLIGHT_REPOLIST_BG
+                text_color = "white"
+            else:
+                highlight_bg = HIGHLIGHT_FILELIST_BG
+                text_color = "white"
+
+            # Only set the index here; actual visual activation is performed
+            # in `watch_index` which runs after Textual has processed the index
+            # change so our styles/classes won't be clobbered.
+            try:
+                logger.debug("_activate_index: old=%r new=%r is_repo=%s", old, new_index, is_repo_mode)
+                logger.debug("_activate_index: scheduling index set via call_after_refresh -> %s", new_index)
+                self.call_after_refresh(lambda: setattr(self, "index", new_index))
+            except Exception as e:
+                self.printException(e, "_activate_index: scheduling index set failed")
+                try:
+                    logger.debug("_activate_index: falling back to direct index set -> %s", new_index)
+                    self.index = new_index
+                except Exception as e2:
+                    self.printException(e2, "_activate_index: setting index failed")
+        except Exception as e:
+            self.printException(e, "_activate_index failed")
+
+    def watch_index(self, old: int | None, new: int | None) -> None:
+        """Called when `index` changes — update visual highlighting here.
+
+        This runs after Textual applies its own highlight, so applying
+        inline styles here overrides the default selection background.
+        """
+        try:
+            nodes = getattr(self, "_nodes", None) or []
+            if not nodes:
+                return
+            # determine repo vs file highlight colors
+            try:
+                is_repo_mode = (
+                    isinstance(self, RepoModeFileList) or isinstance(self, RepoModeHistoryList)
+                )
+            except Exception as e:
+                self.printException(e, "watch_index: repo-mode detection failed")
+                is_repo_mode = False
+            highlight_bg = HIGHLIGHT_REPOLIST_BG if is_repo_mode else HIGHLIGHT_FILELIST_BG
+            text_color = "white"
+
+            logger.debug("watch_index: old=%r new=%r nodes=%d", old, new, len(nodes))
+            # remove style/class from old
+            if old is not None and 0 <= old < len(nodes):
+                try:
+                    node_old = nodes[old]
+                    try:
+                        node_old.remove_class("active")
+                    except Exception as e:
+                        self.printException(e, "watch_index: remove_class failed")
+                    try:
+                        node_old.styles.background = None
+                        node_old.styles.color = None
+                        node_old.styles.text_style = None
+                        logger.debug("watch_index: cleared styles for old index %s", old)
+                    except Exception as e:
+                        self.printException(e, "watch_index: clearing old styles failed")
+                except Exception as e:
+                    self.printException(e, "watch_index: deactivating old failed")
+
+            # apply style/class to new
+            if new is not None and 0 <= new < len(nodes):
+                try:
+                    node_new = nodes[new]
+                    try:
+                        node_new.add_class("active")
+                    except Exception as e:
+                        self.printException(e, "watch_index: add_class failed")
+                    try:
+                        node_new.styles.background = highlight_bg
+                        node_new.styles.color = text_color
+                        node_new.styles.text_style = "bold"
+                        logger.debug("watch_index: applied highlight to new index %s text=%s", new, self.text_of(node_new))
+                    except Exception as e:
+                        self.printException(e, "watch_index: applying new highlight failed")
+                    # Ensure the newly-highlighted node is scrolled into view.
+                    try:
+                        # Use a lambda so `call_after_refresh` calls a single-arg
+                        # callable and we don't accidentally pass extra positional
+                        # args that cause TypeError in scroll_to_widget.
+                        if hasattr(self, "scroll_to_widget"):
+                            try:
+                                logger.debug("watch_index: scheduling scroll_to_widget for index %s", new)
+                                self.call_after_refresh(lambda: self.scroll_to_widget(node_new, animate=False))
+                            except Exception as e:
+                                self.printException(e, "watch_index: scroll_to_widget animate=False failed")
+                                try:
+                                    self.call_after_refresh(lambda: self.scroll_to_widget(node_new))
+                                except Exception as e2:
+                                    self.printException(e2, "watch_index: scroll_to_widget(node_new) fallback failed")
+                        else:
+                            try:
+                                logger.debug("watch_index: scheduling node_new.scroll_visible for index %s", new)
+                                self.call_after_refresh(lambda: getattr(node_new, "scroll_visible", lambda *a, **k: None)(True))
+                            except Exception as e:
+                                self.printException(e, "watch_index: node_new.scroll_visible failed")
+                    except Exception as e:
+                        self.printException(e, "watch_index: scrolling new node failed")
+                except Exception as e:
+                    self.printException(e, "watch_index: finding new node failed")
+        except Exception as e:
+            self.printException(e, "watch_index failed")
+
+    def _highlight_match(self, match: Optional[str]) -> None:
+        """Highlight the first node whose raw text or _hash matches `match`.
+
+        If `match` is None or no matching node is found, highlight the top item.
+        Matching rules: exact match against `_raw_text`, exact match against
+        `_hash`, or node text equality. For hashes allow prefix matching.
+        """
+        try:
+            nodes = getattr(self, "_nodes", None) or []
+            if not nodes:
+                return
+            if match:
+                for i, node in enumerate(nodes):
+                    try:
+                        raw = getattr(node, "_raw_text", None)
+                        h = getattr(node, "_hash", None)
+                        if raw == match:
+                            self._activate_index(i)
+                            return
+                        if h is not None and (h == match or str(h).startswith(match)):
+                            self._activate_index(i)
+                            return
+                        # fallback to visible text equality
+                        try:
+                            txt = self.text_of(node)
+                        except Exception as e:
+                            self.printException(e, "_highlight_match: extracting text failed")
+                            txt = str(node)
+                        if txt == match:
+                            self._activate_index(i)
+                            return
+                    except Exception as e:
+                        self.printException(e, "_highlight_match: checking node failed")
+            # No match found; highlight top
+            self._highlight_top()
+        except Exception as e:
+            self.printException(e, "_highlight_match failed")
+
     # Key handlers: prefer `key_` methods on widgets instead of an `on_key` dispatcher.
     # Implement navigation handlers as `key_*` methods so subclasses may override
     # them individually and keep key logic co-located with widget state.
 
-    def key_up(self) -> None:
+    def key_up(self, event: events.Key | None = None) -> None:
         try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "key_up: event.stop failed")
             min_idx = self._min_index or 0
             cur = self.index
             if cur is None:
-                try:
-                    self.index = min_idx
-                except Exception as e:
-                    self.printException(e, "setting index on key_up")
+                self._activate_index(min_idx)
                 return
             if cur <= min_idx:
                 return
-            try:
-                self.action_cursor_up()
-            except Exception as e:
-                self.printException(e, "cursor up failed")
+            new_index = cur - 1
+            self._activate_index(new_index)
         except Exception as e:
             self.printException(e, "key_up outer failure")
 
-    def key_down(self) -> None:
+    def key_down(self, event: events.Key | None = None) -> None:
         try:
-            try:
-                self.action_cursor_down()
-            except Exception as e:
-                self.printException(e, "cursor down failed")
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "key_down: event.stop failed")
+            cur = self.index or (self._min_index or 0)
+            nodes = getattr(self, "_nodes", None) or []
+            if not nodes:
+                return
+            new_index = min(len(nodes) - 1, cur + 1)
+            self._activate_index(new_index)
         except Exception as e:
             self.printException(e, "key_down outer failure")
 
-    def key_page_down(self) -> None:
+    def key_page_down(self, event: events.Key | None = None) -> None:
         try:
-            nodes = self._nodes
+            logger.debug("key_page_down invoked: index=%r nodes=%r", getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "key_page_down: event.stop failed")
+            nodes = getattr(self, "_nodes", None) or []
             if not nodes:
                 return
             current_index = self.index or 0
@@ -194,19 +384,42 @@ class AppBase(ListView):
                 visible_height = 10
             page_size = max(1, visible_height // 2)
             new_index = min(current_index + page_size, len(nodes) - 1)
+            # Set index synchronously so the watch_index runs and updates
+            # visual highlight immediately instead of relying on scheduled calls.
+            # Use _activate_index which schedules the index change after refresh
             try:
-                self.call_after_refresh(lambda: setattr(self, "index", new_index))
+                self._activate_index(new_index)
             except Exception as e:
-                try:
-                    self.index = new_index
-                except Exception as e2:
-                    self.printException(e2, "setting index for page down")
+                self.printException(e, "key_page_down: activate failed")
         except Exception as e:
             self.printException(e, "key_page_down failed")
 
-    def key_page_up(self) -> None:
+    # Alias handlers: terminals/terminfo may report different key names for
+    # page up / page down (e.g. 'pageup', 'pagedown', 'prior', 'next'). Provide
+    # aliases that delegate to the canonical handlers so keys are handled.
+    def key_pageup(self, event: events.Key | None = None) -> None:
         try:
-            nodes = self._nodes
+            logger.debug("alias key_pageup invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+        except Exception:
+            pass
+        return self.key_page_down(event)
+
+    def key_pagedown(self, event: events.Key | None = None) -> None:
+        try:
+            logger.debug("alias key_pagedown invoked: key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+        except Exception:
+            pass
+        return self.key_page_down(event)
+
+    def key_page_up(self, event: events.Key | None = None) -> None:
+        try:
+            logger.debug("key_page_up invoked: index=%r nodes=%r", getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "key_page_up: event.stop failed")
+            nodes = getattr(self, "_nodes", None) or []
             if not nodes:
                 return
             current_index = self.index or 0
@@ -219,42 +432,74 @@ class AppBase(ListView):
             page_size = max(1, visible_height // 2)
             min_idx = self._min_index or 0
             new_index = max(current_index - page_size, min_idx)
+            # Use _activate_index which schedules the index change after refresh
             try:
-                self.call_after_refresh(lambda: setattr(self, "index", new_index))
+                self._activate_index(new_index)
             except Exception as e:
-                try:
-                    self.index = new_index
-                except Exception as e2:
-                    self.printException(e2, "setting index for page up")
+                self.printException(e, "key_page_up: activate failed")
         except Exception as e:
             self.printException(e, "key_page_up failed")
 
-    def key_home(self) -> None:
+    def key_pageup(self, event: events.Key | None = None) -> None:
         try:
-            min_idx = self._min_index or 0
-            try:
-                self.call_after_refresh(lambda: setattr(self, "index", min_idx))
-            except Exception as e:
+            logger.debug("alias key_pageup invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+        except Exception:
+            pass
+        return self.key_page_up(event)
+
+    def key_pagedown(self, event: events.Key | None = None) -> None:
+        try:
+            logger.debug("alias key_pagedown invoked (alt): key=%r index=%r nodes=%r", getattr(event, 'key', None), getattr(self, 'index', None), len(getattr(self, '_nodes', []) or []))
+        except Exception:
+            pass
+        return self.key_page_down(event)
+
+    def key_prior(self, event: events.Key | None = None) -> None:
+        # 'prior' is sometimes used for PageUp
+        return self.key_page_up(event)
+
+    def key_next(self, event: events.Key | None = None) -> None:
+        # 'next' is sometimes used for PageDown
+        return self.key_page_down(event)
+
+    def on_key(self, event: events.Key) -> None:
+        """Lightweight debug logger to surface which key names arrive.
+
+        Only logs keys that look like page/scroll keys to avoid noise.
+        """
+        try:
+            k = getattr(event, "key", None)
+            if not k:
+                return
+            if "page" in k or k in ("prior", "next"):
+                logger.debug("on_key: widget=%s key=%r", type(self).__name__, k)
+        except Exception as e:
+            self.printException(e, "on_key failed")
+
+    def key_home(self, event: events.Key | None = None) -> None:
+        try:
+            if event is not None:
                 try:
-                    self.index = min_idx
-                except Exception as e2:
-                    self.printException(e2, "home key set index failed")
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "key_home: event.stop failed")
+            min_idx = self._min_index or 0
+            self._activate_index(min_idx)
         except Exception as e:
             self.printException(e, "key_home failed")
 
-    def key_end(self) -> None:
+    def key_end(self, event: events.Key | None = None) -> None:
         try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "key_end: event.stop failed")
             nodes = self._nodes
             if not nodes:
                 return
             last_idx = max(0, len(nodes) - 1)
-            try:
-                self.call_after_refresh(lambda: setattr(self, "index", last_idx))
-            except Exception as e:
-                try:
-                    self.index = last_idx
-                except Exception as e2:
-                    self.printException(e2, "end key set index failed")
+            self._activate_index(last_idx)
         except Exception as e:
             self.printException(e, "key_end failed")
 
@@ -296,10 +541,11 @@ class FileListBase(AppBase):
                     text = str(node)
                 if text == filename:
                     try:
-                        self.call_after_refresh(lambda: setattr(self, "index", i))
-                    except Exception as e2:
+                        self.call_after_refresh(lambda: self._activate_index(i))
+                    except Exception as e:
+                        self.printException(e, "_highlight_filename: scheduling index set failed")
                         try:
-                            self.index = i
+                            self._activate_index(i)
                         except Exception as e:
                             self.printException(e, "setting index in _highlight_filename")
                     return
@@ -308,11 +554,11 @@ class FileListBase(AppBase):
 
     def _highlight_top(self) -> None:
         try:
-            self.call_after_refresh(lambda: setattr(self, "index", self._min_index or 0))
+            self.call_after_refresh(lambda: self._activate_index(self._min_index or 0))
         except Exception as e:
+            # call_after_refresh failed; fall back to direct activation
             try:
-                # call_after_refresh failed; fall back to direct index set
-                self.index = self._min_index or 0
+                self._activate_index(self._min_index or 0)
             except Exception as e2:
                 self.printException(e2, "_highlight_top failed")
             self.printException(e, "_highlight_top: call_after_refresh failed")
@@ -320,6 +566,11 @@ class FileListBase(AppBase):
     def watch_index(self, old, new) -> None:
         # Placeholder watch — concrete subclasses may override
         try:
+            # keep existing logging but delegate to base handler for styling
+            try:
+                super().watch_index(old, new)
+            except Exception as e:
+                self.printException(e, "FileListBase.watch_index: base watch failed")
             logger.debug("FileListBase index changed %r -> %r", old, new)
         except Exception as e:
             self.printException(e, "FileListBase.watch_index failed")
@@ -355,18 +606,26 @@ class FileModeFileList(FileListBase):
     def prepFileModeFileList(self, path: str) -> None:
         try:
             self.clear()
-            # Stubbed content: in later steps this will enumerate files.
-            items = [
-                ListItem(Label(Text(f"{path}/file1.txt"))),
-                ListItem(Label(Text(f"{path}/file2.py"))),
-            ]
-            for it in items:
-                try:
-                    self.append(it)
-                except Exception as e:
-                    self.printException(e, "prepFileModeFileList append failed")
+            # Generate a large set of synthetic file entries for testing
+            try:
+                for i in range(1, 121):
+                    name = f"{path}/file_{i:04d}.py"
+                    item = ListItem(Label(Text(name)))
+                    # attach raw text for matching
+                    try:
+                        setattr(item, "_raw_text", name)
+                        self.append(item)
+                    except Exception as e:
+                        self.printException(e, "prepFileModeFileList append failed")
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList generation failed")
             self._populated = True
             self._filename = path
+            # Highlight the item matching the given path if present, else top
+            try:
+                self._highlight_match(path)
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: highlight failed")
         except Exception as e:
             self.printException(e, "prepFileModeFileList failed")
 
@@ -395,16 +654,32 @@ class RepoModeFileList(FileListBase):
     def prepRepoModeFileList(self, prev_hash: str | None, curr_hash: str | None) -> None:
         try:
             self.clear()
-            items = [
-                ListItem(Label(Text(f"changed_file1.py ({prev_hash[:7] if prev_hash else 'prev'})"))),
-                ListItem(Label(Text(f"changed_file2.md ({curr_hash[:7] if curr_hash else 'curr'})"))),
-            ]
-            for it in items:
-                try:
-                    self.append(it)
-                except Exception as e:
-                    self.printException(e, "prepRepoModeFileList append failed")
+            # Generate many changed files with synthetic commit hashes
+            try:
+                for i in range(1, 121):
+                    hprev = (prev_hash or "pv")[:7]
+                    hcurr = (curr_hash or "cr")[:7]
+                    name = f"changed_file_{i:04d}.py ({hprev}/{hcurr})"
+                    item = ListItem(Label(Text(name)))
+                    try:
+                        setattr(item, "_raw_text", name)
+                        # attach a fake hash for matching tests
+                        setattr(item, "_hash", f"{i:040d}" )
+                        self.append(item)
+                    except Exception as e:
+                        self.printException(e, "prepRepoModeFileList append failed")
+            except Exception as e:
+                self.printException(e, "prepRepoModeFileList generation failed")
             self._populated = True
+            # Highlight based on provided hashes (prefer curr_hash)
+            try:
+                target = curr_hash or prev_hash
+                if target:
+                    self._highlight_match(target)
+                else:
+                    self._highlight_top()
+            except Exception as e:
+                self.printException(e, "prepRepoModeFileList: highlight failed")
         except Exception as e:
             self.printException(e, "prepRepoModeFileList failed")
 
@@ -482,7 +757,8 @@ class HistoryListBase(AppBase):
     def on_focus(self) -> None:
         try:
             if self.index is None:
-                self.index = 0
+                # Respect widget-specific minimum index when focusing
+                self.index = self._min_index or 0
         except Exception as e:
             self.printException(e, "HistoryListBase.on_focus")
 
@@ -492,6 +768,21 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "HistoryListBase.on_list_view_highlighted failed")
 
+    def _highlight_top(self) -> None:
+        """Schedule highlighting of the top item for history lists.
+
+        Use `self._min_index` so subclasses can adjust the logical top.
+        """
+        try:
+            top = self._min_index or 0
+            self.call_after_refresh(lambda: self._activate_index(top))
+        except Exception as e:
+            try:
+                self._activate_index(self._min_index or 0)
+            except Exception as e2:
+                self.printException(e2, "HistoryListBase._highlight_top fallback failed")
+            self.printException(e, "HistoryListBase._highlight_top failed")
+
 
 class FileModeHistoryList(HistoryListBase):
     """History list for a single file's history. Stubbed prep method."""
@@ -499,11 +790,19 @@ class FileModeHistoryList(HistoryListBase):
     def prepFileModeHistoryList(self, path: str) -> None:
         try:
             self.clear()
-            # Stubbed example commits
-            self._add_row(f"commit 1 - fix bug in {path}", "aaaaaaaaaaaaaaaaaaaa")
-            self._add_row(f"commit 2 - add feature to {path}", "bbbbbbbbbbbbbbbbbbbb")
-            self._add_row(f"commit 3 - initial {path}", "cccccccccccccccccccc")
+            # Generate many synthetic commits for the file history
+            try:
+                for i in range(1, 121):
+                    h = f"{i:040x}"[-20:]
+                    self._add_row(f"commit {i} - update {path}", h)
+            except Exception as e:
+                self.printException(e, "prepFileModeHistoryList generation failed")
             self._populated = True
+            # Default to highlighting top commit for file history
+            try:
+                self._highlight_top()
+            except Exception as e:
+                self.printException(e, "prepFileModeHistoryList: highlight failed")
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
 
@@ -514,10 +813,19 @@ class RepoModeHistoryList(HistoryListBase):
     def prepRepoModeHistoryList(self, repo_path: str | None = None) -> None:
         try:
             self.clear()
-            self._add_row("repo commit 1 - overhaul", "11111111111111111111")
-            self._add_row("repo commit 2 - cleanup", "22222222222222222222")
-            self._add_row("repo commit 3 - init", "33333333333333333333")
+            # Generate many synthetic repo commits for testing navigation
+            try:
+                for i in range(1, 121):
+                    h = f"{i:040x}"[-20:]
+                    self._add_row(f"repo commit {i} - change", h)
+            except Exception as e:
+                self.printException(e, "prepRepoModeHistoryList generation failed")
             self._populated = True
+            # Default to highlighting top commit for repo history
+            try:
+                self._highlight_top()
+            except Exception as e:
+                self.printException(e, "prepRepoModeHistoryList: highlight failed")
         except Exception as e:
             self.printException(e, "prepRepoModeHistoryList failed")
 
@@ -571,6 +879,10 @@ class DiffList(AppBase):
                     self.printException(e, "prepDiffList append failed")
             self._populated = True
             self._filename = filename
+            try:
+                self._highlight_top()
+            except Exception as e:
+                self.printException(e, "prepDiffList: highlight failed")
         except Exception as e:
             self.printException(e, "prepDiffList failed")
 
@@ -607,6 +919,10 @@ class HelpList(AppBase):
                 except Exception as e:
                     self.printException(e, "prepHelp append failed")
             self._populated = True
+            try:
+                self._highlight_top()
+            except Exception as e:
+                self.printException(e, "prepHelp: highlight failed")
         except Exception as e:
             self.printException(e, "prepHelp failed")
 
@@ -669,6 +985,21 @@ class GitHistoryNavTool(App):
         except Exception as e:
             printException(e, "GitHistoryNavTool.__init__ failed")
 
+    def printException(self, e: Exception, msg: Optional[str] = None) -> None:
+        """Instance-level exception logger for the App to mirror widget helper.
+
+        Keeps behavior consistent with `AppBase.printException`.
+        """
+        try:
+            className = type(self).__name__
+            funcName = sys._getframe(1).f_code.co_name
+            short = msg or ""
+            logger.warning(f"{className}.{funcName}: {short} - {e}")
+            logger.warning(traceback.format_exc())
+        except Exception:
+            # Fallback to module-level logger
+            printException(e, msg)
+
     def compose(self):
         # Compose the canonical six-column layout using Vertical columns
         yield Header()
@@ -722,15 +1053,51 @@ class GitHistoryNavTool(App):
             except Exception as e:
                 self.printException(e, "on_mount: change_layout failed")
 
-            # Populate the canonical left file list when starting in file mode.
+            # Populate the canonical left lists and set focus so key handlers
+            # and highlight behavior work immediately in both modes.
             try:
                 if not self.repo_first:
-                    self.file_mode_file_list.prepFileModeFileList(path=self.path or ".")
+                    try:
+                        self.file_mode_file_list.prepFileModeFileList(path=self.path or ".")
+                        # ensure the file list has focus so arrow keys affect it
+                        try:
+                            # `set_focus` is not awaitable in this Textual version.
+                            self.set_focus(self.file_mode_file_list)
+                        except Exception as e:
+                            # Fallback: resolve widget by id and call set_focus
+                            try:
+                                widget = self.query_one(f"#{LEFT_FILE_LIST_ID}")
+                                self.set_focus(widget)
+                            except Exception as e2:
+                                self.printException(e2, "on_mount: focusing file list failed")
+                            self.printException(e, "on_mount: file list focus failed")
+                        # ensure top/highlight is active
+                        try:
+                            self.file_mode_file_list._highlight_top()
+                        except Exception as e:
+                            self.printException(e, "on_mount: file list highlight failed")
+                    except Exception as e:
+                        self.printException(e, "on_mount: prepFileModeFileList failed")
                 else:
                     # If starting in repo-first mode, pre-populate the left
                     # repository-history widget so the UI shows commits immediately.
                     try:
                         self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".")
+                        # focus the history list so key navigation works
+                        try:
+                            # Call non-awaitable set_focus
+                            self.set_focus(self.repo_mode_history_list)
+                        except Exception as e:
+                            try:
+                                widget = self.query_one(f"#{LEFT_HISTORY_LIST_ID}")
+                                self.set_focus(widget)
+                            except Exception as e2:
+                                self.printException(e2, "on_mount: focusing repo history failed")
+                            self.printException(e, "on_mount: repo history focus failed")
+                        try:
+                            self.repo_mode_history_list._highlight_top()
+                        except Exception as e:
+                            self.printException(e, "on_mount: repo history highlight failed")
                     except Exception as e:
                         self.printException(e, "on_mount: prepRepoModeHistoryList failed")
             except Exception as e:
@@ -802,32 +1169,29 @@ class GitHistoryNavTool(App):
 
             # set widget visibility based on widths
             try:
-                try:
-                    self.file_mode_file_list.styles.display = show if left_file_w else hide
-                except Exception as e:
-                    self.printException(e, "could not set left-file-list display")
-                try:
-                    self.repo_mode_history_list.styles.display = show if left_history_w else hide
-                except Exception as e:
-                    self.printException(e, "could not set left-history-list display")
-                try:
-                    self.file_mode_history_list.styles.display = show if right_history_w else hide
-                except Exception as e:
-                    self.printException(e, "could not set right-history-list display")
-                try:
-                    self.repo_mode_file_list.styles.display = show if right_file_w else hide
-                except Exception as e:
-                    self.printException(e, "could not set right-file-list display")
-                try:
-                    self.diff_list.styles.display = show if diff_w else hide
-                except Exception as e:
-                    self.printException(e, "could not set diff-list display")
-                try:
-                    self.help_list.styles.display = show if help_w else hide
-                except Exception as e:
-                    self.printException(e, "could not set help-list display")
+                self.file_mode_file_list.styles.display = show if left_file_w else hide
             except Exception as e:
-                self.printException(e, "could not assign displays in _apply_column_layout")
+                self.printException(e, "could not set left-file-list display")
+            try:
+                self.repo_mode_history_list.styles.display = show if left_history_w else hide
+            except Exception as e:
+                self.printException(e, "could not set left-history-list display")
+            try:
+                self.file_mode_history_list.styles.display = show if right_history_w else hide
+            except Exception as e:
+                self.printException(e, "could not set right-history-list display")
+            try:
+                self.repo_mode_file_list.styles.display = show if right_file_w else hide
+            except Exception as e:
+                self.printException(e, "could not set right-file-list display")
+            try:
+                self.diff_list.styles.display = show if diff_w else hide
+            except Exception as e:
+                self.printException(e, "could not set diff-list display")
+            try:
+                self.help_list.styles.display = show if help_w else hide
+            except Exception as e:
+                self.printException(e, "could not set help-list display")
         except Exception as e:
             self.printException(e, "error applying column layout")
 

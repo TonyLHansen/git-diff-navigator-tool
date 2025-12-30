@@ -111,6 +111,11 @@ Plan (steps with pause points)
    - Inline CSS is stored in the module as `INLINE_CSS` and assigned to the app via `GitHistoryNavTool.CSS = INLINE_CSS` (no external `CSS_PATH`).
    - `compose()` should build the six canonical widgets and title labels (left-file, left-history, right-history, right-file, diff, help) using the canonical ids described elsewhere (e.g. `left-file-list`, `left-file-title`, etc.).
    - `on_mount()` should resolve widgets by their canonical ids (querying `#left-file-list`, `#right-history-list`, `#diff-list`, ...) and call the appropriate `prep*` methods (for the initial path or repo-first flow).
+   - Implement navigation key handlers so the UI is testable with the stub data:
+      - Add implementations for `up`, `down`, `pageup`, `pagedown`, `home`, and `end` that change the currently-selected item in the active list widget and update its visible highlight.
+      - Implement this at the `AppBase`/`FileListBase`/`RepoListBase` level (via `key_*` methods) so concrete lists inherit correct behavior.
+      - Ensure a visible highlight is applied to the selected row by marking the `ListItem` as "active" and deactivating the previously-active item before moving. There should be no need to change the `Label`'s renderable text; use the item's active state/CSS class for visual highlighting. Schedule index changes with `call_after_refresh` when DOM timing requires it.
+      - The step should include a tiny test using the stubbed `prep*` data to verify the selection moves and highlights on key invocation.
    - `main()` should instantiate the app passing CLI args into the constructor and call `app.run()` (example: `GitHistoryNavTool(path=args.path, no_color=args.no_color, repo_first=args.repo_first).run()`).
    - Tests/validation: in addition to `py_compile`, verify that `main()` starts the app via `python3 gitdiffnavtool.py --no-color .` and that the app's `path`, `no_color`, and `repo_first` attributes reflect the CLI flags.
 
