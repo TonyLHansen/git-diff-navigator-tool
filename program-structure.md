@@ -26,6 +26,9 @@ CLI entry
 Coloring scheme for FileList
 - Highlight background constant `HIGHLIGHT_FILELIST_BG` (default `#f1c40f`) and `HIGHLIGHT_FILELIST_STYLE` (`white on HIGHLIGHT_FILELIST_BG`). Applied to selected list items and labels.
 - Status markers in file list:
+- Entry format: each row in the `FileModeFileList` is rendered as "TAG NAME" where TAG is a one-character marker (or an arrow for directories) followed by a space and then the file or directory name. This makes tag meaning explicit and easier to scan.
+
+- Status markers in file list (used as TAG for files):
   - space: tracked/clean (white)
   - U: untracked (bold yellow)
   - M: modified (yellow)
@@ -33,6 +36,10 @@ Coloring scheme for FileList
   - D: deleted in working tree (red)
   - I: ignored (dim italic)
   - !: conflicted (magenta)
+
+- Directory tagging: directories are shown with arrows as the TAG instead of a single-status marker:
+  - `←` (left-arrow): special parent entry shown as `..` (displayed as "← ..")
+  - `→` (right-arrow): normal directory entry (displayed as "→ dirname/")
 - Directories styled with white on blue; key legend rows bold white on blue.
 - Borders: left columns thin white; right columns heavy gray; consistent across lists and diff/help.
 - Footers: bold text strings per mode (file/history/diff/help).

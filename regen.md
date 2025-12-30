@@ -79,7 +79,7 @@ Plan (steps with pause points)
 3) Implement `FileListBase` and its two concrete derived classes
    - `FileListBase` responsibilities: `on_focus`, `_highlight_filename`, `_highlight_top`, `watch_index`, `on_list_view_highlighted`, `_child_filename`, `_enter_directory`.
    - Concrete classes:
-     - `FileModeFileList(FileListBase)` with `prepFileModeFileList(path)`, `key_left`, `key_right` (enter directory/open history).
+   - `FileModeFileList(FileListBase)` with `prepFileModeFileList(path)`, `key_left`, `key_right` (enter directory/open history). Rows must be rendered in a "TAG NAME" format: files use one-character markers from the `markers` mapping (e.g. `!`, `A`, `M`, `U`, etc.) followed by the filename; directories use arrows as the TAG (`←` for the parent `..` entry, `→` for normal directories) and include a trailing slash in the name.
      - `RepoModeFileList(FileListBase)` with `prepRepoModeFileList(prev_hash, curr_hash)`, `key_left`, `key_right` (show diff).
    - Use `call_after_refresh` to schedule DOM-dependent index/scroll updates.
    - PAUSE: present these classes and stop.

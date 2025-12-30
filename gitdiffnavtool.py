@@ -25,6 +25,24 @@ HIGHLIGHT_REPOLIST_STYLE = f"white on {HIGHLIGHT_REPOLIST_BG}"
 # Enable debug logging to tmp/debug.log when True
 DOLOGGING = True
 
+# Optional pygit2 support — best-effort import to enable repo status checks
+try:
+    import pygit2
+except Exception:
+    pygit2 = None
+
+# Status markers mapping used to render the left-most TAG for file rows.
+# Keys correspond to computed repo statuses (strings used by preparatory APIs).
+MARKERS = {
+    "conflicted": "!",
+    "staged": "A",
+    "wt_deleted": "D",
+    "ignored": "I",
+    "modified": "M",
+    "untracked": "U",
+    "tracked_clean": " ",
+}
+
 # Inline CSS used by the Textual App (can be edited in-place)
 INLINE_CSS = """
 /* gitdiffnavtool inline CSS */
@@ -654,27 +672,193 @@ class FileModeFileList(FileListBase):
 
     def prepFileModeFileList(self, path: str) -> None:
         try:
-            self.clear()
-            # Generate a large set of synthetic file entries for testing
+            # Canonicalize path and allow callers to pass a file to highlight
+            path = os.path.abspath(path)
+            if os.path.isfile(path):
+                hl = os.path.basename(path)
+                path = os.path.dirname(path) or "."
+            else:
+                hl = None
+
+            self.path = path
             try:
-                for i in range(1, 121):
-                    name = f"{path}/file_{i:04d}.py"
-                    item = ListItem(Label(Text(name)))
-                    # attach raw text for matching
+                if hasattr(self, "app"):
                     try:
-                        setattr(item, "_raw_text", name)
+                        self.app.displayed_path = self.path
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            try:
+                entries = sorted(os.listdir(path))
+            except Exception as e:
+                self.printException(e, f"Error reading {path}")
+                self.clear()
+                try:
+                    self.append(ListItem(Label(Text(f"Error reading {path}: {e}", style="red"))))
+                except Exception as e:
+                    self.printException(e)
+
+                return
+
+            # clear and populate
+            self.clear()
+
+            # Optionally add a parent entry when appropriate
+            try:
+                parent = os.path.dirname(path)
+                if parent and parent != path:
+                    parent_item = ListItem(Label(Text(f"← ..", style="white on blue")))
+                    try:
+                        parent_item._filename = ".."
+                        parent_item._is_dir = True
+                        parent_item._raw_text = os.path.join(parent, "..")
+                    except Exception:
+                        pass
+                    try:
+                        self.append(parent_item)
+                    except Exception as e:
+                        self.printException(e, "prepFileModeFileList: append parent failed")
+            except Exception:
+                pass
+
+            for name in entries:
+                if name == ".git":
+                    continue
+                try:
+                    full = os.path.join(path, name)
+                    is_dir = os.path.isdir(full)
+
+                    # Directories: show arrow tag and trailing slash
+                    if is_dir:
+                        tag = "→"
+                        display_name = f"{name}/"
+                        display = f"{tag} {display_name}"
+                        style = "white on blue"
+                        item = ListItem(Label(Text(display, style=style)))
+                        try:
+                            item._is_dir = True
+                            item._repo_status = None
+                            item._raw_text = full
+                            item._filename = name
+                            self.append(item)
+                        except Exception as e:
+                            self.printException(e, "prepFileModeFileList append dir failed")
+                        continue
+
+                    # Files: determine repo status and marker
+                    repo_status = None
+                    style = None
+                    try:
+                        app = getattr(self, "app", None)
+                        if app and getattr(app, "repo_available", False) and getattr(app, "repo_root", None):
+                            try:
+                                rel = os.path.relpath(full, app.repo_root)
+                            except Exception:
+                                rel = None
+                            if rel and not rel.startswith(".."):
+                                flags = app.repo_status_map.get(rel, 0) if getattr(app, "repo_status_map", None) is not None else 0
+                                try:
+                                    if pygit2 and isinstance(flags, int):
+                                        if flags & getattr(pygit2, "GIT_STATUS_CONFLICTED", 0):
+                                            repo_status = "conflicted"
+                                        elif flags & (
+                                            getattr(pygit2, "GIT_STATUS_INDEX_NEW", 0)
+                                            | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
+                                            | getattr(pygit2, "GIT_STATUS_INDEX_DELETED", 0)
+                                        ):
+                                            repo_status = "staged"
+                                        elif flags & getattr(pygit2, "GIT_STATUS_WT_DELETED", 0):
+                                            repo_status = "wt_deleted"
+                                        elif flags & getattr(pygit2, "GIT_STATUS_IGNORED", 0):
+                                            repo_status = "ignored"
+                                        elif flags & (
+                                            getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0)
+                                            | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
+                                        ):
+                                            repo_status = "modified"
+                                        elif flags & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
+                                            repo_status = "untracked"
+                                        else:
+                                            repo_status = "tracked_clean"
+                                    else:
+                                        # If flags are stored as a status string
+                                        if isinstance(flags, str):
+                                            repo_status = flags
+                                        else:
+                                            repo_status = "untracked"
+                                except Exception:
+                                    repo_status = "untracked"
+                            else:
+                                repo_status = "untracked"
+                        else:
+                            repo_status = "untracked"
+                    except Exception:
+                        repo_status = None
+
+                    # Map repo_status to marker and style
+                    try:
+                        marker = MARKERS.get(repo_status, " ")
+                        if repo_status == "conflicted":
+                            style = "magenta"
+                        elif repo_status == "staged":
+                            style = "cyan"
+                        elif repo_status == "wt_deleted":
+                            style = "red"
+                        elif repo_status == "ignored":
+                            style = "dim italic"
+                        elif repo_status == "modified":
+                            style = "yellow"
+                        elif repo_status == "untracked":
+                            style = "bold yellow"
+                        else:
+                            style = "white"
+                    except Exception:
+                        marker = " "
+                        style = None
+
+                    display = f"{marker} {name}"
+                    try:
+                        if style:
+                            item = ListItem(Label(Text(display, style=style)))
+                        else:
+                            item = ListItem(Label(display))
+                        item._repo_status = repo_status
+                        item._is_dir = False
+                        item._raw_text = full
+                        item._filename = name
                         self.append(item)
                     except Exception as e:
-                        self.printException(e, "prepFileModeFileList append failed")
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList generation failed")
-            self._populated = True
-            self._filename = path
-            # Highlight the item matching the given path if present, else top
+                        self.printException(e, f"exception appending {name} in prepFileModeFileList")
+                        continue
+                except Exception as e:
+                    self.printException(e, f"exception processing entry {name}")
+                    continue
+
             try:
-                self._highlight_match(path)
+                self._populated = True
+                self._filename = path
+                if hl:
+                    try:
+                        self.call_after_refresh(lambda: self._highlight_match(hl))
+                    except Exception as e:
+                        self.printException(e, "prepFileModeFileList: scheduling highlight failed")
+                        try:
+                            self._highlight_match(hl)
+                        except Exception as e:
+                            self.printException(e, "prepFileModeFileList: immediate highlight failed")
+                else:
+                    try:
+                        self.call_after_refresh(self._highlight_top)
+                    except Exception as e:
+                        self.printException(e)
+                        try:
+                            self._highlight_top()
+                        except Exception as e2:
+                            self.printException(e2, "immediate _highlight_top fallback failed")
             except Exception as e:
-                self.printException(e, "prepFileModeFileList: highlight failed")
+                self.printException(e)
         except Exception as e:
             self.printException(e, "prepFileModeFileList failed")
 
