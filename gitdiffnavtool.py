@@ -11,6 +11,8 @@ import argparse
 import logging
 import os
 import sys
+import subprocess
+import traceback
 from typing import Optional
 
 # Optional pygit2 support — best-effort import to enable repo status checks
@@ -697,6 +699,9 @@ class FileModeFileList(FileListBase):
 
             # Record the list's path
             self.path = path
+            # Keep the application's canonical current path in sync with
+            # this widget's directory so other components can rely on it.
+            self.app.current_path = self.path
             relpath = path[len(self.app.repo_root)+1 :]
             logger.debug(f"prepFileModeFileList: path='{path}' relpath={relpath}")
 
@@ -760,6 +765,7 @@ class FileModeFileList(FileListBase):
                     self.printException(e)
                 return
 
+            logger.debug(f"prepFileModeFileList: entries in {path}: {entries}")
             # Optionally add a parent entry when appropriate
             try:
                 parent = os.path.dirname(path)
@@ -940,6 +946,8 @@ class FileModeFileList(FileListBase):
                         self.printException(e, "determining repo status failed")
                         repo_status = None
 
+                    logger.debug("prepFileModeFileList: file %s repo_status=%s", name, repo_status) 
+
                     # Map repo_status to marker and style
                     try:
                         marker = MARKERS.get(repo_status, " ")
@@ -963,14 +971,8 @@ class FileModeFileList(FileListBase):
                         style = None
 
                     # Debug: log final decision for this file
-                    try:
-                        # Existence heuristic: treat anything not explicitly 'untracked' as existing
-                        _exists = False
-                        try:
-                            _exists = repo_status is not None and repo_status != "untracked"
-                        except Exception:
-                            _exists = False
-                        logger.debug(
+                    # Existence heuristic: treat anything not explicitly 'untracked' as existing
+                    logger.debug(
                             "prepFileModeFileList: name=%s rel=%r repo_status=%r marker=%r style=%r",
                             name,
                             rel,
@@ -978,8 +980,7 @@ class FileModeFileList(FileListBase):
                             marker,
                             style,
                         )
-                    except Exception as e:
-                        self.printException(e, "logging final decision failed")
+
 
                     display = f"{marker} {name}"
                     try:
@@ -1025,20 +1026,77 @@ class FileModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "prepFileModeFileList failed")
 
-    def key_left(self) -> None:
-        # In file mode, left could go up a directory — leave as stub.
-        return None
-
-    def key_right(self) -> None:
-        # Enter directory or open history for the selected file.
+    def _nav_dir_if(self, test_fn) -> None:
         try:
             idx = self.index or 0
             nodes = self.nodes()
-            if 0 <= idx < len(nodes):
-                filename = self._child_filename(nodes[idx])
-                self._enter_directory(filename)
+            if not (0 <= idx < len(nodes)):
+                return
+            item = nodes[idx]
+            if not getattr(item, "_is_dir", False):
+                return
+            name = getattr(item, "_filename", None)
+            raw = getattr(item, "_raw_text", None)
+            if test_fn(name) and raw:
+                try:
+                    self.prepFileModeFileList(raw)
+                except Exception as e:
+                    self.printException(e, "FileModeFileList._nav_dir_if prep failed")
         except Exception as e:
-            self.printException(e, "FileModeFileList.key_right failed")
+            self.printException(e, "FileModeFileList._nav_dir_if failed")
+
+    def _activate_or_open(self, event: events.Key | None = None, enter_dir_test_fn=lambda name: True) -> None:
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "_activate_or_open: event.stop failed")
+
+            idx = self.index or 0
+            nodes = self.nodes()
+            if not (0 <= idx < len(nodes)):
+                return
+            item = nodes[idx]
+            is_dir = getattr(item, "_is_dir", False)
+            name = getattr(item, "_filename", None)
+            raw = getattr(item, "_raw_text", None)
+            repo_status = getattr(item, "_repo_status", None)
+
+            if is_dir:
+                if enter_dir_test_fn(name) and raw:
+                    try:
+                        self.prepFileModeFileList(raw)
+                    except Exception as e:
+                        self.printException(e, "FileModeFileList._activate_or_open prep failed")
+                return
+
+            # File selected: open repo view for tracked files only
+            if raw and repo_status not in ("untracked", "ignored"):
+                try:
+                    self.app.file_mode_history_list.prepFileModeRepoList(raw)
+                    try:
+                        # Switch UI to file-history layout and focus
+                        self.app.change_state("file_history", RIGHT_FILE_TITLE, RIGHT_FILE_FOOTER)
+                    except Exception as e:
+                        self.printException(e, "FileModeFileList._activate_or_open change_state failed")
+                except Exception as e:
+                    self.printException(e, "FileModeFileList._activate_or_open repo open failed")
+        except Exception as e:
+            self.printException(e, "FileModeFileList._activate_or_open failed")
+
+    def key_left(self, event: events.Key | None = None) -> None:
+        # Navigate up only when the selected directory is the parent entry ('..')
+        # Use shared helper so event.stop() is honored and behavior is unified.
+        self._activate_or_open(event, enter_dir_test_fn=lambda name: name == "..")
+
+    def key_right(self, event: events.Key | None = None) -> None:
+        # Use shared helper to handle directory enter or file open.
+        self._activate_or_open(event, enter_dir_test_fn=lambda name: (name is not None) and name != "..")
+
+    def key_enter(self, event: events.Key | None = None) -> None:
+        # Enter key: enter directories or open file history for tracked files.
+        self._activate_or_open(event, enter_dir_test_fn=lambda name: True)
 
 
 class RepoModeFileList(FileListBase):
@@ -1050,8 +1108,7 @@ class RepoModeFileList(FileListBase):
     def prepRepoModeFileList(self, prev_hash: str | None, curr_hash: str | None) -> None:
         try:
             self.clear()
-            repo_root = self.app.repo_root
-            if not repo_root:
+            if not self.app.repo_root:
                 # nothing to show; fallback to empty synthetic list
                 self._populated = True
                 self._highlight_top()
@@ -1247,14 +1304,7 @@ class FileModeHistoryList(HistoryListBase):
                     pass
                 except Exception as e:
                     self.printException(e, "prepFileModeHistoryList git log failed")
-            else:
-                # Fallback synthetic commits for non-repo dirs
-                try:
-                    for i in range(1, 121):
-                        h = f"{i:040x}"[-20:]
-                        self._add_row(f"commit {i} - update {path}", h)
-                except Exception as e:
-                    self.printException(e, "prepFileModeHistoryList generation failed")
+
             self._populated = True
             # Default to highlighting top commit for file history
             try:
@@ -1272,8 +1322,7 @@ class RepoModeHistoryList(HistoryListBase):
         try:
             self.clear()
             # Use git log to populate repo-wide history when possible
-            repo_root = repo_path or self.app.repo_root
-            if repo_root:
+            if self.app.repo_root:
                 try:
                     cmd = ["git", "-C", repo_root, "log", "--pretty=format:%H\t%ad\t%s", "--date=short", "-n", "200"]
                     out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
@@ -1330,19 +1379,16 @@ class DiffList(AppBase):
     def prepDiffList(self, filename: str, prev: str | None, curr: str | None, variant_index: int | None = None) -> None:
         try:
             self.clear()
-            app = self.app
-            repo_root = app.repo_root if app else None
             # Prefer the canonicalized `current_path` on the app when available
-            workdir = repo_root or (app.current_path if app else None)
             cmd = None
             try:
                 try:
-                    cmd = app.build_diff_cmd(filename, prev, curr, variant_index)
+                    cmd = self.app.build_diff_cmd(filename, prev, curr, variant_index)
                 except Exception as e:
                     self.printException(e, "prepDiffList: building diff command failed")
                     # fallback basic diff
-                    if repo_root:
-                        cmd = ["git", "-C", repo_root, "diff"]
+                    if self.app.repo_root:
+                        cmd = ["git", "-C", self.app.repo_root, "diff"]
                     else:
                         cmd = ["git", "diff"]
                     if prev and curr:
@@ -1459,16 +1505,15 @@ DIFF_TITLE = "diff-title"
 HELP_LIST_ID = "help-list"
 HELP_TITLE = "help-title"
 
-
-# (imports consolidated at top)
+# Footer text used when switching to file-history view
+RIGHT_FILE_FOOTER = Text("File history: press Left to return")
 
 
 class GitHistoryNavTool(App):
     """Main Textual application wiring the lists together.
 
-    This is a minimal implementation for regen Step 6: it composes the
-    previously defined widgets, mounts a header/footer, and provides simple
-    state save/restore stubs and a repo-cache builder.
+    It composes the previously defined widgets, mounts a header/footer, 
+    and provides simple state save/restore stubs.
     """
 
     CSS = INLINE_CSS
@@ -1929,6 +1974,7 @@ class GitHistoryNavTool(App):
         except Exception as e:
             self.printException(e, "change_state outer failure")
 
+    
     def save_state(self) -> None:
         """Save the current single-value state (layout, focus, footer).
 
@@ -2014,22 +2060,22 @@ class GitHistoryNavTool(App):
                     self.printException(e, "change_focus resetting title label classes failed")
 
                 if key == LEFT_FILE_LIST_ID:
-                    widget = getattr(self, "file_mode_file_list", None)
+                    widget = self.file_mode_file_list
                     label_name = LEFT_FILE_TITLE
                 elif key == LEFT_HISTORY_LIST_ID:
-                    widget = getattr(self, "repo_mode_history_list", None)
+                    widget = self.repo_mode_history_list
                     label_name = LEFT_HISTORY_TITLE
                 elif key == RIGHT_FILE_LIST_ID:
-                    widget = getattr(self, "repo_mode_file_list", None)
+                    widget = self.repo_mode_file_list
                     label_name = RIGHT_FILE_TITLE
                 elif key == RIGHT_HISTORY_LIST_ID:
-                    widget = getattr(self, "file_mode_history_list", None)
+                    widget = self.file_mode_history_list
                     label_name = RIGHT_HISTORY_TITLE
                 elif key == DIFF_LIST_ID:
-                    widget = getattr(self, "diff_list", None)
+                    widget = self.diff_list
                     label_name = DIFF_TITLE
                 elif key == HELP_LIST_ID:
-                    widget = getattr(self, "help_list", None)
+                    widget = self.help_list
                     label_name = HELP_TITLE
                 else:
                     logger.warning(f"change_focus: unknown canonical focus target {target}")
