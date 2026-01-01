@@ -641,8 +641,8 @@ class FileListBase(AppBase):
         navigation skips the header.
         """
         try:
-            # Create header row; use a dim style so it's visually distinct
-            item = ListItem(Label(Text(FILELIST_KEY_ROW_TEXT, style="dim")))
+            # Create header row; use the configured style so it's visually distinct
+            item = ListItem(Label(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY)))
             # Mark metadata so callers can recognize it and avoid selecting it
             try:
                 item._filelist_key_header = True
@@ -1458,6 +1458,35 @@ class RepoModeHistoryList(HistoryListBase):
     def prepRepoModeHistoryList(self, repo_path: str | None = None) -> None:
         try:
             self.clear()
+            # Add pseudo-entries for working-tree state: MODS (modified, unstaged)
+            # and STAGED (indexed but uncommitted). Only include when present.
+            try:
+                out_mods = subprocess.check_output(
+                    ["git", "-C", self.app.repo_root, "diff", "--name-only"],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+                mods = [ln for ln in out_mods.splitlines() if ln.strip()]
+            except Exception:
+                mods = []
+            try:
+                out_staged = subprocess.check_output(
+                    ["git", "-C", self.app.repo_root, "diff", "--name-only", "--cached"],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+                staged = [ln for ln in out_staged.splitlines() if ln.strip()]
+            except Exception:
+                staged = []
+            # Insert MODS then STAGED at the top if present
+            try:
+                if mods:
+                    self._add_row(f"MODS ({len(mods)} modified files)", "MODS")
+                if staged:
+                    self._add_row(f"STAGED ({len(staged)} staged files)", "STAGED")
+            except Exception as e:
+                self.printException(e, "prepRepoModeHistoryList adding pseudo-rows failed")
+
             # Use git log to populate repo-wide history when possible
             if self.app.repo_root:
                 try:
@@ -1658,6 +1687,8 @@ STYLE_IGNORED = "dim italic"
 STYLE_MODIFIED = "yellow"
 STYLE_UNTRACKED = "bold yellow"
 STYLE_DEFAULT = "white"
+
+STYLE_FILELIST_KEY = "dim"
 
 # Header row text for file lists (unselectable)
 FILELIST_KEY_ROW_TEXT = "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
