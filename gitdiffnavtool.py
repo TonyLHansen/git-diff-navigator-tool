@@ -11,8 +11,20 @@ import argparse
 import logging
 import os
 import sys
-import traceback
 from typing import Optional
+
+# Optional pygit2 support — best-effort import to enable repo status checks
+try:
+    import pygit2  # type: ignore
+except Exception:
+    pygit2 = None
+
+# Third-party UI and rendering imports
+from rich.text import Text
+from textual import events
+from textual.app import App
+from textual.containers import Horizontal, Vertical
+from textual.widgets import ListView, Label, ListItem, Footer, Header
 
 # --- Constants -------------------------------------------------------------
 # Highlight constants (defaults)
@@ -21,13 +33,6 @@ HIGHLIGHT_FILELIST_STYLE = f"white on {HIGHLIGHT_FILELIST_BG}"
 
 HIGHLIGHT_REPOLIST_BG = "#3333CC"
 HIGHLIGHT_REPOLIST_STYLE = f"white on {HIGHLIGHT_REPOLIST_BG}"
-
-
-# Optional pygit2 support — best-effort import to enable repo status checks
-try:
-    import pygit2
-except Exception:
-    pygit2 = None
 
 # Status markers mapping used to render the left-most TAG for file rows.
 # Keys correspond to computed repo statuses (strings used by preparatory APIs).
@@ -70,12 +75,7 @@ ListItem.active {
 }
 
 """
-from rich.text import Text
-from textual import events
-from textual.app import App
-from textual.containers import Horizontal, Vertical
-from textual.widgets import ListView, Label, ListItem, Footer, Header
-import subprocess
+
 
 
 # --- Logging setup --------------------------------------------------------
@@ -95,12 +95,9 @@ def printException(e: Exception, msg: Optional[str] = None) -> None:
         logger.warning(traceback.format_exc())
     except Exception as e2:
         # Last-resort fallback to stderr — avoid recursive logging
-        try:
-            sys.stderr.write(f"printException fallback: {e}\n")
-            sys.stderr.write(f"secondary exception: {e2}\n")
-        except Exception:
-            # If even stderr fails, give up quietly
-            pass
+        sys.stderr.write(f"printException fallback: {e}\n")
+        sys.stderr.write(f"secondary exception: {e2}\n")
+
 
 
 class AppBase(ListView):
@@ -183,7 +180,8 @@ class AppBase(ListView):
             # observe the current DOM without allocating a snapshot.
             n = self.children
             return n if n else []
-        except Exception:
+        except Exception as e:
+            printException(e)
             return []
 
     def _activate_index(self, new_index: int) -> None:
@@ -292,7 +290,8 @@ class AppBase(ListView):
                         animate = False
                         try:
                             animate = bool(self._page_scroll)
-                        except Exception:
+                        except Exception as e:
+                            printException(e)
                             animate = False
                         logger.debug("watch_index: scroll animate=%s for index %s", animate, new)
                         if hasattr(self, "scroll_to_widget"):
@@ -318,8 +317,10 @@ class AppBase(ListView):
                         try:
                             if self._page_scroll:
                                 self._page_scroll = False
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
+                    except Exception as e:
+                        printException(e, "watch_index: scrolling new node failed")
                     except Exception as e:
                         self.printException(e, "watch_index: scrolling new node failed")
                     except Exception as e:
@@ -378,7 +379,8 @@ class AppBase(ListView):
             top = self._min_index or 0
             try:
                 self.call_after_refresh(lambda: self._activate_index(top))
-            except Exception:
+            except Exception as e:
+                self.printException(e, "_highlight_top: scheduling index set failed")
                 # Fall back to direct activation if scheduling fails
                 self._activate_index(top)
         except Exception as e:
@@ -450,8 +452,8 @@ class AppBase(ListView):
                 # Mark that this was a page-scroll so watch_index uses animation
                 try:
                     self._page_scroll = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e, "key_page_down: setting _page_scroll failed")
                 self._activate_index(new_index)
             except Exception as e:
                 self.printException(e, "key_page_down: activate failed")
@@ -462,27 +464,23 @@ class AppBase(ListView):
     # page up / page down (e.g. 'pageup', 'pagedown', 'prior', 'next'). Provide
     # aliases that delegate to the canonical handlers so keys are handled.
     def key_pageup(self, event: events.Key | None = None) -> None:
-        try:
-            logger.debug(
+        logger.debug(
                 "alias key_pageup invoked: key=%r index=%r nodes=%r",
                 getattr(event, "key", None),
                 self.index,
                 len(self.nodes()),
             )
-        except Exception:
-            pass
+        
+            
         return self.key_page_down(event)
 
     def key_pagedown(self, event: events.Key | None = None) -> None:
-        try:
-            logger.debug(
+        logger.debug(
                 "alias key_pagedown invoked: key=%r index=%r nodes=%r",
                 getattr(event, "key", None),
                 self.index,
                 len(self.nodes()),
             )
-        except Exception:
-            pass
         return self.key_page_down(event)
 
     def key_page_up(self, event: events.Key | None = None) -> None:
@@ -510,8 +508,8 @@ class AppBase(ListView):
             try:
                 try:
                     self._page_scroll = True
-                except Exception:
-                    pass
+                except Exception as e:
+                        self.printException(e)
                 self._activate_index(new_index)
             except Exception as e:
                 self.printException(e, "key_page_up: activate failed")
@@ -519,27 +517,21 @@ class AppBase(ListView):
             self.printException(e, "key_page_up failed")
 
     def key_pageup(self, event: events.Key | None = None) -> None:
-        try:
-            logger.debug(
+        logger.debug(
                 "alias key_pageup invoked (alt): key=%r index=%r nodes=%r",
                 getattr(event, "key", None),
                 self.index,
                 len(self.nodes()),
             )
-        except Exception:
-            pass
         return self.key_page_up(event)
 
     def key_pagedown(self, event: events.Key | None = None) -> None:
-        try:
-            logger.debug(
+        logger.debug(
                 "alias key_pagedown invoked (alt): key=%r index=%r nodes=%r",
                 getattr(event, "key", None),
                 self.index,
                 len(self.nodes()),
             )
-        except Exception:
-            pass
         return self.key_page_down(event)
 
     def key_prior(self, event: events.Key | None = None) -> None:
@@ -680,67 +672,130 @@ class FileModeFileList(FileListBase):
     default `key_left`/`key_right` handlers.
     """
 
-    def prepFileModeFileList(self, path: str) -> None:
+    def prepFileModeFileList(self, path: str, highlight_filename: str | None = None) -> None:
         try:
             # Canonicalize path and allow callers to pass a file to highlight
             path = os.path.abspath(path)
-            if os.path.isfile(path):
+            # `highlight_filename` (if provided) takes precedence. If not
+            # provided and `path` points at a file, use that file's basename
+            # as the highlight and list its containing directory.
+            hl = highlight_filename
+            if hl is None and os.path.isfile(path):
                 hl = os.path.basename(path)
+            if os.path.isfile(path):
                 path = os.path.dirname(path) or "."
-            else:
-                hl = None
 
-            self.path = path
+            # Canonicalize the directory path so comparisons (e.g. against
+            # the repo root) use real paths and avoid /tmp vs /private/tmp
+            # mismatches.
             try:
-                try:
-                    self.app.displayed_path = self.path
-                except Exception:
-                    pass
+                path = os.path.realpath(path)
             except Exception:
+                self.printException(e, "prepFileModeFileList: realpath failed")
+                # If realpath fails for some reason, keep the original path
                 pass
+
+            # Record the list's path
+            self.path = path
+            relpath = path[len(self.app.repo_root)+1 :]
+            logger.debug(f"prepFileModeFileList: path='{path}' relpath={relpath}")
+
+            # Build a batched `status_map` once per directory when `pygit2` is
+            # unavailable. This avoids per-file `git status` calls for large
+            # directories. `status_map` maps repository-relative paths to the
+            # two-char porcelain status code (e.g. ' M', 'A ', '??'). If the
+            # repository isn't available or building the map fails, leave
+            # `status_map` as None and fall back to per-file checks later.
+            status_map = None
+            try:
+                if not (self.app.pygit2_repo and pygit2):
+                    if self.app.repo_root and path.startswith(self.app.repo_root):
+                        prefix = os.path.relpath(path, repo_root)
+                        if prefix == ".":
+                            prefix = ""
+                        else:
+                            prefix = prefix + os.sep
+                        try:
+                            out = subprocess.check_output(
+                                ["git", "-C", repo_root, "status", "--porcelain"],
+                                text=True,
+                                stderr=subprocess.DEVNULL,
+                            )
+                            m: dict[str, str] = {}
+                            for ln in out.splitlines():
+                                if not ln:
+                                    continue
+                                logger.debug("prepFileModeFileList: git status line: %s", ln)   
+                                code = ln[:2]
+                                logger.debug("prepFileModeFileList: git status code: %s", code)
+                                name = ln[3:].rstrip() if len(ln) > 3 else ""
+                                if "->" in name:
+                                    name = name.split("->")[-1].strip()
+                                logger.debug("prepFileModeFileList: git status file: %s code=%s", name, code)
+                                if prefix:
+                                    if not name.startswith(prefix):
+                                        logger.debug("prepFileModeFileList: skipping file %s as it does not start with prefix %s", name, prefix)
+                                        continue
+                                    rel = name[len(prefix):]
+                                else:
+                                    rel = name
+                                m[rel] = code
+                            status_map = m
+                        except Exception:
+                            self.printException(e, "prepFileModeFileList: git status subprocess failed")
+            except Exception:
+                self.printException(e, "prepFileModeFileList: building status_map failed")
+                status_map = None
+
+            # clear and populate
+            self.clear()
 
             try:
                 entries = sorted(os.listdir(path))
             except Exception as e:
                 self.printException(e, f"Error reading {path}")
-                self.clear()
                 try:
                     self.append(ListItem(Label(Text(f"Error reading {path}: {e}", style="red"))))
                 except Exception as e:
                     self.printException(e)
-
                 return
-
-            # clear and populate
-            self.clear()
 
             # Optionally add a parent entry when appropriate
             try:
                 parent = os.path.dirname(path)
-                if parent and parent != path:
+                logger.debug("prepFileModeFileList: path=%s parent=%s", path, parent)
+                # Only add a parent entry when appropriate and when the
+                # current path is not the repository root. Use the canonical
+                # `app.repo_root` provided by the application (widgets are
+                # expected to have this set by `GitHistoryNavTool`).
+                # Only add parent entry when not at the repo root. Compare
+                # directly to the app-provided `repo_root` per project axiom.
+                if parent and parent != path and path != self.app.repo_root:
                     parent_item = ListItem(Label(Text(f"← ..", style="white on blue")))
                     try:
                         parent_item._filename = ".."
                         parent_item._is_dir = True
-                        parent_item._raw_text = os.path.join(parent, "..")
-                    except Exception:
-                        pass
+                        parent_item._raw_text = parent
+                        logger.debug("prepFileModeFileList: adding parent dir item for %s", parent_item._raw_text)
+                    except Exception as e:
+                        self.printException(e, "prepFileModeFileList: setting parent item attributes failed")
                     try:
                         self.append(parent_item)
                     except Exception as e:
                         self.printException(e, "prepFileModeFileList: append parent failed")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: adding parent directory failed")
 
             for name in entries:
+                logger.debug("prepFileModeFileList: processing entry %s", name)
                 if name == ".git":
                     continue
                 try:
                     full = os.path.join(path, name)
-                    is_dir = os.path.isdir(full)
+                    logger.debug("prepFileModeFileList: full path %s", full)
 
                     # Directories: show arrow tag and trailing slash
-                    if is_dir:
+                    if os.path.isdir(full):
                         tag = "→"
                         display_name = f"{name}/"
                         display = f"{tag} {display_name}"
@@ -751,6 +806,7 @@ class FileModeFileList(FileListBase):
                             item._repo_status = None
                             item._raw_text = full
                             item._filename = name
+                            logger.debug("prepFileModeFileList: adding dir item for %s", full)
                             self.append(item)
                         except Exception as e:
                             self.printException(e, "prepFileModeFileList append dir failed")
@@ -760,50 +816,128 @@ class FileModeFileList(FileListBase):
                     repo_status = None
                     style = None
                     try:
-                        app = self.app
-                        if app.repo_available and app.repo_root:
+                        repo_status = None
+                        style = None
+                        # Compute rel by slicing the canonical repo root from full.
+                        rel = full[len(self.app.repo_root) :]
+                        if rel.startswith(os.sep):
+                            rel = rel[1:]
+                        rel = os.path.normpath(rel) if rel else rel
+                        logger.debug("prepFileModeFileList: rel path %s", rel)
+
+                        if rel:
+                            # Try pygit2 fast-path first (single-file query). If
+                            # unavailable or it fails, fall back to git CLI.
                             try:
-                                rel = os.path.relpath(full, app.repo_root)
-                            except Exception:
-                                rel = None
-                            if rel and not rel.startswith(".."):
-                                flags = app.repo_status_map.get(rel, 0) if app.repo_status_map is not None else 0
-                                try:
-                                    if pygit2 and isinstance(flags, int):
-                                        if flags & getattr(pygit2, "GIT_STATUS_CONFLICTED", 0):
+                                if self.app.pygit2_repo:
+                                    try:
+                                        flags = self.app.pygit2_repo.status_file(rel)
+                                        if flags & pygit2.GIT_STATUS_IGNORED:
+                                            repo_status = "ignored"
+                                        elif flags & pygit2.GIT_STATUS_WT_NEW:
+                                            repo_status = "untracked"
+                                        elif flags & pygit2.GIT_STATUS_CONFLICTED:
                                             repo_status = "conflicted"
                                         elif flags & (
-                                            getattr(pygit2, "GIT_STATUS_INDEX_NEW", 0)
-                                            | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
-                                            | getattr(pygit2, "GIT_STATUS_INDEX_DELETED", 0)
+                                            pygit2.GIT_STATUS_INDEX_NEW
+                                            | pygit2.GIT_STATUS_INDEX_MODIFIED
+                                            | pygit2.GIT_STATUS_INDEX_RENAMED
+                                            | pygit2.GIT_STATUS_INDEX_TYPECHANGE
+                                            | pygit2.GIT_STATUS_INDEX_DELETED
                                         ):
                                             repo_status = "staged"
-                                        elif flags & getattr(pygit2, "GIT_STATUS_WT_DELETED", 0):
+                                        elif flags & pygit2.GIT_STATUS_WT_DELETED:
                                             repo_status = "wt_deleted"
-                                        elif flags & getattr(pygit2, "GIT_STATUS_IGNORED", 0):
-                                            repo_status = "ignored"
                                         elif flags & (
-                                            getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0)
-                                            | getattr(pygit2, "GIT_STATUS_INDEX_MODIFIED", 0)
+                                            pygit2.GIT_STATUS_WT_MODIFIED
+                                            | pygit2.GIT_STATUS_WT_RENAMED
+                                            | pygit2.GIT_STATUS_WT_TYPECHANGE
                                         ):
                                             repo_status = "modified"
-                                        elif flags & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
-                                            repo_status = "untracked"
                                         else:
                                             repo_status = "tracked_clean"
-                                    else:
-                                        # If flags are stored as a status string
-                                        if isinstance(flags, str):
-                                            repo_status = flags
+                                    except Exception as e:
+                                        self.printException(e, "pygit2 status_file failed")
+                                        repo_status = None
+                            except Exception:
+                                repo_status = None
+
+                            if repo_status is None:
+                                # If we built a batch status_map earlier, prefer it
+                                # to avoid per-file `git status` calls.
+                                if status_map is not None:
+                                    try:
+                                        code = status_map.get(rel)
+                                        if code is not None:
+                                            if code == "??":
+                                                repo_status = "untracked"
+                                            elif code == "!!":
+                                                repo_status = "ignored"
+                                            elif "U" in code:
+                                                repo_status = "conflicted"
+                                            elif code[0] != " ":
+                                                repo_status = "staged"
+                                            elif code[1] != " ":
+                                                if code[1] == "D":
+                                                    repo_status = "wt_deleted"
+                                                else:
+                                                    repo_status = "modified"
+                                            else:
+                                                repo_status = "tracked_clean"
                                         else:
-                                            repo_status = "untracked"
-                                except Exception:
-                                    repo_status = "untracked"
-                            else:
-                                repo_status = "untracked"
+                                            # Not present in status_map: check tracked via ls-files
+                                            try:
+                                                subprocess.check_call(
+                                                    ["git", "-C", self.app.repo_root, "ls-files", "--error-unmatch", rel],
+                                                    stdout=subprocess.DEVNULL,
+                                                    stderr=subprocess.DEVNULL,
+                                                )
+                                                repo_status = "tracked_clean"
+                                            except subprocess.CalledProcessError:
+                                                repo_status = "untracked"
+                                    except Exception as e:
+                                        self.printException(e, "status_map processing failed")
+                                        repo_status = "tracked_clean"
+                                else:
+                                    # No batch map: fall back to per-file git status
+                                    try:
+                                        cmd = ["git", "-C", self.app.repo_root, "status", "--porcelain", "--", rel]
+                                        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
+                                        if out:
+                                            code = out[:2]
+                                            if code == "??":
+                                                repo_status = "untracked"
+                                            elif code == "!!":
+                                                repo_status = "ignored"
+                                            elif "U" in code:
+                                                repo_status = "conflicted"
+                                            elif code[0] != " ":
+                                                repo_status = "staged"
+                                            elif code[1] != " ":
+                                                if code[1] == "D":
+                                                    repo_status = "wt_deleted"
+                                                else:
+                                                    repo_status = "modified"
+                                            else:
+                                                repo_status = "tracked_clean"
+                                        else:
+                                            try:
+                                                subprocess.check_call(
+                                                    ["git", "-C", self.app.repo_root, "ls-files", "--error-unmatch", rel],
+                                                    stdout=subprocess.DEVNULL,
+                                                    stderr=subprocess.DEVNULL,
+                                                )
+                                                repo_status = "tracked_clean"
+                                            except subprocess.CalledProcessError:
+                                                repo_status = "untracked"
+                                    except Exception as e:
+                                        self.printException(e, "git status check failed")
+                                        repo_status = "tracked_clean"
                         else:
+                            # If not inside repo root, treat as untracked for safety
                             repo_status = "untracked"
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "determining repo status failed")
                         repo_status = None
 
                     # Map repo_status to marker and style
@@ -823,9 +957,29 @@ class FileModeFileList(FileListBase):
                             style = "bold yellow"
                         else:
                             style = "white"
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "mapping repo_status to marker and style failed")
                         marker = " "
                         style = None
+
+                    # Debug: log final decision for this file
+                    try:
+                        # Existence heuristic: treat anything not explicitly 'untracked' as existing
+                        _exists = False
+                        try:
+                            _exists = repo_status is not None and repo_status != "untracked"
+                        except Exception:
+                            _exists = False
+                        logger.debug(
+                            "prepFileModeFileList: name=%s rel=%r repo_status=%r marker=%r style=%r",
+                            name,
+                            rel,
+                            repo_status,
+                            marker,
+                            style,
+                        )
+                    except Exception as e:
+                        self.printException(e, "logging final decision failed")
 
                     display = f"{marker} {name}"
                     try:
@@ -896,7 +1050,7 @@ class RepoModeFileList(FileListBase):
     def prepRepoModeFileList(self, prev_hash: str | None, curr_hash: str | None) -> None:
         try:
             self.clear()
-            repo_root = getattr(self.app, "repo_root", None)
+            repo_root = self.app.repo_root
             if not repo_root:
                 # nothing to show; fallback to empty synthetic list
                 self._populated = True
@@ -1019,10 +1173,10 @@ class HistoryListBase(AppBase):
                             else:
                                 # Unmarked: two-space prefix (already applied during add), plain style
                                 lbl.update(Text(f"  {raw}"))
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
+                        except Exception as e:
+                            self.printException(e, "updating label renderable failed")
+                    except Exception as e:
+                        self.printException(e, "updating _checked attribute failed")
             except Exception as e:
                 self.printException(e, "HistoryListBase.toggle_check_current update failed")
         except Exception as e:
@@ -1065,7 +1219,7 @@ class FileModeHistoryList(HistoryListBase):
         try:
             self.clear()
             # If repository available, call git log --follow for the path
-            repo_root = getattr(self.app, "repo_root", None)
+            repo_root = self.app.repo_root
             if repo_root:
                 try:
                     cmd = [
@@ -1118,7 +1272,7 @@ class RepoModeHistoryList(HistoryListBase):
         try:
             self.clear()
             # Use git log to populate repo-wide history when possible
-            repo_root = repo_path or getattr(self.app, "repo_root", None)
+            repo_root = repo_path or self.app.repo_root
             if repo_root:
                 try:
                     cmd = ["git", "-C", repo_root, "log", "--pretty=format:%H\t%ad\t%s", "--date=short", "-n", "200"]
@@ -1178,12 +1332,14 @@ class DiffList(AppBase):
             self.clear()
             app = self.app
             repo_root = app.repo_root if app else None
-            workdir = repo_root or (app.path if app else None)
+            # Prefer the canonicalized `current_path` on the app when available
+            workdir = repo_root or (app.current_path if app else None)
             cmd = None
             try:
                 try:
                     cmd = app.build_diff_cmd(filename, prev, curr, variant_index)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "prepDiffList: building diff command failed")
                     # fallback basic diff
                     if repo_root:
                         cmd = ["git", "-C", repo_root, "diff"]
@@ -1319,10 +1475,11 @@ class GitHistoryNavTool(App):
 
     def __init__(
         self,
-        path: str = ".",
-        no_color: bool = False,
-        repo_first: bool = False,
-        repo_hashes: list | None = None,
+        path: str,
+        no_color: bool,
+        repo_first: bool,
+        repo_hashes: list,
+        repo_root: str,
         **kwargs,
     ):
         # Accept CLI options here so the app can inspect them during mount
@@ -1332,17 +1489,50 @@ class GitHistoryNavTool(App):
             self.no_color = no_color
             self.repo_first = repo_first
             # optional repo hash initialization (list of 1 or 2 hashes)
+            # Normalize repo_hashes to a list (avoid mutable default)
             self.repo_hashes = repo_hashes or []
             # placeholders for runtime state
-            self.repo_cache = None
-            # repo-related defaults so methods can access them directly
-            self.repo_available = False
-            self.repo_root = None
-            self.repo_status_map = {}
+            # `repo_root` is provided by main and should not be modified further.
+            self.repo_root = repo_root
             self._saved_state = None
             self._current_layout = None
+            # Best-effort: cache a pygit2 Repository object to avoid
+            # constructing it per-file. If pygit2 isn't available set
+            # `pygit2_repo` to None so callers can fall back to CLI.
+            self.pygit2_repo = None
+            if pygit2:
+                try:
+                    self.pygit2_repo = pygit2.Repository(self.repo_root)
+                except Exception as e:
+                    printException(e, "GitHistoryNavTool.__init__: pygit2.Repository init failed")
+
+            # Initialize `_current_path` to either the provided path when
+            # it's a directory, or the dirname when `path` is a file.
+            # Use the property setter so the value is canonicalized.
+            self._current_path = (self.path if os.path.isdir(self.path) else os.path.dirname(self.path))
         except Exception as e:
             printException(e, "GitHistoryNavTool.__init__ failed")
+
+    @property
+    def current_path(self) -> str | None:
+        """The current working path for the app, always stored as a realpath.
+
+        External code should set `app.current_path = some_path` and the
+        property will canonicalize it via `os.path.realpath`. A None value
+        is preserved as None.
+        """
+        return self._current_path
+
+    @current_path.setter
+    def current_path(self, value: str) -> None:
+        try:
+            # Treat empty/false as '.' and always store realpath
+            p = value if value else "."
+            self._current_path = os.path.realpath(p)
+        except Exception as e:
+            # Fall back to storing raw value and log
+            self.printException(e, "setting current_path failed")
+            self._current_path = value
 
     def printException(self, e: Exception, msg: Optional[str] = None) -> None:
         """Instance-level exception logger for the App to mirror widget helper.
@@ -1355,9 +1545,10 @@ class GitHistoryNavTool(App):
             short = msg or ""
             logger.warning(f"{className}.{funcName}: {short} - {e}")
             logger.warning(traceback.format_exc())
-        except Exception:
-            # Fallback to module-level logger
+        except Exception as e_fallback:
+            # Fall back to module-level printer
             printException(e, msg)
+            printException(e_fallback, "GitHistoryNavTool.printException fallback")
 
     def compose(self):
         # Compose the canonical six-column layout using Vertical columns
@@ -1386,8 +1577,8 @@ class GitHistoryNavTool(App):
 
     async def on_mount(self) -> None:
         try:
-            # Build light repo cache (stub); real discovery in a later step
-            self.build_repo_cache()
+            # Repo discovery is handled by `main()` and passed into the app;
+            # do not perform any repo scans here.
             # Resolve and store references to the six canonical widgets
             try:
                 self.file_mode_file_list = self.query_one(f"#{LEFT_FILE_LIST_ID}", FileModeFileList)
@@ -1474,16 +1665,16 @@ class GitHistoryNavTool(App):
                             try:
                                 self.current_prev_sha = prev
                                 self.current_commit_sha = curr
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                self.printException(e, "setting current_prev_sha and current_commit_sha failed")
                             try:
                                 # If starting in repo-first mode, populate the repo file list
                                 # with the specified hashes so the UI reflects them immediately.
                                 if self.repo_first:
                                     try:
                                         self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        self.printException(e, "preparing repo mode file list failed")
                             except Exception as e:
                                 self.printException(e, "on_mount: initializing repo hashes failed")
                     except Exception as e:
@@ -1491,13 +1682,13 @@ class GitHistoryNavTool(App):
 
                     # Ensure help content is prepared so help is immediately available
                     try:
-                        if getattr(self, "help_list", None) is not None:
+                        if self.help_list is not None:
                             try:
                                 self.help_list.prepHelp()
                             except Exception as e:
                                 self.printException(e, "on_mount: prepHelp failed")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e, "on_mount: prepHelp outer failure")
             except Exception as e:
                 self.printException(e, "on_mount: initial prep failed")
         except Exception as e:
@@ -1509,13 +1700,14 @@ class GitHistoryNavTool(App):
             if event is not None:
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e, "key_q: event.stop failed")
             logger.debug("key_q invoked; exiting app")
             try:
                 # App.exit() is the Textual API to stop the app.
                 self.exit()
-            except Exception:
+            except Exception as e:
+                self.printException(e, "key_q: app.exit failed")
                 # Fallback to raising SystemExit
                 raise SystemExit(0)
         except Exception as e:
@@ -1535,8 +1727,8 @@ class GitHistoryNavTool(App):
             if event is not None:
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e, "key_h: event.stop failed")
             logger.debug("key_h invoked: saving state and showing help")
             try:
                 self.save_state()
@@ -1560,113 +1752,6 @@ class GitHistoryNavTool(App):
         # Some terminals map '?' to 'question'
         return self.key_h(event)
 
-    def build_repo_cache(self) -> None:
-        # Populate lightweight repo metadata for the UI using pygit2 when
-        # available, otherwise fall back to calling `git` on the command line.
-        try:
-            self.repo_available = False
-            self.repo_root = None
-            self.repo_status_map = {}
-            # Try pygit2 discovery first
-            if pygit2:
-                try:
-                    repo_path = pygit2.discover_repository(self.path or ".")
-                    if repo_path:
-                        # pygit2 returns path to the .git directory
-                        self.repo_root = os.path.abspath(os.path.dirname(repo_path))
-                        repo = pygit2.Repository(repo_path)
-                        self.repo_available = True
-                        status_map = {}
-                        try:
-                            statuses = repo.status()
-                            # statuses is a dict: path -> flags
-                            for fpath, flags in statuses.items():
-                                try:
-                                    if flags & pygit2.GIT_STATUS_CONFLICTED:
-                                        st = "conflicted"
-                                    elif flags & pygit2.GIT_STATUS_IGNORED:
-                                        st = "ignored"
-                                    elif flags & (
-                                        pygit2.GIT_STATUS_INDEX_NEW
-                                        | pygit2.GIT_STATUS_INDEX_MODIFIED
-                                        | pygit2.GIT_STATUS_INDEX_DELETED
-                                    ):
-                                        st = "staged"
-                                    elif flags & pygit2.GIT_STATUS_WT_DELETED:
-                                        st = "wt_deleted"
-                                    elif flags & pygit2.GIT_STATUS_WT_MODIFIED:
-                                        st = "modified"
-                                    elif flags & pygit2.GIT_STATUS_WT_NEW:
-                                        st = "untracked"
-                                    else:
-                                        st = "tracked_clean"
-                                except Exception:
-                                    st = "tracked_clean"
-                                status_map[fpath] = st
-                        except Exception:
-                            status_map = {}
-                        self.repo_status_map = status_map
-                except Exception:
-                    # pygit2 discovery failed; fall back to git CLI below
-                    pass
-
-            if not self.repo_available:
-                # Try CLI-based discovery
-                try:
-                    topo = subprocess.check_output(
-                        ["git", "-C", self.path or ".", "rev-parse", "--show-toplevel"],
-                        stderr=subprocess.DEVNULL,
-                        text=True,
-                    ).strip()
-                    if topo:
-                        self.repo_root = topo
-                        self.repo_available = True
-                        status_map = {}
-                        try:
-                            out = subprocess.check_output(
-                                ["git", "-C", self.repo_root, "status", "--porcelain"],
-                                text=True,
-                                stderr=subprocess.DEVNULL,
-                            )
-                            for ln in out.splitlines():
-                                if not ln:
-                                    continue
-                                code = ln[:2]
-                                path = ln[3:]
-                                st = "tracked_clean"
-                                try:
-                                    if code == "??":
-                                        st = "untracked"
-                                    elif code == "!!":
-                                        st = "ignored"
-                                    elif "U" in code:
-                                        st = "conflicted"
-                                    elif code[0] != " ":
-                                        # index has a change
-                                        st = "staged"
-                                    elif code[1] != " ":
-                                        # working tree has change
-                                        if code[1] == "D":
-                                            st = "wt_deleted"
-                                        else:
-                                            st = "modified"
-                                except Exception:
-                                    st = "tracked_clean"
-                                status_map[path] = st
-                        except Exception:
-                            status_map = {}
-                        self.repo_status_map = status_map
-                except Exception:
-                    self.repo_available = False
-
-            # store a small cache dict for future use
-            self.repo_cache = {
-                "root": self.repo_root,
-                "available": self.repo_available,
-                "status_map": self.repo_status_map,
-            }
-        except Exception as e:
-            self.printException(e, "build_repo_cache failed")
 
     def _apply_column_layout(
         self,
@@ -1851,9 +1936,9 @@ class GitHistoryNavTool(App):
         """
         try:
             self._saved_state = (
-                getattr(self, "_current_layout", None),
-                getattr(self, "_current_focus", None),
-                getattr(self, "_current_footer", None),
+                self._current_layout,
+                self._current_focus,
+                self._current_footer,
             )
             logger.debug(f"save_state: saved={self._saved_state}")
         except Exception as e:
@@ -1880,8 +1965,8 @@ class GitHistoryNavTool(App):
             # clear saved slot after restore
             try:
                 self._saved_state = None
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e, "restore_state clearing saved state failed")
         except Exception as e:
             self.printException(e, "restore_state failed")
 
@@ -1891,9 +1976,9 @@ class GitHistoryNavTool(App):
         Records the desired focus id for save/restore semantics.
         """
         try:
-
             def _do():
                 sel = str(target)
+                # normalize selector to a bare id (without leading '#')
                 if sel.startswith("#"):
                     key = sel[1:]
                 else:
@@ -1917,13 +2002,14 @@ class GitHistoryNavTool(App):
                             lbl = self.query_one(f"#{tid}", Label)
                             try:
                                 lbl.set_class(False, "active")
-                            except Exception:
+                            except Exception as e:
+                                self.printException(e, "change_focus resetting title label class failed")
                                 try:
                                     lbl.remove_class("active")
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
+                                except Exception as e:
+                                    self.printException(e, "change_focus removing title label class failed")
+                        except Exception as e:
+                            self.printException(e, "change_focus querying title label failed")
                 except Exception as e:
                     self.printException(e, "change_focus resetting title label classes failed")
 
@@ -1953,19 +2039,21 @@ class GitHistoryNavTool(App):
                     if widget is not None:
                         try:
                             self.set_focus(widget)
-                        except Exception:
+                        except Exception as e:
+                            self.printException(e, f"could not set focus to widget for {target}")
+                            # Fallback: resolve widget by id and call set_focus
                             try:
                                 widget.focus()
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                self.printException(e, f"could not fallback focus to widget for {target}")
                         # best-effort normalize index/scroll for file lists
                         try:
                             if hasattr(widget, "index"):
                                 idx = getattr(widget, "index", None)
                                 if idx is None:
                                     widget.index = getattr(widget, "_min_index", 0) or 0
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e, f"could not normalize index/scroll for widget {target}")
 
                 except Exception as e:
                     self.printException(e, f"could not focus resolved widget for {target}")
@@ -1977,11 +2065,12 @@ class GitHistoryNavTool(App):
                             title_lbl = self.query_one(f"#{label_name}", Label)
                             try:
                                 title_lbl.set_class(True, "active")
-                            except Exception:
+                            except Exception as e:
+                                self.printException(e, "change_focus setting title label class failed") 
                                 try:
                                     title_lbl.add_class("active")
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    self.printException(e, "change_focus adding title label class failed")
                         except Exception as e:
                             self.printException(e, f"could not update title label {label_name}")
                 except Exception as e:
@@ -1989,7 +2078,8 @@ class GitHistoryNavTool(App):
 
             try:
                 self.call_after_refresh(_do)
-            except Exception:
+            except Exception as e:
+                self.printException(e, "change_focus.call_after_refresh failed")
                 _do()
 
             # record desired focus target for save/restore
@@ -2013,13 +2103,14 @@ class GitHistoryNavTool(App):
                 footer = None
                 try:
                     footer = self.query_one("#footer", Label)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "change_footer querying footer label failed")
                     footer = None
                 if footer is not None:
                     try:
                         footer.update(txt)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e, "change_footer updating footer label failed")
             except Exception as e:
                 self.printException(e, "could not update footer in change_footer")
             try:
@@ -2030,15 +2121,67 @@ class GitHistoryNavTool(App):
             self.printException(e, "change_footer outer failure")
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="gitdiffnavtool.py")
-    p.add_argument("path", nargs="?", default=".", help="directory or file to open")
-    p.add_argument("-C", "--no-color", dest="no_color", action="store_true", help="start with diff colorization off")
-    p.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
-    p.add_argument(
+def discover_repo_worktree(start_path: str | None) -> str:
+    """Discover the repository worktree root starting at `start_path`.
+
+    Uses `pygit2.discover_repository` when available; otherwise uses
+    git -C <start_path> rev-parse --show-toplevel to find the worktree root.
+    If no repository is found this function exits the program with an error message.
+    """
+    try:
+        start = os.path.abspath(start_path or os.getcwd())
+    except Exception:
+        start = os.getcwd()
+
+    # Try pygit2 discovery first
+    if pygit2:
+        try:
+            gitdir = pygit2.discover_repository(start)
+            logger.debug("discover_repo_worktree: pygit2 discovered gitdir=%s", gitdir)
+            if gitdir:
+                try:
+                    gitdir = os.fspath(gitdir)
+                    logger.debug("discover_repo_worktree: pygit2 gitdir fspath=%s", gitdir)
+                except Exception as e:
+                    printException(e, "discover_repo_worktree: converting gitdir to fspath failed")
+                gitdir_real = os.path.realpath(gitdir)
+                logger.debug(f"discover_repo_worktree: pygit2 gitdir realpath={gitdir_real}")
+                # Worktree root is parent of the .git directory
+                worktree = os.path.realpath(os.path.dirname(gitdir_real))
+                logger.debug("discover_repo_worktree: pygit2 discovered gitdir=%s worktree=%s", gitdir_real, worktree)
+                return worktree
+        except Exception as e:
+            printException(e, "discover_repo_worktree: pygit2 discovery failed, falling back to git CLI")
+
+    # Next try git CLI discovery using `git -C <start> rev-parse --show-toplevel`.
+    try:
+        cmd = ["git", "-C", start or ".", "rev-parse", "--show-toplevel"]
+        topo = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True).strip()
+        if topo:
+            try:
+                worktree = os.path.realpath(topo)
+            except Exception:
+                logger.debug("discover_repo_worktree: realpath failed for topo=%s", topo)
+                worktree = topo
+            logger.debug("discover_repo_worktree: git rev-parse -> %s (worktree=%s)", topo, worktree)
+            return worktree
+    except Exception as e:
+        printException(e, "discover_repo_worktree: git rev-parse failed, falling back to directory walk")
+
+    # If pygit2 and git discovery both fail, fail fast — no filesystem walk.
+    sys.exit(f"Not a git repository (pygit2 and git discovery failed) starting at {start}")
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
+    parser.add_argument("path", nargs="?", default=".", help="directory or file to open")
+    parser.add_argument("-C", "--no-color", dest="no_color", action="store_true", help="start with diff colorization off")
+    parser.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
+    parser.add_argument(
         "-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)"
     )
-    p.add_argument(
+    parser.add_argument("-P", "--no-pygit2", dest="no_pygit2", action="store_true", help="disable pygit2 usage even if installed")
+    parser.add_argument(
         "-R",
         "--repo-hash",
         dest="repo_hash",
@@ -2046,19 +2189,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         metavar="HASH",
         help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
     )
-    return p
-
-
-def main(argv: Optional[list[str]] = None) -> int:
-    parser = build_arg_parser()
     args = parser.parse_args(argv)
+
+    if args.no_pygit2:
+        global pygit2  # pylint: disable=global-statement
+        pygit2 = None
+
     # Configure logging if debug file requested
     try:
         if args.debug:
             try:
                 os.makedirs(os.path.dirname(args.debug) or "", exist_ok=True)
-            except Exception:
-                pass
+            except Exception as e:
+                printException(e, "could not create directories for debug log file")
             logging.basicConfig(
                 filename=args.debug,
                 level=logging.DEBUG,
@@ -2077,10 +2220,18 @@ def main(argv: Optional[list[str]] = None) -> int:
             # imply repo-first when -R used
             args.repo_first = True
 
+        # Determine repository worktree root once and store on the app.
+        repo_root = discover_repo_worktree(args.path)
+        logger.debug("Discovered repository worktree root: %s", repo_root)
+        
         # Wire CLI into the Textual app and run it.
-        logger.debug("Starting GitHistoryNavTool; args=%s", args)
+        logger.debug("Starting GitHistoryNavTool; args=%s repo_root=%s", args, repo_root)
         app = GitHistoryNavTool(
-            path=args.path, no_color=args.no_color, repo_first=args.repo_first, repo_hashes=repo_hashes
+            path=args.path,
+            no_color=args.no_color,
+            repo_first=args.repo_first,
+            repo_hashes=repo_hashes,
+            repo_root=repo_root,
         )
         # Run the textual app (blocks until exit)
         app.run()
