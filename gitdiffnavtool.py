@@ -1310,9 +1310,18 @@ class RepoModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "prepRepoModeFileList failed")
 
-    def key_left(self) -> None:
+    def key_left(self, event: events.Key | None = None) -> None:
         # Move to previous view or update state in main app (stub)
-        return None
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "RepoModeFileList.key_left: event.stop failed")
+        try:
+            # Switch layout back to left-side history fullscreen
+            self.app.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
+        except Exception as e:
+            self.printException(e, "RepoModeFileList.key_left change_state failed")
 
     def key_right(self) -> None:
         # Open diff view for selected file (stub)
@@ -1814,6 +1823,8 @@ HELP_TITLE = "help-title"
 
 # Footer text used when switching to file-history view
 RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
+# Footer text used when showing the left history pane
+LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
 # Footer text used when showing the left file list
 LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
 # Footer text used when showing the right file list (file list view)
@@ -2002,7 +2013,7 @@ class GitHistoryNavTool(App):
                         self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".")
                         # Centralize layout/focus/footer handling via change_state.
                         try:
-                            self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
+                            self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
                         except Exception as e:
                             self.printException(e, "on_mount: change_state for history_fullscreen failed")
                     except Exception as e:
