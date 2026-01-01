@@ -1516,6 +1516,11 @@ class HistoryListBase(AppBase):
                 # Delegate to the repo-mode file list preparer. The preparer
                 # understands pseudo-hashes like MODS/STAGED.
                 self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash)
+                try:
+                    # Switch to the right-file list view and update footer
+                    self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
+                except Exception as e:
+                    self.printException(e, "RepoModeHistoryList.key_right change_state failed")
             except Exception as e:
                 self.printException(e, "RepoModeHistoryList.key_right prep failed")
         except Exception as e:
@@ -1811,6 +1816,8 @@ HELP_TITLE = "help-title"
 RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
 # Footer text used when showing the left file list
 LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
+# Footer text used when showing the right file list (file list view)
+RIGHT_FILE_FOOTER = Text("Files: press Left to return")
 
  # Common styles used across file/history preparers
 STYLE_DIR = "white on blue"
