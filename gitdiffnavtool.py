@@ -715,14 +715,14 @@ class FileModeFileList(FileListBase):
             try:
                 if not (self.app.pygit2_repo and pygit2):
                     if self.app.repo_root and path.startswith(self.app.repo_root):
-                        prefix = os.path.relpath(path, repo_root)
+                        prefix = os.path.relpath(path, self.app.repo_root)
                         if prefix == ".":
                             prefix = ""
                         else:
                             prefix = prefix + os.sep
                         try:
                             out = subprocess.check_output(
-                                ["git", "-C", repo_root, "status", "--porcelain"],
+                                ["git", "-C", self.app.repo_root, "status", "--porcelain"],
                                 text=True,
                                 stderr=subprocess.DEVNULL,
                             )
@@ -1074,7 +1074,7 @@ class FileModeFileList(FileListBase):
             # File selected: open repo view for tracked files only
             if raw and repo_status not in ("untracked", "ignored"):
                 try:
-                    self.app.file_mode_history_list.prepFileModeRepoList(raw)
+                    self.app.file_mode_history_list.prepFileModeHistoryList(raw)
                     try:
                         # Switch UI to file-history layout and focus
                         self.app.change_state("file_history", RIGHT_FILE_TITLE, RIGHT_FILE_FOOTER)
@@ -1116,7 +1116,7 @@ class RepoModeFileList(FileListBase):
 
             # Build git diff command to list changed files between the two refs
             try:
-                cmd = ["git", "-C", repo_root, "diff", "--name-status"]
+                cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status"]
                 if prev_hash and curr_hash:
                     cmd += [prev_hash, curr_hash]
                 elif curr_hash:
@@ -1324,7 +1324,7 @@ class RepoModeHistoryList(HistoryListBase):
             # Use git log to populate repo-wide history when possible
             if self.app.repo_root:
                 try:
-                    cmd = ["git", "-C", repo_root, "log", "--pretty=format:%H\t%ad\t%s", "--date=short", "-n", "200"]
+                    cmd = ["git", "-C", self.app.repo_root, "log", "--pretty=format:%H\t%ad\t%s", "--date=short", "-n", "200"]
                     out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
                     for ln in out.splitlines():
                         if not ln:
