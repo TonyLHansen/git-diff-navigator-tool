@@ -1077,7 +1077,7 @@ class FileModeFileList(FileListBase):
                     self.app.file_mode_history_list.prepFileModeHistoryList(raw)
                     try:
                         # Switch UI to file-history layout and focus
-                        self.app.change_state("file_history", RIGHT_FILE_TITLE, RIGHT_FILE_FOOTER)
+                        self.app.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
                     except Exception as e:
                         self.printException(e, "FileModeFileList._activate_or_open change_state failed")
                 except Exception as e:
@@ -1506,7 +1506,7 @@ HELP_LIST_ID = "help-list"
 HELP_TITLE = "help-title"
 
 # Footer text used when switching to file-history view
-RIGHT_FILE_FOOTER = Text("File history: press Left to return")
+RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
 
 
 class GitHistoryNavTool(App):
@@ -1618,7 +1618,10 @@ class GitHistoryNavTool(App):
                 yield Label(Text("Help"), id=HELP_TITLE)
                 yield HelpList(id=HELP_LIST_ID)
 
-        yield Footer()
+        # Use a Label with id="footer" so `change_footer` can update it.
+        # Placing it outside the `Horizontal` ensures it always sits below
+        # the columns and remains visible regardless of layout changes.
+        yield Label(Text(""), id="footer")
 
     async def on_mount(self) -> None:
         try:
