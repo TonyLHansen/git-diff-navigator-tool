@@ -111,8 +111,8 @@ def enable_trace_logging(enabled: bool) -> None:
             for h in root.handlers:
                 try:
                     h.setLevel(TRACE)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to set handler level to TRACE: %s", e)
             logger.debug("Trace logging enabled")
     except Exception as e:
         printException(e, "enable_trace_logging failed")
@@ -634,6 +634,31 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, "FileListBase.on_focus")
 
+    def _add_filelist_key_header(self) -> None:
+        """Insert an unselectable key legend row at the top of the file list.
+
+        This places the header at index 0 and sets `_min_index` to 1 so
+        navigation skips the header.
+        """
+        try:
+            # Create header row; use a dim style so it's visually distinct
+            item = ListItem(Label(Text(FILELIST_KEY_ROW_TEXT, style="dim")))
+            # Mark metadata so callers can recognize it and avoid selecting it
+            try:
+                item._filelist_key_header = True
+                item._selectable = False
+            except Exception as e:
+                self.printException(e, "_add_filelist_key_header: setting metadata failed")
+            try:
+                # Append header to the list; callers will set `_min_index`
+                # after populating rows to ensure it doesn't exceed the
+                # available node count.
+                self.append(item)
+            except Exception as e:
+                self.printException(e, "_add_filelist_key_header append failed")
+        except Exception as e:
+            self.printException(e, "_add_filelist_key_header failed")
+
     def _highlight_filename(self, filename: str) -> None:
         """Find the first node matching `filename` and move the index there."""
         try:
@@ -715,10 +740,9 @@ class FileModeFileList(FileListBase):
             # mismatches.
             try:
                 path = os.path.realpath(path)
-            except Exception:
+            except Exception as e:
                 self.printException(e, "prepFileModeFileList: realpath failed")
                 # If realpath fails for some reason, keep the original path
-                pass
 
             # Record the list's path
             self.path = path
@@ -769,15 +793,22 @@ class FileModeFileList(FileListBase):
                                     rel = name
                                 m[rel] = code
                             status_map = m
-                        except Exception:
+                        except Exception as e:
                             self.printException(e, "prepFileModeFileList: git status subprocess failed")
-            except Exception:
+            except Exception as e:
                 self.printException(e, "prepFileModeFileList: building status_map failed")
                 status_map = None
 
             # clear and populate
             self.clear()
 
+            # Insert the unselectable key legend header at the top
+            try:
+                self._add_filelist_key_header()
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: adding filelist key header failed")
+
+            # List directory contents
             try:
                 entries = sorted(os.listdir(path))
             except Exception as e:
@@ -888,7 +919,8 @@ class FileModeFileList(FileListBase):
                                     except Exception as e:
                                         self.printException(e, "pygit2 status_file failed")
                                         repo_status = None
-                            except Exception:
+                            except Exception as e:
+                                self.printException(e, "pygit2 status_file outer failed")
                                 repo_status = None
 
                             if repo_status is None:
@@ -1026,6 +1058,15 @@ class FileModeFileList(FileListBase):
             try:
                 self._populated = True
                 self._filename = path
+                # Ensure navigation skips the header when rows exist
+                try:
+                    nodes = self.nodes()
+                    if len(nodes) > 1:
+                        self._min_index = 1
+                    else:
+                        self._min_index = 0
+                except Exception as e:
+                    self.printException(e, "prepFileModeFileList: determining min index failed")
                 if hl:
                     try:
                         self.call_after_refresh(lambda: self._highlight_match(hl))
@@ -1105,8 +1146,8 @@ class FileModeFileList(FileListBase):
                                 # matcher can match the node `_raw_text` which
                                 # stores full paths.
                                 hl = self.path
-                        except Exception:
-                            hl = None
+                        except Exception as e:
+                            self.printException(e, "FileModeFileList._activate_or_open highlight filename fallback failed") 
 
                         self.prepFileModeFileList(raw, highlight_filename=hl)
                     except Exception as e:
@@ -1151,6 +1192,11 @@ class RepoModeFileList(FileListBase):
     def prepRepoModeFileList(self, prev_hash: str | None, curr_hash: str | None) -> None:
         try:
             self.clear()
+            # Insert the unselectable key legend header at the top
+            try:
+                self._add_filelist_key_header()
+            except Exception as e:
+                self.printException(e, "prepRepoModeFileList _add_filelist_key_header failed")
             if not self.app.repo_root:
                 # nothing to show; fallback to empty synthetic list
                 self._populated = True
@@ -1192,6 +1238,15 @@ class RepoModeFileList(FileListBase):
 
             self._populated = True
             # Highlight based on provided hashes (prefer curr_hash)
+            # Ensure navigation skips the header when rows exist
+            try:
+                nodes = self.nodes()
+                if len(nodes) > 1:
+                    self._min_index = 1
+                else:
+                    self._min_index = 0
+            except Exception as e:
+                self.printException(e, "prepRepoModeFileList: setting _min_index failed")
             try:
                 target = curr_hash or prev_hash
                 if target:
@@ -1230,8 +1285,8 @@ class HistoryListBase(AppBase):
         # History lists should use repository-style highlighting
         try:
             self.is_history_list = True
-        except Exception:
-            pass
+        except Exception as e:
+            self.printException(e, "HistoryListBase __init__ failed")
 
     def _add_row(self, text: str, commit_hash: str | None) -> None:
         try:
@@ -1289,6 +1344,24 @@ class HistoryListBase(AppBase):
                 self.printException(e, "HistoryListBase.toggle_check_current update failed")
         except Exception as e:
             self.printException(e, "toggle_check_current failed")
+
+    def key_m(self, event: events.Key | None = None) -> None:
+        """Toggle the 'marked' state for the currently-selected history row."""
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "HistoryListBase.key_m: event.stop failed")
+            try:
+                self.toggle_check_current()
+            except Exception as e:
+                self.printException(e, "HistoryListBase.key_m toggle failed")
+        except Exception as e:
+            self.printException(e, "HistoryListBase.key_m failed")
+
+    def key_M(self, event: events.Key | None = None) -> None:
+        return self.key_m(event)
 
     def compute_commit_pair_hashes(self, idx: int | None = None) -> tuple[str | None, str | None]:
         try:
@@ -1585,6 +1658,9 @@ STYLE_IGNORED = "dim italic"
 STYLE_MODIFIED = "yellow"
 STYLE_UNTRACKED = "bold yellow"
 STYLE_DEFAULT = "white"
+
+# Header row text for file lists (unselectable)
+FILELIST_KEY_ROW_TEXT = "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
 
 
 class GitHistoryNavTool(App):
