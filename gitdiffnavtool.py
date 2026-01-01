@@ -85,6 +85,38 @@ ListItem.active {
 
 logger = logging.getLogger(__name__)
 
+# Define a TRACE level lower than DEBUG and add a convenience `trace` method
+# so callers can emit very-verbose trace messages when enabled.
+TRACE = 5
+logging.addLevelName(TRACE, "TRACE")
+
+def _logger_trace(self, msg, *args, **kwargs):
+    if self.isEnabledFor(TRACE):
+        self._log(TRACE, msg, args, **kwargs)
+
+setattr(logging.Logger, "trace", _logger_trace)
+
+
+def enable_trace_logging(enabled: bool) -> None:
+    """Enable or disable TRACE-level logging across the root logger and handlers.
+
+    When enabled this sets the root logger and all its handlers to the numeric
+    TRACE level so `logger.trace(...)` messages are emitted. When disabled this
+    does nothing (existing logging configuration remains).
+    """
+    try:
+        root = logging.getLogger()
+        if enabled:
+            root.setLevel(TRACE)
+            for h in root.handlers:
+                try:
+                    h.setLevel(TRACE)
+                except Exception:
+                    pass
+            logger.debug("Trace logging enabled")
+    except Exception as e:
+        printException(e, "enable_trace_logging failed")
+
 
 def printException(e: Exception, msg: Optional[str] = None) -> None:
     """Module-level helper to log unexpected exceptions when `self` isn't available.
@@ -125,6 +157,8 @@ class AppBase(ListView):
         self._page_scroll = False
         # Ensure common attributes exist so code can access them directly
         # Rely on ListView to provide `children`, `_nodes`, `index`, and `app`.
+        # Flag indicating this widget is a history-style list (overridden by subclasses)
+        self.is_history_list = False
 
     def printException(self, e: Exception, msg: Optional[str] = None) -> None:
         try:
@@ -198,14 +232,8 @@ class AppBase(ListView):
                 return
             old = self.index
             # determine highlight colors based on widget type (repo vs file)
-            try:
-                is_repo_mode = isinstance(self, RepoModeFileList) or isinstance(self, RepoModeHistoryList)
-            except Exception as e:
-                # If classes aren't available, default to file highlight
-                self.printException(e, "_activate_index: repo-mode detection failed")
-                is_repo_mode = False
 
-            if is_repo_mode:
+            if self.is_history_list:
                 highlight_bg = HIGHLIGHT_REPOLIST_BG
                 text_color = "white"
             else:
@@ -216,7 +244,7 @@ class AppBase(ListView):
             # in `watch_index` which runs after Textual has processed the index
             # change so our styles/classes won't be clobbered.
             try:
-                logger.debug("_activate_index: old=%r new=%r is_repo=%s", old, new_index, is_repo_mode)
+                logger.debug("_activate_index: old=%r new=%r is_repo=%s", old, new_index, self.is_history_list)
                 logger.debug("_activate_index: scheduling index set via call_after_refresh -> %s", new_index)
                 self.call_after_refresh(lambda: setattr(self, "index", new_index))
             except Exception as e:
@@ -240,12 +268,7 @@ class AppBase(ListView):
             if not nodes:
                 return
             # determine repo vs file highlight colors
-            try:
-                is_repo_mode = isinstance(self, RepoModeFileList) or isinstance(self, RepoModeHistoryList)
-            except Exception as e:
-                self.printException(e, "watch_index: repo-mode detection failed")
-                is_repo_mode = False
-            highlight_bg = HIGHLIGHT_REPOLIST_BG if is_repo_mode else HIGHLIGHT_FILELIST_BG
+            highlight_bg = HIGHLIGHT_REPOLIST_BG if self.is_history_list else HIGHLIGHT_FILELIST_BG
             text_color = "white"
 
             logger.debug("watch_index: old=%r new=%r nodes=%d", old, new, len(nodes))
@@ -760,9 +783,9 @@ class FileModeFileList(FileListBase):
             except Exception as e:
                 self.printException(e, f"Error reading {path}")
                 try:
-                    self.append(ListItem(Label(Text(f"Error reading {path}: {e}", style="red"))))
-                except Exception as e:
-                    self.printException(e)
+                    self.append(ListItem(Label(Text(f"Error reading {path}: {e}", style=STYLE_ERROR))))
+                except Exception as e2:
+                    self.printException(e2)
                 return
 
             logger.debug(f"prepFileModeFileList: entries in {path}: {entries}")
@@ -777,7 +800,7 @@ class FileModeFileList(FileListBase):
                 # Only add parent entry when not at the repo root. Compare
                 # directly to the app-provided `repo_root` per project axiom.
                 if parent and parent != path and path != self.app.repo_root:
-                    parent_item = ListItem(Label(Text(f"← ..", style="white on blue")))
+                    parent_item = ListItem(Label(Text(f"← ..", style=STYLE_PARENT)))
                     try:
                         parent_item._filename = ".."
                         parent_item._is_dir = True
@@ -805,7 +828,7 @@ class FileModeFileList(FileListBase):
                         tag = "→"
                         display_name = f"{name}/"
                         display = f"{tag} {display_name}"
-                        style = "white on blue"
+                        style = STYLE_DIR
                         item = ListItem(Label(Text(display, style=style)))
                         try:
                             item._is_dir = True
@@ -952,19 +975,19 @@ class FileModeFileList(FileListBase):
                     try:
                         marker = MARKERS.get(repo_status, " ")
                         if repo_status == "conflicted":
-                            style = "magenta"
+                            style = STYLE_CONFLICTED
                         elif repo_status == "staged":
-                            style = "cyan"
+                            style = STYLE_STAGED
                         elif repo_status == "wt_deleted":
-                            style = "red"
+                            style = STYLE_WT_DELETED
                         elif repo_status == "ignored":
-                            style = "dim italic"
+                            style = STYLE_IGNORED
                         elif repo_status == "modified":
-                            style = "yellow"
+                            style = STYLE_MODIFIED
                         elif repo_status == "untracked":
-                            style = "bold yellow"
+                            style = STYLE_UNTRACKED
                         else:
-                            style = "white"
+                            style = STYLE_DEFAULT
                     except Exception as e:
                         self.printException(e, "mapping repo_status to marker and style failed")
                         marker = " "
@@ -1045,7 +1068,12 @@ class FileModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "FileModeFileList._nav_dir_if failed")
 
-    def _activate_or_open(self, event: events.Key | None = None, enter_dir_test_fn=lambda name: True) -> None:
+    def _activate_or_open(
+        self,
+        event: events.Key | None = None,
+        enter_dir_test_fn=lambda name: True,
+        allow_file_open: bool = True,
+    ) -> None:
         try:
             if event is not None:
                 try:
@@ -1066,13 +1094,27 @@ class FileModeFileList(FileListBase):
             if is_dir:
                 if enter_dir_test_fn(name) and raw:
                     try:
-                        self.prepFileModeFileList(raw)
+                        # If navigating up to the parent entry ('..'), pass the
+                        # current directory basename as the highlight filename
+                        # so the parent listing highlights the directory we
+                        # came from.
+                        hl = None
+                        try:
+                            if name == "..":
+                                # Pass the full directory path so the highlight
+                                # matcher can match the node `_raw_text` which
+                                # stores full paths.
+                                hl = self.path
+                        except Exception:
+                            hl = None
+
+                        self.prepFileModeFileList(raw, highlight_filename=hl)
                     except Exception as e:
                         self.printException(e, "FileModeFileList._activate_or_open prep failed")
                 return
 
-            # File selected: open repo view for tracked files only
-            if raw and repo_status not in ("untracked", "ignored"):
+            # File selected: open repo view for tracked files only (when allowed)
+            if raw and repo_status not in ("untracked", "ignored") and allow_file_open:
                 try:
                     self.app.file_mode_history_list.prepFileModeHistoryList(raw)
                     try:
@@ -1088,7 +1130,8 @@ class FileModeFileList(FileListBase):
     def key_left(self, event: events.Key | None = None) -> None:
         # Navigate up only when the selected directory is the parent entry ('..')
         # Use shared helper so event.stop() is honored and behavior is unified.
-        self._activate_or_open(event, enter_dir_test_fn=lambda name: name == "..")
+        # Do not open files when pressing left; only allow entering parent dir
+        self._activate_or_open(event, enter_dir_test_fn=lambda name: name == "..", allow_file_open=False)
 
     def key_right(self, event: events.Key | None = None) -> None:
         # Use shared helper to handle directory enter or file open.
@@ -1181,6 +1224,14 @@ class HistoryListBase(AppBase):
 
     Provides helpers to attach metadata to rows and compute commit-pair hashes.
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # History lists should use repository-style highlighting
+        try:
+            self.is_history_list = True
+        except Exception:
+            pass
 
     def _add_row(self, text: str, commit_hash: str | None) -> None:
         try:
@@ -1313,6 +1364,19 @@ class FileModeHistoryList(HistoryListBase):
                 self.printException(e, "prepFileModeHistoryList: highlight failed")
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
+
+    def key_left(self, event: events.Key | None = None) -> None:
+        """Return to file fullscreen and focus the left file list."""
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "FileModeHistoryList.key_left: event.stop failed")
+        try:
+            app = self.app
+            app.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
+        except Exception as e:
+            self.printException(e, "FileModeHistoryList.key_left change_state failed")
 
 
 class RepoModeHistoryList(HistoryListBase):
@@ -1507,6 +1571,20 @@ HELP_TITLE = "help-title"
 
 # Footer text used when switching to file-history view
 RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
+# Footer text used when showing the left file list
+LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
+
+ # Common styles used across file/history preparers
+STYLE_DIR = "white on blue"
+STYLE_PARENT = STYLE_DIR
+STYLE_WT_DELETED = "red"
+STYLE_ERROR = "red"
+STYLE_CONFLICTED = "magenta"
+STYLE_STAGED = "cyan"
+STYLE_IGNORED = "dim italic"
+STYLE_MODIFIED = "yellow"
+STYLE_UNTRACKED = "bold yellow"
+STYLE_DEFAULT = "white"
 
 
 class GitHistoryNavTool(App):
@@ -1657,23 +1735,11 @@ class GitHistoryNavTool(App):
                 if not self.repo_first:
                     try:
                         self.file_mode_file_list.prepFileModeFileList(path=self.path or ".")
-                        # ensure the file list has focus so arrow keys affect it
+                        # Centralize layout/focus/footer handling via change_state.
                         try:
-                            # `set_focus` is not awaitable in this Textual version.
-                            self.set_focus(self.file_mode_file_list)
+                            self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
                         except Exception as e:
-                            # Fallback: resolve widget by id and call set_focus
-                            try:
-                                widget = self.query_one(f"#{LEFT_FILE_LIST_ID}")
-                                self.set_focus(widget)
-                            except Exception as e2:
-                                self.printException(e2, "on_mount: focusing file list failed")
-                            self.printException(e, "on_mount: file list focus failed")
-                        # ensure top/highlight is active
-                        try:
-                            self.file_mode_file_list._highlight_top()
-                        except Exception as e:
-                            self.printException(e, "on_mount: file list highlight failed")
+                            self.printException(e, "on_mount: change_state for file_fullscreen failed")
                     except Exception as e:
                         self.printException(e, "on_mount: prepFileModeFileList failed")
                 else:
@@ -1681,21 +1747,11 @@ class GitHistoryNavTool(App):
                     # repository-history widget so the UI shows commits immediately.
                     try:
                         self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".")
-                        # focus the history list so key navigation works
+                        # Centralize layout/focus/footer handling via change_state.
                         try:
-                            # Call non-awaitable set_focus
-                            self.set_focus(self.repo_mode_history_list)
+                            self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
                         except Exception as e:
-                            try:
-                                widget = self.query_one(f"#{LEFT_HISTORY_LIST_ID}")
-                                self.set_focus(widget)
-                            except Exception as e2:
-                                self.printException(e2, "on_mount: focusing repo history failed")
-                            self.printException(e, "on_mount: repo history focus failed")
-                        try:
-                            self.repo_mode_history_list._highlight_top()
-                        except Exception as e:
-                            self.printException(e, "on_mount: repo history highlight failed")
+                            self.printException(e, "on_mount: change_state for history_fullscreen failed")
                     except Exception as e:
                         self.printException(e, "on_mount: prepRepoModeHistoryList failed")
                     # If repo hashes were provided on the command line, use them
@@ -2229,6 +2285,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)"
     )
+    parser.add_argument(
+        "-D",
+        "--debug-tracing",
+        dest="debug_tracing",
+        action="store_true",
+        help="enable TRACE-level (very verbose) logging",
+    )
     parser.add_argument("-P", "--no-pygit2", dest="no_pygit2", action="store_true", help="disable pygit2 usage even if installed")
     parser.add_argument(
         "-R",
@@ -2258,6 +2321,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
             logging.getLogger().setLevel(logging.DEBUG)
             logger.debug("Debug logging enabled -> %s", args.debug)
+
+        # Enable TRACE-level logging if requested (applies to root and handlers)
+        enable_trace_logging(bool(args.debug_tracing))
 
         # If repo-hash provided, validate count and imply repo-first
         repo_hashes = None
