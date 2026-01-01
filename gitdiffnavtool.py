@@ -1197,44 +1197,96 @@ class RepoModeFileList(FileListBase):
                 self._add_filelist_key_header()
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList _add_filelist_key_header failed")
-            if not self.app.repo_root:
-                # nothing to show; fallback to empty synthetic list
-                self._populated = True
-                self._highlight_top()
-                return
 
-            # Build git diff command to list changed files between the two refs
+            # If caller passed pseudo-hashes (MODS/STAGED) treat them
+            # specially rather than passing them through to `git diff`.
+            # Collect file lists for the pseudo refs and render them.
+            pseudo_names = ("MODS", "STAGED")
+            pseudo_entries = []
             try:
-                cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status"]
-                if prev_hash and curr_hash:
-                    cmd += [prev_hash, curr_hash]
-                elif curr_hash:
-                    # diff against working tree (curr only) or HEAD
-                    cmd += [curr_hash]
-                # run command
-                out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
-                for ln in out.splitlines():
-                    if not ln:
-                        continue
+                def _collect_for(pseudo: str) -> list[tuple[str, str]]:
+                    out = ""
+                    items: list[tuple[str, str]] = []
                     try:
-                        parts = ln.split("\t", 1)
-                        status = parts[0]
-                        path = parts[1] if len(parts) > 1 else parts[0]
-                        display = f"{status} {path}"
-                        item = ListItem(Label(Text(display)))
+                        if pseudo == "MODS":
+                            out = subprocess.check_output(
+                                ["git", "-C", self.app.repo_root, "diff", "--name-status"],
+                                text=True,
+                                stderr=subprocess.DEVNULL,
+                            )
+                        elif pseudo == "STAGED":
+                            out = subprocess.check_output(
+                                ["git", "-C", self.app.repo_root, "diff", "--name-status", "--cached"],
+                                text=True,
+                                stderr=subprocess.DEVNULL,
+                            )
+                        for ln in out.splitlines():
+                            if not ln:
+                                continue
+                            parts = ln.split("\t", 1)
+                            status = parts[0]
+                            path = parts[1] if len(parts) > 1 else parts[0]
+                            items.append((status, path))
+                    except subprocess.CalledProcessError:
+                        return []
+                    except Exception as e:
+                        self.printException(e, f"collecting pseudo entries for {pseudo} failed")
+                    return items
+
+                if prev_hash in pseudo_names:
+                    pseudo_entries.extend(_collect_for(prev_hash))
+                if curr_hash in pseudo_names:
+                    pseudo_entries.extend(_collect_for(curr_hash))
+            except Exception as e:
+                self.printException(e, "prepRepoModeFileList collecting pseudo entries failed")
+
+            if pseudo_entries:
+                # Render collected pseudo entries and skip the git-diff-with-refs path
+                try:
+                    for status, path in pseudo_entries:
                         try:
+                            display = f"{status} {path}"
+                            item = ListItem(Label(Text(display)))
                             item._raw_text = path
                             item._is_dir = False
                             self.append(item)
                         except Exception as e:
-                            self.printException(e, "prepRepoModeFileList append failed")
-                    except Exception as e:
-                        self.printException(e, "prepRepoModeFileList parsing line failed")
-            except subprocess.CalledProcessError:
-                # Fallback: no diff output
-                pass
-            except Exception as e:
-                self.printException(e, "prepRepoModeFileList git diff failed")
+                            self.printException(e, "prepRepoModeFileList append pseudo entry failed")
+                except Exception as e:
+                    self.printException(e, "prepRepoModeFileList rendering pseudo entries failed")
+            else:
+                # Build git diff command to list changed files between the two refs
+                try:
+                    cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status"]
+                    if prev_hash and curr_hash:
+                        cmd += [prev_hash, curr_hash]
+                    elif curr_hash:
+                        # diff against working tree (curr only) or HEAD
+                        cmd += [curr_hash]
+                    # run command
+                    out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+                    for ln in out.splitlines():
+                        if not ln:
+                            continue
+                        try:
+                            parts = ln.split("\t", 1)
+                            status = parts[0]
+                            path = parts[1] if len(parts) > 1 else parts[0]
+                            display = f"{status} {path}"
+                            item = ListItem(Label(Text(display)))
+                            try:
+                                item._raw_text = path
+                                item._is_dir = False
+                                self.append(item)
+                            except Exception as e:
+                                self.printException(e, "prepRepoModeFileList append failed")
+                        except Exception as e:
+                            self.printException(e, "prepRepoModeFileList parsing line failed")
+                except subprocess.CalledProcessError:
+                    # Fallback: no diff output
+                    pass
+                except Exception as e:
+                    self.printException(e, "prepRepoModeFileList git diff failed")
 
             self._populated = True
             # Highlight based on provided hashes (prefer curr_hash)
@@ -1391,6 +1443,90 @@ class HistoryListBase(AppBase):
             logger.debug("history highlighted: %s", event)
         except Exception as e:
             self.printException(e, "HistoryListBase.on_list_view_highlighted failed")
+
+    def _compute_selected_pair(self) -> tuple[str | None, str | None]:
+        """Return (prev_hash, curr_hash) where prev is older and curr is newer.
+
+        If a row is marked (single-mark semantics) use the marked row and the
+        currently-selected row as the pair. Otherwise compute the pair as the
+        currently-selected row and the following row.
+        """
+        try:
+            idx = self.index or 0
+            nodes = self.nodes()
+            if not nodes:
+                return (None, None)
+            selected_hash = getattr(nodes[idx], "_hash", None)
+            marked_idx = None
+            for i, node in enumerate(nodes):
+                if getattr(node, "_checked", False):
+                    marked_idx = i
+                    break
+            if marked_idx is not None:
+                marked_hash = getattr(nodes[marked_idx], "_hash", None)
+                # History ordering: lower index == newer, higher index == older
+                if marked_idx > idx:
+                    # marked is older
+                    try:
+                        # update app-level hashes for other components
+                        try:
+                            self.app.current_hash = selected_hash
+                            self.app.previous_hash = marked_hash
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    return (marked_hash, selected_hash)
+                else:
+                    try:
+                        try:
+                            self.app.current_hash = marked_hash
+                            self.app.previous_hash = selected_hash
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    return (selected_hash, marked_hash)
+
+            # No marked row — fall back to adjacent pair computation
+            prev, curr = self.compute_commit_pair_hashes(idx)
+            try:
+                try:
+                    self.app.current_hash = curr
+                    self.app.previous_hash = prev
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return (prev, curr)
+        except Exception as e:
+            self.printException(e, "_compute_selected_pair failed")
+            return (None, None)
+
+    def key_right(self, event: events.Key | None = None) -> None:
+        """Open the selected/marked commit-pair in the repo file list preparer."""
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "RepoModeHistoryList.key_right: event.stop failed")
+            prev_hash, curr_hash = self._compute_selected_pair()
+            try:
+                # Delegate to the repo-mode file list preparer. The preparer
+                # understands pseudo-hashes like MODS/STAGED.
+                self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash)
+            except Exception as e:
+                self.printException(e, "RepoModeHistoryList.key_right prep failed")
+        except Exception as e:
+            self.printException(e, "RepoModeHistoryList.key_right failed")
+
+    def key_enter(self, event: events.Key | None = None) -> None:
+        # Same behavior as Right: open the commit-pair file list
+        try:
+            return self.key_right(event)
+        except Exception as e:
+            self.printException(e, "RepoModeHistoryList.key_enter failed")
 
 
 class FileModeHistoryList(HistoryListBase):
@@ -1726,6 +1862,9 @@ class GitHistoryNavTool(App):
             self.repo_root = repo_root
             self._saved_state = None
             self._current_layout = None
+            # Track the currently-selected and previous commit hashes
+            self.current_hash = None
+            self.previous_hash = None
             # Best-effort: cache a pygit2 Repository object to avoid
             # constructing it per-file. If pygit2 isn't available set
             # `pygit2_repo` to None so callers can fall back to CLI.
