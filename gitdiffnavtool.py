@@ -1481,9 +1481,9 @@ class RepoModeHistoryList(HistoryListBase):
             # Insert MODS then STAGED at the top if present
             try:
                 if mods:
-                    self._add_row(f"MODS ({len(mods)} modified files)", "MODS")
+                    self._add_row(f"MODS ({len(mods)} modified file{'s' if len(mods) != 1 else ''})", "MODS")
                 if staged:
-                    self._add_row(f"STAGED ({len(staged)} staged files)", "STAGED")
+                    self._add_row(f"STAGED ({len(staged)} staged file{'s' if len(staged) != 1 else ''})", "STAGED")
             except Exception as e:
                 self.printException(e, "prepRepoModeHistoryList adding pseudo-rows failed")
 
