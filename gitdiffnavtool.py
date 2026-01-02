@@ -1410,13 +1410,18 @@ class RepoModeFileList(FileListBase):
 
             # Pass through the app-level commit pair unchanged; variant is fixed for now
             variant_index = 0
+            self.app.path = filename
 
             try:
-                try:
-                    self.app.path = filename
-                except Exception as e:
-                    self.printException(e, "RepoModeFileList.key_right: setting app.path failed")
-                self.app.diff_list.prepDiffList(filename, self.app.previous_hash, self.app.current_hash, variant_index)
+                # When opening from the repo-file list, we want DiffList.key_left
+                # to return to the repo file list view.
+                self.app.diff_list.prepDiffList(
+                    filename,
+                    self.app.previous_hash,
+                    self.app.current_hash,
+                    variant_index,
+                    ("history_file", RIGHT_FILE_LIST_ID, RIGHT_FILE_FOOTER),
+                )
             except Exception as e:
                 self.printException(e, "RepoModeFileList.key_right: prepDiffList failed")
 
@@ -1645,6 +1650,52 @@ class FileModeHistoryList(HistoryListBase):
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
 
+    def key_right(self, event: events.Key | None = None) -> None:
+        """Open the diff for the selected file commit-pair.
+
+        Compute the current and previous hashes (using marked rows if present),
+        determine the filename from the app-level `path`, call
+        `self.app.diff_list.prepDiffList(filename, prev, curr)` and switch the
+        UI to the file-history-diff layout.
+        """
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "FileModeHistoryList.key_right: event.stop failed")
+
+        prev_hash, curr_hash = self._compute_selected_pair()
+        try:
+            filename = getattr(self.app, "path", None)
+            # Ask the diff list to prepare the diff for this file and pair
+            try:
+                # When opening from a file's history, ensure left returns to
+                # the file-history view on the right history column.
+                self.app.diff_list.prepDiffList(
+                    filename,
+                    prev_hash,
+                    curr_hash,
+                    0,
+                    ("file_history", RIGHT_HISTORY_LIST_ID, RIGHT_HISTORY_FOOTER),
+                )
+            except Exception as e:
+                self.printException(e, "FileModeHistoryList.key_right: prepDiffList failed")
+
+            # Switch to the file-history-diff layout and focus diff list
+            try:
+                self.app.change_state("file_history_diff", f"#{DIFF_LIST_ID}", HISTORY_FILE_DIFF_FOOTER)
+            except Exception as e:
+                self.printException(e, "FileModeHistoryList.key_right change_state failed")
+        except Exception as e:
+            self.printException(e, "FileModeHistoryList.key_right prep failed")
+
+    def key_enter(self, event: events.Key | None = None) -> None:
+        # Same behavior as Right: open the file commit-pair diff
+        try:
+            return self.key_right(event)
+        except Exception as e:
+            self.printException(e, "FileModeHistoryList.key_enter failed")
+
     def key_left(self, event: events.Key | None = None) -> None:
         """Return to file fullscreen and focus the left file list."""
         if event is not None:
@@ -1790,9 +1841,13 @@ class DiffList(AppBase):
         self.output: list[str] = []
         # Current diff variant index used when re-prepping the diff
         self.variant: int = 0
+        # Where to return when leaving the diff view: (state_name, widget_id, footer)
+        # Always initialized to a non-None default so callers can rely on it.
+        self.go_back: tuple = ("history_file", RIGHT_FILE_LIST_ID, RIGHT_FILE_FOOTER)
 
-    def prepDiffList(self, filename: str, prev: str, curr: str, variant_index: int = 0) -> None:
+    def prepDiffList(self, filename: str, prev: str, curr: str, variant_index: int, go_back: tuple) -> None:
         try:
+            logger.debug("DiffList.prepDiffList: filename=%s prev=%s curr=%s variant=%s go_back=%s", filename, prev, curr, variant_index, go_back)
             # Prefer the canonicalized `current_path` on the app when available
             out = ""
             try:
@@ -1856,6 +1911,10 @@ class DiffList(AppBase):
                 self.variant = variant_index
             except Exception:
                 self.variant = 0
+
+            # Update go-back state only.
+            self.go_back = go_back
+
             try:
                 self._render_output()
             except Exception as e:
@@ -1918,7 +1977,14 @@ class DiffList(AppBase):
             logger.debug("DiffList.key_d: switching to variant %s from %s", new_variant, self.variant)
             try:
                 # Use the app-level path and selected commit pair when re-prepping
-                self.prepDiffList(self.app.path, self.app.previous_hash, self.app.current_hash, new_variant)
+                # Preserve the current go_back state when re-prepping.
+                self.prepDiffList(
+                    self.app.path,
+                    self.app.previous_hash,
+                    self.app.current_hash,
+                    new_variant,
+                    self.go_back,
+                )
             except Exception as e:
                 self.printException(e, "DiffList.key_d: re-prep failed")
         except Exception as e:
@@ -1942,7 +2008,9 @@ class DiffList(AppBase):
                 except Exception as e:
                     self.printException(e, "DiffList.key_left: event.stop failed")
             try:
-                self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
+                # Use the recorded go-back tuple.
+                state_name, widget_id, footer = self.go_back
+                self.app.change_state(state_name, f"#{widget_id}", footer)
             except Exception as e:
                 self.printException(e, "DiffList.key_left change_state failed")
         except Exception as e:
