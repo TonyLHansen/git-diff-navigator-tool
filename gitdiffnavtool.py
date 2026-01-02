@@ -14,6 +14,7 @@ import sys
 import subprocess
 import traceback
 from typing import Optional
+from functools import wraps
 
 # Optional pygit2 support — best-effort import to enable repo status checks
 try:
@@ -317,7 +318,6 @@ class AppBase(ListView):
             if not nodes:
                 return
             # determine repo vs file highlight colors
-            # `highlight_bg_style` is now a background color string; use it directly
             highlight_bg = self.highlight_bg_style
             text_color = "white"
 
@@ -2654,6 +2654,53 @@ class GitHistoryNavTool(App):
                 self.printException(e, "change_footer recording _current_footer failed")
         except Exception as e:
             self.printException(e, "change_footer outer failure")
+
+
+    # Instrument all `key_` handlers on AppBase subclasses to log their invocation.
+    def _wrap_key_methods_for_logging() -> None:
+        try:
+            for name, obj in list(globals().items()):
+                try:
+                    if not isinstance(obj, type):
+                        continue
+                    if not issubclass(obj, AppBase):
+                        continue
+                except Exception:
+                    continue
+                for attr in dir(obj):
+                    if not attr.startswith("key_"):
+                        continue
+                    try:
+                        fn = getattr(obj, attr, None)
+                        if not callable(fn):
+                            continue
+                        if getattr(fn, "_key_log_wrapped", False):
+                            continue
+
+                        def _make_wrapper(f):
+                            @wraps(f)
+                            def _wrapper(self, *a, **k):
+                                try:
+                                    logger.debug("key handler invoked: %s.%s", type(self).__name__, f.__name__)
+                                except Exception:
+                                    pass
+                                return f(self, *a, **k)
+
+                            _wrapper._key_log_wrapped = True
+                            return _wrapper
+
+                        setattr(obj, attr, _make_wrapper(fn))
+                    except Exception:
+                        continue
+        except Exception:
+            try:
+                logger.exception("_wrap_key_methods_for_logging failed")
+            except Exception:
+                pass
+
+
+    # Run the instrumentation at import time.
+    _wrap_key_methods_for_logging()
 
 
 def discover_repo_worktree(start_path: str | None) -> str:
