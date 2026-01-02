@@ -327,7 +327,7 @@ class AppBase(ListView):
             # change so our styles/classes won't be clobbered.
             try:
                 logger.debug("_activate_index: old=%r new=%r highlight_style=%s", old, new_index, self.highlight_bg_style)
-                logger.debug("_activate_index: scheduling index set via call_after_refresh -> %s", new_index)
+                # Schedule the index change after the UI refresh.
                 self.call_after_refresh(lambda: setattr(self, "index", new_index))
             except Exception as e:
                 self.printException(e, "_activate_index: scheduling index set failed")
@@ -2000,6 +2000,7 @@ class RepoModeHistoryList(HistoryListBase):
             # `app.current_hash` and `app.previous_hash` immediately.
             try:
                 self._compute_selected_pair()
+                logger.debug("prepRepoModeHistoryList: after compute_selected_pair app.previous_hash=%r app.current_hash=%r", getattr(self.app, "previous_hash", None), getattr(self.app, "current_hash", None))
             except Exception as e:
                 self.printException(e, "prepRepoModeHistoryList: computing selected pair failed")
         except Exception as e:
@@ -3140,6 +3141,7 @@ class GitHistoryNavTool(App):
         # Save transient values
         saved_path = self.current_path
         try:
+            logger.debug("toggle_file_history: before prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r saved_path=%r", getattr(self, "previous_hash", None), getattr(self, "current_hash", None), saved_path)
             # Prepare repo history and request that preparer highlight and
             # mark the provided commit hashes when present.
             # Use the current app-level hashes as the initial request; the
@@ -3149,6 +3151,7 @@ class GitHistoryNavTool(App):
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo history failed")
         try:
+            logger.debug("toggle_file_history: after prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r", getattr(self, "previous_hash", None), getattr(self, "current_hash", None))
             # After the history preparer runs it will have updated
             # `app.current_hash`/`app.previous_hash` to match the highlighted
             # selection. Read those authoritative values and pass them to the
