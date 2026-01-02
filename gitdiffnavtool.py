@@ -1844,6 +1844,10 @@ class DiffList(AppBase):
         # Where to return when leaving the diff view: (state_name, widget_id, footer)
         # Always initialized to a non-None default so callers can rely on it.
         self.go_back: tuple = ("history_file", RIGHT_FILE_LIST_ID, RIGHT_FILE_FOOTER)
+        # Saved layout for fullscreen diff toggles. When the user presses
+        # Right from a history_file_diff or file_history_diff layout we save
+        # that layout so `key_left` can restore it when exiting fullscreen.
+        self._saved_layout: str | None = None
 
     def prepDiffList(self, filename: str, prev: str, curr: str, variant_index: int, go_back: tuple) -> None:
         try:
@@ -1938,6 +1942,27 @@ class DiffList(AppBase):
         except Exception as e:
             self.printException(e, "DiffList.key_c failed")
 
+    def key_right(self, event: events.Key | None = None) -> None:
+        """When in a history-file diff layout, promote the diff to fullscreen.
+
+        If the current app layout is one of the file-history diff layouts,
+        save it and switch to the `diff_fullscreen` layout. Otherwise noop.
+        """
+        try:
+            try:
+                current = self.app._current_layout
+            except Exception:
+                current = None
+            if current in ("history_file_diff", "file_history_diff"):
+                try:
+                    # save then switch to fullscreen diff
+                    self._saved_layout = current
+                    self.app.change_layout("diff_fullscreen")
+                except Exception as e:
+                    self.printException(e, "DiffList.key_right change_layout failed")
+        except Exception as e:
+            self.printException(e, "DiffList.key_right failed")
+
     def key_C(self) -> None:
         return self.key_c()
 
@@ -2008,13 +2033,46 @@ class DiffList(AppBase):
                 except Exception as e:
                     self.printException(e, "DiffList.key_left: event.stop failed")
             try:
-                # Use the recorded go-back tuple.
+                # If we're in fullscreen diff, restore the saved layout.
+                current = self.app._current_layout
+                if current == "diff_fullscreen":
+                    try:
+                        target = self._saved_layout or "history_file_diff"
+                        # restore layout
+                        self.app.change_layout(target)
+                        # clear saved layout
+                        self._saved_layout = None
+                        return
+                    except Exception as e:
+                        self.printException(e, "DiffList.key_left restore layout failed")
+
+                # Otherwise fall back to the recorded go-back tuple.
                 state_name, widget_id, footer = self.go_back
                 self.app.change_state(state_name, f"#{widget_id}", footer)
             except Exception as e:
                 self.printException(e, "DiffList.key_left change_state failed")
         except Exception as e:
             self.printException(e, "DiffList.key_left failed")
+
+    def key_enter(self, event: events.Key | None = None) -> None:
+        """If fullscreen, act like Left (close); otherwise act like Right.
+
+        This mirrors the behavior of using Enter to toggle fullscreen/back.
+        """
+        try:
+            current = self.app._current_layout
+            if current == "diff_fullscreen":
+                try:
+                    return self.key_left(event)
+                except Exception as e:
+                    self.printException(e, "DiffList.key_enter left failed")
+            else:
+                try:
+                    return self.key_right(event)
+                except Exception as e:
+                    self.printException(e, "DiffList.key_enter right failed")
+        except Exception as e:
+            self.printException(e, "DiffList.key_enter failed")
 
 
 class HelpList(AppBase):
@@ -2187,18 +2245,6 @@ class GitHistoryNavTool(App):
             except Exception as e:
                 # composition must match expected ids
                 raise RuntimeError(f"widget resolution failed in on_mount: {e}") from e
-
-            # initial prep placeholders (populate left file list)
-            # Start in history_fullscreen when repo_first is True; otherwise
-            # start in file_fullscreen. This guarantees consistent initial
-            # layouts for both modes and keeps layout logic centralized.
-            try:
-                if self.repo_first:
-                    self.change_layout("history_fullscreen")
-                else:
-                    self.change_layout("file_fullscreen")
-            except Exception as e:
-                self.printException(e, "on_mount: change_layout failed")
 
             # Populate the canonical left lists and set focus so key handlers
             # and highlight behavior work immediately in both modes.
