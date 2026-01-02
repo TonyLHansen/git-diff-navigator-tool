@@ -1595,36 +1595,7 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "_compute_selected_pair failed")
             return (None, None)
-
-    def key_right(self, event: events.Key | None = None) -> None:
-        """Open the selected/marked commit-pair in the repo file list preparer."""
-        try:
-            if event is not None:
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "RepoModeHistoryList.key_right: event.stop failed")
-            prev_hash, curr_hash = self._compute_selected_pair()
-            try:
-                # Delegate to the repo-mode file list preparer. The preparer
-                # understands pseudo-hashes like MODS/STAGED.
-                self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash)
-                try:
-                    # Switch to the right-file list view and update footer
-                    self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
-                except Exception as e:
-                    self.printException(e, "RepoModeHistoryList.key_right change_state failed")
-            except Exception as e:
-                self.printException(e, "RepoModeHistoryList.key_right prep failed")
-        except Exception as e:
-            self.printException(e, "RepoModeHistoryList.key_right failed")
-
-    def key_enter(self, event: events.Key | None = None) -> None:
-        # Same behavior as Right: open the commit-pair file list
-        try:
-            return self.key_right(event)
-        except Exception as e:
-            self.printException(e, "RepoModeHistoryList.key_enter failed")
+    
 
 
 class FileModeHistoryList(HistoryListBase):
@@ -1755,6 +1726,41 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e, "prepRepoModeHistoryList: highlight failed")
         except Exception as e:
             self.printException(e, "prepRepoModeHistoryList failed")
+
+    def key_right(self, event: events.Key | None = None) -> None:
+        """Open the selected/marked commit-pair in the repo file list preparer.
+
+        This method lives on the repo-mode history widget because the action
+        it performs (populate the repo file list and switch to the files
+        column) is meaningful only for repository-wide history views.
+        """
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "RepoModeHistoryList.key_right: event.stop failed")
+            prev_hash, curr_hash = self._compute_selected_pair()
+            try:
+                # Delegate to the repo-mode file list preparer. The preparer
+                # understands pseudo-hashes like MODS/STAGED.
+                self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash)
+                try:
+                    # Switch to the right-file list view and update footer
+                    self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
+                except Exception as e:
+                    self.printException(e, "RepoModeHistoryList.key_right change_state failed")
+            except Exception as e:
+                self.printException(e, "RepoModeHistoryList.key_right prep failed")
+        except Exception as e:
+            self.printException(e, "RepoModeHistoryList.key_right failed")
+
+    def key_enter(self, event: events.Key | None = None) -> None:
+        # Same behavior as Right: open the commit-pair file list
+        try:
+            return self.key_right(event)
+        except Exception as e:
+            self.printException(e, "RepoModeHistoryList.key_enter failed")
 
 
 HELP_TEXT = """
@@ -2677,11 +2683,22 @@ class GitHistoryNavTool(App):
                         if getattr(fn, "_key_log_wrapped", False):
                             continue
 
-                        def _make_wrapper(f):
+                        # Find the class in the MRO that actually defines this attr
+                        owner = None
+                        try:
+                            for c in obj.__mro__:
+                                if attr in c.__dict__:
+                                    owner = c
+                                    break
+                        except Exception:
+                            owner = None
+                        owner_name = owner.__name__ if owner is not None else getattr(fn, "__qualname__", "<unknown>").split(".")[0]
+
+                        def _make_wrapper(f, owner_name=owner_name):
                             @wraps(f)
                             def _wrapper(self, *a, **k):
                                 try:
-                                    logger.debug("key handler invoked: %s.%s", type(self).__name__, f.__name__)
+                                    logger.debug("key handler invoked: %s.%s (invoked on %s)", owner_name, f.__name__, type(self).__name__)
                                 except Exception:
                                     pass
                                 return f(self, *a, **k)
