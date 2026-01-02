@@ -1258,7 +1258,7 @@ class RepoModeFileList(FileListBase):
     Provides a `prepRepoModeFileList` stub and navigation handlers.
     """
 
-    def prepRepoModeFileList(self, prev_hash: str | None, curr_hash: str | None) -> None:
+    def prepRepoModeFileList(self, prev_hash: str | None, curr_hash: str | None, highlight_filename: str | None = None) -> None:
         try:
             self.clear()
             # Insert the unselectable key legend header at the top
@@ -1360,8 +1360,9 @@ class RepoModeFileList(FileListBase):
                     self.printException(e, "prepRepoModeFileList git diff failed")
 
             self._populated = True
-            # Highlight based on provided hashes (prefer curr_hash)
-            # Ensure navigation skips the header when rows exist
+            # Highlight based on provided hashes (prefer curr_hash) or
+            # by filename when `highlight_filename` is provided. Ensure
+            # navigation skips the header when rows exist
             try:
                 nodes = self.nodes()
                 if len(nodes) > 1:
@@ -1371,11 +1372,16 @@ class RepoModeFileList(FileListBase):
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: setting _min_index failed")
             try:
-                target = curr_hash or prev_hash
-                if target:
-                    self._highlight_match(target)
+                # If a filename highlight was requested prefer it over
+                # commit-based highlighting.
+                if highlight_filename:
+                    self._highlight_filename(highlight_filename)
                 else:
-                    self._highlight_top()
+                    target = curr_hash or prev_hash
+                    if target:
+                        self._highlight_match(target)
+                    else:
+                        self._highlight_top()
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: highlight failed")
         except Exception as e:
@@ -1618,7 +1624,7 @@ class HistoryListBase(AppBase):
 class FileModeHistoryList(HistoryListBase):
     """History list for a single file's history. Stubbed prep method."""
 
-    def prepFileModeHistoryList(self, path: str) -> None:
+    def prepFileModeHistoryList(self, path: str, prev_hash: str | None = None, curr_hash: str | None = None) -> None:
         try:
             self.clear()
             # If repository available, call git log --follow for the path
@@ -1654,9 +1660,21 @@ class FileModeHistoryList(HistoryListBase):
                     self.printException(e, "prepFileModeHistoryList git log failed")
 
             self._populated = True
-            # Default to highlighting top commit for file history
+            # Highlight requested commits when provided. Prefer `curr_hash`
+            # and mark `prev_hash` if present; otherwise highlight top.
             try:
-                self._highlight_top()
+                if curr_hash:
+                    self._highlight_match(curr_hash)
+                elif prev_hash:
+                    for i, node in enumerate(self.nodes()):
+                        if getattr(node, "_hash", None) == prev_hash:
+                            try:
+                                self.toggle_check_current(i)
+                            except Exception as e:
+                                self.printException(e, "prepFileModeHistoryList toggle_check_current failed")
+                            break
+                else:
+                    self._highlight_top()
             except Exception as e:
                 self.printException(e, "prepFileModeHistoryList: highlight failed")
         except Exception as e:
@@ -1725,7 +1743,7 @@ class FileModeHistoryList(HistoryListBase):
 class RepoModeHistoryList(HistoryListBase):
     """History list for repository-wide commits. Stubbed prep method."""
 
-    def prepRepoModeHistoryList(self, repo_path: str | None = None) -> None:
+    def prepRepoModeHistoryList(self, repo_path: str | None = None, prev_hash: str | None = None, curr_hash: str | None = None) -> None:
         try:
             self.clear()
             # Add pseudo-entries for working-tree state: MODS (modified, unstaged)
@@ -1782,9 +1800,22 @@ class RepoModeHistoryList(HistoryListBase):
                 except Exception as e:
                     self.printException(e, "prepRepoModeHistoryList git log failed")
             self._populated = True
-            # Default to highlighting top commit for repo history
+            # Highlight requested commits when provided. Prefer highlighting
+            # the `curr_hash` then marking `prev_hash` as the checked row.
             try:
-                self._highlight_top()
+                if curr_hash:
+                    self._highlight_match(curr_hash)
+                elif prev_hash:
+                    # find and mark the previous commit row
+                    for i, node in enumerate(self.nodes()):
+                        if getattr(node, "_hash", None) == prev_hash:
+                            try:
+                                self.toggle_check_current(i)
+                            except Exception as e:
+                                self.printException(e, "prepRepoModeHistoryList toggle_check_current failed")
+                            break
+                else:
+                    self._highlight_top()
             except Exception as e:
                 self.printException(e, "prepRepoModeHistoryList: highlight failed")
         except Exception as e:
@@ -2786,6 +2817,153 @@ class GitHistoryNavTool(App):
                 self.printException(e, "change_footer recording _current_footer failed")
         except Exception as e:
             self.printException(e, "change_footer outer failure")
+
+    # Layout toggle helpers -------------------------------------------------
+    def toggle(self, layout: str, event: events.Key | None = None) -> None:
+        """Dispatch to a per-layout toggle_* handler for `layout`.
+
+        If the layout is `help_fullscreen` this is a no-op. Otherwise stop
+        the event (if provided) and call the corresponding `toggle_<layout>`
+        method if it exists.
+        """
+        try:
+            if layout == "help_fullscreen":
+                return
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "toggle: event.stop failed")
+            handler_name = f"toggle_{layout}"
+            handler = getattr(self, handler_name, None)
+            if callable(handler):
+                try:
+                    handler()
+                except Exception as e:
+                    self.printException(e, f"{handler_name} failed")
+            else:
+                logger.debug("toggle: no handler for layout %s", layout)
+        except Exception as e:
+            self.printException(e, "toggle outer failure")
+
+    def key_s(self, event: events.Key | None = None) -> None:
+        return self.toggle(self._current_layout, event)
+
+    def key_S(self, event: events.Key | None = None) -> None:
+        return self.key_s(event)
+
+    # Per-layout toggle implementations. These prepare lists and switch
+    # layouts in pairs so the `s` key toggles between related views.
+    def toggle_file_fullscreen(self) -> None:
+        # When toggling from file_fullscreen, populate the repo history
+        # so the paired history_fullscreen view is ready.
+        try:
+            self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".")
+        except Exception as e:
+            self.printException(e, "toggle_file_fullscreen prepRepoModeHistoryList failed")
+        try:
+            self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
+        except Exception as e:
+            self.printException(e, "toggle_file_fullscreen change_state failed")
+
+    def toggle_history_fullscreen(self) -> None:
+        # When toggling from history_fullscreen, prepare the left file list
+        # and highlight the current filename when available.
+        try:
+            hl = os.path.basename(self.path) if self.path else None
+            self.file_mode_file_list.prepFileModeFileList(self.path or ".", hl)
+        except Exception as e:
+            self.printException(e, "toggle_history_fullscreen prepFileModeFileList failed")
+        try:
+            self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
+        except Exception as e:
+            self.printException(e, "toggle_history_fullscreen change_state failed")
+
+    def toggle_file_history(self) -> None:
+        # Save transient values
+        saved_path = self.current_path
+        saved_curr = self.current_hash
+        saved_prev = self.previous_hash
+        try:
+            # Prepare repo history and request that preparer highlight and
+            # mark the provided commit hashes when present.
+            self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".", prev_hash=saved_prev, curr_hash=saved_curr)
+        except Exception as e:
+            self.printException(e, "toggle_file_history preparing repo history failed")
+        try:
+            # Prepare the right file list and request filename highlighting
+            self.repo_mode_file_list.prepRepoModeFileList(saved_prev, saved_curr, highlight_filename=saved_path)
+        except Exception as e:
+            self.printException(e, "toggle_file_history preparing repo file list failed")
+        try:
+            self.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
+        except Exception as e:
+            self.printException(e, "toggle_file_history change_state failed")
+
+    def toggle_history_file(self) -> None:
+        # Save transient values
+        saved_path = self.current_path
+        saved_curr = self.current_hash
+        saved_prev = self.previous_hash
+        try:
+            # Prepare the right file list (file pane on right) showing files
+            self.file_mode_file_list.prepFileModeFileList(saved_path or ".", os.path.basename(saved_path) if saved_path else None)
+        except Exception as e:
+            self.printException(e, "toggle_history_file prepFileModeFileList failed")
+        try:
+            # Prepare the right history list for the current file and request
+            # the preparer highlight/mark the provided commit hashes.
+            self.file_mode_history_list.prepFileModeHistoryList(saved_path or ".", prev_hash=saved_prev, curr_hash=saved_curr)
+        except Exception as e:
+            self.printException(e, "toggle_history_file prepping file history failed")
+        try:
+            self.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
+        except Exception as e:
+            self.printException(e, "toggle_history_file change_state failed")
+
+    def toggle_file_history_diff(self) -> None:
+        try:
+            self.toggle_file_history()
+        except Exception as e:
+            self.printException(e, "toggle_file_history_diff: toggle_file_history failed")
+        try:
+            # show diff in the right diff column and set go_back
+            self.change_state("history_file_diff", f"#{DIFF_LIST_ID}", HISTORY_FILE_DIFF_FOOTER)
+            try:
+                self.diff_list.go_back = ("history_file", RIGHT_FILE_LIST_ID, RIGHT_FILE_FOOTER)
+            except Exception as e:
+                self.printException(e, "toggle_file_history_diff setting diff_list.go_back failed")
+        except Exception as e:
+            self.printException(e, "toggle_file_history_diff change_state failed")
+
+    def toggle_history_file_diff(self) -> None:
+        try:
+            self.toggle_history_file()
+        except Exception as e:
+            self.printException(e, "toggle_history_file_diff: toggle_history_file failed")
+        try:
+            self.change_state("file_history_diff", f"#{DIFF_LIST_ID}", HISTORY_FILE_DIFF_FOOTER)
+            try:
+                self.diff_list.go_back = ("file_history", RIGHT_HISTORY_LIST_ID, RIGHT_HISTORY_FOOTER)
+            except Exception as e:
+                self.printException(e, "toggle_history_file_diff setting diff_list.go_back failed")
+        except Exception as e:
+            self.printException(e, "toggle_history_file_diff change_state failed")
+
+    def toggle_diff_fullscreen(self) -> None:
+        try:
+            # If the diff has a saved layout, toggle back to it via recursive dispatch
+            try:
+                saved = self.diff_list._saved_layout
+                if saved:
+                    try:
+                        self.toggle(saved)
+                    except Exception as e:
+                        self.printException(e, "toggle_diff_fullscreen dispatch failed")
+            except Exception as e:
+                self.printException(e, "toggle_diff_fullscreen retrieving saved layout failed")
+        except Exception as e:
+            self.printException(e, "toggle_diff_fullscreen outer failure")
 
 
     # Instrument all `key_` handlers on AppBase subclasses to log their invocation.
