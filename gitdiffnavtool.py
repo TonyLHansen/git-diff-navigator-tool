@@ -158,7 +158,6 @@ class AppBase(ListView):
         # Safe defaults so other code can access these attributes early
         self._min_index = 0
         self._populated = False
-        self._filename = None
         self.current_prev_sha = None
         self.current_commit_sha = None
         self.current_diff_file = None
@@ -1068,7 +1067,6 @@ class FileModeFileList(FileListBase):
 
             try:
                 self._populated = True
-                self._filename = path
                 # Ensure navigation skips the header when rows exist
                 try:
                     nodes = self.nodes()
@@ -1164,6 +1162,11 @@ class FileModeFileList(FileListBase):
                         except Exception as e:
                             self.printException(e, "FileModeFileList._activate_or_open highlight filename fallback failed") 
 
+                        # Record the app-level path for downstream components
+                        try:
+                            self.app.path = raw
+                        except Exception:
+                            pass
                         self.prepFileModeFileList(raw, highlight_filename=hl)
                     except Exception as e:
                         self.printException(e, "FileModeFileList._activate_or_open prep failed")
@@ -1172,6 +1175,10 @@ class FileModeFileList(FileListBase):
             # File selected: open repo view for tracked files only (when allowed)
             if raw and repo_status not in ("untracked", "ignored") and allow_file_open:
                 try:
+                    try:
+                        self.app.path = raw
+                    except Exception:
+                        pass
                     self.app.file_mode_history_list.prepFileModeHistoryList(raw)
                     try:
                         # Switch UI to file-history layout and focus
@@ -1358,6 +1365,10 @@ class RepoModeFileList(FileListBase):
             variant_index = 0
 
             try:
+                try:
+                    self.app.path = filename
+                except Exception:
+                    pass
                 self.app.diff_list.prepDiffList(filename, self.app.previous_hash, self.app.current_hash, variant_index)
             except Exception as e:
                 self.printException(e, "RepoModeFileList.key_right: prepDiffList failed")
@@ -1379,7 +1390,8 @@ class HistoryListBase(AppBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # History lists should use repository-style highlighting
-        self.highlight_bg_style = HIGHLIGHT_REPOLIST_STYLE
+        try:
+            self.highlight_bg_style = HIGHLIGHT_REPOLIST_STYLE
         except Exception as e:
             self.printException(e, "HistoryListBase __init__ failed")
 
@@ -1726,6 +1738,8 @@ class DiffList(AppBase):
         self.highlight_bg_style = HIGHLIGHT_DIFF_STYLE
         # Stored output lines from the last diff command
         self.output: list[str] = []
+        # Current diff variant index used when re-prepping the diff
+        self.variant: int = 0
 
     def prepDiffList(self, filename: str, prev: str, curr: str, variant_index: int = 0) -> None:
         try:
@@ -1786,12 +1800,12 @@ class DiffList(AppBase):
                     self.printException(e, "prepDiffList: metadata diff failed")
 
             # Save output lines on the object and render via helper
+            self.output = out.splitlines() if out else []
+            # Record the active variant for future re-renders
             try:
-                self.output = out.splitlines() if out else []
+                self.variant = int(variant_index or 0)
             except Exception:
-                self.output = []
-            # Record filename and mark populated, then render
-            self._filename = filename
+                self.variant = 0
             try:
                 self._render_output()
             except Exception as e:
@@ -1845,9 +1859,23 @@ class DiffList(AppBase):
 
     def key_d(self) -> None:
         try:
-            logger.debug("DiffList.key_d: save diff for %s", self._filename)
+            # Rotate to the next diff variant and re-run the diff preparer.
+            try:
+                total = len(getattr(self.app, "diff_variants", []) or [None])
+                new_variant = (int(getattr(self, "variant", 0)) + 1) % max(1, total)
+            except Exception:
+                new_variant = 0
+            logger.debug("DiffList.key_d: switching to variant %s from %s", new_variant, getattr(self, "variant", None))
+            try:
+                # Use the app-level path and selected commit pair when re-prepping
+                self.prepDiffList(self.app.path, self.app.previous_hash, self.app.current_hash, new_variant)
+            except Exception as e:
+                self.printException(e, "DiffList.key_d: re-prep failed")
         except Exception as e:
             self.printException(e, "DiffList.key_d failed")
+
+    def key_D(self) -> None:
+        return self.key_d()
 
     def key_f(self) -> None:
         try:
