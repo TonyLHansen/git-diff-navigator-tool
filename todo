@@ -236,33 +236,33 @@ it should do it as a set of steps with pause points for testing purposes and val
 Tell me how to instruct copilot to follow its instructions
 
 
-create a GitDiffNavTool.toggle function and a series of GitDiffNavTool.toggle_ methods named after each of the layouts (eg toggle_file_fullscreen) except for help_fullscreen (no toggle_help_fullscreen)
+1) create a GitDiffNavTool.toggle function and a series of GitDiffNavTool.toggle_ methods named after each of the layouts (eg toggle_file_fullscreen) except for help_fullscreen (no toggle_help_fullscreen)
 
-toggle(layout)
+2) toggle(layout)
 	Look at the passed-in layout
 	if help_fullscreen, ignore the key and do nothing
 	otherwise event.stop() and invoke the corresponding toggle_layout
 
-Add key_s/key_S functions
+3) add key_s/key_S functions
 	invoke toggle(current layout)
 
-file_fullscreen
+4) file_fullscreen
 	prepRepoModeHistoryList
 	app.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
 
-history_fullscreen
+5) history_fullscreen
 	prepFileModeFileList(app.current_filename, highlight the current_filename if there is one)
 	app.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
 	
-file_history:
+6) file_history:
 	locally save current path, current_hash, previous_hash
 	prepRepoModeHistoryList
 		highlight current_hash, previous_hash
 	prepRepoModeFileList
 		highlight current path
 	self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
-	
-history_file
+
+7) history_file
 	locally save current path, current_hash, previous_hash
 	prepFileModeFileList
 		highlight current file
@@ -270,16 +270,19 @@ history_file
 		highlight current_hash, previous_hash
 	self.app.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
 		
-file_history_diff
+8) file_history_diff
 	invoke toggle_file_history
 	self.app.change_state("history_file_diff", f"#{DIFF_LIST_ID}", HISTORY_FILE_DIFF_FOOTER)
 		set goback to ("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
 
-history_file_diff
+9) history_file_diff
 	invoke toggle_history_file
 	self.app.change_state("file_history_diff", f"#{DIFF_LIST_ID}", HISTORY_FILE_DIFF_FOOTER)
 		set goback to ("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
 
-diff_fullscreen
+10) diff_fullscreen
 	invoke toggle(DiffList.saved_layout)
 
+
+
+prepRepoModeFileList should be getting passed the directory to be displayed and the filename to be highlighted (if any)

@@ -191,6 +191,20 @@ def printException(e: Exception, msg: Optional[str] = None) -> None:
         sys.stderr.write(f"secondary exception: {e2}\n")
 
 
+def run_cmd_log(cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
+    """Module-level wrapper for subprocess.run mirroring `AppBase._run_cmd_log`.
+
+    Useful for top-level functions that don't have access to a widget `self`.
+    Returns a CompletedProcess-like result; on exception returns a non-zero
+    CompletedProcess with the exception text in `stderr`.
+    """
+    proc = subprocess.run(cmd, text=text, capture_output=capture_output)
+    lab = label or "cmd"
+    if proc.stderr:
+        logger.warning("%s stderr (cmd=%s):\n%s", lab, " ".join(cmd), proc.stderr.strip())
+    logger.trace("%s stdout (cmd=%s):\n%s", lab, " ".join(cmd), proc.stdout or "")
+    return proc
+
 
 class AppBase(ListView):
     """Base widget class for list-like components providing shared helpers.
@@ -212,6 +226,10 @@ class AppBase(ListView):
         # (used by page up / page down handlers to make the jump more
         # visually noticeable).
         self._page_scroll = False
+        # Flags to identify widget type without relying on isinstance checks
+        # These are set to 0 by default and overridden by subclasses.
+        self.is_history_list = 0
+        self.is_file_list = 0
         # Ensure common attributes exist so code can access them directly
         # Rely on ListView to provide `children`, `_nodes`, `index`, and `app`.
         # Per-widget highlight background; subclasses override with specific backgrounds
@@ -228,6 +246,20 @@ class AppBase(ListView):
             # Fall back to module-level printer
             printException(e, msg)
             printException(e_fallback, "AppBase.printException fallback")
+
+    def _run_cmd_log(self, cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
+        """Run subprocess command, log stderr as warning and stdout at TRACE.
+
+        Returns the CompletedProcess instance. Defensive: on exception returns
+        a CompletedProcess with non-zero return code and the exception string
+        in `stderr` so callers can continue to inspect `stdout`/`stderr` safely.
+        """
+        proc = subprocess.run(cmd, text=text, capture_output=capture_output)
+        lab = label or "cmd"
+        if proc.stderr:
+            logger.warning("%s stderr (cmd=%s):\n%s", lab, " ".join(cmd), proc.stderr.strip())
+        logger.trace("%s stdout (cmd=%s):\n%s", lab, " ".join(cmd), proc.stdout or "")
+        return proc
 
     def text_of(self, node) -> str:
         """Extract visible text from a ListItem's Label or renderable."""
@@ -402,6 +434,45 @@ class AppBase(ListView):
                         self.printException(e, "watch_index: scrolling new node failed")
                 except Exception as e:
                     self.printException(e, "watch_index: finding new node failed")
+                # After highlighting, synchronize app-level state conservatively:
+                # - If this widget is a history list, only update app hashes.
+                # - If this widget is a file list, update app.path from the
+                #   selected node's `_raw_text` (which is a filesystem path).
+                try:
+                    if isinstance(self, HistoryListBase):
+                        try:
+                            self._compute_selected_pair()
+                        except Exception:
+                            pass
+                        try:
+                            logger.debug(
+                                "watch_index: history widget updated app.current_hash=%r app.previous_hash=%r",
+                                getattr(self.app, "current_hash", None),
+                                getattr(self.app, "previous_hash", None),
+                            )
+                        except Exception:
+                            pass
+                    elif isinstance(self, FileListBase):
+                        try:
+                            raw = getattr(node_new, "_raw_text", None)
+                            if raw:
+                                try:
+                                    self.app.path = raw
+                                except Exception:
+                                    pass
+                            try:
+                                logger.debug("watch_index: file widget set app.path=%r", getattr(self.app, "path", None))
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            logger.debug("watch_index: widget type %s - not updating app.path", type(self).__name__)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    self.printException(e, "watch_index: post-highlight app state sync failed")
         except Exception as e:
             self.printException(e, "watch_index failed")
 
@@ -466,6 +537,7 @@ class AppBase(ListView):
     # them individually and keep key logic co-located with widget state.
 
     def key_up(self, event: events.Key | None = None) -> None:
+        logger.debug("AppBase.key_up called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -485,6 +557,7 @@ class AppBase(ListView):
             self.printException(e, "key_up outer failure")
 
     def key_down(self, event: events.Key | None = None) -> None:
+        logger.debug("AppBase.key_down called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -500,9 +573,10 @@ class AppBase(ListView):
         except Exception as e:
             self.printException(e, "key_down outer failure")
 
-    def key_page_down(self, event: events.Key | None = None) -> None:
+    def key_page_down(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        if not recursive:
+            logger.debug("AppBase.key_pagedown called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
-            logger.debug("key_page_down invoked: index=%r nodes=%r", self.index, len(self.nodes()))
             if event is not None:
                 try:
                     event.stop()
@@ -520,11 +594,7 @@ class AppBase(ListView):
                 visible_height = 10
             page_size = max(1, visible_height // 2)
             new_index = min(current_index + page_size, len(nodes) - 1)
-            # Set index synchronously so the watch_index runs and updates
-            # visual highlight immediately instead of relying on scheduled calls.
-            # Use _activate_index which schedules the index change after refresh
             try:
-                # Mark that this was a page-scroll so watch_index uses animation
                 try:
                     self._page_scroll = True
                 except Exception as e:
@@ -539,28 +609,17 @@ class AppBase(ListView):
     # page up / page down (e.g. 'pageup', 'pagedown', 'prior', 'next'). Provide
     # aliases that delegate to the canonical handlers so keys are handled.
     def key_pageup(self, event: events.Key | None = None) -> None:
-        logger.debug(
-                "alias key_pageup invoked: key=%r index=%r nodes=%r",
-                getattr(event, "key", None),
-                self.index,
-                len(self.nodes()),
-            )
-        
-            
-        return self.key_page_down(event)
+        logger.debug("AppBase.key_pageup called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_page_up(event, recursive=True)
 
     def key_pagedown(self, event: events.Key | None = None) -> None:
-        logger.debug(
-                "alias key_pagedown invoked: key=%r index=%r nodes=%r",
-                getattr(event, "key", None),
-                self.index,
-                len(self.nodes()),
-            )
-        return self.key_page_down(event)
+        logger.debug("AppBase.key_pagedown called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_page_down(event, recursive=True)
 
-    def key_page_up(self, event: events.Key | None = None) -> None:
+    def key_page_up(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        if not recursive:
+            logger.debug("AppBase.key_pageup called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
-            logger.debug("key_page_up invoked: index=%r nodes=%r", self.index, len(self.nodes()))
             if event is not None:
                 try:
                     event.stop()
@@ -584,54 +643,26 @@ class AppBase(ListView):
                 try:
                     self._page_scroll = True
                 except Exception as e:
-                        self.printException(e)
+                    self.printException(e)
                 self._activate_index(new_index)
             except Exception as e:
                 self.printException(e, "key_page_up: activate failed")
         except Exception as e:
             self.printException(e, "key_page_up failed")
 
-    def key_pageup(self, event: events.Key | None = None) -> None:
-        logger.debug(
-                "alias key_pageup invoked (alt): key=%r index=%r nodes=%r",
-                getattr(event, "key", None),
-                self.index,
-                len(self.nodes()),
-            )
-        return self.key_page_up(event)
-
-    def key_pagedown(self, event: events.Key | None = None) -> None:
-        logger.debug(
-                "alias key_pagedown invoked (alt): key=%r index=%r nodes=%r",
-                getattr(event, "key", None),
-                self.index,
-                len(self.nodes()),
-            )
-        return self.key_page_down(event)
 
     def key_prior(self, event: events.Key | None = None) -> None:
         # 'prior' is sometimes used for PageUp
-        return self.key_page_up(event)
+        logger.debug("AppBase.key_prior called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_page_up(event, recursive=True)
 
     def key_next(self, event: events.Key | None = None) -> None:
         # 'next' is sometimes used for PageDown
-        return self.key_page_down(event)
-
-    def on_key(self, event: events.Key) -> None:
-        """Lightweight debug logger to surface which key names arrive.
-
-        Only logs keys that look like page/scroll keys to avoid noise.
-        """
-        try:
-            k = getattr(event, "key", None)
-            if not k:
-                return
-            if "page" in k or k in ("prior", "next"):
-                logger.debug("on_key: widget=%s key=%r", type(self).__name__, k)
-        except Exception as e:
-            self.printException(e, "on_key failed")
+        logger.debug("AppBase.key_next called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_page_down(event, recursive=True)
 
     def key_home(self, event: events.Key | None = None) -> None:
+        logger.debug("AppBase.key_home called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -644,6 +675,7 @@ class AppBase(ListView):
             self.printException(e, "key_home failed")
 
     def key_end(self, event: events.Key | None = None) -> None:
+        logger.debug("AppBase.key_end called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -659,13 +691,40 @@ class AppBase(ListView):
             self.printException(e, "key_end failed")
 
     # Default stubs for left/right/enter — subclasses should override as needed
-    def key_left(self) -> None:
+    def key_left(self, event: events.Key | None = None) -> None:
+        logger.debug("AppBase.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "AppBase.key_left: event.stop failed")
+        except Exception as e:
+            self.printException(e, "AppBase.key_left failed")
         return None
 
-    def key_right(self) -> None:
+    def key_right(self, event: events.Key | None = None) -> None:
+        logger.debug("AppBase.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "AppBase.key_right: event.stop failed")
+        except Exception as e:
+            self.printException(e, "AppBase.key_right failed")
         return None
 
-    def key_enter(self) -> None:
+    def key_enter(self, event: events.Key | None = None) -> None:
+        logger.debug("AppBase.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "AppBase.key_enter: event.stop failed")
+        except Exception as e:
+            self.printException(e, "AppBase.key_enter failed")
         return None
 
 
@@ -683,6 +742,41 @@ class FileListBase(AppBase):
                 self.index = self._min_index or 0
         except Exception as e:
             self.printException(e, "FileListBase.on_focus")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Mark this base as a file-list so AppBase.watch_index can act
+        # conservatively based on widget type flags instead of isinstance.
+        self.is_file_list = 1
+
+    def _ensure_index_visible(self) -> None:
+        """Ensure the current `index` node is scrolled into view.
+
+        Safe no-op when scrolling APIs are unavailable.
+        """
+        try:
+            idx = getattr(self, "index", None) or 0
+            nodes = self.nodes()
+            if not nodes:
+                return
+            if not (0 <= idx < len(nodes)):
+                return
+            node = nodes[idx]
+            # Prefer Textual's scroll_to_widget when available
+            if hasattr(self, "scroll_to_widget"):
+                try:
+                    self.call_after_refresh(lambda: self.scroll_to_widget(node, animate=False))
+                    return
+                except Exception as e:
+                    self.printException(e, "_ensure_index_visible: scroll_to_widget failed")
+            # Fallback to node.scroll_visible if provided
+            try:
+                self.call_after_refresh(lambda: getattr(node, "scroll_visible", lambda *a, **k: None)(True))
+            except Exception as e:
+                self.printException(e, "_ensure_index_visible: scroll_visible failed")
+                pass
+        except Exception as e:
+            self.printException(e, "_ensure_index_visible failed")
 
     def _add_filelist_key_header(self) -> None:
         """Insert an unselectable key legend row at the top of the file list.
@@ -774,6 +868,7 @@ class FileModeFileList(FileListBase):
 
     def prepFileModeFileList(self, path: str, highlight_filename: str | None = None) -> None:
         try:
+            logger.debug("prepFileModeFileList: path=%r highlight_filename=%r", path, highlight_filename)
             # Canonicalize path and allow callers to pass a file to highlight
             path = os.path.abspath(path)
             # `highlight_filename` (if provided) takes precedence. If not
@@ -799,6 +894,12 @@ class FileModeFileList(FileListBase):
             # Keep the application's canonical current path in sync with
             # this widget's directory so other components can rely on it.
             self.app.current_path = self.path
+            # Also record the app-level `path` so other components (diff,
+            # toggles) can rely on the currently-visible directory.
+            try:
+                self.app.path = self.path
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: setting app.path failed")
             relpath = path[len(self.app.repo_root)+1 :]
             logger.debug(f"prepFileModeFileList: path='{path}' relpath={relpath}")
 
@@ -819,9 +920,7 @@ class FileModeFileList(FileListBase):
                             prefix = prefix + os.sep
                         try:
                             cmd = ["git", "-C", self.app.repo_root, "status", "--porcelain"]
-                            proc = subprocess.run(cmd, text=True, capture_output=True)
-                            if proc.stderr:
-                                logger.warning("prepFileModeFileList git status stderr (cmd=%r): %s", cmd, proc.stderr.strip())
+                            proc = self._run_cmd_log(cmd, label="prepFileModeFileList git status")
                             out = proc.stdout or ""
                             m: dict[str, str] = {}
                             for ln in out.splitlines():
@@ -1000,6 +1099,9 @@ class FileModeFileList(FileListBase):
                                                 try:
                                                     cmd = ["git", "-C", self.app.repo_root, "ls-files", "--error-unmatch", rel]
                                                     proc = subprocess.run(cmd, text=True, capture_output=True)
+                                                    if proc.stderr:
+                                                        logger.warning("prepFileModeFileList ls-files stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                                                    logger.trace("prepFileModeFileList: git ls-files (cmd=%s) output: %s", " ".join(cmd), proc.stdout or "")
                                                     if proc.returncode == 0:
                                                         repo_status = "tracked_clean"
                                                     else:
@@ -1015,9 +1117,7 @@ class FileModeFileList(FileListBase):
                                     # No batch map: fall back to per-file git status
                                     try:
                                         cmd = ["git", "-C", self.app.repo_root, "status", "--porcelain", "--", rel]
-                                        proc = subprocess.run(cmd, text=True, capture_output=True)
-                                        if proc.stderr:
-                                            logger.warning("prepFileModeFileList per-file git status stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                                        proc = self._run_cmd_log(cmd, label="prepFileModeFileList per-file git status")
                                         out = proc.stdout.strip() if proc.returncode == 0 and proc.stdout else ""
                                         if out:
                                             code = out[:2]
@@ -1126,6 +1226,11 @@ class FileModeFileList(FileListBase):
                 if hl:
                     try:
                         self.call_after_refresh(lambda: self._highlight_match(hl))
+                        # After highlighting, ensure the selected node is visible
+                        try:
+                            self.call_after_refresh(self._ensure_index_visible)
+                        except Exception as e:
+                            self.printException(e, "prepFileModeFileList: scheduling _ensure_index_visible failed")
                     except Exception as e:
                         self.printException(e, "prepFileModeFileList: scheduling highlight failed")
                         try:
@@ -1241,14 +1346,17 @@ class FileModeFileList(FileListBase):
         # Navigate up only when the selected directory is the parent entry ('..')
         # Use shared helper so event.stop() is honored and behavior is unified.
         # Do not open files when pressing left; only allow entering parent dir
+        logger.debug("FileModeFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         self._activate_or_open(event, enter_dir_test_fn=lambda name: name == "..", allow_file_open=False)
 
     def key_right(self, event: events.Key | None = None) -> None:
         # Use shared helper to handle directory enter or file open.
+        logger.debug("FileModeFileList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         self._activate_or_open(event, enter_dir_test_fn=lambda name: (name is not None) and name != "..")
 
     def key_enter(self, event: events.Key | None = None) -> None:
         # Enter key: enter directories or open file history for tracked files.
+        logger.debug("FileModeFileList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         self._activate_or_open(event, enter_dir_test_fn=lambda name: True)
 
 
@@ -1260,12 +1368,34 @@ class RepoModeFileList(FileListBase):
 
     def prepRepoModeFileList(self, prev_hash: str | None, curr_hash: str | None, highlight_filename: str | None = None) -> None:
         try:
+            logger.debug("prepRepoModeFileList: prev_hash=%r curr_hash=%r highlight_filename=%r", prev_hash, curr_hash, highlight_filename)
             self.clear()
-            # Insert the unselectable key legend header at the top
+            # Insert a hash header and the unselectable key legend header at the top
             try:
-                self._add_filelist_key_header()
+                try:
+                    def _short(h: str | None) -> str:
+                        if not h:
+                            return "None"
+                        return h[:12] if len(h) > 12 else h
+
+                    hash_text = f"Hashes: prev={_short(prev_hash)}  curr={_short(curr_hash)}"
+                    hash_item = ListItem(Label(Text(hash_text, style=STYLE_FILELIST_KEY)))
+                    try:
+                        hash_item._hash_header = True
+                        hash_item._selectable = False
+                        self.append(hash_item)
+                    except Exception:
+                        pass
+                except Exception as e:
+                    self.printException(e, "prepRepoModeFileList: creating hash header failed")
+                # Then append the existing key legend row so it appears below
+                # the hashes header.
+                try:
+                    self._add_filelist_key_header()
+                except Exception as e:
+                    self.printException(e, "prepRepoModeFileList _add_filelist_key_header failed")
             except Exception as e:
-                self.printException(e, "prepRepoModeFileList _add_filelist_key_header failed")
+                self.printException(e, "prepRepoModeFileList header setup failed")
 
             # If caller passed pseudo-hashes (MODS/STAGED) treat them
             # specially rather than passing them through to `git diff`.
@@ -1284,10 +1414,9 @@ class RepoModeFileList(FileListBase):
                         else:
                             cmd = []
                         if cmd:
-                            proc = subprocess.run(cmd, text=True, capture_output=True)
-                            if proc.stderr:
-                                logger.warning("prepRepoModeFileList pseudo diff stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                            proc = self._run_cmd_log(cmd, label="prepRepoModeFileList pseudo diff")
                             out = proc.stdout or ""
+                        logger.debug("prepRepoModeFileList: pseudo %s diff (cmd=%s) output: %s", pseudo, " ".join(cmd), out)
                         for ln in out.splitlines():
                             if not ln:
                                 continue
@@ -1323,19 +1452,26 @@ class RepoModeFileList(FileListBase):
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList rendering pseudo entries failed")
             else:
-                # Build git diff command to list changed files between the two refs
+                # Build git command to list changed files for the provided
+                # commit pair. When both `prev_hash` and `curr_hash` are
+                # provided, run `git diff --name-status prev curr`. When only
+                # a single commit (`curr_hash`) is provided, list the files
+                # changed by that single commit using `git show --name-status`.
                 try:
-                    cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status"]
                     if prev_hash and curr_hash:
-                        cmd += [prev_hash, curr_hash]
+                        cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status", prev_hash, curr_hash]
                     elif curr_hash:
-                        # diff against working tree (curr only) or HEAD
-                        cmd += [curr_hash]
+                        # List files changed by the single commit `curr_hash`.
+                        # cmd = ["git", "-C", self.app.repo_root, "show", "--name-status", curr_hash]
+                        # cmd = ["git", "-C", self.app.repo_root, "diff-tree", "--no-commit-id", "--name-status", "-r", curr_hash]
+                        cmd = ["git", "-C", self.app.repo_root, "show", "--name-status", "--pretty=format:", curr_hash]
+                    else:
+                        # No explicit commits: fall back to diff against working tree
+                        cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status"]
                     # run command
-                    proc = subprocess.run(cmd, text=True, capture_output=True)
-                    if proc.stderr:
-                        logger.warning("prepRepoModeFileList git diff stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                    proc = self._run_cmd_log(cmd, label="prepRepoModeFileList git diff")
                     out = proc.stdout or ""
+                    logger.debug("prepRepoModeFileList: git diff (cmd=%s) output: %s", " ".join(cmd), out)
                     for ln in out.splitlines():
                         if not ln:
                             continue
@@ -1365,23 +1501,39 @@ class RepoModeFileList(FileListBase):
             # navigation skips the header when rows exist
             try:
                 nodes = self.nodes()
-                if len(nodes) > 1:
-                    self._min_index = 1
+                header_count = 2
+                if len(nodes) > header_count:
+                    self._min_index = header_count
                 else:
                     self._min_index = 0
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: setting _min_index failed")
+            # Immediately record the repo-level commit pair so other
+            # components can access the selected refs.
+            try:
+                try:
+                    self.app.previous_hash = prev_hash
+                except Exception:
+                    pass
+                try:
+                    self.app.current_hash = curr_hash
+                except Exception:
+                    pass
+                # If caller requested a filename highlight, record it as app.path
+                if highlight_filename:
+                    try:
+                        self.app.path = highlight_filename
+                    except Exception:
+                        pass
+            except Exception as e:
+                self.printException(e, "prepRepoModeFileList: recording app-level state failed")
             try:
                 # If a filename highlight was requested prefer it over
                 # commit-based highlighting.
                 if highlight_filename:
                     self._highlight_filename(highlight_filename)
                 else:
-                    target = curr_hash or prev_hash
-                    if target:
-                        self._highlight_match(target)
-                    else:
-                        self._highlight_top()
+                    self._highlight_top()
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: highlight failed")
         except Exception as e:
@@ -1393,6 +1545,7 @@ class RepoModeFileList(FileListBase):
 
     def key_left(self, event: events.Key | None = None) -> None:
         # Move to previous view or update state in main app (stub)
+        logger.debug("RepoModeFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
             try:
                 event.stop()
@@ -1404,8 +1557,15 @@ class RepoModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "RepoModeFileList.key_left change_state failed")
 
-    def key_right(self) -> None:
+    def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         # Open diff view for selected file: delegate to DiffList and switch layout.
+        if not recursive:
+            logger.debug("RepoModeFileList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "RepoModeFileList.key_right: event.stop failed")
         try:
             idx = self.index or 0
             nodes = self.nodes()
@@ -1440,15 +1600,8 @@ class RepoModeFileList(FileListBase):
 
     def key_enter(self, event: events.Key | None = None) -> None:
         """Same behavior as Right: open the diff for the selected file."""
-        if event is not None:
-            try:
-                event.stop()
-            except Exception as e:
-                self.printException(e, "RepoModeFileList.key_enter: event.stop failed")
-        try:
-            return self.key_right()
-        except Exception as e:
-            self.printException(e, "RepoModeFileList.key_enter failed")
+        logger.debug("RepoModeFileList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_right(event, recursive=True)
 
 
 class HistoryListBase(AppBase):
@@ -1461,6 +1614,8 @@ class HistoryListBase(AppBase):
         super().__init__(*args, **kwargs)
         # History lists should use repository highlight backgrounds
         self.highlight_bg_style = HIGHLIGHT_REPOLIST_BG
+        # Mark as history list for flag-based checks in AppBase.watch_index
+        self.is_history_list = 1
 
     def _add_row(self, text: str, commit_hash: str | None) -> None:
         try:
@@ -1519,8 +1674,10 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "toggle_check_current failed")
 
-    def key_m(self, event: events.Key | None = None) -> None:
+    def key_m(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Toggle the 'marked' state for the currently-selected history row."""
+        if not recursive:
+            logger.debug("HistoryListBase.key_m called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -1535,7 +1692,8 @@ class HistoryListBase(AppBase):
             self.printException(e, "HistoryListBase.key_m failed")
 
     def key_M(self, event: events.Key | None = None) -> None:
-        return self.key_m(event)
+        logger.debug("HistoryListBase.key_M called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_m(event, recursive=True)
 
     def compute_commit_pair_hashes(self, idx: int | None = None) -> tuple[str | None, str | None]:
         try:
@@ -1626,6 +1784,7 @@ class FileModeHistoryList(HistoryListBase):
 
     def prepFileModeHistoryList(self, path: str, prev_hash: str | None = None, curr_hash: str | None = None) -> None:
         try:
+            logger.debug("prepFileModeHistoryList: path=%r prev_hash=%r curr_hash=%r", path, prev_hash, curr_hash)
             self.clear()
             # If repository available, call git log --follow for the path
             repo_root = self.app.repo_root
@@ -1642,9 +1801,7 @@ class FileModeHistoryList(HistoryListBase):
                         "--",
                         path,
                     ]
-                    proc = subprocess.run(cmd, text=True, capture_output=True)
-                    if proc.stderr:
-                        logger.warning("prepFileModeHistoryList git log stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                    proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList git log")
                     for ln in (proc.stdout or "").splitlines():
                         try:
                             parts = ln.split("\t", 2)
@@ -1677,10 +1834,34 @@ class FileModeHistoryList(HistoryListBase):
                     self._highlight_top()
             except Exception as e:
                 self.printException(e, "prepFileModeHistoryList: highlight failed")
+            # Ensure app-level hashes/path are updated immediately after prep
+            try:
+                if curr_hash is not None or prev_hash is not None:
+                    try:
+                        self.app.current_hash = curr_hash
+                    except Exception:
+                        pass
+                    try:
+                        self.app.previous_hash = prev_hash
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        # compute and record selected pair based on current index
+                        self._compute_selected_pair()
+                    except Exception:
+                        pass
+                try:
+                    # record the file associated with this history list
+                    self.app.path = path
+                except Exception:
+                    pass
+            except Exception as e:
+                self.printException(e, "prepFileModeHistoryList: highlight failed")
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
 
-    def key_right(self, event: events.Key | None = None) -> None:
+    def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Open the diff for the selected file commit-pair.
 
         Compute the current and previous hashes (using marked rows if present),
@@ -1688,6 +1869,8 @@ class FileModeHistoryList(HistoryListBase):
         `self.app.diff_list.prepDiffList(filename, prev, curr)` and switch the
         UI to the file-history-diff layout.
         """
+        if not recursive:
+            logger.debug("FileModeHistoryList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
             try:
                 event.stop()
@@ -1721,13 +1904,12 @@ class FileModeHistoryList(HistoryListBase):
 
     def key_enter(self, event: events.Key | None = None) -> None:
         # Same behavior as Right: open the file commit-pair diff
-        try:
-            return self.key_right(event)
-        except Exception as e:
-            self.printException(e, "FileModeHistoryList.key_enter failed")
+        logger.debug("FileModeHistoryList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_right(event, recursive=True)
 
     def key_left(self, event: events.Key | None = None) -> None:
         """Return to file fullscreen and focus the left file list."""
+        logger.debug("FileModeHistoryList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
             try:
                 event.stop()
@@ -1745,23 +1927,20 @@ class RepoModeHistoryList(HistoryListBase):
 
     def prepRepoModeHistoryList(self, repo_path: str | None = None, prev_hash: str | None = None, curr_hash: str | None = None) -> None:
         try:
+            logger.debug("prepRepoModeHistoryList: repo_path=%r prev_hash=%r curr_hash=%r", repo_path, prev_hash, curr_hash)
             self.clear()
             # Add pseudo-entries for working-tree state: MODS (modified, unstaged)
             # and STAGED (indexed but uncommitted). Only include when present.
             try:
                 cmd = ["git", "-C", self.app.repo_root, "diff", "--name-only"]
-                proc = subprocess.run(cmd, text=True, capture_output=True)
-                if proc.stderr:
-                    logger.warning("prepRepoModeHistoryList diff --name-only stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                proc = self._run_cmd_log(cmd, label="prepRepoModeHistoryList diff --name-only")
                 mods = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
             except Exception as e:
                 self.printException(e, "prepRepoModeHistoryList getting modified files failed")
                 mods = []
             try:
                 cmd = ["git", "-C", self.app.repo_root, "diff", "--name-only", "--cached"]
-                proc = subprocess.run(cmd, text=True, capture_output=True)
-                if proc.stderr:
-                    logger.warning("prepRepoModeHistoryList diff --name-only --cached stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                proc = self._run_cmd_log(cmd, label="prepRepoModeHistoryList diff --name-only --cached")
                 staged = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
             except Exception as e:
                 self.printException(e, "prepRepoModeHistoryList getting staged files failed")
@@ -1779,9 +1958,7 @@ class RepoModeHistoryList(HistoryListBase):
             if self.app.repo_root:
                 try:
                     cmd = ["git", "-C", self.app.repo_root, "log", "--pretty=format:%H\t%ad\t%s", "--date=short", "-n", "200"]
-                    proc = subprocess.run(cmd, text=True, capture_output=True)
-                    if proc.stderr:
-                        logger.warning("prepRepoModeHistoryList git log stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                    proc = self._run_cmd_log(cmd, label="prepRepoModeHistoryList git log")
                     for ln in (proc.stdout or "").splitlines():
                         if not ln:
                             continue
@@ -1818,6 +1995,13 @@ class RepoModeHistoryList(HistoryListBase):
                     self._highlight_top()
             except Exception as e:
                 self.printException(e, "prepRepoModeHistoryList: highlight failed")
+            # Ensure app-level commit pair state reflects the newly-highlighted
+            # selection so callers (e.g. repo file preparer) can rely on
+            # `app.current_hash` and `app.previous_hash` immediately.
+            try:
+                self._compute_selected_pair()
+            except Exception as e:
+                self.printException(e, "prepRepoModeHistoryList: computing selected pair failed")
         except Exception as e:
             self.printException(e, "prepRepoModeHistoryList failed")
 
@@ -1828,6 +2012,7 @@ class RepoModeHistoryList(HistoryListBase):
         it performs (populate the repo file list and switch to the files
         column) is meaningful only for repository-wide history views.
         """
+        logger.debug("RepoModeHistoryList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -1837,8 +2022,12 @@ class RepoModeHistoryList(HistoryListBase):
             prev_hash, curr_hash = self._compute_selected_pair()
             try:
                 # Delegate to the repo-mode file list preparer. The preparer
-                # understands pseudo-hashes like MODS/STAGED.
-                self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash)
+                # understands pseudo-hashes like MODS/STAGED. Pass the
+                # currently-selected filename (app.path) as a highlight so
+                # the file list highlights the expected file.
+                hf = self.app.path
+                logger.debug("RepoModeHistoryList.key_right: prev=%r curr=%r app.path=%r", prev_hash, curr_hash, hf)
+                self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash, highlight_filename=hf)
                 try:
                     # Switch to the right-file list view and update footer
                     self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
@@ -1851,10 +2040,8 @@ class RepoModeHistoryList(HistoryListBase):
 
     def key_enter(self, event: events.Key | None = None) -> None:
         # Same behavior as Right: open the commit-pair file list
-        try:
-            return self.key_right(event)
-        except Exception as e:
-            self.printException(e, "RepoModeHistoryList.key_enter failed")
+        logger.debug("RepoModeHistoryList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_right(event, recursive=True)
 
 
 HELP_TEXT = """
@@ -1899,15 +2086,7 @@ class DiffList(AppBase):
             out = ""
             try:
                 cmd = self.app.build_diff_cmd(filename, prev, curr, variant_index)
-                # Use run() to capture stderr so it can be logged for diagnostics.
-                proc = subprocess.run(cmd, text=True, capture_output=True)
-                # Log any stderr output from the git command for debugging.
-                try:
-                    if proc.stderr:
-                        logger.warning("prepDiffList stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
-                except Exception:
-                    # Be defensive: logging must not break prep behavior
-                    pass
+                proc = self._run_cmd_log(cmd, label="prepDiffList diff")
                 # Prefer stdout when available; keep empty string on failure
                 out = proc.stdout or ""
             except Exception as e:
@@ -1940,9 +2119,7 @@ class DiffList(AppBase):
                             meta_cmd.append(curr)
                     if filename:
                         meta_cmd += ["--", filename]
-                    proc_meta = subprocess.run(meta_cmd, text=True, capture_output=True)
-                    if proc_meta.stderr:
-                        logger.warning("prepDiffList metadata stderr (cmd=%s): %s", " ".join(meta_cmd), proc_meta.stderr.strip())
+                    proc_meta = self._run_cmd_log(meta_cmd, label="prepDiffList metadata diff")
                     meta_out = proc_meta.stdout or ""
                     if meta_out.strip():
                         out = meta_out
@@ -1974,8 +2151,14 @@ class DiffList(AppBase):
         except Exception as e:
             self.printException(e, "prepDiffList failed")
 
-    def key_c(self) -> None:
+    def key_c(self, event: events.Key | None = None) -> None:
+        logger.debug("DiffList.key_c called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None))
         try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "DiffList.key_c: event.stop failed")
             self._colorized = not self._colorized
             logger.debug("DiffList colorized=%s", self._colorized)
             try:
@@ -1991,7 +2174,13 @@ class DiffList(AppBase):
         If the current app layout is one of the file-history diff layouts,
         save it and switch to the `diff_fullscreen` layout. Otherwise noop.
         """
+        logger.debug("DiffList.key_right called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None))
         try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "DiffList.key_right: event.stop failed")
             try:
                 current = self.app._current_layout
             except Exception:
@@ -2006,8 +2195,9 @@ class DiffList(AppBase):
         except Exception as e:
             self.printException(e, "DiffList.key_right failed")
 
-    def key_C(self) -> None:
-        return self.key_c()
+    def key_C(self, event: events.Key | None = None) -> None:
+        logger.debug("DiffList.key_C called: key=%r", getattr(event, "key", None))
+        return self.key_c(event, recursive=True)
 
     def _render_output(self) -> None:
         """Clear and render `self.output` honoring `self._colorized`."""
@@ -2034,8 +2224,14 @@ class DiffList(AppBase):
         except Exception as e:
             self.printException(e, "_render_output failed")
 
-    def key_d(self) -> None:
+    def key_d(self, event: events.Key | None = None) -> None:
+        logger.debug("DiffList.key_d called: key=%r variant=%r index=%r", getattr(event, "key", None), getattr(self, "variant", None), getattr(self, "index", None))
         try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "DiffList.key_d: event.stop failed")
             # Rotate to the next diff variant and re-run the diff preparer.
             try:
                 total = len(getattr(self.app, "diff_variants", []) or [None])
@@ -2058,17 +2254,13 @@ class DiffList(AppBase):
         except Exception as e:
             self.printException(e, "DiffList.key_d failed")
 
-    def key_D(self) -> None:
-        return self.key_d()
-
-    def key_f(self) -> None:
-        try:
-            logger.debug("DiffList.key_f: find in diff")
-        except Exception as e:
-            self.printException(e, "DiffList.key_f failed")
+    def key_D(self, event: events.Key | None = None) -> None:
+        logger.debug("DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None))
+        return self.key_d(event, recursive=True)
 
     def key_left(self, event: events.Key | None = None) -> None:
         """Return from diff view to the right file list."""
+        logger.debug("DiffList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -2102,18 +2294,13 @@ class DiffList(AppBase):
 
         This mirrors the behavior of using Enter to toggle fullscreen/back.
         """
+        logger.debug("DiffList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             current = self.app._current_layout
             if current == "diff_fullscreen":
-                try:
-                    return self.key_left(event)
-                except Exception as e:
-                    self.printException(e, "DiffList.key_enter left failed")
+                return self.key_left(event, recursive=True)
             else:
-                try:
-                    return self.key_right(event)
-                except Exception as e:
-                    self.printException(e, "DiffList.key_enter right failed")
+                return self.key_right(event, recursive=True)
         except Exception as e:
             self.printException(e, "DiffList.key_enter failed")
 
@@ -2127,6 +2314,7 @@ class HelpList(AppBase):
 
     def prepHelp(self) -> None:
         try:
+            logger.debug("prepHelp: invoked")
             self.clear()
             for ln in HELP_TEXT.strip().splitlines():
                 try:
@@ -2141,8 +2329,14 @@ class HelpList(AppBase):
         except Exception as e:
             self.printException(e, "prepHelp failed")
 
-    def key_enter(self) -> None:
+    def key_enter(self, event: events.Key | None = None) -> None:
+        logger.debug("HelpList.key_enter called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None))
         try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "HelpList.key_enter: event.stop failed")
             app = self.app
             try:
                 app.restore_state()
@@ -2360,6 +2554,7 @@ class GitHistoryNavTool(App):
 
     def key_q(self, event: events.Key | None = None) -> None:
         """Quit the application on `q` keypress (synonym for ^Q)."""
+        logger.debug("GitHistoryNavTool.key_q called: key=%r", getattr(event, "key", None))
         try:
             if event is not None:
                 try:
@@ -2379,7 +2574,8 @@ class GitHistoryNavTool(App):
 
     def key_Q(self, event: events.Key | None = None) -> None:
         """Uppercase Q also quits."""
-        return self.key_q(event)
+        logger.debug("GitHistoryNavTool.key_Q called: key=%r", getattr(event, "key", None))
+        return self.key_q(event, recursive=True)
 
     def key_h(self, event: events.Key | None = None) -> None:
         """Show help: save state, prepare help, then display help fullscreen.
@@ -2387,6 +2583,7 @@ class GitHistoryNavTool(App):
         This records the single-slot state, ensures help content is prepared,
         and switches layout/focus/footer to the help configuration.
         """
+        logger.debug("GitHistoryNavTool.key_h called: key=%r", getattr(event, "key", None))
         try:
             if event is not None:
                 try:
@@ -2409,11 +2606,13 @@ class GitHistoryNavTool(App):
             self.printException(e, "key_h outer failure")
 
     def key_H(self, event: events.Key | None = None) -> None:
-        return self.key_h(event)
+        logger.debug("GitHistoryNavTool.key_H called: key=%r", getattr(event, "key", None))
+        return self.key_h(event, recursive=True)
 
     def key_question(self, event: events.Key | None = None) -> None:
         # Some terminals map '?' to 'question'
-        return self.key_h(event)
+        logger.debug("GitHistoryNavTool.key_question called: key=%r", getattr(event, "key", None))
+        return self.key_h(event, recursive=True)
 
 
     def _apply_column_layout(
@@ -2829,6 +3028,62 @@ class GitHistoryNavTool(App):
         try:
             if layout == "help_fullscreen":
                 return
+
+            # Log app and focused-widget state to help debug path/hash swapping
+            try:
+                logger.debug(
+                    "toggle_%s invoked: _current_layout=%s _current_focus=%s",
+                    layout,
+                    self._current_layout,
+                    self._current_focus,
+                )
+                logger.debug(
+                    "app state: path=<%r> current_path=<%r> current_hash=<%r> previous_hash=<%r>",
+                    self.path,
+                    self.current_path,
+                    self.current_hash,
+                    self.previous_hash,
+                )
+                logger.debug(f"file_mode_file_list.prev={self.file_mode_file_list.current_prev_sha} file_mode_file_list.curr={self.file_mode_file_list.current_commit_sha}")
+                logger.debug(f"repo_mode_history_list.prev={self.repo_mode_history_list.current_prev_sha} repo_mode_history_list.curr={self.repo_mode_history_list.current_commit_sha}")
+                logger.debug(f"file_mode_history_list.prev={self.file_mode_history_list.current_prev_sha} file_mode_history_list.curr={self.file_mode_history_list.current_commit_sha}")
+                logger.debug(f"repo_mode_file_list.prev={self.repo_mode_file_list.current_prev_sha} repo_mode_file_list.curr={self.repo_mode_file_list.current_commit_sha}")
+
+                focused_info = None
+                try:
+                    fsel = getattr(self, "_current_focus", None)
+                    if fsel:
+                        fid = fsel[1:] if str(fsel).startswith("#") else str(fsel)
+                        try:
+                            widget = self.query_one(f"#{fid}")
+                        except Exception:
+                            widget = None
+                        if widget is not None:
+                            wtype = type(widget).__name__
+                            wpath = getattr(widget, "path", None)
+                            # If history list, compute selected commit pair
+                            pair = None
+                            try:
+                                if isinstance(widget, HistoryListBase):
+                                    pair = widget.compute_commit_pair_hashes()
+                            except Exception:
+                                pair = None
+                            # If file list, try to get selected node raw text
+                            selected_raw = None
+                            try:
+                                nodes = widget.nodes()
+                                idx = widget.index or getattr(widget, "_min_index", 0) or 0
+                                if 0 <= idx < len(nodes):
+                                    selected_raw = getattr(nodes[idx], "_raw_text", None)
+                            except Exception:
+                                selected_raw = None
+                            focused_info = (wtype, wpath, pair, selected_raw)
+                except Exception:
+                    focused_info = None
+                logger.debug("focused widget info: %r", focused_info)
+            except Exception:
+                pass
+
             if event is not None:
                 try:
                     event.stop()
@@ -2847,10 +3102,12 @@ class GitHistoryNavTool(App):
             self.printException(e, "toggle outer failure")
 
     def key_s(self, event: events.Key | None = None) -> None:
+        logger.debug("GitHistoryNavTool.key_s called: key=%r", getattr(event, "key", None))
         return self.toggle(self._current_layout, event)
 
     def key_S(self, event: events.Key | None = None) -> None:
-        return self.key_s(event)
+        logger.debug("GitHistoryNavTool.key_S called: key=%r", getattr(event, "key", None))
+        return self.key_s(event, recursive=True)
 
     # Per-layout toggle implementations. These prepare lists and switch
     # layouts in pairs so the `s` key toggles between related views.
@@ -2882,17 +3139,23 @@ class GitHistoryNavTool(App):
     def toggle_file_history(self) -> None:
         # Save transient values
         saved_path = self.current_path
-        saved_curr = self.current_hash
-        saved_prev = self.previous_hash
         try:
             # Prepare repo history and request that preparer highlight and
             # mark the provided commit hashes when present.
-            self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".", prev_hash=saved_prev, curr_hash=saved_curr)
+            # Use the current app-level hashes as the initial request; the
+            # preparer will update app-level state to reflect the highlighted
+            # selection and we will read back the authoritative values.
+            self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".", prev_hash=self.previous_hash, curr_hash=self.current_hash)
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo history failed")
         try:
-            # Prepare the right file list and request filename highlighting
-            self.repo_mode_file_list.prepRepoModeFileList(saved_prev, saved_curr, highlight_filename=saved_path)
+            # After the history preparer runs it will have updated
+            # `app.current_hash`/`app.previous_hash` to match the highlighted
+            # selection. Read those authoritative values and pass them to the
+            # file preparer so it lists the correct commit-pair.
+            use_prev = getattr(self, "previous_hash", None)
+            use_curr = getattr(self, "current_hash", None)
+            self.repo_mode_file_list.prepRepoModeFileList(use_prev, use_curr, highlight_filename=saved_path)
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo file list failed")
         try:
@@ -2951,77 +3214,18 @@ class GitHistoryNavTool(App):
             self.printException(e, "toggle_history_file_diff change_state failed")
 
     def toggle_diff_fullscreen(self) -> None:
+        # If the diff has a saved layout, toggle back to it via recursive dispatch
         try:
-            # If the diff has a saved layout, toggle back to it via recursive dispatch
-            try:
-                saved = self.diff_list._saved_layout
-                if saved:
-                    try:
-                        self.toggle(saved)
-                    except Exception as e:
-                        self.printException(e, "toggle_diff_fullscreen dispatch failed")
-            except Exception as e:
-                self.printException(e, "toggle_diff_fullscreen retrieving saved layout failed")
-        except Exception as e:
-            self.printException(e, "toggle_diff_fullscreen outer failure")
-
-
-    # Instrument all `key_` handlers on AppBase subclasses to log their invocation.
-    def _wrap_key_methods_for_logging() -> None:
-        try:
-            for name, obj in list(globals().items()):
+            saved = self.diff_list._saved_layout
+            if saved:
                 try:
-                    if not isinstance(obj, type):
-                        continue
-                    if not issubclass(obj, AppBase):
-                        continue
-                except Exception:
-                    continue
-                for attr in dir(obj):
-                    if not attr.startswith("key_"):
-                        continue
-                    try:
-                        fn = getattr(obj, attr, None)
-                        if not callable(fn):
-                            continue
-                        if getattr(fn, "_key_log_wrapped", False):
-                            continue
-
-                        # Find the class in the MRO that actually defines this attr
-                        owner = None
-                        try:
-                            for c in obj.__mro__:
-                                if attr in c.__dict__:
-                                    owner = c
-                                    break
-                        except Exception:
-                            owner = None
-                        owner_name = owner.__name__ if owner is not None else getattr(fn, "__qualname__", "<unknown>").split(".")[0]
-
-                        def _make_wrapper(f, owner_name=owner_name):
-                            @wraps(f)
-                            def _wrapper(self, *a, **k):
-                                try:
-                                    logger.debug("key handler invoked: %s.%s (invoked on %s)", owner_name, f.__name__, type(self).__name__)
-                                except Exception:
-                                    pass
-                                return f(self, *a, **k)
-
-                            _wrapper._key_log_wrapped = True
-                            return _wrapper
-
-                        setattr(obj, attr, _make_wrapper(fn))
-                    except Exception:
-                        continue
-        except Exception:
-            try:
-                logger.exception("_wrap_key_methods_for_logging failed")
-            except Exception:
-                pass
+                    self.toggle(saved)
+                except Exception as e:
+                    self.printException(e, "toggle_diff_fullscreen dispatch failed")
+        except Exception as e:
+            self.printException(e, "toggle_diff_fullscreen retrieving saved layout failed")
 
 
-    # Run the instrumentation at import time.
-    _wrap_key_methods_for_logging()
 
 
 def discover_repo_worktree(start_path: str | None) -> str:
@@ -3059,9 +3263,7 @@ def discover_repo_worktree(start_path: str | None) -> str:
     # Next try git CLI discovery using `git -C <start> rev-parse --show-toplevel`.
     try:
         cmd = ["git", "-C", start or ".", "rev-parse", "--show-toplevel"]
-        proc = subprocess.run(cmd, text=True, capture_output=True)
-        if proc.stderr:
-            logger.warning("discover_repo_worktree git rev-parse stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+        proc = run_cmd_log(cmd, label="discover_repo_worktree rev-parse")
         topo = (proc.stdout or "").strip() if proc.returncode == 0 else ""
         if topo:
             try:
