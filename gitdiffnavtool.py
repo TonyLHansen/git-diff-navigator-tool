@@ -36,6 +36,17 @@ HIGHLIGHT_FILELIST_STYLE = f"white on {HIGHLIGHT_FILELIST_BG}"
 HIGHLIGHT_REPOLIST_BG = "#3333CC"
 HIGHLIGHT_REPOLIST_STYLE = f"white on {HIGHLIGHT_REPOLIST_BG}"
 
+# Diff-list specific highlight
+HIGHLIGHT_DIFF_BG = "#2ecc71"
+HIGHLIGHT_DIFF_STYLE = f"white on {HIGHLIGHT_DIFF_BG}"
+ 
+# Help-list specific highlight
+HIGHLIGHT_HELP_BG = "#95a5a6"
+HIGHLIGHT_HELP_STYLE = f"white on {HIGHLIGHT_HELP_BG}"
+
+# Default highlight style used when a widget doesn't specify one
+HIGHLIGHT_DEFAULT_STYLE = "white on light_gray"
+
 # Status markers mapping used to render the left-most TAG for file rows.
 # Keys correspond to computed repo statuses (strings used by preparatory APIs).
 MARKERS = {
@@ -157,8 +168,8 @@ class AppBase(ListView):
         self._page_scroll = False
         # Ensure common attributes exist so code can access them directly
         # Rely on ListView to provide `children`, `_nodes`, `index`, and `app`.
-        # Flag indicating this widget is a history-style list (overridden by subclasses)
-        self.is_history_list = False
+        # Per-widget highlight style; subclasses override with specific styles
+        self.highlight_bg_style = HIGHLIGHT_DEFAULT_STYLE
 
     def printException(self, e: Exception, msg: Optional[str] = None) -> None:
         try:
@@ -231,20 +242,13 @@ class AppBase(ListView):
             if not nodes:
                 return
             old = self.index
-            # determine highlight colors based on widget type (repo vs file)
-
-            if self.is_history_list:
-                highlight_bg = HIGHLIGHT_REPOLIST_BG
-                text_color = "white"
-            else:
-                highlight_bg = HIGHLIGHT_FILELIST_BG
-                text_color = "white"
+            # per-widget highlight is provided via `self.highlight_bg_style`
 
             # Only set the index here; actual visual activation is performed
             # in `watch_index` which runs after Textual has processed the index
             # change so our styles/classes won't be clobbered.
             try:
-                logger.debug("_activate_index: old=%r new=%r is_repo=%s", old, new_index, self.is_history_list)
+                logger.debug("_activate_index: old=%r new=%r highlight_style=%s", old, new_index, getattr(self, "highlight_bg_style", None))
                 logger.debug("_activate_index: scheduling index set via call_after_refresh -> %s", new_index)
                 self.call_after_refresh(lambda: setattr(self, "index", new_index))
             except Exception as e:
@@ -268,7 +272,7 @@ class AppBase(ListView):
             if not nodes:
                 return
             # determine repo vs file highlight colors
-            highlight_bg = HIGHLIGHT_REPOLIST_BG if self.is_history_list else HIGHLIGHT_FILELIST_BG
+            highlight_bg = self.highlight_bg_style
             text_color = "white"
 
             logger.debug("watch_index: old=%r new=%r nodes=%d", old, new, len(nodes))
@@ -768,11 +772,11 @@ class FileModeFileList(FileListBase):
                         else:
                             prefix = prefix + os.sep
                         try:
-                            out = subprocess.check_output(
-                                ["git", "-C", self.app.repo_root, "status", "--porcelain"],
-                                text=True,
-                                stderr=subprocess.DEVNULL,
-                            )
+                            cmd = ["git", "-C", self.app.repo_root, "status", "--porcelain"]
+                            proc = subprocess.run(cmd, text=True, capture_output=True)
+                            if proc.stderr:
+                                logger.warning("prepFileModeFileList git status stderr (cmd=%r): %s", cmd, proc.stderr.strip())
+                            out = proc.stdout or ""
                             m: dict[str, str] = {}
                             for ln in out.splitlines():
                                 if not ln:
@@ -947,15 +951,17 @@ class FileModeFileList(FileListBase):
                                                 repo_status = "tracked_clean"
                                         else:
                                             # Not present in status_map: check tracked via ls-files
-                                            try:
-                                                subprocess.check_call(
-                                                    ["git", "-C", self.app.repo_root, "ls-files", "--error-unmatch", rel],
-                                                    stdout=subprocess.DEVNULL,
-                                                    stderr=subprocess.DEVNULL,
-                                                )
-                                                repo_status = "tracked_clean"
-                                            except subprocess.CalledProcessError:
-                                                repo_status = "untracked"
+                                                try:
+                                                    cmd = ["git", "-C", self.app.repo_root, "ls-files", "--error-unmatch", rel]
+                                                    proc = subprocess.run(cmd, text=True, capture_output=True)
+                                                    if proc.returncode == 0:
+                                                        repo_status = "tracked_clean"
+                                                    else:
+                                                        if proc.stderr:
+                                                            logger.warning("ls-files stderr (cmd=%r): %s", cmd, proc.stderr.strip())
+                                                        repo_status = "untracked"
+                                                except Exception:
+                                                    repo_status = "untracked"
                                     except Exception as e:
                                         self.printException(e, "status_map processing failed")
                                         repo_status = "tracked_clean"
@@ -963,7 +969,10 @@ class FileModeFileList(FileListBase):
                                     # No batch map: fall back to per-file git status
                                     try:
                                         cmd = ["git", "-C", self.app.repo_root, "status", "--porcelain", "--", rel]
-                                        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
+                                        proc = subprocess.run(cmd, text=True, capture_output=True)
+                                        if proc.stderr:
+                                            logger.warning("prepFileModeFileList per-file git status stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                                        out = proc.stdout.strip() if proc.returncode == 0 and proc.stdout else ""
                                         if out:
                                             code = out[:2]
                                             if code == "??":
@@ -982,15 +991,17 @@ class FileModeFileList(FileListBase):
                                             else:
                                                 repo_status = "tracked_clean"
                                         else:
-                                            try:
-                                                subprocess.check_call(
-                                                    ["git", "-C", self.app.repo_root, "ls-files", "--error-unmatch", rel],
-                                                    stdout=subprocess.DEVNULL,
-                                                    stderr=subprocess.DEVNULL,
-                                                )
-                                                repo_status = "tracked_clean"
-                                            except subprocess.CalledProcessError:
-                                                repo_status = "untracked"
+                                                try:
+                                                    cmd = ["git", "-C", self.app.repo_root, "ls-files", "--error-unmatch", rel]
+                                                    proc = subprocess.run(cmd, text=True, capture_output=True)
+                                                    if proc.returncode == 0:
+                                                        repo_status = "tracked_clean"
+                                                    else:
+                                                        if proc.stderr:
+                                                            logger.warning("ls-files stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                                                        repo_status = "untracked"
+                                                except Exception:
+                                                    repo_status = "untracked"
                                     except Exception as e:
                                         self.printException(e, "git status check failed")
                                         repo_status = "tracked_clean"
@@ -1089,6 +1100,10 @@ class FileModeFileList(FileListBase):
                 self.printException(e)
         except Exception as e:
             self.printException(e, "prepFileModeFileList failed")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.highlight_bg_style = HIGHLIGHT_FILELIST_STYLE
 
     def _nav_dir_if(self, test_fn) -> None:
         try:
@@ -1209,17 +1224,16 @@ class RepoModeFileList(FileListBase):
                     items: list[tuple[str, str]] = []
                     try:
                         if pseudo == "MODS":
-                            out = subprocess.check_output(
-                                ["git", "-C", self.app.repo_root, "diff", "--name-status"],
-                                text=True,
-                                stderr=subprocess.DEVNULL,
-                            )
+                            cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status"]
                         elif pseudo == "STAGED":
-                            out = subprocess.check_output(
-                                ["git", "-C", self.app.repo_root, "diff", "--name-status", "--cached"],
-                                text=True,
-                                stderr=subprocess.DEVNULL,
-                            )
+                            cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status", "--cached"]
+                        else:
+                            cmd = []
+                        if cmd:
+                            proc = subprocess.run(cmd, text=True, capture_output=True)
+                            if proc.stderr:
+                                logger.warning("prepRepoModeFileList pseudo diff stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                            out = proc.stdout or ""
                         for ln in out.splitlines():
                             if not ln:
                                 continue
@@ -1264,7 +1278,10 @@ class RepoModeFileList(FileListBase):
                         # diff against working tree (curr only) or HEAD
                         cmd += [curr_hash]
                     # run command
-                    out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+                    proc = subprocess.run(cmd, text=True, capture_output=True)
+                    if proc.stderr:
+                        logger.warning("prepRepoModeFileList git diff stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                    out = proc.stdout or ""
                     for ln in out.splitlines():
                         if not ln:
                             continue
@@ -1310,6 +1327,10 @@ class RepoModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "prepRepoModeFileList failed")
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.highlight_bg_style = HIGHLIGHT_FILELIST_STYLE
+
     def key_left(self, event: events.Key | None = None) -> None:
         # Move to previous view or update state in main app (stub)
         if event is not None:
@@ -1324,13 +1345,27 @@ class RepoModeFileList(FileListBase):
             self.printException(e, "RepoModeFileList.key_left change_state failed")
 
     def key_right(self) -> None:
-        # Open diff view for selected file (stub)
+        # Open diff view for selected file: delegate to DiffList and switch layout.
         try:
             idx = self.index or 0
             nodes = self.nodes()
-            if 0 <= idx < len(nodes):
-                filename = self._child_filename(nodes[idx])
-                logger.debug("RepoModeFileList open diff for %s", filename)
+            if not (0 <= idx < len(nodes)):
+                return
+            node = nodes[idx]
+            filename = getattr(node, "_raw_text", None) or self._child_filename(node)
+
+            # Pass through the app-level commit pair unchanged; variant is fixed for now
+            variant_index = 0
+
+            try:
+                self.app.diff_list.prepDiffList(filename, self.app.previous_hash, self.app.current_hash, variant_index)
+            except Exception as e:
+                self.printException(e, "RepoModeFileList.key_right: prepDiffList failed")
+
+            try:
+                self.app.change_state("history_file_diff", f"#{DIFF_LIST_ID}", HISTORY_FILE_DIFF_FOOTER)
+            except Exception as e:
+                self.printException(e, "RepoModeFileList.key_right change_state failed")
         except Exception as e:
             self.printException(e, "RepoModeFileList.key_right failed")
 
@@ -1344,8 +1379,7 @@ class HistoryListBase(AppBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # History lists should use repository-style highlighting
-        try:
-            self.is_history_list = True
+        self.highlight_bg_style = HIGHLIGHT_REPOLIST_STYLE
         except Exception as e:
             self.printException(e, "HistoryListBase __init__ failed")
 
@@ -1481,32 +1515,26 @@ class HistoryListBase(AppBase):
                         try:
                             self.app.current_hash = selected_hash
                             self.app.previous_hash = marked_hash
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
+                        except Exception as e:
+                            self.printException(e, "updating app-level hashes failed")
+                    except Exception as e:
+                        self.printException(e, "updating app-level hashes failed")
                     return (marked_hash, selected_hash)
                 else:
                     try:
-                        try:
-                            self.app.current_hash = marked_hash
-                            self.app.previous_hash = selected_hash
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
+                        self.app.current_hash = marked_hash
+                        self.app.previous_hash = selected_hash
+                    except Exception as e:
+                        self.printException(e, "updating app-level hashes failed")
                     return (selected_hash, marked_hash)
 
             # No marked row — fall back to adjacent pair computation
             prev, curr = self.compute_commit_pair_hashes(idx)
             try:
-                try:
-                    self.app.current_hash = curr
-                    self.app.previous_hash = prev
-                except Exception:
-                    pass
-            except Exception:
-                pass
+                self.app.current_hash = curr
+                self.app.previous_hash = prev
+            except Exception as e:
+                self.printException(e, "updating app-level hashes failed")
             return (prev, curr)
         except Exception as e:
             self.printException(e, "_compute_selected_pair failed")
@@ -1564,8 +1592,10 @@ class FileModeHistoryList(HistoryListBase):
                         "--",
                         path,
                     ]
-                    out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
-                    for ln in out.splitlines():
+                    proc = subprocess.run(cmd, text=True, capture_output=True)
+                    if proc.stderr:
+                        logger.warning("prepFileModeHistoryList git log stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                    for ln in (proc.stdout or "").splitlines():
                         try:
                             parts = ln.split("\t", 2)
                             h = parts[0]
@@ -1611,22 +1641,22 @@ class RepoModeHistoryList(HistoryListBase):
             # Add pseudo-entries for working-tree state: MODS (modified, unstaged)
             # and STAGED (indexed but uncommitted). Only include when present.
             try:
-                out_mods = subprocess.check_output(
-                    ["git", "-C", self.app.repo_root, "diff", "--name-only"],
-                    text=True,
-                    stderr=subprocess.DEVNULL,
-                )
-                mods = [ln for ln in out_mods.splitlines() if ln.strip()]
-            except Exception:
+                cmd = ["git", "-C", self.app.repo_root, "diff", "--name-only"]
+                proc = subprocess.run(cmd, text=True, capture_output=True)
+                if proc.stderr:
+                    logger.warning("prepRepoModeHistoryList diff --name-only stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                mods = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+            except Exception as e:
+                self.printException(e, "prepRepoModeHistoryList getting modified files failed")
                 mods = []
             try:
-                out_staged = subprocess.check_output(
-                    ["git", "-C", self.app.repo_root, "diff", "--name-only", "--cached"],
-                    text=True,
-                    stderr=subprocess.DEVNULL,
-                )
-                staged = [ln for ln in out_staged.splitlines() if ln.strip()]
-            except Exception:
+                cmd = ["git", "-C", self.app.repo_root, "diff", "--name-only", "--cached"]
+                proc = subprocess.run(cmd, text=True, capture_output=True)
+                if proc.stderr:
+                    logger.warning("prepRepoModeHistoryList diff --name-only --cached stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                staged = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+            except Exception as e:
+                self.printException(e, "prepRepoModeHistoryList getting staged files failed")
                 staged = []
             # Insert MODS then STAGED at the top if present
             try:
@@ -1641,8 +1671,10 @@ class RepoModeHistoryList(HistoryListBase):
             if self.app.repo_root:
                 try:
                     cmd = ["git", "-C", self.app.repo_root, "log", "--pretty=format:%H\t%ad\t%s", "--date=short", "-n", "200"]
-                    out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
-                    for ln in out.splitlines():
+                    proc = subprocess.run(cmd, text=True, capture_output=True)
+                    if proc.stderr:
+                        logger.warning("prepRepoModeHistoryList git log stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                    for ln in (proc.stdout or "").splitlines():
                         if not ln:
                             continue
                         try:
@@ -1691,60 +1723,81 @@ class DiffList(AppBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._colorized = True
+        self.highlight_bg_style = HIGHLIGHT_DIFF_STYLE
+        # Stored output lines from the last diff command
+        self.output: list[str] = []
 
-    def prepDiffList(self, filename: str, prev: str | None, curr: str | None, variant_index: int | None = None) -> None:
+    def prepDiffList(self, filename: str, prev: str, curr: str, variant_index: int = 0) -> None:
         try:
-            self.clear()
             # Prefer the canonicalized `current_path` on the app when available
-            cmd = None
+            out = ""
             try:
+                cmd = self.app.build_diff_cmd(filename, prev, curr, variant_index)
+                # Use run() to capture stderr so it can be logged for diagnostics.
+                proc = subprocess.run(cmd, text=True, capture_output=True)
+                # Log any stderr output from the git command for debugging.
                 try:
-                    cmd = self.app.build_diff_cmd(filename, prev, curr, variant_index)
-                except Exception as e:
-                    self.printException(e, "prepDiffList: building diff command failed")
-                    # fallback basic diff
-                    if self.app.repo_root:
-                        cmd = ["git", "-C", self.app.repo_root, "diff"]
-                    else:
-                        cmd = ["git", "diff"]
-                    if prev and curr:
-                        cmd += [prev, curr]
-                    if filename:
-                        cmd += ["--", filename]
-                out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
-            except subprocess.CalledProcessError:
-                out = ""
+                    if proc.stderr:
+                        logger.warning("prepDiffList stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+                except Exception:
+                    # Be defensive: logging must not break prep behavior
+                    pass
+                # Prefer stdout when available; keep empty string on failure
+                out = proc.stdout or ""
             except Exception as e:
                 self.printException(e, "prepDiffList: running git diff failed")
                 out = ""
 
-            # Colorize lines by prefix and append to list
-            try:
-                for ln in out.splitlines() or []:
-                    try:
-                        style = None
-                        if ln.startswith("+") and not ln.startswith("+++"):
-                            style = "green"
-                        elif ln.startswith("-") and not ln.startswith("---"):
-                            style = "red"
-                        elif ln.startswith("@@"):
-                            style = "magenta"
-                        elif ln.startswith("diff --git") or ln.startswith("index "):
-                            style = "bold white"
-                        else:
-                            style = None
-                        if style:
-                            self.append(ListItem(Label(Text(ln, style=style))))
-                        else:
-                            self.append(ListItem(Label(Text(ln))))
-                    except Exception as e:
-                        self.printException(e, "prepDiffList append failed")
-            except Exception as e:
-                self.printException(e, "prepDiffList processing output failed")
+            # If the textual diff is empty, attempt to collect metadata (renames,
+            # mode changes, summary) so the UI can indicate non-textual changes.
+            if not (out and out.strip()):
+                try:
+                    repo_root = self.app.repo_root
+                    pseudo_names = ("MODS", "STAGED")
+                    use_cached = prev == "STAGED" or curr == "STAGED"
+                    meta_cmd = ["git", "-C", repo_root, "diff"]
+                    if use_cached:
+                        meta_cmd.append("--cached")
+                    meta_cmd += ["--name-status", "--summary"]
+                    # Include explicit refs when provided (avoid pseudo names)
+                    if prev in pseudo_names or curr in pseudo_names:
+                        if prev and prev not in pseudo_names and curr and curr not in pseudo_names:
+                            meta_cmd += [prev, curr]
+                        elif curr and curr not in pseudo_names:
+                            meta_cmd.append(curr)
+                        elif prev and prev not in pseudo_names:
+                            meta_cmd.append(prev)
+                    else:
+                        if prev and curr:
+                            meta_cmd += [prev, curr]
+                        elif curr and not prev:
+                            meta_cmd.append(curr)
+                    if filename:
+                        meta_cmd += ["--", filename]
+                    proc_meta = subprocess.run(meta_cmd, text=True, capture_output=True)
+                    if proc_meta.stderr:
+                        logger.warning("prepDiffList metadata stderr (cmd=%s): %s", " ".join(meta_cmd), proc_meta.stderr.strip())
+                    meta_out = proc_meta.stdout or ""
+                    if meta_out.strip():
+                        out = meta_out
+                    else:
+                        out = "(no textual changes for this file)"
+                except Exception as e:
+                    self.printException(e, "prepDiffList: metadata diff failed")
 
-            self._populated = True
+            # Save output lines on the object and render via helper
+            try:
+                self.output = out.splitlines() if out else []
+            except Exception:
+                self.output = []
+            # Record filename and mark populated, then render
             self._filename = filename
             try:
+                self._render_output()
+            except Exception as e:
+                self.printException(e, "prepDiffList: render failed")
+            try:
+                self._populated = True
                 self._highlight_top()
             except Exception as e:
                 self.printException(e, "prepDiffList: highlight failed")
@@ -1755,9 +1808,40 @@ class DiffList(AppBase):
         try:
             self._colorized = not self._colorized
             logger.debug("DiffList colorized=%s", self._colorized)
-            # Re-render could be done here; stubbed for now
+            try:
+                self._render_output()
+            except Exception as e:
+                self.printException(e, "DiffList.key_c re-render failed")
         except Exception as e:
             self.printException(e, "DiffList.key_c failed")
+
+    def key_C(self) -> None:
+        return self.key_c()
+
+    def _render_output(self) -> None:
+        """Clear and render `self.output` honoring `self._colorized`."""
+        try:
+            self.clear()
+            for ln in self.output or []:
+                try:
+                    style = None
+                    if self._colorized:
+                        if ln.startswith("+") and not ln.startswith("+++"):
+                            style = "green"
+                        elif ln.startswith("-") and not ln.startswith("---"):
+                            style = "red"
+                        elif ln.startswith("@@"):
+                            style = "magenta"
+                        elif ln.startswith("diff --git") or ln.startswith("index "):
+                            style = "bold white"
+                    if style:
+                        self.append(ListItem(Label(Text(ln, style=style))))
+                    else:
+                        self.append(ListItem(Label(Text(ln))))
+                except Exception as e:
+                    self.printException(e, "_render_output append failed")
+        except Exception as e:
+            self.printException(e, "_render_output failed")
 
     def key_d(self) -> None:
         try:
@@ -1771,9 +1855,28 @@ class DiffList(AppBase):
         except Exception as e:
             self.printException(e, "DiffList.key_f failed")
 
+    def key_left(self, event: events.Key | None = None) -> None:
+        """Return from diff view to the right file list."""
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "DiffList.key_left: event.stop failed")
+            try:
+                self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
+            except Exception as e:
+                self.printException(e, "DiffList.key_left change_state failed")
+        except Exception as e:
+            self.printException(e, "DiffList.key_left failed")
+
 
 class HelpList(AppBase):
     """Renders help text as list rows and allows restoring previous state."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.highlight_bg_style = HIGHLIGHT_HELP_STYLE
 
     def prepHelp(self) -> None:
         try:
@@ -1829,6 +1932,10 @@ LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
 LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
 # Footer text used when showing the right file list (file list view)
 RIGHT_FILE_FOOTER = Text("Files: press Left to return")
+# Footer text used for help screen
+HELP_FOOTER = Text("Help: press Enter to return")
+# Footer text used when showing the diff for a history/file selection
+HISTORY_FILE_DIFF_FOOTER = Text("Diff: press Left to return to files")
 
  # Common styles used across file/history preparers
 STYLE_DIR = "white on blue"
@@ -1892,6 +1999,10 @@ class GitHistoryNavTool(App):
                     self.pygit2_repo = pygit2.Repository(self.repo_root)
                 except Exception as e:
                     printException(e, "GitHistoryNavTool.__init__: pygit2.Repository init failed")
+
+            # Optional diff variant arguments indexed by variant_index.
+            # index 0 -> None (no extra arg), 1 -> ignore-space-change, 2 -> patience algorithm
+            self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
 
             # Initialize `_current_path` to either the provided path when
             # it's a directory, or the dirname when `path` is a file.
@@ -2106,8 +2217,7 @@ class GitHistoryNavTool(App):
             # to call prepHelp() again here.
 
             try:
-                footer_txt = Text("Help: press Enter to return")
-                self.change_state("help_fullscreen", f"#{HELP_LIST_ID}", footer_txt)
+                self.change_state("help_fullscreen", f"#{HELP_LIST_ID}", HELP_FOOTER)
             except Exception as e:
                 self.printException(e, "key_h: change_state failed")
         except Exception as e:
@@ -2205,7 +2315,7 @@ class GitHistoryNavTool(App):
             self.printException(e, "error applying column layout")
 
     def build_diff_cmd(
-        self, filename: str | None, prev: str | None, curr: str | None, variant_index: int | None = None
+        self, filename: str, prev: str, curr: str, variant_index: int = 0
     ) -> list[str]:
         """Return a git diff command list for the given filenames and commit-ish pair.
 
@@ -2215,21 +2325,55 @@ class GitHistoryNavTool(App):
         """
         try:
             repo_root = self.repo_root
-            if repo_root:
-                cmd = ["git", "-C", repo_root, "diff"]
-            else:
-                cmd = ["git", "diff"]
+            pseudo_names = ("MODS", "STAGED")
 
-            # If both refs provided, diff between them; if only curr provided,
-            # diff that ref against working tree; if neither provided, diff
-            # working tree against HEAD.
-            if prev and curr:
-                cmd += [prev, curr]
-            elif curr and not prev:
-                cmd += [curr]
+            # Determine the optional variant argument (insert after 'diff')
+            variant_arg = None
+            try:
+                if 0 <= variant_index < len(self.diff_variants):
+                    variant_arg = self.diff_variants[variant_index]
+            except Exception as e:
+                self.printException(e, "determining variant_arg in build_diff_cmd")
+                variant_arg = None
+
+            # Helper to create base diff command (without refs/filename yet)
+            def _base_diff(use_cached: bool = False) -> list[str]:
+                base = ["git", "-C", self.repo_root, "diff"]
+                # insert variant arg immediately after 'diff' when present
+                if variant_arg:
+                    try:
+                        idx = base.index("diff")
+                        base.insert(idx + 1, variant_arg)
+                    except Exception as e:
+                        self.printException(e, "inserting variant_arg in base diff command")
+                        # best-effort: append if lookup fails
+                        base.append(variant_arg)
+                if use_cached:
+                    base.append("--cached")
+                return base
+
+            # Build command considering pseudo-names
+            if prev in pseudo_names or curr in pseudo_names:
+                use_cached = prev == "STAGED" or curr == "STAGED"
+                cmd = _base_diff(use_cached=use_cached)
+                # If a concrete ref is provided (not pseudo) include it
+                if prev and prev not in pseudo_names and curr and curr not in pseudo_names:
+                    cmd += [prev, curr]
+                elif curr and curr not in pseudo_names:
+                    cmd.append(curr)
+                elif prev and prev not in pseudo_names:
+                    cmd.append(prev)
+            else:
+                cmd = _base_diff(use_cached=False)
+                if prev and curr:
+                    cmd += [prev, curr]
+                elif curr and not prev:
+                    cmd.append(curr)
 
             if filename:
                 cmd += ["--", filename]
+
+            logger.debug(f"build_diff_cmd: filename={filename} prev={prev} curr={curr} variant_index={variant_index} -> cmd={' '.join(cmd)}")
             return cmd
         except Exception as e:
             self.printException(e, "build_diff_cmd failed")
@@ -2525,7 +2669,10 @@ def discover_repo_worktree(start_path: str | None) -> str:
     # Next try git CLI discovery using `git -C <start> rev-parse --show-toplevel`.
     try:
         cmd = ["git", "-C", start or ".", "rev-parse", "--show-toplevel"]
-        topo = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True).strip()
+        proc = subprocess.run(cmd, text=True, capture_output=True)
+        if proc.stderr:
+            logger.warning("discover_repo_worktree git rev-parse stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
+        topo = (proc.stdout or "").strip() if proc.returncode == 0 else ""
         if topo:
             try:
                 worktree = os.path.realpath(topo)
