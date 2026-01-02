@@ -1432,6 +1432,18 @@ class RepoModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "RepoModeFileList.key_right failed")
 
+    def key_enter(self, event: events.Key | None = None) -> None:
+        """Same behavior as Right: open the diff for the selected file."""
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "RepoModeFileList.key_enter: event.stop failed")
+        try:
+            return self.key_right()
+        except Exception as e:
+            self.printException(e, "RepoModeFileList.key_enter failed")
+
 
 class HistoryListBase(AppBase):
     """Base for history (commit) lists.
