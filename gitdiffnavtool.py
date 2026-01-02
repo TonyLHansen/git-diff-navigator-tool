@@ -31,21 +31,17 @@ from textual.widgets import ListView, Label, ListItem, Footer, Header
 # --- Constants -------------------------------------------------------------
 # Highlight constants (defaults)
 HIGHLIGHT_FILELIST_BG = "#f1c40f"
-HIGHLIGHT_FILELIST_STYLE = f"white on {HIGHLIGHT_FILELIST_BG}"
 
 HIGHLIGHT_REPOLIST_BG = "#3333CC"
-HIGHLIGHT_REPOLIST_STYLE = f"white on {HIGHLIGHT_REPOLIST_BG}"
 
-# Diff-list specific highlight
+# Diff-list specific highlight background
 HIGHLIGHT_DIFF_BG = "#2ecc71"
-HIGHLIGHT_DIFF_STYLE = f"white on {HIGHLIGHT_DIFF_BG}"
- 
-# Help-list specific highlight
-HIGHLIGHT_HELP_BG = "#95a5a6"
-HIGHLIGHT_HELP_STYLE = f"white on {HIGHLIGHT_HELP_BG}"
 
-# Default highlight style used when a widget doesn't specify one
-HIGHLIGHT_DEFAULT_STYLE = "white on light_gray"
+# Help-list specific highlight background
+HIGHLIGHT_HELP_BG = "#95a5a6"
+
+# Default highlight background used when a widget doesn't specify one
+HIGHLIGHT_DEFAULT_BG = "light_gray"
 
 # Status markers mapping used to render the left-most TAG for file rows.
 # Keys correspond to computed repo statuses (strings used by preparatory APIs).
@@ -88,6 +84,56 @@ ListItem.active {
 }
 
 """
+
+
+# Canonical widget and label IDs (six canonical widgets)
+LEFT_FILE_LIST_ID = "left-file-list"
+LEFT_FILE_TITLE = "left-file-title"
+
+LEFT_HISTORY_LIST_ID = "left-history-list"
+LEFT_HISTORY_TITLE = "left-history-title"
+
+RIGHT_FILE_LIST_ID = "right-file-list"
+RIGHT_FILE_TITLE = "right-file-title"
+
+RIGHT_HISTORY_LIST_ID = "right-history-list"
+RIGHT_HISTORY_TITLE = "right-history-title"
+
+DIFF_LIST_ID = "diff-list"
+DIFF_TITLE = "diff-title"
+
+HELP_LIST_ID = "help-list"
+HELP_TITLE = "help-title"
+
+# Footer text used when switching to file-history view
+RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
+# Footer text used when showing the left history pane
+LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
+# Footer text used when showing the left file list
+LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
+# Footer text used when showing the right file list (file list view)
+RIGHT_FILE_FOOTER = Text("Files: press Left to return")
+# Footer text used for help screen
+HELP_FOOTER = Text("Help: press Enter to return")
+# Footer text used when showing the diff for a history/file selection
+HISTORY_FILE_DIFF_FOOTER = Text("Diff: press Left to return to files")
+
+ # Common styles used across file/history preparers
+STYLE_DIR = "white on blue"
+STYLE_PARENT = STYLE_DIR
+STYLE_WT_DELETED = "red"
+STYLE_ERROR = "red"
+STYLE_CONFLICTED = "magenta"
+STYLE_STAGED = "cyan"
+STYLE_IGNORED = "dim italic"
+STYLE_MODIFIED = "yellow"
+STYLE_UNTRACKED = "bold yellow"
+STYLE_DEFAULT = "white"
+
+STYLE_FILELIST_KEY = "dim"
+
+# Header row text for file lists (unselectable)
+FILELIST_KEY_ROW_TEXT = "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
 
 
 
@@ -167,8 +213,8 @@ class AppBase(ListView):
         self._page_scroll = False
         # Ensure common attributes exist so code can access them directly
         # Rely on ListView to provide `children`, `_nodes`, `index`, and `app`.
-        # Per-widget highlight style; subclasses override with specific styles
-        self.highlight_bg_style = HIGHLIGHT_DEFAULT_STYLE
+        # Per-widget highlight background; subclasses override with specific backgrounds
+        self.highlight_bg_style = HIGHLIGHT_DEFAULT_BG
 
     def printException(self, e: Exception, msg: Optional[str] = None) -> None:
         try:
@@ -247,7 +293,7 @@ class AppBase(ListView):
             # in `watch_index` which runs after Textual has processed the index
             # change so our styles/classes won't be clobbered.
             try:
-                logger.debug("_activate_index: old=%r new=%r highlight_style=%s", old, new_index, getattr(self, "highlight_bg_style", None))
+                logger.debug("_activate_index: old=%r new=%r highlight_style=%s", old, new_index, self.highlight_bg_style)
                 logger.debug("_activate_index: scheduling index set via call_after_refresh -> %s", new_index)
                 self.call_after_refresh(lambda: setattr(self, "index", new_index))
             except Exception as e:
@@ -271,6 +317,7 @@ class AppBase(ListView):
             if not nodes:
                 return
             # determine repo vs file highlight colors
+            # `highlight_bg_style` is now a background color string; use it directly
             highlight_bg = self.highlight_bg_style
             text_color = "white"
 
@@ -1101,7 +1148,7 @@ class FileModeFileList(FileListBase):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.highlight_bg_style = HIGHLIGHT_FILELIST_STYLE
+        self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
 
     def _nav_dir_if(self, test_fn) -> None:
         try:
@@ -1165,8 +1212,8 @@ class FileModeFileList(FileListBase):
                         # Record the app-level path for downstream components
                         try:
                             self.app.path = raw
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e, "FileModeFileList._activate_or_open setting app.path failed")
                         self.prepFileModeFileList(raw, highlight_filename=hl)
                     except Exception as e:
                         self.printException(e, "FileModeFileList._activate_or_open prep failed")
@@ -1177,8 +1224,8 @@ class FileModeFileList(FileListBase):
                 try:
                     try:
                         self.app.path = raw
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e, "FileModeFileList._activate_or_open setting app.path failed")
                     self.app.file_mode_history_list.prepFileModeHistoryList(raw)
                     try:
                         # Switch UI to file-history layout and focus
@@ -1336,7 +1383,7 @@ class RepoModeFileList(FileListBase):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.highlight_bg_style = HIGHLIGHT_FILELIST_STYLE
+        self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
 
     def key_left(self, event: events.Key | None = None) -> None:
         # Move to previous view or update state in main app (stub)
@@ -1367,8 +1414,8 @@ class RepoModeFileList(FileListBase):
             try:
                 try:
                     self.app.path = filename
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e, "RepoModeFileList.key_right: setting app.path failed")
                 self.app.diff_list.prepDiffList(filename, self.app.previous_hash, self.app.current_hash, variant_index)
             except Exception as e:
                 self.printException(e, "RepoModeFileList.key_right: prepDiffList failed")
@@ -1389,11 +1436,8 @@ class HistoryListBase(AppBase):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # History lists should use repository-style highlighting
-        try:
-            self.highlight_bg_style = HIGHLIGHT_REPOLIST_STYLE
-        except Exception as e:
-            self.printException(e, "HistoryListBase __init__ failed")
+        # History lists should use repository highlight backgrounds
+        self.highlight_bg_style = HIGHLIGHT_REPOLIST_BG
 
     def _add_row(self, text: str, commit_hash: str | None) -> None:
         try:
@@ -1735,7 +1779,7 @@ class DiffList(AppBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._colorized = True
-        self.highlight_bg_style = HIGHLIGHT_DIFF_STYLE
+        self.highlight_bg_style = HIGHLIGHT_DIFF_BG
         # Stored output lines from the last diff command
         self.output: list[str] = []
         # Current diff variant index used when re-prepping the diff
@@ -1803,7 +1847,7 @@ class DiffList(AppBase):
             self.output = out.splitlines() if out else []
             # Record the active variant for future re-renders
             try:
-                self.variant = int(variant_index or 0)
+                self.variant = variant_index
             except Exception:
                 self.variant = 0
             try:
@@ -1862,10 +1906,10 @@ class DiffList(AppBase):
             # Rotate to the next diff variant and re-run the diff preparer.
             try:
                 total = len(getattr(self.app, "diff_variants", []) or [None])
-                new_variant = (int(getattr(self, "variant", 0)) + 1) % max(1, total)
+                new_variant = (int(self.variant or 0) + 1) % max(1, total)
             except Exception:
                 new_variant = 0
-            logger.debug("DiffList.key_d: switching to variant %s from %s", new_variant, getattr(self, "variant", None))
+            logger.debug("DiffList.key_d: switching to variant %s from %s", new_variant, self.variant)
             try:
                 # Use the app-level path and selected commit pair when re-prepping
                 self.prepDiffList(self.app.path, self.app.previous_hash, self.app.current_hash, new_variant)
@@ -1904,7 +1948,7 @@ class HelpList(AppBase):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.highlight_bg_style = HIGHLIGHT_HELP_STYLE
+        self.highlight_bg_style = HIGHLIGHT_HELP_BG
 
     def prepHelp(self) -> None:
         try:
@@ -1931,56 +1975,6 @@ class HelpList(AppBase):
                 self.printException(e, "HelpList.restore_state failed")
         except Exception as e:
             self.printException(e, "HelpList.key_enter failed")
-
-
-# Canonical widget and label IDs (six canonical widgets)
-LEFT_FILE_LIST_ID = "left-file-list"
-LEFT_FILE_TITLE = "left-file-title"
-
-LEFT_HISTORY_LIST_ID = "left-history-list"
-LEFT_HISTORY_TITLE = "left-history-title"
-
-RIGHT_FILE_LIST_ID = "right-file-list"
-RIGHT_FILE_TITLE = "right-file-title"
-
-RIGHT_HISTORY_LIST_ID = "right-history-list"
-RIGHT_HISTORY_TITLE = "right-history-title"
-
-DIFF_LIST_ID = "diff-list"
-DIFF_TITLE = "diff-title"
-
-HELP_LIST_ID = "help-list"
-HELP_TITLE = "help-title"
-
-# Footer text used when switching to file-history view
-RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
-# Footer text used when showing the left history pane
-LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
-# Footer text used when showing the left file list
-LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
-# Footer text used when showing the right file list (file list view)
-RIGHT_FILE_FOOTER = Text("Files: press Left to return")
-# Footer text used for help screen
-HELP_FOOTER = Text("Help: press Enter to return")
-# Footer text used when showing the diff for a history/file selection
-HISTORY_FILE_DIFF_FOOTER = Text("Diff: press Left to return to files")
-
- # Common styles used across file/history preparers
-STYLE_DIR = "white on blue"
-STYLE_PARENT = STYLE_DIR
-STYLE_WT_DELETED = "red"
-STYLE_ERROR = "red"
-STYLE_CONFLICTED = "magenta"
-STYLE_STAGED = "cyan"
-STYLE_IGNORED = "dim italic"
-STYLE_MODIFIED = "yellow"
-STYLE_UNTRACKED = "bold yellow"
-STYLE_DEFAULT = "white"
-
-STYLE_FILELIST_KEY = "dim"
-
-# Header row text for file lists (unselectable)
-FILELIST_KEY_ROW_TEXT = "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
 
 
 class GitHistoryNavTool(App):
