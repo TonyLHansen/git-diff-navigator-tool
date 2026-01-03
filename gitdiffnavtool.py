@@ -387,6 +387,40 @@ class AppBase(ListView):
                         logger.debug(
                             "watch_index: applied highlight to new index %s text=%s", new, self.text_of(node_new)
                         )
+                        # Update borders for the main columns to indicate focus.
+                        try:
+                            cur_focus = getattr(self.app, "_current_focus", None)
+                            col_ids = [
+                                LEFT_FILE_LIST_ID,
+                                LEFT_HISTORY_LIST_ID,
+                                RIGHT_FILE_LIST_ID,
+                                RIGHT_HISTORY_LIST_ID,
+                                DIFF_LIST_ID,
+                                HELP_LIST_ID,
+                            ]
+                            for cid in col_ids:
+                                try:
+                                    w = None
+                                    try:
+                                        w = self.app.query_one(f"#{cid}")
+                                    except Exception:
+                                        w = None
+                                    if w is None:
+                                        continue
+                                    if cur_focus and str(cur_focus) == f"#{cid}":
+                                        try:
+                                            w.styles.border = "solid white"
+                                        except Exception:
+                                            pass
+                                    else:
+                                        try:
+                                            w.styles.border = "solid gray"
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    continue
+                        except Exception as e:
+                            self.printException(e, "watch_index: updating column borders failed")
                     except Exception as e:
                         self.printException(e, "watch_index: applying new highlight failed")
                     # Ensure the newly-highlighted node is scrolled into view.

@@ -374,3 +374,91 @@ ListView items contain `Label` children;
 focus/title labels exist; 
 only one checked history item allowed.
 
+
+
+# Axioms gathered from the conversation
+
+## 1. Logging & Event Semantics
+- Per-handler logging: every `key_` handler should log at entry, including the class name and handler name.
+- `key_` handlers must be declared with the `event: Event=None` optional argument.
+- Event semantics: `key_` handlers must call `event.stop()` when an event object is provided to prevent propagation (except for key aliases, as described below).
+- Key aliases: 
+-- alias `key_*` handlers should be deduplicated and delegate to canonical handlers (e.g., `key_pageup` -> `key_page_up`). 
+-- These delegating aliases do not need to call `event.stop()`.
+-- The recursively called canonical handlers should have a `recursive:Bool = False`. 
+-- The alias `key_*` handlers should pass `recursive=True` to the canonical handlers.
+
+## 2. Paths, Matching & Row Metadata
+- Canonical paths: highlight/matching comparisons must prefer canonical full filesystem paths (`realpath`) when available.
+- Store canonical path on rows: repository file list rows should store the canonical full path on a `_raw_text` attribute for reliable matching.
+- `app.path` vs `app.current_path`: `app.path` may be raw/repo-relative; `app.current_path` must be the canonical full filesystem path.
+- Matching precedence: when highlighting/selecting a node, prefer (1) full-path equality (canonical), (2) `_hash` equality or prefix match, (3) visible text equality.
+- Row metadata: list row nodes may carry attributes like `_raw_text`, `_hash`, `_is_dir`, `_hash_header`, and `_selectable` that code relies on for logic and matching.
+
+## 3. Pseudo-refs & File/Repo State
+- Pseudo refs: represent working-tree state using pseudo-entries `MODS` (modified/unstaged) and `STAGED` (indexed but uncommitted); treat them specially instead of as normal git refs.
+- File-level pseudo entries: `prepFileModeHistoryList` should insert `MODS` and `STAGED` pseudo-rows for the specific file when applicable.
+- Repo-level pseudo entries: `prepRepoModeHistoryList` should insert `MODS` then `STAGED` at the top when the repo has working-tree changes.
+
+## 4. UI Highlighting, Borders & Style
+- Use per-widget highlight background: widgets expose `highlight_bg_style` and should default to `HIGHLIGHT_DEFAULT_BG` when unspecified.
+- Highlight application: apply per-node visual state by adding/removing classes (e.g., `active`, `unfocused`) and by setting inline styles on the node (background, color, text_style) in `watch_index`.
+- Unfocused visuals: columns without focus should present paler or otherwise visually distinct highlights; if subtle background changes aren't visible, use a contrasting background or adjust borders.
+- Column borders: focused column should have a solid white border; unfocused columns should have a solid gray border (applies to main column widgets).
+- Header/title: the app title/header should show repository path as `GitHistoryNavTool (/path/to/repo)`.
+- Use short hashes in UI: when rendering history rows for files, include a short hash (e.g., first 12 chars) in the visible text.
+
+## 5. Timing, Scrolling & Scheduling
+- Timing / scheduling: compute selected commit-pair or other state that depends on visual highlight only after UI refresh (use `call_after_refresh`) to avoid stale index/state races.
+- Scroll behavior: use `call_after_refresh` to schedule `scroll_to_widget` or fall back to `node.scroll_visible` to ensure newly-highlighted nodes are scrolled into view.
+- Keep UI state recorded: record `_current_layout`, `_current_focus`, and `_current_footer` to enable toggles and state restoration.
+
+## 7. Logging
+- Logging levels: use `logger.debug` for normal debug info and `logger.trace` (TRACE level) for very verbose output; `enable_trace_logging` helper can enable TRACE globally.
+
+Axioms gathered from the conversation
+
+## Explicit Axioms
+Axiom: anytime you think isinstance should be used, you're probably wrong.
+User: remember these axioms: 1) calls to logger.debug() do not require try/except blocks around them. 2) Bare `except Exception:` blocks should NOT be created, but should instead capture the exception and call self.printException(). 3) calls to self.printException() o not require try/except blocks around them
+User: AXIOM update for GitHistoryNavTool: For any of the attributes set in __init__, do not use getattr(self, "example") but instead directly use self.example
+User: there is another axiom that self.printException does not itself require a try/except block. And yes, finish the sweep for other bare excepts
+User: new axiom: accessing the attributes from the output of argparse do not need to use getattr. Add the axiom to program-structure.md    and regen.md and apply it.
+
+## 1. Logging & Event Semantics
+- Per-handler logging: every `key_` handler should log at entry, including the class name and handler name.
+- Event semantics: `key_` handlers must call `event.stop()` when an event object is provided to prevent propagation.
+- Key aliases: alias `key_*` handlers should be deduplicated and delegate to canonical handlers (e.g., `key_pageup` -> `key_page_up`).
+
+## 2. Paths, Matching & Row Metadata
+- Canonical paths: highlight/matching comparisons must prefer canonical full filesystem paths (`realpath`) when available.
+- Store canonical path on rows: repository file list rows should store the canonical full path on a `_raw_text` attribute for reliable matching.
+- `app.path` vs `app.current_path`: `app.path` may be raw/repo-relative; `app.current_path` must be the canonical full filesystem path.
+- Matching precedence: when highlighting/selecting a node, prefer (1) full-path equality (canonical), (2) `_hash` equality or prefix match, (3) visible text equality.
+- Row metadata: list row nodes may carry attributes like `_raw_text`, `_hash`, `_is_dir`, `_hash_header`, and `_selectable` that code relies on for logic and matching.
+
+## 3. Pseudo-refs & File/Repo State
+- Pseudo refs: represent working-tree state using pseudo-entries `MODS` (modified/unstaged) and `STAGED` (indexed but uncommitted); treat them specially instead of as normal git refs.
+- File-level pseudo entries: `prepFileModeHistoryList` should insert `MODS` and `STAGED` pseudo-rows for the specific file when applicable.
+- Repo-level pseudo entries: `prepRepoModeHistoryList` should insert `MODS` then `STAGED` at the top when the repo has working-tree changes.
+
+## 4. UI Highlighting, Borders & Style
+- Use per-widget highlight background: widgets expose `highlight_bg_style` and should default to `HIGHLIGHT_DEFAULT_BG` when unspecified.
+- Highlight application: apply per-node visual state by adding/removing classes (e.g., `active`, `unfocused`) and by setting inline styles on the node (background, color, text_style) in `watch_index`.
+- Unfocused visuals: columns without focus should present paler or otherwise visually distinct highlights; if subtle background changes aren't visible, use a contrasting background or adjust borders.
+- Column borders: focused column should have a solid white border; unfocused columns should have a solid gray border (applies to main column widgets).
+- Header/title: the app title/header should show repository path as `GitHistoryNavTool (/path/to/repo)`.
+- Use short hashes in UI: when rendering history rows for files, include a short hash (e.g., first 12 chars) in the visible text.
+
+## 5. Timing, Scrolling & Scheduling
+- Timing / scheduling: compute selected commit-pair or other state that depends on visual highlight only after UI refresh (use `call_after_refresh`) to avoid stale index/state races.
+- Scroll behavior: use `call_after_refresh` to schedule `scroll_to_widget` or fall back to `node.scroll_visible` to ensure newly-highlighted nodes are scrolled into view.
+- Keep UI state recorded: record `_current_layout`, `_current_focus`, and `_current_footer` to enable toggles and state restoration.
+
+## 6. Defensive Coding & Logging
+- Prefer direct attribute access when attributes are guaranteed to exist (e.g., `self.app.current_path`) rather than repeated `getattr` calls when reasonable.
+- Defensive programming: guard operations with try/except, use safe getters like `getattr(self.app, 'current_focus', None)`, and keep syntax/indentation correct (run `python -m py_compile` to verify changes compile).
+- There should be no silent `except Exception:` blocks; always capture exceptions as `except Exception as e:` and follow with a call to `self.printException(e, "message")`.
+- Logging levels: use `logger.debug` for normal debug info and `logger.trace` (TRACE level) for very verbose output; `enable_trace_logging` helper can enable TRACE globally.
+
+If you want these exported to another format (YAML/JSON) or rearranged further, tell me which grouping or format you prefer.
