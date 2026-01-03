@@ -5,6 +5,7 @@
 - There should be NO silent `except Exception:` blocks in any of the classes; always capture the Exceptions of any `try/except` block used in the class methods, as in `except Exception as e:`. Vary the name of the variable capturing the exception when in nested `try/except` blocks.
 - Every `except Exception as e:` should be followed a call to `self.printException(e,"message about the cause")`. 
 - Calls to `self.printException()` do NOT need to be surrounded by `try/except` block.
+- A `pass` after `except Exception as var` is not needed if there is another statement present (such as `printException()`)
 
 # Functional Axioms for Co-Pilot
 - After making changes, always run `python -m py_compile` to verify that the changes compile.

@@ -289,3 +289,10 @@ prepRepoModeFileList should be getting passed the directory to be displayed and 
 
 
 I see no difference; add a solid white border around the in-focus column. Change the border to a solid gray border when out-of-focus
+
+finish the white border
+help text
+footer texts
+
+add info to column titles
+add info to diff first line

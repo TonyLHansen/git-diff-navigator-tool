@@ -387,40 +387,6 @@ class AppBase(ListView):
                         logger.debug(
                             "watch_index: applied highlight to new index %s text=%s", new, self.text_of(node_new)
                         )
-                        # Update borders for the main columns to indicate focus.
-                        try:
-                            cur_focus = getattr(self.app, "_current_focus", None)
-                            col_ids = [
-                                LEFT_FILE_LIST_ID,
-                                LEFT_HISTORY_LIST_ID,
-                                RIGHT_FILE_LIST_ID,
-                                RIGHT_HISTORY_LIST_ID,
-                                DIFF_LIST_ID,
-                                HELP_LIST_ID,
-                            ]
-                            for cid in col_ids:
-                                try:
-                                    w = None
-                                    try:
-                                        w = self.app.query_one(f"#{cid}")
-                                    except Exception:
-                                        w = None
-                                    if w is None:
-                                        continue
-                                    if cur_focus and str(cur_focus) == f"#{cid}":
-                                        try:
-                                            w.styles.border = "solid white"
-                                        except Exception:
-                                            pass
-                                    else:
-                                        try:
-                                            w.styles.border = "solid gray"
-                                        except Exception:
-                                            pass
-                                except Exception:
-                                    continue
-                        except Exception as e:
-                            self.printException(e, "watch_index: updating column borders failed")
                     except Exception as e:
                         self.printException(e, "watch_index: applying new highlight failed")
                     # Ensure the newly-highlighted node is scrolled into view.
@@ -3191,6 +3157,28 @@ class GitHistoryNavTool(App):
 
                 try:
                     if widget is not None:
+                        # If there is an existing focused column, set its border to gray
+                        try:
+                            cur_focus = getattr(self, "_current_focus", None) or getattr(self, "_current_focus", None)
+                            if cur_focus:
+                                try:
+                                    prev_id = str(cur_focus)
+                                    if prev_id.startswith("#"):
+                                        prev_widget = None
+                                        try:
+                                            prev_widget = self.query_one(prev_id)
+                                        except Exception:
+                                            prev_widget = None
+                                        if prev_widget is not None:
+                                            try:
+                                                prev_widget.styles.border = "solid gray"
+                                            except Exception:
+                                                pass
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+
                         try:
                             self.set_focus(widget)
                         except Exception as e:
@@ -3200,6 +3188,28 @@ class GitHistoryNavTool(App):
                                 widget.focus()
                             except Exception as e:
                                 self.printException(e, f"could not fallback focus to widget for {target}")
+
+                        # Now set the new focused widget's border to white
+                        try:
+                            try:
+                                widget.styles.border = "solid white"
+                            except Exception:
+                                # Attempt to resolve by id and set border
+                                try:
+                                    w = None
+                                    try:
+                                        w = self.query_one(f"#{key}")
+                                    except Exception:
+                                        w = None
+                                    if w is not None:
+                                        try:
+                                            w.styles.border = "solid white"
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+                        except Exception as e:
+                            self.printException(e, "change_focus: setting focused widget border failed")
                         # best-effort normalize index/scroll for file lists
                         try:
                             if hasattr(widget, "index"):
