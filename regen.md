@@ -154,7 +154,7 @@ Plan (steps with pause points)
    - Add inline comments that map back to `program-structure.md` sections where appropriate.
    - PAUSE: present the final `gitdiffnavtool.py` file and tests.
    - Tests/validation: full import/py_compile and manual run; collect logs.
-   - add the repo_path to the title
+   - add the repo_path to the title (show the repository path in the app title/footer)
 
 Validation guidance (commands for user)
 - Syntax check:

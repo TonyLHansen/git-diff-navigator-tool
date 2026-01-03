@@ -2562,6 +2562,11 @@ class GitHistoryNavTool(App):
             # placeholders for runtime state
             # `repo_root` is provided by main and should not be modified further.
             self.repo_root = repo_root
+            try:
+                # Set the application title to include the repository path
+                self.title = f"GitHistoryNavTool ({self.repo_root or '.'})"
+            except Exception:
+                self.title = "GitHistoryNavTool"
             self._saved_state = None
             self._current_layout = None
             # Track the currently-selected and previous commit hashes
@@ -2627,7 +2632,19 @@ class GitHistoryNavTool(App):
 
     def compose(self):
         # Compose the canonical six-column layout using Vertical columns
-        yield Header()
+        # Create Header and set its title to show the repository path.
+        try:
+            hdr = Header()
+            try:
+                hdr.title = f"Repo: {self.repo_root or '.'}"
+            except Exception:
+                try:
+                    hdr.title = "Repo: ."
+                except Exception:
+                    pass
+        except Exception:
+            hdr = Header()
+        yield hdr
         with Horizontal(id="main"):
             with Vertical(id="left-file-column"):
                 yield Label(Text("Files"), id=LEFT_FILE_TITLE)
