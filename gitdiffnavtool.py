@@ -1530,6 +1530,7 @@ class RepoModeFileList(FileListBase):
                     pseudo_entries.extend(_collect_for(prev_hash))
                 if curr_hash in pseudo_names:
                     pseudo_entries.extend(_collect_for(curr_hash))
+                logger.debug("prepRepoModeFileList: prev_hash=%r curr_hash=%r pseudo_entries=%r", prev_hash, curr_hash, pseudo_entries)
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList collecting pseudo entries failed")
 
@@ -2095,10 +2096,29 @@ class RepoModeHistoryList(HistoryListBase):
             # selection so callers (e.g. repo file preparer) can rely on
             # `app.current_hash` and `app.previous_hash` immediately.
             try:
-                self._compute_selected_pair()
-                logger.debug("prepRepoModeHistoryList: after compute_selected_pair app.previous_hash=%r app.current_hash=%r", getattr(self.app, "previous_hash", None), getattr(self.app, "current_hash", None))
+                # Compute the selected pair after the UI refresh so any
+                # scheduled index activation (from `_highlight_match`) has
+                # taken effect. Calling `_compute_selected_pair` immediately
+                # can observe the old index (e.g. top/pseudo rows) which
+                # results in incorrect pseudo-hash selection.
+                def _compute_and_log() -> None:
+                    try:
+                        self._compute_selected_pair()
+                        logger.debug(
+                            "prepRepoModeHistoryList: after compute_selected_pair app.previous_hash=%r app.current_hash=%r",
+                            getattr(self.app, "previous_hash", None),
+                            getattr(self.app, "current_hash", None),
+                        )
+                    except Exception as e:
+                        self.printException(e, "prepRepoModeHistoryList: computing selected pair failed")
+
+                try:
+                    self.call_after_refresh(_compute_and_log)
+                except Exception:
+                    # Fallback: run immediately if scheduling isn't available
+                    _compute_and_log()
             except Exception as e:
-                self.printException(e, "prepRepoModeHistoryList: computing selected pair failed")
+                self.printException(e, "prepRepoModeHistoryList: scheduling compute_selected_pair failed")
         except Exception as e:
             self.printException(e, "prepRepoModeHistoryList failed")
 
