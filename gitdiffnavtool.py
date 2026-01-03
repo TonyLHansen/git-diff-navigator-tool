@@ -442,35 +442,60 @@ class AppBase(ListView):
                     if isinstance(self, HistoryListBase):
                         try:
                             self._compute_selected_pair()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
                         try:
                             logger.debug(
                                 "watch_index: history widget updated app.current_hash=%r app.previous_hash=%r",
                                 getattr(self.app, "current_hash", None),
                                 getattr(self.app, "previous_hash", None),
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
                     elif isinstance(self, FileListBase):
                         try:
                             raw = getattr(node_new, "_raw_text", None)
                             if raw:
                                 try:
+                                    # Preserve the raw value on `app.path` for
+                                    # components that expect repo-relative names,
+                                    # but also set the canonical full filesystem
+                                    # path on `app.current_path` so other logic
+                                    # can rely on a realpath.
                                     self.app.path = raw
                                 except Exception:
                                     pass
+                                try:
+                                    if os.path.isabs(raw):
+                                        full = raw
+                                    else:
+                                        full = os.path.join(getattr(self.app, "repo_root", ""), raw)
+                                    # Setter canonicalizes via realpath
+                                    try:
+                                        self.app.current_path = full
+                                    except Exception:
+                                        # Best-effort fallback: store raw full
+                                        try:
+                                            self.app._current_path = os.path.realpath(full)
+                                        except Exception as e:
+                                            self.printException(e)
+                                except Exception as e:
+                                    self.printException(e)
                             try:
-                                logger.debug("watch_index: file widget set app.path=%r", getattr(self.app, "path", None))
-                            except Exception:
-                                pass
-                        except Exception:
-                            pass
+                                logger.debug(
+                                    "watch_index: file widget set app.path=%r app.current_path=%r",
+                                    getattr(self.app, "path", None),
+                                    getattr(self.app, "current_path", None),
+                                )
+                            except Exception as e:
+                                self.printException(e)
+                        except Exception as e:
+                            self.printException(e)
                     else:
                         try:
                             logger.debug("watch_index: widget type %s - not updating app.path", type(self).__name__)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e)
                 except Exception as e:
                     self.printException(e, "watch_index: post-highlight app state sync failed")
         except Exception as e:
@@ -488,16 +513,39 @@ class AppBase(ListView):
             if not nodes:
                 return
             if match:
+                # Normalize match to canonical full path when possible so
+                # comparisons against `_raw_text` (which we now store as
+                # full paths for repo-mode rows) succeed.
+                try:
+                    if os.path.isabs(match):
+                        match_full = os.path.realpath(match)
+                    else:
+                        match_full = os.path.realpath(os.path.join(self.app.repo_root, match))
+                except Exception as e:
+                    match_full = match
+                    self.printException(e, "_highlight_match: normalizing match failed")
+
                 for i, node in enumerate(nodes):
                     try:
                         raw = getattr(node, "_raw_text", None)
                         h = getattr(node, "_hash", None)
-                        if raw == match:
+                        try:
+                            if raw is not None:
+                                node_full = raw if os.path.isabs(raw) else os.path.realpath(os.path.join(getattr(self.app, "repo_root", ""), raw))
+                            else:
+                                node_full = None
+                        except Exception as e:
+                            node_full = raw
+                            self.printException(e, "_highlight_match: computing node_full failed")
+
+                        if node_full is not None and match_full is not None and node_full == match_full:
                             self._activate_index(i)
                             return
+
                         if h is not None and (h == match or str(h).startswith(match)):
                             self._activate_index(i)
                             return
+
                         # fallback to visible text equality
                         try:
                             txt = self.text_of(node)
@@ -757,7 +805,7 @@ class FileListBase(AppBase):
         try:
             idx = getattr(self, "index", None) or 0
             nodes = self.nodes()
-            if not nodes:
+            if not nodes or idx is None:
                 return
             if not (0 <= idx < len(nodes)):
                 return
@@ -807,22 +855,57 @@ class FileListBase(AppBase):
         """Find the first node matching `filename` and move the index there."""
         try:
             nodes = self.nodes()
+            # Normalize the provided filename to a canonical full path when
+            # possible so comparisons match stored `_raw_text` values.
+            try:
+                match_full = None
+                if filename:
+                    if os.path.isabs(filename):
+                        match_full = os.path.realpath(filename)
+                    else:
+                        match_full = os.path.realpath(os.path.join(self.app.repo_root, filename))
+            except Exception as e:
+                match_full = filename
+                self.printException(e, "_highlight_filename: normalizing filename failed")
+
             for i, node in enumerate(nodes):
                 try:
-                    text = self.text_of(node)
-                except Exception as e:
-                    self.printException(e, "_highlight_filename: extracting text failed")
-                    text = str(node)
-                if text == filename:
-                    try:
-                        self.call_after_refresh(lambda: self._activate_index(i))
-                    except Exception as e:
-                        self.printException(e, "_highlight_filename: scheduling index set failed")
+                    # Prefer matching against canonical `_raw_text` when
+                    # available; fall back to visible text equality.
+                    raw = getattr(node, "_raw_text", None)
+                    if raw is not None and match_full is not None:
                         try:
-                            self._activate_index(i)
+                            node_full = raw if os.path.isabs(raw) else os.path.realpath(os.path.join(getattr(self.app, "repo_root", ""), raw))
                         except Exception as e:
-                            self.printException(e, "setting index in _highlight_filename")
-                    return
+                            node_full = raw
+                            self.printException(e, "_highlight_filename: computing node_full failed")
+                        if node_full == match_full:
+                            try:
+                                self.call_after_refresh(lambda: self._activate_index(i))
+                            except Exception as e:
+                                self.printException(e, "_highlight_filename: scheduling index set failed")
+                                try:
+                                    self._activate_index(i)
+                                except Exception as e:
+                                    self.printException(e, "setting index in _highlight_filename")
+                            return
+                    try:
+                        text = self.text_of(node)
+                    except Exception as e:
+                        self.printException(e, "_highlight_filename: extracting text failed")
+                        text = str(node)
+                    if text == filename:
+                        try:
+                            self.call_after_refresh(lambda: self._activate_index(i))
+                        except Exception as e:
+                            self.printException(e, "_highlight_filename: scheduling index set failed")
+                            try:
+                                self._activate_index(i)
+                            except Exception as e:
+                                self.printException(e, "setting index in _highlight_filename")
+                        return
+                except Exception as e:
+                    self.printException(e, "_highlight_filename: checking node failed")
         except Exception as e:
             self.printException(e, "_highlight_filename failed")
 
@@ -1108,8 +1191,9 @@ class FileModeFileList(FileListBase):
                                                         if proc.stderr:
                                                             logger.warning("ls-files stderr (cmd=%r): %s", cmd, proc.stderr.strip())
                                                         repo_status = "untracked"
-                                                except Exception:
+                                                except Exception as e:
                                                     repo_status = "untracked"
+                                                    self.printException(e, "prepFileModeFileList: ls-files check failed")
                                     except Exception as e:
                                         self.printException(e, "status_map processing failed")
                                         repo_status = "tracked_clean"
@@ -1146,7 +1230,8 @@ class FileModeFileList(FileListBase):
                                                         if proc.stderr:
                                                             logger.warning("ls-files stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
                                                         repo_status = "untracked"
-                                                except Exception:
+                                                except Exception as e:
+                                                    self.printException(e, "prepFileModeFileList: ls-files check failed")
                                                     repo_status = "untracked"
                                     except Exception as e:
                                         self.printException(e, "git status check failed")
@@ -1225,7 +1310,18 @@ class FileModeFileList(FileListBase):
                     self.printException(e, "prepFileModeFileList: determining min index failed")
                 if hl:
                     try:
-                        self.call_after_refresh(lambda: self._highlight_match(hl))
+                        # If `hl` looks like a filename (not an absolute path), prefer
+                        # highlighting by the canonical full path inside this list's
+                        # directory so matches against `_raw_text` succeed when rows
+                        # store absolute paths (common for file lists).
+                        try:
+                            candidate = hl
+                            if not os.path.isabs(candidate):
+                                candidate = os.path.join(self.path, candidate)
+                        except Exception as e:
+                            self.printException(e, "prepFileModeFileList: candidate path adjustment failed")
+                            candidate = hl
+                        self.call_after_refresh(lambda: self._highlight_match(candidate))
                         # After highlighting, ensure the selected node is visible
                         try:
                             self.call_after_refresh(self._ensure_index_visible)
@@ -1384,8 +1480,8 @@ class RepoModeFileList(FileListBase):
                         hash_item._hash_header = True
                         hash_item._selectable = False
                         self.append(hash_item)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e, "prepRepoModeFileList: appending hash header failed")
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList: creating hash header failed")
                 # Then append the existing key legend row so it appears below
@@ -1444,7 +1540,15 @@ class RepoModeFileList(FileListBase):
                         try:
                             display = f"{status} {path}"
                             item = ListItem(Label(Text(display)))
-                            item._raw_text = path
+                            try:
+                                if not os.path.isabs(path):
+                                    full = os.path.realpath(os.path.join(self.app.repo_root, path))
+                                else:
+                                    full = os.path.realpath(path)
+                                item._raw_text = full
+                            except Exception as e:
+                                self.printException(e, "prepRepoModeFileList: resolving full path failed")
+                                item._raw_text = path
                             item._is_dir = False
                             self.append(item)
                         except Exception as e:
@@ -1482,11 +1586,16 @@ class RepoModeFileList(FileListBase):
                             display = f"{status} {path}"
                             item = ListItem(Label(Text(display)))
                             try:
-                                item._raw_text = path
-                                item._is_dir = False
-                                self.append(item)
+                                if not os.path.isabs(path):
+                                    full = os.path.realpath(os.path.join(self.app.repo_root, path))
+                                else:
+                                    full = os.path.realpath(path)
+                                item._raw_text = full
                             except Exception as e:
-                                self.printException(e, "prepRepoModeFileList append failed")
+                                self.printException(e, "prepRepoModeFileList: resolving full path failed")
+                                item._raw_text = path
+                            item._is_dir = False
+                            self.append(item)
                         except Exception as e:
                             self.printException(e, "prepRepoModeFileList parsing line failed")
                 except subprocess.CalledProcessError:
@@ -1511,20 +1620,16 @@ class RepoModeFileList(FileListBase):
             # Immediately record the repo-level commit pair so other
             # components can access the selected refs.
             try:
-                try:
-                    self.app.previous_hash = prev_hash
-                except Exception:
-                    pass
-                try:
-                    self.app.current_hash = curr_hash
-                except Exception:
-                    pass
-                # If caller requested a filename highlight, record it as app.path
+                self.app.previous_hash = prev_hash
+                self.app.current_hash = curr_hash
+                # If caller requested a filename highlight, record it as
+                # `app.path` and set `app.current_path` to the canonical
+                # full path so other components can rely on it.
                 if highlight_filename:
-                    try:
-                        self.app.path = highlight_filename
-                    except Exception:
-                        pass
+                    self.app.path = highlight_filename
+                    self.app.current_path = highlight_filename
+                    # Prefer setting current_path which canonicalizes.
+                    self.app.current_path = highlight_filename
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: recording app-level state failed")
             try:
@@ -1806,7 +1911,10 @@ class FileModeHistoryList(HistoryListBase):
                         try:
                             parts = ln.split("\t", 2)
                             h = parts[0]
-                            text = parts[1] + " " + (parts[2] if len(parts) > 2 else "")
+                            date_stamp = parts[1] if len(parts) > 1 else ""
+                            msg = parts[2] if len(parts) > 2 else ""
+                            short_hash = h[:12] if h else ""
+                            text = f"{date_stamp} {short_hash} {msg}".strip()
                             self._add_row(text, h)
                         except Exception as e:
                             self.printException(e, "prepFileModeHistoryList parse failed")
@@ -1837,25 +1945,13 @@ class FileModeHistoryList(HistoryListBase):
             # Ensure app-level hashes/path are updated immediately after prep
             try:
                 if curr_hash is not None or prev_hash is not None:
-                    try:
-                        self.app.current_hash = curr_hash
-                    except Exception:
-                        pass
-                    try:
-                        self.app.previous_hash = prev_hash
-                    except Exception:
-                        pass
+                    self.app.current_hash = curr_hash
+                    self.app.previous_hash = prev_hash
                 else:
-                    try:
-                        # compute and record selected pair based on current index
-                        self._compute_selected_pair()
-                    except Exception:
-                        pass
-                try:
+                    # compute and record selected pair based on current index
+                    self._compute_selected_pair()
                     # record the file associated with this history list
-                    self.app.path = path
-                except Exception:
-                    pass
+                    self.app.current_path = path
             except Exception as e:
                 self.printException(e, "prepFileModeHistoryList: highlight failed")
         except Exception as e:
@@ -2026,8 +2122,11 @@ class RepoModeHistoryList(HistoryListBase):
                 # understands pseudo-hashes like MODS/STAGED. Pass the
                 # currently-selected filename (app.path) as a highlight so
                 # the file list highlights the expected file.
-                hf = self.app.path
-                logger.debug("RepoModeHistoryList.key_right: prev=%r curr=%r app.path=%r", prev_hash, curr_hash, hf)
+                # Prefer the canonical current_path (full path) for highlight
+                # comparisons so repo-mode file rows (which store full paths)
+                # match deterministically.
+                hf = getattr(self.app, "current_path", None) or getattr(self.app, "path", None)
+                logger.debug("RepoModeHistoryList.key_right: prev=%r curr=%r app.current_path=%r app.path=%r", prev_hash, curr_hash, getattr(self.app, "current_path", None), getattr(self.app, "path", None))
                 self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash, highlight_filename=hf)
                 try:
                     # Switch to the right-file list view and update footer
@@ -2132,11 +2231,7 @@ class DiffList(AppBase):
             # Save output lines on the object and render via helper
             self.output = out.splitlines() if out else []
             # Record the active variant for future re-renders
-            try:
-                self.variant = variant_index
-            except Exception:
-                self.variant = 0
-
+            self.variant = variant_index
             # Update go-back state only.
             self.go_back = go_back
 
@@ -2182,10 +2277,7 @@ class DiffList(AppBase):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "DiffList.key_right: event.stop failed")
-            try:
-                current = self.app._current_layout
-            except Exception:
-                current = None
+            current = self.app._current_layout
             if current in ("history_file_diff", "file_history_diff"):
                 try:
                     # save then switch to fullscreen diff
@@ -2237,7 +2329,8 @@ class DiffList(AppBase):
             try:
                 total = len(getattr(self.app, "diff_variants", []) or [None])
                 new_variant = (int(self.variant or 0) + 1) % max(1, total)
-            except Exception:
+            except Exception as e:
+                self.printException(e, "DiffList.key_d: computing new variant failed")
                 new_variant = 0
             logger.debug("DiffList.key_d: switching to variant %s from %s", new_variant, self.variant)
             try:
@@ -3057,7 +3150,8 @@ class GitHistoryNavTool(App):
                         fid = fsel[1:] if str(fsel).startswith("#") else str(fsel)
                         try:
                             widget = self.query_one(f"#{fid}")
-                        except Exception:
+                        except Exception as e:
+                            self.printException(e, f"toggle: querying focused widget #{fid} failed")
                             widget = None
                         if widget is not None:
                             wtype = type(widget).__name__
@@ -3067,7 +3161,8 @@ class GitHistoryNavTool(App):
                             try:
                                 if isinstance(widget, HistoryListBase):
                                     pair = widget.compute_commit_pair_hashes()
-                            except Exception:
+                            except Exception as e:
+                                self.printException(e, "toggle: computing commit pair hashes failed")
                                 pair = None
                             # If file list, try to get selected node raw text
                             selected_raw = None
@@ -3076,14 +3171,16 @@ class GitHistoryNavTool(App):
                                 idx = widget.index or getattr(widget, "_min_index", 0) or 0
                                 if 0 <= idx < len(nodes):
                                     selected_raw = getattr(nodes[idx], "_raw_text", None)
-                            except Exception:
+                            except Exception as e:
+                                self.printException(e, "toggle: getting selected node raw text failed")
                                 selected_raw = None
                             focused_info = (wtype, wpath, pair, selected_raw)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "toggle: getting focused widget info failed")
                     focused_info = None
                 logger.debug("focused widget info: %r", focused_info)
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e, "toggle outer failure")
 
             if event is not None:
                 try:
@@ -3158,7 +3255,16 @@ class GitHistoryNavTool(App):
             # file preparer so it lists the correct commit-pair.
             use_prev = getattr(self, "previous_hash", None)
             use_curr = getattr(self, "current_hash", None)
-            self.repo_mode_file_list.prepRepoModeFileList(use_prev, use_curr, highlight_filename=saved_path)
+            # Compute a repo-relative highlight filename so it matches the
+            # `_raw_text` values attached to repo-mode file list rows (these
+            # are repository-relative paths like 'docs/notes.txt'). Prefer a
+            # normalized relative path when `saved_path` is inside the repo.
+
+            # Pass the canonical full path through as the highlight so
+            # matching is performed against absolute paths.
+            hl = saved_path
+            logger.debug("toggle_file_history: passing fullpath highlight=%r", hl)
+            self.repo_mode_file_list.prepRepoModeFileList(use_prev, use_curr, highlight_filename=hl)
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo file list failed")
         try:
@@ -3171,9 +3277,14 @@ class GitHistoryNavTool(App):
         saved_path = self.current_path
         saved_curr = self.current_hash
         saved_prev = self.previous_hash
+        logger.debug("toggle_history_file: before prepFileModeFileList app.previous_hash=%r app.current_hash=%r saved_path=%r", getattr(self, "previous_hash", None), getattr(self, "current_hash", None), saved_path)
         try:
             # Prepare the right file list (file pane on right) showing files
-            self.file_mode_file_list.prepFileModeFileList(saved_path or ".", os.path.basename(saved_path) if saved_path else None)
+            # Use the full path as the highlight so matching is
+            # performed against canonical full paths instead of basenames.
+            hl = saved_path
+            logger.debug("toggle_history_file: saved_path=%r computed_highlight=%r", saved_path, hl)
+            self.file_mode_file_list.prepFileModeFileList(saved_path or ".", hl)
         except Exception as e:
             self.printException(e, "toggle_history_file prepFileModeFileList failed")
         try:
