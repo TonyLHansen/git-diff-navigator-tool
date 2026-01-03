@@ -296,3 +296,8 @@ footer texts
 
 add info to column titles
 add info to diff first line
+
+ 1)  (Optional) Warn when exception-variable names are reused in nested scopes — 
+implement AST-based name-collision detection. 
+2) Extend prefer direct attribute access to consider base-class-assigned attributes 
+or other init-like methods, or document the current conservative behavior in axioms.md.
