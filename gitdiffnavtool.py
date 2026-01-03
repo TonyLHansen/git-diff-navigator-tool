@@ -119,7 +119,7 @@ HELP_FOOTER = Text("Help: press Enter to return")
 # Footer text used when showing the diff for a history/file selection
 HISTORY_FILE_DIFF_FOOTER = Text("Diff: press Left to return to files")
 
- # Common styles used across file/history preparers
+# Common styles used across file/history preparers
 STYLE_DIR = "white on blue"
 STYLE_PARENT = STYLE_DIR
 STYLE_WT_DELETED = "red"
@@ -137,7 +137,6 @@ STYLE_FILELIST_KEY = "dim"
 FILELIST_KEY_ROW_TEXT = "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
 
 
-
 # --- Logging setup --------------------------------------------------------
 # NOTE: logging is configured in `main()` when `--debug` is passed.
 
@@ -148,9 +147,11 @@ logger = logging.getLogger(__name__)
 TRACE = 5
 logging.addLevelName(TRACE, "TRACE")
 
+
 def _logger_trace(self, msg, *args, **kwargs):
     if self.isEnabledFor(TRACE):
         self._log(TRACE, msg, args, **kwargs)
+
 
 setattr(logging.Logger, "trace", _logger_trace)
 
@@ -326,16 +327,15 @@ class AppBase(ListView):
             # in `watch_index` which runs after Textual has processed the index
             # change so our styles/classes won't be clobbered.
             try:
-                logger.debug("_activate_index: old=%r new=%r highlight_style=%s", old, new_index, self.highlight_bg_style)
+                logger.debug(
+                    "_activate_index: old=%r new=%r highlight_style=%s", old, new_index, self.highlight_bg_style
+                )
                 # Schedule the index change after the UI refresh.
                 self.call_after_refresh(lambda: setattr(self, "index", new_index))
             except Exception as e:
                 self.printException(e, "_activate_index: scheduling index set failed")
-                try:
-                    logger.debug("_activate_index: falling back to direct index set -> %s", new_index)
-                    self.index = new_index
-                except Exception as e2:
-                    self.printException(e2, "_activate_index: setting index failed")
+                logger.debug("_activate_index: falling back to direct index set -> %s", new_index)
+                self.index = new_index
         except Exception as e:
             self.printException(e, "_activate_index failed")
 
@@ -421,17 +421,9 @@ class AppBase(ListView):
                             except Exception as e:
                                 self.printException(e, "watch_index: node_new.scroll_visible failed")
                         # Reset the page_scroll flag after scheduling
-                        try:
-                            if self._page_scroll:
-                                self._page_scroll = False
-                        except Exception as e:
-                            self.printException(e)
+                        self._page_scroll = False
                     except Exception as e:
                         printException(e, "watch_index: scrolling new node failed")
-                    except Exception as e:
-                        self.printException(e, "watch_index: scrolling new node failed")
-                    except Exception as e:
-                        self.printException(e, "watch_index: scrolling new node failed")
                 except Exception as e:
                     self.printException(e, "watch_index: finding new node failed")
                 # After highlighting, synchronize app-level state conservatively:
@@ -444,14 +436,12 @@ class AppBase(ListView):
                             self._compute_selected_pair()
                         except Exception as e:
                             self.printException(e)
-                        try:
-                            logger.debug(
-                                "watch_index: history widget updated app.current_hash=%r app.previous_hash=%r",
-                                getattr(self.app, "current_hash", None),
-                                getattr(self.app, "previous_hash", None),
-                            )
-                        except Exception as e:
-                            self.printException(e)
+                        logger.debug(
+                            "watch_index: history widget updated app.current_hash=%r app.previous_hash=%r",
+                            getattr(self.app, "current_hash", None),
+                            getattr(self.app, "previous_hash", None),
+                        )
+
                     elif isinstance(self, FileListBase):
                         try:
                             raw = getattr(node_new, "_raw_text", None)
@@ -481,21 +471,15 @@ class AppBase(ListView):
                                             self.printException(e)
                                 except Exception as e:
                                     self.printException(e)
-                            try:
-                                logger.debug(
-                                    "watch_index: file widget set app.path=%r app.current_path=%r",
-                                    getattr(self.app, "path", None),
-                                    getattr(self.app, "current_path", None),
-                                )
-                            except Exception as e:
-                                self.printException(e)
+                            logger.debug(
+                                "watch_index: file widget set app.path=%r app.current_path=%r",
+                                getattr(self.app, "path", None),
+                                getattr(self.app, "current_path", None),
+                            )
                         except Exception as e:
                             self.printException(e)
                     else:
-                        try:
-                            logger.debug("watch_index: widget type %s - not updating app.path", type(self).__name__)
-                        except Exception as e:
-                            self.printException(e)
+                        logger.debug("watch_index: widget type %s - not updating app.path", type(self).__name__)
                 except Exception as e:
                     self.printException(e, "watch_index: post-highlight app state sync failed")
         except Exception as e:
@@ -531,7 +515,11 @@ class AppBase(ListView):
                         h = getattr(node, "_hash", None)
                         try:
                             if raw is not None:
-                                node_full = raw if os.path.isabs(raw) else os.path.realpath(os.path.join(getattr(self.app, "repo_root", ""), raw))
+                                node_full = (
+                                    raw
+                                    if os.path.isabs(raw)
+                                    else os.path.realpath(os.path.join(getattr(self.app, "repo_root", ""), raw))
+                                )
                             else:
                                 node_full = None
                         except Exception as e:
@@ -697,7 +685,6 @@ class AppBase(ListView):
                 self.printException(e, "key_page_up: activate failed")
         except Exception as e:
             self.printException(e, "key_page_up failed")
-
 
     def key_prior(self, event: events.Key | None = None) -> None:
         # 'prior' is sometimes used for PageUp
@@ -875,7 +862,11 @@ class FileListBase(AppBase):
                     raw = getattr(node, "_raw_text", None)
                     if raw is not None and match_full is not None:
                         try:
-                            node_full = raw if os.path.isabs(raw) else os.path.realpath(os.path.join(getattr(self.app, "repo_root", ""), raw))
+                            node_full = (
+                                raw
+                                if os.path.isabs(raw)
+                                else os.path.realpath(os.path.join(getattr(self.app, "repo_root", ""), raw))
+                            )
                         except Exception as e:
                             node_full = raw
                             self.printException(e, "_highlight_filename: computing node_full failed")
@@ -923,10 +914,7 @@ class FileListBase(AppBase):
 
     def on_list_view_highlighted(self, event) -> None:
         # Textual-specific hook placeholder for when highlighting changes.
-        try:
-            logger.debug("list view highlighted: %s", event)
-        except Exception as e:
-            self.printException(e, "FileListBase.on_list_view_highlighted failed")
+        logger.debug("list view highlighted: %s", event)
 
     def _child_filename(self, node) -> str:
         try:
@@ -936,10 +924,7 @@ class FileListBase(AppBase):
 
     def _enter_directory(self, filename: str) -> None:
         # Default: log and do nothing. Subclasses should override to change mode.
-        try:
-            logger.debug("enter directory requested: %s", filename)
-        except Exception as e:
-            self.printException(e, "FileListBase._enter_directory failed")
+        logger.debug("enter directory requested: %s", filename)
 
 
 class FileModeFileList(FileListBase):
@@ -983,7 +968,7 @@ class FileModeFileList(FileListBase):
                 self.app.path = self.path
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: setting app.path failed")
-            relpath = path[len(self.app.repo_root)+1 :]
+            relpath = path[len(self.app.repo_root) + 1 :]
             logger.debug(f"prepFileModeFileList: path='{path}' relpath={relpath}")
 
             # Build a batched `status_map` once per directory when `pygit2` is
@@ -1009,7 +994,7 @@ class FileModeFileList(FileListBase):
                             for ln in out.splitlines():
                                 if not ln:
                                     continue
-                                logger.debug("prepFileModeFileList: git status line: %s", ln)   
+                                logger.debug("prepFileModeFileList: git status line: %s", ln)
                                 code = ln[:2]
                                 logger.debug("prepFileModeFileList: git status code: %s", code)
                                 name = ln[3:].rstrip() if len(ln) > 3 else ""
@@ -1018,9 +1003,13 @@ class FileModeFileList(FileListBase):
                                 logger.debug("prepFileModeFileList: git status file: %s code=%s", name, code)
                                 if prefix:
                                     if not name.startswith(prefix):
-                                        logger.debug("prepFileModeFileList: skipping file %s as it does not start with prefix %s", name, prefix)
+                                        logger.debug(
+                                            "prepFileModeFileList: skipping file %s as it does not start with prefix %s",
+                                            name,
+                                            prefix,
+                                        )
                                         continue
-                                    rel = name[len(prefix):]
+                                    rel = name[len(prefix) :]
                                 else:
                                     rel = name
                                 m[rel] = code
@@ -1179,21 +1168,38 @@ class FileModeFileList(FileListBase):
                                                 repo_status = "tracked_clean"
                                         else:
                                             # Not present in status_map: check tracked via ls-files
-                                                try:
-                                                    cmd = ["git", "-C", self.app.repo_root, "ls-files", "--error-unmatch", rel]
-                                                    proc = subprocess.run(cmd, text=True, capture_output=True)
+                                            try:
+                                                cmd = [
+                                                    "git",
+                                                    "-C",
+                                                    self.app.repo_root,
+                                                    "ls-files",
+                                                    "--error-unmatch",
+                                                    rel,
+                                                ]
+                                                proc = subprocess.run(cmd, text=True, capture_output=True)
+                                                if proc.stderr:
+                                                    logger.warning(
+                                                        "prepFileModeFileList ls-files stderr (cmd=%s): %s",
+                                                        " ".join(cmd),
+                                                        proc.stderr.strip(),
+                                                    )
+                                                logger.trace(
+                                                    "prepFileModeFileList: git ls-files (cmd=%s) output: %s",
+                                                    " ".join(cmd),
+                                                    proc.stdout or "",
+                                                )
+                                                if proc.returncode == 0:
+                                                    repo_status = "tracked_clean"
+                                                else:
                                                     if proc.stderr:
-                                                        logger.warning("prepFileModeFileList ls-files stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
-                                                    logger.trace("prepFileModeFileList: git ls-files (cmd=%s) output: %s", " ".join(cmd), proc.stdout or "")
-                                                    if proc.returncode == 0:
-                                                        repo_status = "tracked_clean"
-                                                    else:
-                                                        if proc.stderr:
-                                                            logger.warning("ls-files stderr (cmd=%r): %s", cmd, proc.stderr.strip())
-                                                        repo_status = "untracked"
-                                                except Exception as e:
+                                                        logger.warning(
+                                                            "ls-files stderr (cmd=%r): %s", cmd, proc.stderr.strip()
+                                                        )
                                                     repo_status = "untracked"
-                                                    self.printException(e, "prepFileModeFileList: ls-files check failed")
+                                            except Exception as e:
+                                                repo_status = "untracked"
+                                                self.printException(e, "prepFileModeFileList: ls-files check failed")
                                     except Exception as e:
                                         self.printException(e, "status_map processing failed")
                                         repo_status = "tracked_clean"
@@ -1221,18 +1227,29 @@ class FileModeFileList(FileListBase):
                                             else:
                                                 repo_status = "tracked_clean"
                                         else:
-                                                try:
-                                                    cmd = ["git", "-C", self.app.repo_root, "ls-files", "--error-unmatch", rel]
-                                                    proc = subprocess.run(cmd, text=True, capture_output=True)
-                                                    if proc.returncode == 0:
-                                                        repo_status = "tracked_clean"
-                                                    else:
-                                                        if proc.stderr:
-                                                            logger.warning("ls-files stderr (cmd=%s): %s", " ".join(cmd), proc.stderr.strip())
-                                                        repo_status = "untracked"
-                                                except Exception as e:
-                                                    self.printException(e, "prepFileModeFileList: ls-files check failed")
+                                            try:
+                                                cmd = [
+                                                    "git",
+                                                    "-C",
+                                                    self.app.repo_root,
+                                                    "ls-files",
+                                                    "--error-unmatch",
+                                                    rel,
+                                                ]
+                                                proc = subprocess.run(cmd, text=True, capture_output=True)
+                                                if proc.returncode == 0:
+                                                    repo_status = "tracked_clean"
+                                                else:
+                                                    if proc.stderr:
+                                                        logger.warning(
+                                                            "ls-files stderr (cmd=%s): %s",
+                                                            " ".join(cmd),
+                                                            proc.stderr.strip(),
+                                                        )
                                                     repo_status = "untracked"
+                                            except Exception as e:
+                                                self.printException(e, "prepFileModeFileList: ls-files check failed")
+                                                repo_status = "untracked"
                                     except Exception as e:
                                         self.printException(e, "git status check failed")
                                         repo_status = "tracked_clean"
@@ -1243,7 +1260,7 @@ class FileModeFileList(FileListBase):
                         self.printException(e, "determining repo status failed")
                         repo_status = None
 
-                    logger.debug("prepFileModeFileList: file %s repo_status=%s", name, repo_status) 
+                    logger.debug("prepFileModeFileList: file %s repo_status=%s", name, repo_status)
 
                     # Map repo_status to marker and style
                     try:
@@ -1270,14 +1287,13 @@ class FileModeFileList(FileListBase):
                     # Debug: log final decision for this file
                     # Existence heuristic: treat anything not explicitly 'untracked' as existing
                     logger.debug(
-                            "prepFileModeFileList: name=%s rel=%r repo_status=%r marker=%r style=%r",
-                            name,
-                            rel,
-                            repo_status,
-                            marker,
-                            style,
-                        )
-
+                        "prepFileModeFileList: name=%s rel=%r repo_status=%r marker=%r style=%r",
+                        name,
+                        rel,
+                        repo_status,
+                        marker,
+                        style,
+                    )
 
                     display = f"{marker} {name}"
                     try:
@@ -1408,7 +1424,9 @@ class FileModeFileList(FileListBase):
                                 # stores full paths.
                                 hl = self.path
                         except Exception as e:
-                            self.printException(e, "FileModeFileList._activate_or_open highlight filename fallback failed") 
+                            self.printException(
+                                e, "FileModeFileList._activate_or_open highlight filename fallback failed"
+                            )
 
                         # Record the app-level path for downstream components
                         try:
@@ -1462,13 +1480,21 @@ class RepoModeFileList(FileListBase):
     Provides a `prepRepoModeFileList` stub and navigation handlers.
     """
 
-    def prepRepoModeFileList(self, prev_hash: str | None, curr_hash: str | None, highlight_filename: str | None = None) -> None:
+    def prepRepoModeFileList(
+        self, prev_hash: str | None, curr_hash: str | None, highlight_filename: str | None = None
+    ) -> None:
         try:
-            logger.debug("prepRepoModeFileList: prev_hash=%r curr_hash=%r highlight_filename=%r", prev_hash, curr_hash, highlight_filename)
+            logger.debug(
+                "prepRepoModeFileList: prev_hash=%r curr_hash=%r highlight_filename=%r",
+                prev_hash,
+                curr_hash,
+                highlight_filename,
+            )
             self.clear()
             # Insert a hash header and the unselectable key legend header at the top
             try:
                 try:
+
                     def _short(h: str | None) -> str:
                         if not h:
                             return "None"
@@ -1499,6 +1525,7 @@ class RepoModeFileList(FileListBase):
             pseudo_names = ("MODS", "STAGED")
             pseudo_entries = []
             try:
+
                 def _collect_for(pseudo: str) -> list[tuple[str, str]]:
                     out = ""
                     items: list[tuple[str, str]] = []
@@ -1512,7 +1539,9 @@ class RepoModeFileList(FileListBase):
                         if cmd:
                             proc = self._run_cmd_log(cmd, label="prepRepoModeFileList pseudo diff")
                             out = proc.stdout or ""
-                        logger.debug("prepRepoModeFileList: pseudo %s diff (cmd=%s) output: %s", pseudo, " ".join(cmd), out)
+                        logger.debug(
+                            "prepRepoModeFileList: pseudo %s diff (cmd=%s) output: %s", pseudo, " ".join(cmd), out
+                        )
                         for ln in out.splitlines():
                             if not ln:
                                 continue
@@ -1530,7 +1559,12 @@ class RepoModeFileList(FileListBase):
                     pseudo_entries.extend(_collect_for(prev_hash))
                 if curr_hash in pseudo_names:
                     pseudo_entries.extend(_collect_for(curr_hash))
-                logger.debug("prepRepoModeFileList: prev_hash=%r curr_hash=%r pseudo_entries=%r", prev_hash, curr_hash, pseudo_entries)
+                logger.debug(
+                    "prepRepoModeFileList: prev_hash=%r curr_hash=%r pseudo_entries=%r",
+                    prev_hash,
+                    curr_hash,
+                    pseudo_entries,
+                )
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList collecting pseudo entries failed")
 
@@ -1825,10 +1859,7 @@ class HistoryListBase(AppBase):
             self.printException(e, "HistoryListBase.on_focus")
 
     def on_list_view_highlighted(self, event) -> None:
-        try:
-            logger.debug("history highlighted: %s", event)
-        except Exception as e:
-            self.printException(e, "HistoryListBase.on_list_view_highlighted failed")
+        logger.debug("history highlighted: %s", event)
 
     def _compute_selected_pair(self) -> tuple[str | None, str | None]:
         """Return (prev_hash, curr_hash) where prev is older and curr is newer.
@@ -1882,7 +1913,6 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "_compute_selected_pair failed")
             return (None, None)
-    
 
 
 class FileModeHistoryList(HistoryListBase):
@@ -1967,7 +1997,9 @@ class FileModeHistoryList(HistoryListBase):
         UI to the file-history-diff layout.
         """
         if not recursive:
-            logger.debug("FileModeHistoryList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+            logger.debug(
+                "FileModeHistoryList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index
+            )
         if event is not None:
             try:
                 event.stop()
@@ -2022,9 +2054,13 @@ class FileModeHistoryList(HistoryListBase):
 class RepoModeHistoryList(HistoryListBase):
     """History list for repository-wide commits. Stubbed prep method."""
 
-    def prepRepoModeHistoryList(self, repo_path: str | None = None, prev_hash: str | None = None, curr_hash: str | None = None) -> None:
+    def prepRepoModeHistoryList(
+        self, repo_path: str | None = None, prev_hash: str | None = None, curr_hash: str | None = None
+    ) -> None:
         try:
-            logger.debug("prepRepoModeHistoryList: repo_path=%r prev_hash=%r curr_hash=%r", repo_path, prev_hash, curr_hash)
+            logger.debug(
+                "prepRepoModeHistoryList: repo_path=%r prev_hash=%r curr_hash=%r", repo_path, prev_hash, curr_hash
+            )
             self.clear()
             # Add pseudo-entries for working-tree state: MODS (modified, unstaged)
             # and STAGED (indexed but uncommitted). Only include when present.
@@ -2054,7 +2090,16 @@ class RepoModeHistoryList(HistoryListBase):
             # Use git log to populate repo-wide history when possible
             if self.app.repo_root:
                 try:
-                    cmd = ["git", "-C", self.app.repo_root, "log", "--pretty=format:%H\t%ad\t%s", "--date=short", "-n", "200"]
+                    cmd = [
+                        "git",
+                        "-C",
+                        self.app.repo_root,
+                        "log",
+                        "--pretty=format:%H\t%ad\t%s",
+                        "--date=short",
+                        "-n",
+                        "200",
+                    ]
                     proc = self._run_cmd_log(cmd, label="prepRepoModeHistoryList git log")
                     for ln in (proc.stdout or "").splitlines():
                         if not ln:
@@ -2114,7 +2159,8 @@ class RepoModeHistoryList(HistoryListBase):
 
                 try:
                     self.call_after_refresh(_compute_and_log)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "prepRepoModeHistoryList: scheduling compute_selected_pair failed")
                     # Fallback: run immediately if scheduling isn't available
                     _compute_and_log()
             except Exception as e:
@@ -2146,7 +2192,13 @@ class RepoModeHistoryList(HistoryListBase):
                 # comparisons so repo-mode file rows (which store full paths)
                 # match deterministically.
                 hf = getattr(self.app, "current_path", None) or getattr(self.app, "path", None)
-                logger.debug("RepoModeHistoryList.key_right: prev=%r curr=%r app.current_path=%r app.path=%r", prev_hash, curr_hash, getattr(self.app, "current_path", None), getattr(self.app, "path", None))
+                logger.debug(
+                    "RepoModeHistoryList.key_right: prev=%r curr=%r app.current_path=%r app.path=%r",
+                    prev_hash,
+                    curr_hash,
+                    getattr(self.app, "current_path", None),
+                    getattr(self.app, "path", None),
+                )
                 self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash, highlight_filename=hf)
                 try:
                     # Switch to the right-file list view and update footer
@@ -2201,7 +2253,14 @@ class DiffList(AppBase):
 
     def prepDiffList(self, filename: str, prev: str, curr: str, variant_index: int, go_back: tuple) -> None:
         try:
-            logger.debug("DiffList.prepDiffList: filename=%s prev=%s curr=%s variant=%s go_back=%s", filename, prev, curr, variant_index, go_back)
+            logger.debug(
+                "DiffList.prepDiffList: filename=%s prev=%s curr=%s variant=%s go_back=%s",
+                filename,
+                prev,
+                curr,
+                variant_index,
+                go_back,
+            )
             # Prefer the canonicalized `current_path` on the app when available
             out = ""
             try:
@@ -2268,7 +2327,9 @@ class DiffList(AppBase):
             self.printException(e, "prepDiffList failed")
 
     def key_c(self, event: events.Key | None = None) -> None:
-        logger.debug("DiffList.key_c called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None))
+        logger.debug(
+            "DiffList.key_c called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None)
+        )
         try:
             if event is not None:
                 try:
@@ -2290,7 +2351,9 @@ class DiffList(AppBase):
         If the current app layout is one of the file-history diff layouts,
         save it and switch to the `diff_fullscreen` layout. Otherwise noop.
         """
-        logger.debug("DiffList.key_right called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None))
+        logger.debug(
+            "DiffList.key_right called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None)
+        )
         try:
             if event is not None:
                 try:
@@ -2338,7 +2401,12 @@ class DiffList(AppBase):
             self.printException(e, "_render_output failed")
 
     def key_d(self, event: events.Key | None = None) -> None:
-        logger.debug("DiffList.key_d called: key=%r variant=%r index=%r", getattr(event, "key", None), getattr(self, "variant", None), getattr(self, "index", None))
+        logger.debug(
+            "DiffList.key_d called: key=%r variant=%r index=%r",
+            getattr(event, "key", None),
+            getattr(self, "variant", None),
+            getattr(self, "index", None),
+        )
         try:
             if event is not None:
                 try:
@@ -2369,7 +2437,9 @@ class DiffList(AppBase):
             self.printException(e, "DiffList.key_d failed")
 
     def key_D(self, event: events.Key | None = None) -> None:
-        logger.debug("DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None))
+        logger.debug(
+            "DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None)
+        )
         return self.key_d(event, recursive=True)
 
     def key_left(self, event: events.Key | None = None) -> None:
@@ -2444,7 +2514,9 @@ class HelpList(AppBase):
             self.printException(e, "prepHelp failed")
 
     def key_enter(self, event: events.Key | None = None) -> None:
-        logger.debug("HelpList.key_enter called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None))
+        logger.debug(
+            "HelpList.key_enter called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None)
+        )
         try:
             if event is not None:
                 try:
@@ -2463,7 +2535,7 @@ class HelpList(AppBase):
 class GitHistoryNavTool(App):
     """Main Textual application wiring the lists together.
 
-    It composes the previously defined widgets, mounts a header/footer, 
+    It composes the previously defined widgets, mounts a header/footer,
     and provides simple state save/restore stubs.
     """
 
@@ -2512,7 +2584,7 @@ class GitHistoryNavTool(App):
             # Initialize `_current_path` to either the provided path when
             # it's a directory, or the dirname when `path` is a file.
             # Use the property setter so the value is canonicalized.
-            self._current_path = (self.path if os.path.isdir(self.path) else os.path.dirname(self.path))
+            self._current_path = self.path if os.path.isdir(self.path) else os.path.dirname(self.path)
         except Exception as e:
             printException(e, "GitHistoryNavTool.__init__ failed")
 
@@ -2728,7 +2800,6 @@ class GitHistoryNavTool(App):
         logger.debug("GitHistoryNavTool.key_question called: key=%r", getattr(event, "key", None))
         return self.key_h(event, recursive=True)
 
-
     def _apply_column_layout(
         self,
         left_file_w: int,
@@ -2812,9 +2883,7 @@ class GitHistoryNavTool(App):
         except Exception as e:
             self.printException(e, "error applying column layout")
 
-    def build_diff_cmd(
-        self, filename: str, prev: str, curr: str, variant_index: int = 0
-    ) -> list[str]:
+    def build_diff_cmd(self, filename: str, prev: str, curr: str, variant_index: int = 0) -> list[str]:
         """Return a git diff command list for the given filenames and commit-ish pair.
 
         This is a small helper used by `DiffList.prepDiffList` to centralize
@@ -2871,7 +2940,9 @@ class GitHistoryNavTool(App):
             if filename:
                 cmd += ["--", filename]
 
-            logger.debug(f"build_diff_cmd: filename={filename} prev={prev} curr={curr} variant_index={variant_index} -> cmd={' '.join(cmd)}")
+            logger.debug(
+                f"build_diff_cmd: filename={filename} prev={prev} curr={curr} variant_index={variant_index} -> cmd={' '.join(cmd)}"
+            )
             return cmd
         except Exception as e:
             self.printException(e, "build_diff_cmd failed")
@@ -2939,7 +3010,6 @@ class GitHistoryNavTool(App):
         except Exception as e:
             self.printException(e, "change_state outer failure")
 
-    
     def save_state(self) -> None:
         """Save the current single-value state (layout, focus, footer).
 
@@ -2987,6 +3057,7 @@ class GitHistoryNavTool(App):
         Records the desired focus id for save/restore semantics.
         """
         try:
+
             def _do():
                 sel = str(target)
                 # normalize selector to a bare id (without leading '#')
@@ -3077,7 +3148,7 @@ class GitHistoryNavTool(App):
                             try:
                                 title_lbl.set_class(True, "active")
                             except Exception as e:
-                                self.printException(e, "change_focus setting title label class failed") 
+                                self.printException(e, "change_focus setting title label class failed")
                                 try:
                                     title_lbl.add_class("active")
                                 except Exception as e:
@@ -3145,23 +3216,19 @@ class GitHistoryNavTool(App):
 
             # Log app and focused-widget state to help debug path/hash swapping
             try:
-                logger.debug(
+                logger.trace(
                     "toggle_%s invoked: _current_layout=%s _current_focus=%s",
                     layout,
                     self._current_layout,
                     self._current_focus,
                 )
-                logger.debug(
+                logger.trace(
                     "app state: path=<%r> current_path=<%r> current_hash=<%r> previous_hash=<%r>",
                     self.path,
                     self.current_path,
                     self.current_hash,
                     self.previous_hash,
                 )
-                logger.debug(f"file_mode_file_list.prev={self.file_mode_file_list.current_prev_sha} file_mode_file_list.curr={self.file_mode_file_list.current_commit_sha}")
-                logger.debug(f"repo_mode_history_list.prev={self.repo_mode_history_list.current_prev_sha} repo_mode_history_list.curr={self.repo_mode_history_list.current_commit_sha}")
-                logger.debug(f"file_mode_history_list.prev={self.file_mode_history_list.current_prev_sha} file_mode_history_list.curr={self.file_mode_history_list.current_commit_sha}")
-                logger.debug(f"repo_mode_file_list.prev={self.repo_mode_file_list.current_prev_sha} repo_mode_file_list.curr={self.repo_mode_file_list.current_commit_sha}")
 
                 focused_info = None
                 try:
@@ -3258,17 +3325,28 @@ class GitHistoryNavTool(App):
         # Save transient values
         saved_path = self.current_path
         try:
-            logger.debug("toggle_file_history: before prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r saved_path=%r", getattr(self, "previous_hash", None), getattr(self, "current_hash", None), saved_path)
+            logger.debug(
+                "toggle_file_history: before prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r saved_path=%r",
+                getattr(self, "previous_hash", None),
+                getattr(self, "current_hash", None),
+                saved_path,
+            )
             # Prepare repo history and request that preparer highlight and
             # mark the provided commit hashes when present.
             # Use the current app-level hashes as the initial request; the
             # preparer will update app-level state to reflect the highlighted
             # selection and we will read back the authoritative values.
-            self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".", prev_hash=self.previous_hash, curr_hash=self.current_hash)
+            self.repo_mode_history_list.prepRepoModeHistoryList(
+                repo_path=self.path or ".", prev_hash=self.previous_hash, curr_hash=self.current_hash
+            )
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo history failed")
         try:
-            logger.debug("toggle_file_history: after prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r", getattr(self, "previous_hash", None), getattr(self, "current_hash", None))
+            logger.debug(
+                "toggle_file_history: after prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r",
+                getattr(self, "previous_hash", None),
+                getattr(self, "current_hash", None),
+            )
             # After the history preparer runs it will have updated
             # `app.current_hash`/`app.previous_hash` to match the highlighted
             # selection. Read those authoritative values and pass them to the
@@ -3297,7 +3375,12 @@ class GitHistoryNavTool(App):
         saved_path = self.current_path
         saved_curr = self.current_hash
         saved_prev = self.previous_hash
-        logger.debug("toggle_history_file: before prepFileModeFileList app.previous_hash=%r app.current_hash=%r saved_path=%r", getattr(self, "previous_hash", None), getattr(self, "current_hash", None), saved_path)
+        logger.debug(
+            "toggle_history_file: before prepFileModeFileList app.previous_hash=%r app.current_hash=%r saved_path=%r",
+            getattr(self, "previous_hash", None),
+            getattr(self, "current_hash", None),
+            saved_path,
+        )
         try:
             # Prepare the right file list (file pane on right) showing files
             # Use the full path as the highlight so matching is
@@ -3310,7 +3393,9 @@ class GitHistoryNavTool(App):
         try:
             # Prepare the right history list for the current file and request
             # the preparer highlight/mark the provided commit hashes.
-            self.file_mode_history_list.prepFileModeHistoryList(saved_path or ".", prev_hash=saved_prev, curr_hash=saved_curr)
+            self.file_mode_history_list.prepFileModeHistoryList(
+                saved_path or ".", prev_hash=saved_prev, curr_hash=saved_curr
+            )
         except Exception as e:
             self.printException(e, "toggle_history_file prepping file history failed")
         try:
@@ -3358,8 +3443,6 @@ class GitHistoryNavTool(App):
                     self.printException(e, "toggle_diff_fullscreen dispatch failed")
         except Exception as e:
             self.printException(e, "toggle_diff_fullscreen retrieving saved layout failed")
-
-
 
 
 def discover_repo_worktree(start_path: str | None) -> str:
@@ -3417,7 +3500,9 @@ def discover_repo_worktree(start_path: str | None) -> str:
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
     parser.add_argument("path", nargs="?", default=".", help="directory or file to open")
-    parser.add_argument("-C", "--no-color", dest="no_color", action="store_true", help="start with diff colorization off")
+    parser.add_argument(
+        "-C", "--no-color", dest="no_color", action="store_true", help="start with diff colorization off"
+    )
     parser.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
     parser.add_argument(
         "-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)"
@@ -3429,7 +3514,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="enable TRACE-level (very verbose) logging",
     )
-    parser.add_argument("-P", "--no-pygit2", dest="no_pygit2", action="store_true", help="disable pygit2 usage even if installed")
+    parser.add_argument(
+        "-P", "--no-pygit2", dest="no_pygit2", action="store_true", help="disable pygit2 usage even if installed"
+    )
     parser.add_argument(
         "-R",
         "--repo-hash",
@@ -3475,7 +3562,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         # Determine repository worktree root once and store on the app.
         repo_root = discover_repo_worktree(args.path)
         logger.debug("Discovered repository worktree root: %s", repo_root)
-        
+
         # Wire CLI into the Textual app and run it.
         logger.debug("Starting GitHistoryNavTool; args=%s repo_root=%s", args, repo_root)
         app = GitHistoryNavTool(

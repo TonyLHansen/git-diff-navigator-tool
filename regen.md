@@ -134,6 +134,20 @@ Plan (steps with pause points)
    - PAUSE: provide the updated methods and stop.
    - Tests/validation: run sample commands to fetch history for a known file, and run `gitdiffnavtool.py <file>` to confirm history populates. Collect `tmp/debug.log` if failures occur.
 
+7b) Changes made during interactive debugging and fixes
+   - After implementing step 7, an interactive debugging session produced several focused fixes and improvements recorded here so the regeneration plan reflects the current, working codebase:
+      - **Per-handler logging:** Added an explicit `logger.debug` line at the top of all `key_` handlers (including class name in the message) and ensured `event.stop()` is called where appropriate.
+      - **Deduplicated key aliases:** Canonicalized alias `key_` handler methods so there are no ambiguous wrappers invoked at import time.
+      - **Canonical path matching:** Normalized highlight matching to prefer canonical full paths. Updated `_highlight_match` and `_highlight_filename` to compare against canonical `_raw_text` values (repo-mode rows now store `_raw_text` as full canonical paths).
+      - **`watch_index`/app path sync:** `watch_index` now sets both `app.path` (raw display) and `app.current_path` (canonical full path) and logs both values for diagnostics.
+      - **Prep/Toggle flow fixes:** `prepFileModeFileList`, `toggle_file_history`, `toggle_history_file`, and `RepoModeHistoryList.key_right` were updated to pass and prefer the canonical `app.current_path` when asking preparers to highlight a filename.
+      - **Repo file preparer logging & pseudo handling:** `prepRepoModeFileList` now logs `prev_hash`, `curr_hash`, and collected `pseudo_entries` (MODS/STAGED), and stores repo-row `_raw_text` as canonical paths to avoid pseudo-entry mismatches.
+      - **Scheduling selected-pair computation:** `prepRepoModeHistoryList` now schedules `_compute_selected_pair()` via `call_after_refresh` (with immediate fallback) so highlight activations complete before the app computes the selected commit-pair—this prevents observing a stale/top index and incorrectly selecting pseudo hashes.
+      - **File-mode history display:** `FileModeHistoryList.prepFileModeHistoryList` rows show a short commit hash in the visible text (e.g., `2025-12-31 92310840cb26 Message`) for clarity during navigation.
+      - **Syntax/indentation cleanups:** Fixed several syntax and indentation regressions introduced during iterative edits (broken string literal, mis-indented blocks) so the module compiles cleanly (`python -m py_compile gitdiffnavtool.py`).
+   - Rationale: These edits were driven by observed runtime log traces (see `tmp/debug.log`) where highlight/canonicalization mismatches and timing caused `RepoModeFileList` to show pseudo entries after swapping views. The scheduling change in `prepRepoModeHistoryList` specifically prevents reading stale widget indexes.
+   - PAUSE: confirm you want this summary included in regeneration docs, then proceed to continue the regen steps (or `REVISE` with additional details).
+
 8) Final polish, exception-safety, and documentation
    - Sweep to replace bare `except:` with `except Exception as e:` and call `self.printException(e, "<context>")`.
    - Add/verify constants naming consistency and docstring header.
