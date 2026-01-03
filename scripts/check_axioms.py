@@ -147,11 +147,11 @@ def _find_except_without_name_locations(path: Path) -> List[int]:
     """
     try:
         src = path.read_text(encoding="utf-8")
-    except Exception:
+    except Exception as e:
         return []
     try:
         tree = ast.parse(src)
-    except Exception:
+    except Exception as e:
         return []
 
     results: List[int] = []
@@ -283,11 +283,11 @@ def _find_parse_args_targets(path: Path) -> set:
     """
     try:
         src = path.read_text(encoding="utf-8")
-    except Exception:
+    except Exception as e:
         return set()
     try:
         tree = ast.parse(src)
-    except Exception:
+    except Exception as e:
         return set()
 
     targets: set = set()
@@ -300,7 +300,7 @@ def _find_parse_args_targets(path: Path) -> set:
                     for t in node.targets:
                         if isinstance(t, ast.Name):
                             targets.add(t.id)
-            except Exception:
+            except Exception as e:
                 pass
             self.generic_visit(node)
 
@@ -315,11 +315,11 @@ def _find_getattr_on_vars(path: Path, varnames: set) -> List[tuple[int, str, str
     """
     try:
         src = path.read_text(encoding="utf-8")
-    except Exception:
+    except Exception as e:
         return []
     try:
         tree = ast.parse(src)
-    except Exception:
+    except Exception as e:
         return []
 
     results: List[tuple[int, str, str]] = []
@@ -341,7 +341,7 @@ def _find_getattr_on_vars(path: Path, varnames: set) -> List[tuple[int, str, str
                                 lineno = getattr(node, "lineno", None)
                                 if lineno is not None:
                                     results.append((lineno, first.id, attr))
-            except Exception:
+            except Exception as e:
                 pass
             self.generic_visit(node)
 
@@ -368,7 +368,7 @@ def check_file(path: Path, check_global_excepts: bool = False, check_bare_except
         # Also flag `except Name:` (type present but no `as var`)
         try:
             no_name_linenos = _find_except_without_name_locations(path)
-        except Exception:
+        except Exception as e:
             no_name_linenos = []
         for lineno in no_name_linenos:
             errs.append(f"{path}:{lineno}: 'except [<type>]:' without 'as <var>' detected")
@@ -410,12 +410,12 @@ def check_file(path: Path, check_global_excepts: bool = False, check_bare_except
         if check_pass:
             try:
                 errs += check_unnecessary_pass_in_except(path)
-            except NameError:
+            except NameError as e:
                 # function may be defined later in the file; skip for now
                 pass
             except Exception as e:
                 printException(e, f"checking unnecessary pass in except for {path}")
-    except Exception:
+    except Exception as e:
         pass
 
     return errs
@@ -508,7 +508,7 @@ def check_prefer_direct_attrs(path: Path) -> List[str]:
     # Also flag getattr usage on argparse Namespace objects returned by parse_args()
     try:
         parse_args_vars = _find_parse_args_targets(path)
-    except Exception:
+    except Exception as e:
         parse_args_vars = set()
 
     if parse_args_vars:
@@ -655,7 +655,7 @@ def main(argv: List[str] | None = None) -> int:
                 elif p.exists():
                     py_files_set.append(p)
             # except Exception as e:
-            except Exception:
+            except Exception as e:
                 # printException(e, f"processing supplied path {p}")
                 continue
         py_files = sorted({p for p in py_files_set})
