@@ -155,6 +155,9 @@ Plan (steps with pause points)
    - PAUSE: present the final `gitdiffnavtool.py` file and tests.
    - Tests/validation: full import/py_compile and manual run; collect logs.
    - add the repo_path to the title (show the repository path in the app title/footer)
+   - fix help display
+   - fill in ^P
+   - fix up footers, make variables
 
 Validation guidance (commands for user)
 - Syntax check:

@@ -286,3 +286,6 @@ Tell me how to instruct copilot to follow its instructions
 
 
 prepRepoModeFileList should be getting passed the directory to be displayed and the filename to be highlighted (if any)
+
+
+I see no difference; add a solid white border around the in-focus column. Change the border to a solid gray border when out-of-focus

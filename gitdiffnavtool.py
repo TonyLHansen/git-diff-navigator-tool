@@ -354,7 +354,7 @@ class AppBase(ListView):
             text_color = "white"
 
             logger.debug("watch_index: old=%r new=%r nodes=%d", old, new, len(nodes))
-            # remove style/class from old
+            # remove style/class from old if it exists
             if old is not None and 0 <= old < len(nodes):
                 try:
                     node_old = nodes[old]
@@ -1924,6 +1924,42 @@ class FileModeHistoryList(HistoryListBase):
             self.clear()
             # If repository available, call git log --follow for the path
             repo_root = self.app.repo_root
+            # First, check for working-tree pseudo-entries for this file
+            try:
+                try:
+                    # Normalize to repo-relative path for git commands
+                    rel_path = path if not os.path.isabs(path) else os.path.relpath(path, repo_root)
+                except Exception as e:
+                    self.printException(e, "prepFileModeHistoryList: computing rel_path failed")
+                    rel_path = path
+                # Check unstaged modifications for this file
+                try:
+                    cmd = ["git", "-C", repo_root, "diff", "--name-only", "--", rel_path]
+                    proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList diff --name-only")
+                    mods = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+                except Exception as e:
+                    self.printException(e, "prepFileModeHistoryList getting modified file failed")
+                    mods = []
+                # Check staged (indexed) changes for this file
+                try:
+                    cmd = ["git", "-C", repo_root, "diff", "--name-only", "--cached", "--", rel_path]
+                    proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList diff --name-only --cached")
+                    staged = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+                except Exception as e:
+                    self.printException(e, "prepFileModeHistoryList getting staged file failed")
+                    staged = []
+                # Insert MODS then STAGED at the top if present for this file
+                try:
+                    if mods:
+                        self._add_row(f"MODS (modified, unstaged)", "MODS")
+                    if staged:
+                        self._add_row(f"STAGED (staged, uncommitted)", "STAGED")
+                except Exception as e:
+                    self.printException(e, "prepFileModeHistoryList adding pseudo-rows failed")
+            except Exception as e:
+                # Fall through to normal git log population if anything fails
+                self.printException(e, "prepFileModeHistoryList failed")
+
             if repo_root:
                 try:
                     cmd = [
