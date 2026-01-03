@@ -438,8 +438,8 @@ class AppBase(ListView):
                             self.printException(e)
                         logger.debug(
                             "watch_index: history widget updated app.current_hash=%r app.previous_hash=%r",
-                            getattr(self.app, "current_hash", None),
-                            getattr(self.app, "previous_hash", None),
+                            self.app.current_hash,
+                            self.app.previous_hash,
                         )
 
                     elif isinstance(self, FileListBase):
@@ -459,7 +459,7 @@ class AppBase(ListView):
                                     if os.path.isabs(raw):
                                         full = raw
                                     else:
-                                        full = os.path.join(getattr(self.app, "repo_root", ""), raw)
+                                        full = os.path.join(self.app.repo_root, raw)
                                     # Setter canonicalizes via realpath
                                     try:
                                         self.app.current_path = full
@@ -473,8 +473,8 @@ class AppBase(ListView):
                                     self.printException(e)
                             logger.debug(
                                 "watch_index: file widget set app.path=%r app.current_path=%r",
-                                getattr(self.app, "path", None),
-                                getattr(self.app, "current_path", None),
+                                self.app.path,
+                                self.app.current_path,
                             )
                         except Exception as e:
                             self.printException(e)
@@ -518,7 +518,7 @@ class AppBase(ListView):
                                 node_full = (
                                     raw
                                     if os.path.isabs(raw)
-                                    else os.path.realpath(os.path.join(getattr(self.app, "repo_root", ""), raw))
+                                    else os.path.realpath(os.path.join(self.app.repo_root, raw))
                                 )
                             else:
                                 node_full = None
@@ -790,7 +790,7 @@ class FileListBase(AppBase):
         Safe no-op when scrolling APIs are unavailable.
         """
         try:
-            idx = getattr(self, "index", None) or 0
+            idx = self.index or 0
             nodes = self.nodes()
             if not nodes or idx is None:
                 return
@@ -865,7 +865,7 @@ class FileListBase(AppBase):
                             node_full = (
                                 raw
                                 if os.path.isabs(raw)
-                                else os.path.realpath(os.path.join(getattr(self.app, "repo_root", ""), raw))
+                                else os.path.realpath(os.path.join(self.app.repo_root, raw))
                             )
                         except Exception as e:
                             node_full = raw
@@ -2008,7 +2008,7 @@ class FileModeHistoryList(HistoryListBase):
 
         prev_hash, curr_hash = self._compute_selected_pair()
         try:
-            filename = getattr(self.app, "path", None)
+            filename = self.app.path
             # Ask the diff list to prepare the diff for this file and pair
             try:
                 # When opening from a file's history, ensure left returns to
@@ -2151,8 +2151,8 @@ class RepoModeHistoryList(HistoryListBase):
                         self._compute_selected_pair()
                         logger.debug(
                             "prepRepoModeHistoryList: after compute_selected_pair app.previous_hash=%r app.current_hash=%r",
-                            getattr(self.app, "previous_hash", None),
-                            getattr(self.app, "current_hash", None),
+                            self.app.previous_hash,
+                            self.app.current_hash,
                         )
                     except Exception as e:
                         self.printException(e, "prepRepoModeHistoryList: computing selected pair failed")
@@ -2191,13 +2191,13 @@ class RepoModeHistoryList(HistoryListBase):
                 # Prefer the canonical current_path (full path) for highlight
                 # comparisons so repo-mode file rows (which store full paths)
                 # match deterministically.
-                hf = getattr(self.app, "current_path", None) or getattr(self.app, "path", None)
+                hf = self.app.current_path or self.app.path
                 logger.debug(
                     "RepoModeHistoryList.key_right: prev=%r curr=%r app.current_path=%r app.path=%r",
                     prev_hash,
                     curr_hash,
-                    getattr(self.app, "current_path", None),
-                    getattr(self.app, "path", None),
+                    self.app.current_path,
+                    self.app.path,
                 )
                 self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash, highlight_filename=hf)
                 try:
@@ -2328,7 +2328,7 @@ class DiffList(AppBase):
 
     def key_c(self, event: events.Key | None = None) -> None:
         logger.debug(
-            "DiffList.key_c called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None)
+            "DiffList.key_c called: key=%r index=%r", getattr(event, "key", None), self.index
         )
         try:
             if event is not None:
@@ -2352,7 +2352,7 @@ class DiffList(AppBase):
         save it and switch to the `diff_fullscreen` layout. Otherwise noop.
         """
         logger.debug(
-            "DiffList.key_right called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None)
+            "DiffList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index
         )
         try:
             if event is not None:
@@ -2404,8 +2404,8 @@ class DiffList(AppBase):
         logger.debug(
             "DiffList.key_d called: key=%r variant=%r index=%r",
             getattr(event, "key", None),
-            getattr(self, "variant", None),
-            getattr(self, "index", None),
+            self.variant,
+            self.index,
         )
         try:
             if event is not None:
@@ -2415,7 +2415,7 @@ class DiffList(AppBase):
                     self.printException(e, "DiffList.key_d: event.stop failed")
             # Rotate to the next diff variant and re-run the diff preparer.
             try:
-                total = len(getattr(self.app, "diff_variants", []) or [None])
+                total = len(self.app.diff_variants or [None])
                 new_variant = (int(self.variant or 0) + 1) % max(1, total)
             except Exception as e:
                 self.printException(e, "DiffList.key_d: computing new variant failed")
@@ -2438,7 +2438,7 @@ class DiffList(AppBase):
 
     def key_D(self, event: events.Key | None = None) -> None:
         logger.debug(
-            "DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None)
+            "DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), self.index
         )
         return self.key_d(event, recursive=True)
 
@@ -2515,7 +2515,7 @@ class HelpList(AppBase):
 
     def key_enter(self, event: events.Key | None = None) -> None:
         logger.debug(
-            "HelpList.key_enter called: key=%r index=%r", getattr(event, "key", None), getattr(self, "index", None)
+            "HelpList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index
         )
         try:
             if event is not None:
@@ -3232,7 +3232,7 @@ class GitHistoryNavTool(App):
 
                 focused_info = None
                 try:
-                    fsel = getattr(self, "_current_focus", None)
+                    fsel = self._current_focus
                     if fsel:
                         fid = fsel[1:] if str(fsel).startswith("#") else str(fsel)
                         try:
@@ -3274,13 +3274,12 @@ class GitHistoryNavTool(App):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "toggle: event.stop failed")
-            handler_name = f"toggle_{layout}"
-            handler = getattr(self, handler_name, None)
+            handler = getattr(self, f"toggle_{layout}", None)
             if callable(handler):
                 try:
                     handler()
                 except Exception as e:
-                    self.printException(e, f"{handler_name} failed")
+                    self.printException(e, f"toggle_{layout} failed")
             else:
                 logger.debug("toggle: no handler for layout %s", layout)
         except Exception as e:
@@ -3326,11 +3325,11 @@ class GitHistoryNavTool(App):
         saved_path = self.current_path
         try:
             logger.debug(
-                "toggle_file_history: before prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r saved_path=%r",
-                getattr(self, "previous_hash", None),
-                getattr(self, "current_hash", None),
-                saved_path,
-            )
+                    "toggle_file_history: before prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r saved_path=%r",
+                    self.previous_hash,
+                    self.current_hash,
+                    saved_path,
+                )
             # Prepare repo history and request that preparer highlight and
             # mark the provided commit hashes when present.
             # Use the current app-level hashes as the initial request; the
@@ -3344,15 +3343,15 @@ class GitHistoryNavTool(App):
         try:
             logger.debug(
                 "toggle_file_history: after prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r",
-                getattr(self, "previous_hash", None),
-                getattr(self, "current_hash", None),
+                self.previous_hash,
+                self.current_hash,
             )
             # After the history preparer runs it will have updated
             # `app.current_hash`/`app.previous_hash` to match the highlighted
             # selection. Read those authoritative values and pass them to the
             # file preparer so it lists the correct commit-pair.
-            use_prev = getattr(self, "previous_hash", None)
-            use_curr = getattr(self, "current_hash", None)
+            use_prev = self.previous_hash
+            use_curr = self.current_hash
             # Compute a repo-relative highlight filename so it matches the
             # `_raw_text` values attached to repo-mode file list rows (these
             # are repository-relative paths like 'docs/notes.txt'). Prefer a
@@ -3377,8 +3376,8 @@ class GitHistoryNavTool(App):
         saved_prev = self.previous_hash
         logger.debug(
             "toggle_history_file: before prepFileModeFileList app.previous_hash=%r app.current_hash=%r saved_path=%r",
-            getattr(self, "previous_hash", None),
-            getattr(self, "current_hash", None),
+            self.previous_hash,
+            self.current_hash,
             saved_path,
         )
         try:
