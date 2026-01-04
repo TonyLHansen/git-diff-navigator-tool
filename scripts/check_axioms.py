@@ -608,6 +608,42 @@ def check_prefer_direct_attrs(path: Path) -> List[str]:
     return errs
 
 
+def check_getattr_not_initialized(path: Path) -> List[str]:
+    """Flag getattr(self, 'attr', ...) usages where `attr` is not assigned in __init__/on_mount.
+
+    This helps catch cases where code relies on implicit attributes that should
+    instead be initialized in the class initializer or guarded before use.
+    """
+    errs: List[str] = []
+    try:
+        classes = _collect_self_assigned_attrs(path)
+        getattr_uses = _find_getattr_on_self(path)
+    except Exception as e:
+        printException(e, f"collecting class attrs/getattr usages in {path}")
+        return errs
+
+    # Build the set of assigned attributes (from __init__/on_mount)
+    assigned_attrs = set()
+    for s in classes.values():
+        assigned_attrs.update(s)
+
+    for lineno, attr in getattr_uses:
+        # attr may be 'app.current_path' style when getattr called on self.app
+        if "." in attr:
+            right = attr.split(".", 1)[1]
+            if right not in assigned_attrs:
+                errs.append(
+                    f"{path}:{lineno}: getattr used for attribute '{attr}' but '{right}' is not initialized in __init__/on_mount"
+                )
+        else:
+            if attr not in assigned_attrs:
+                errs.append(
+                    f"{path}:{lineno}: getattr(self, '{attr}', ...) used but '{attr}' is not initialized in __init__/on_mount"
+                )
+
+    return errs
+
+
 def run_py_compile(py_files: List[Path]) -> List[Tuple[Path, str]]:
     failures: List[Tuple[Path, str]] = []
     for p in py_files:
@@ -660,7 +696,7 @@ def main(argv: List[str] | None = None) -> int:
         action="store_false",
         help="Skip checking for unnecessary 'pass' inside except-as blocks (default: check)",
     )
-    parser.add_argument("--NONE",
+    parser.add_argument("-N", "--NONE",
         dest="none",
         action="store_true",
         help="Disable all checks (equivalent to -B -E -D -C)",
@@ -684,6 +720,18 @@ def main(argv: List[str] | None = None) -> int:
         dest="enable_prefer_direct_attrs",
         action="store_true",
         help="Enable prefer-direct-attrs check (opposite of -D)."
+    )
+    parser.add_argument("-I",
+        "--no-getattr-not-initialized",
+        dest="check_getattr_not_initialized",
+        action="store_false",
+        help="Skip checking for getattr-not-initialized (default: check)",
+    )
+    parser.add_argument("-i",
+        "--getattr-not-initialized",
+        dest="enable_getattr_not_initialized",
+        action="store_true",
+        help="Enable getattr-not-initialized check (opposite of -I).",
     )
     parser.add_argument("-c",
         "--py-compile",
@@ -713,15 +761,16 @@ def main(argv: List[str] | None = None) -> int:
     else:
         logging.basicConfig(level=logging.WARNING)
 
-    # If --NONE specified, disable all checks (convenience shorthand)
+    # If -N/--NONE specified, disable all checks (convenience shorthand)
     if args.none:
         args.check_bare_excepts = False
         args.check_except_as_print = False
         args.check_prefer_direct_attrs = False
         args.check_py_compile = False
         args.check_pass = False
+        args.check_getattr_not_initialized = False
 
-    # Honor explicit small-letter re-enable flags after --NONE
+    # Honor explicit small-letter re-enable flags after -N/--NONE
     if args.enable_bare_excepts:
         args.check_bare_excepts = True
     if args.enable_except_as_print:
@@ -732,6 +781,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_py_compile = True
     if args.enable_pass_check:
         args.check_pass = True
+    if args.enable_getattr_not_initialized:
+        args.check_getattr_not_initialized = True
 
     logger.info("cwd: %s", Path.cwd())
 
@@ -784,6 +835,12 @@ def main(argv: List[str] | None = None) -> int:
                         errs += check_prefer_direct_attrs(p)
                     except Exception as e:
                         printException(e, f"check_prefer_direct_attrs failed for {p}")
+                # Enforce 'getattr-not-initialized' axiom
+                if args.check_getattr_not_initialized:
+                    try:
+                        errs += check_getattr_not_initialized(p)
+                    except Exception as e:
+                        printException(e, f"check_getattr_not_initialized failed for {p}")
             except Exception as e:
                 printException(e, f"error checking {p}")
             if errs:
