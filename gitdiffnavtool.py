@@ -2977,11 +2977,18 @@ class GitHistoryNavTool(App):
                 elif prev and prev not in pseudo_names:
                     cmd.append(prev)
             else:
-                cmd = _base_diff(use_cached=False)
-                if prev and curr:
-                    cmd += [prev, curr]
-                elif curr and not prev:
-                    cmd.append(curr)
+                # When only a single commit is provided (no `prev`), prefer
+                # `git show <commit> -- <file>` which produces a patch against
+                # /dev/null for new files (initial commit) and generally
+                # represents the commit's changes. `git diff <commit> -- <file>`
+                # compares the commit to the working tree and can yield empty
+                # output for initial commits.
+                if curr and not prev:
+                    cmd = ["git", "-C", self.repo_root, "show", "--pretty=format:", curr]
+                else:
+                    cmd = _base_diff(use_cached=False)
+                    if prev and curr:
+                        cmd += [prev, curr]
 
             if filename:
                 cmd += ["--", filename]
