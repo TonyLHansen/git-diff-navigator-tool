@@ -38,58 +38,7 @@ PY_EXT = "*.py"
 # How many lines after an except to search for a printException call
 EXCEPT_LOOKAHEAD = 8
 
-
-def list_py_files(root: Path) -> List[Path]:
-    files: List[Path] = []
-
-    # Also include files that have a python shebang (#!...python) even if
-    # they don't end with .py. Iterate a limited set of files to avoid
-    # scanning large binary directories.
-    shebang_re = re.compile(r"^#!.*python")
-    for p in root.rglob("*"):
-        try:
-            if not p.is_file():
-                continue
-            # Skip virtualenvs, caches and package dirs to avoid scanning
-            # third-party site-packages and user venvs. Match on path
-            # components (parts) rather than naive substring checks so
-            # names like 'venv-3.14.sv' are correctly excluded.
-            parts_lower = [part.lower() for part in p.parts]
-            skip = False
-            for part in parts_lower:
-                if part in ("__pycache__", ".git", "build", "dist"):
-                    skip = True
-                    break
-                if part.startswith("venv") or part.startswith(".venv") or part.startswith("env") or "site-packages" in part:
-                    skip = True
-                    break
-            if skip:
-                continue
-            name = p.name.lower()
-            # Keep a light heuristic to ignore backup files named like 'old'
-            if "old." in name or name.startswith("old") or name.endswith("~"):
-                continue
-            if p.suffix.lower() == ".py":
-                files.append(p)
-                continue
-
-            # read only first line cheaply
-            try:
-                with p.open("rb") as fh:
-                    first = fh.readline(200).decode("utf-8", errors="ignore")
-            except Exception as e:
-                printException(e, f"reading first line of {p}")
-                continue
-            if shebang_re.search(first):
-                files.append(p)
-        except Exception as e:
-            printException(e, f"scanning file {p}")
-            continue
-    return sorted(files)
-
-
 logger = logging.getLogger(__name__)
-
 
 def printException(e: Exception, msg: Optional[str] = None) -> None:
     """Module-level helper to log unexpected exceptions when `self` isn't available.
@@ -103,6 +52,71 @@ def printException(e: Exception, msg: Optional[str] = None) -> None:
     except Exception as _use_stderr:
         sys.stderr.write(f"printException fallback: {e}\n")
         sys.stderr.write(f"secondary exception: {_use_stderr}\n")
+
+
+def list_py_files(root: Path) -> List[Path]:
+    files: List[Path] = []
+
+    # Also include files that have a python shebang (#!...python) even if
+    # they don't end with .py. Use os.walk with directory pruning to avoid
+    # descending into large virtualenv/site-packages/__pycache__ trees.
+    shebang_re = re.compile(r"^#!.*python")
+    exclude_names = {"__pycache__", ".git", "build", "dist"}
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        try:
+            # Prune directories in-place so os.walk won't descend into them.
+            kept = []
+            for d in dirnames:
+                dl = d.lower()
+                if dl in exclude_names or dl.startswith("venv") or dl.startswith(".venv") or dl.startswith("env") or "site-packages" in dl:
+                    logger.debug("skipping directory during walk: %s", Path(dirpath) / d)
+                    continue
+                kept.append(d)
+            dirnames[:] = kept
+
+            for fname in filenames:
+                p = Path(dirpath) / fname
+                try:
+                    logger.debug("considering path: %s", p)
+                    if not p.is_file():
+                        continue
+                    parts_lower = [part.lower() for part in p.parts]
+                    skip = False
+                    for part in parts_lower:
+                        if part in exclude_names or part.startswith("venv") or part.startswith(".venv") or part.startswith("env") or "site-packages" in part:
+                            skip = True
+                            break
+                    if skip:
+                        logger.debug("skipping path (excluded): %s", p)
+                        continue
+                    name = p.name.lower()
+                    # Keep a light heuristic to ignore backup files named like 'old'
+                    if "old." in name or name.startswith("old") or name.endswith("~"):
+                        logger.debug("ignoring backup/temp file: %s", p)
+                        continue
+                    if p.suffix.lower() == ".py":
+                        logger.debug("including python file: %s", p)
+                        files.append(p)
+                        continue
+
+                    # read only first line cheaply
+                    try:
+                        with p.open("rb") as fh:
+                            first = fh.readline(200).decode("utf-8", errors="ignore")
+                    except Exception as e:
+                        printException(e, f"reading first line of {p}")
+                        continue
+                    if shebang_re.search(first):
+                        logger.debug("including shebang-marked file: %s", p)
+                        files.append(p)
+                except Exception as e:
+                    printException(e, f"scanning file {p}")
+                    continue
+        except Exception as e:
+            printException(e, f"walking directory {dirpath}")
+            continue
+    return files
 
 
 def _find_bare_except_locations(path: Path) -> List[tuple[int, bool]]:
@@ -683,10 +697,21 @@ def main(argv: List[str] | None = None) -> int:
         action="store_true",
         help="Enable unnecessary-pass check (opposite of -P)."
     )
+    parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=0,
+        help="Increase verbosity (specify multiple times for more detail)."
+    )
     parser.add_argument("files", nargs="*", help="Optional explicit files or directories to check (overrides discovery)")
     args = parser.parse_args(argv)
 
     root = Path(args.root)
+
+    # Configure logging verbosity: 0=WARNING (default), 1=INFO, 2+=DEBUG
+    if args.verbose >= 2:
+        logging.basicConfig(level=logging.DEBUG)
+    elif args.verbose == 1:
+        logging.basicConfig(level=logging.INFO)
+    else:
+        logging.basicConfig(level=logging.WARNING)
 
     # If --NONE specified, disable all checks (convenience shorthand)
     if args.none:
@@ -708,26 +733,26 @@ def main(argv: List[str] | None = None) -> int:
     if args.enable_pass_check:
         args.check_pass = True
 
-    os.system("/bin/pwd")  # debug
+    logger.info("cwd: %s", Path.cwd())
 
     # If explicit files/dirs were provided, use them (override discovery).
     if args.files:
         supplied: List[Path] = []
         for f in args.files:
-            print(f"Supplied path: {f}")
+            logger.debug("Supplied path: %s", f)
             p = Path(f)
             if not p.is_absolute():
                 p = root.joinpath(p)
             supplied.append(p)
-            print(f"  resolved to: {p}")
+            logger.debug("  resolved to: %s", p)
 
         py_files_set = []
         for p in supplied:
             try:
-                print(f"Processing supplied path: {p}")
+                logger.debug("Processing supplied path: %s", p)
                 if p.is_dir():
                     for q in list_py_files(p):
-                        print(f"  found: {q}")
+                        logger.debug("  found: %s", q)
                         py_files_set.append(q)
                 elif p.exists():
                     py_files_set.append(p)
