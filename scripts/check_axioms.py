@@ -761,7 +761,7 @@ def main(argv: List[str] | None = None) -> int:
                 continue
         py_files = sorted({p for p in py_files_set})
     else:
-        py_files = list_py_files(root)
+        py_files = sorted(list_py_files(root))
 
     error_count = 0
 
