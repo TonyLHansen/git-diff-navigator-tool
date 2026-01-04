@@ -20,8 +20,7 @@ from functools import wraps
 # Optional pygit2 support — best-effort import to enable repo status checks
 try:
     import pygit2  # type: ignore
-except Exception as _ex:
-    printException(_ex)
+except Exception as _no_logging:
     pygit2 = None
 
 # Third-party UI and rendering imports
@@ -3172,97 +3171,54 @@ class GitHistoryNavTool(App):
                     if widget is not None:
                         # If there is an existing focused column, set its border to gray
                         try:
-                            cur_focus = self._current_focus
+                            # Force all canonical candidate widgets to gray borders,
+                            # then we'll set the chosen widget to white below.
                             try:
-                                logger.debug(
-                                    "change_focus:%d: cur_focus=%r key=%r",
-                                    inspect.currentframe().f_lineno,
-                                    cur_focus,
-                                    key,
-                                )
-                            except Exception as _ex:
-                                printException(_ex)
-                            if cur_focus:
-                                try:
-                                    prev_id = str(cur_focus)
+                                candidates = [
+                                    ("left_file_list", self.file_mode_file_list),
+                                    ("left_history_list", self.repo_mode_history_list),
+                                    ("right_file_list", self.repo_mode_file_list),
+                                    ("right_history_list", self.file_mode_history_list),
+                                    ("diff_list", self.diff_list),
+                                    ("help_list", self.help_list),
+                                ]
+                                for cname, w in candidates:
                                     try:
-                                        logger.debug(
-                                            "change_focus:%d: prev_id computed=%r (before startswith)",
-                                            inspect.currentframe().f_lineno,
-                                            prev_id,
-                                        )
-                                    except Exception as _ex:
-                                        printException(_ex)
-                                    if prev_id.startswith("#"):
-                                        prev_widget = None
+                                        if w is None:
+                                            continue
                                         try:
-                                            logger.debug(
-                                                "change_focus:%d: querying prev widget for id=%r",
-                                                inspect.currentframe().f_lineno,
-                                                prev_id,
-                                            )
-                                            prev_widget = self.query_one(prev_id)
+                                            before = getattr(w.styles, "border", None)
                                         except Exception as _ex:
                                             printException(_ex)
-                                            prev_widget = None
-                                        if prev_widget is not None:
-                                            try:
-                                                # safe-read previous border
-                                                try:
-                                                    prev_border = getattr(prev_widget.styles, "border", None)
-                                                except Exception as _ex:
-                                                    printException(_ex)
-                                                    prev_border = "<unavailable>"
-                                                try:
-                                                    logger.debug(
-                                                        "change_focus:%d: prev_widget current border=%r for id=%r",
-                                                        inspect.currentframe().f_lineno,
-                                                        prev_border,
-                                                        prev_id,
-                                                    )
-                                                except Exception as _ex:
-                                                    printException(_ex)
-                                                # skip if same widget
-                                                prev_key = prev_id[1:]
-                                                if prev_key == key:
-                                                    try:
-                                                        logger.debug(
-                                                            "change_focus:%d: skipping prev border set because prev == key %r",
-                                                            inspect.currentframe().f_lineno,
-                                                            prev_key,
-                                                        )
-                                                    except Exception as _ex:
-                                                        printException(_ex)
-                                                else:
-                                                    try:
-                                                        logger.debug(
-                                                            "change_focus:%d: setting prev_widget.styles.border -> %r (was=%r) for id=%r",
-                                                            inspect.currentframe().f_lineno,
-                                                            ("solid", "gray"),
-                                                            prev_border,
-                                                            prev_id,
-                                                        )
-                                                    except Exception as _ex:
-                                                        printException(_ex)
-                                                    prev_widget.styles.border = ("solid", "gray")
-                                                    try:
-                                                        readback = getattr(prev_widget.styles, "border", None)
-                                                    except Exception as _ex:
-                                                        printException(_ex)
-                                                        readback = "<unavailable>"
-                                                    try:
-                                                        logger.debug(
-                                                            "change_focus:%d: prev_widget.styles.border readback=%r for id=%r",
-                                                            inspect.currentframe().f_lineno,
-                                                            readback,
-                                                            prev_id,
-                                                        )
-                                                    except Exception as _ex:
-                                                        printException(_ex)
-                                            except Exception as _ex:
-                                                printException(_ex)
-                                except Exception as _ex:
-                                    printException(_ex)
+                                            before = "<unavailable>"
+                                        try:
+                                            logger.debug(
+                                                "change_focus:%d: forcing gray border for %s (before=%r)",
+                                                inspect.currentframe().f_lineno,
+                                                cname,
+                                                before,
+                                            )
+                                        except Exception as _ex:
+                                            printException(_ex)
+                                        w.styles.border = ("solid", "gray")
+                                        try:
+                                            readback = getattr(w.styles, "border", None)
+                                        except Exception as _ex:
+                                            printException(_ex)
+                                            readback = "<unavailable>"
+                                        try:
+                                            logger.debug(
+                                                "change_focus:%d: forced gray border readback=%r for %s",
+                                                inspect.currentframe().f_lineno,
+                                                readback,
+                                                cname,
+                                            )
+                                        except Exception as _ex:
+                                            printException(_ex)
+                                    except Exception as _ex:
+                                        printException(_ex)
+                            except Exception as _ex:
+                                printException(_ex)
                         except Exception as _ex:
                             printException(_ex)
 
@@ -3315,12 +3271,12 @@ class GitHistoryNavTool(App):
                                     logger.debug(
                                         "change_focus:%d: setting focused widget.styles.border -> %r for key=%r",
                                         inspect.currentframe().f_lineno,
-                                        "solid white",
+                                        ("solid", "white"),
                                         key,
                                     )
                                 except Exception as _ex:
                                     printException(_ex)
-                                widget.styles.border = "solid white"
+                                widget.styles.border = ("solid", "white")
                                 try:
                                     readback = getattr(widget.styles, "border", None)
                                 except Exception as _ex:
@@ -3355,7 +3311,7 @@ class GitHistoryNavTool(App):
                                             )
                                         except Exception as _ex:
                                             printException(_ex)
-                                        w.styles.border = "solid white"
+                                        w.styles.border = ("solid", "white")
                                 except Exception as _ex:
                                     printException(_ex)
                         except Exception as e:
