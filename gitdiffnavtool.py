@@ -13,14 +13,15 @@ import os
 import sys
 import subprocess
 import traceback
+import inspect
 from typing import Optional
 from functools import wraps
 
 # Optional pygit2 support — best-effort import to enable repo status checks
 try:
     import pygit2  # type: ignore
-except Exception as _ex:
-    printException(_ex)
+except Exception as _use_stderr:
+    print(f"optional pygit2 import failed: {_use_stderr}", file=sys.stderr)
     pygit2 = None
 
 # Third-party UI and rendering imports
@@ -85,6 +86,7 @@ ListItem.active {
     color: white;
 }
 
+
 """
 
 
@@ -118,16 +120,7 @@ RIGHT_FILE_FOOTER = Text("Files: press Left to return")
 # Footer text used for help screen
 HELP_FOOTER = Text("Help: press Enter to return")
 # Footer text used when showing the diff for a history/file selection
-HISTORY_FILE_DIFF_FOOTER = Text("Diff: press Left to return to files")
 
-# Common styles used across file/history preparers
-STYLE_DIR = "white on blue"
-STYLE_PARENT = STYLE_DIR
-STYLE_WT_DELETED = "red"
-STYLE_ERROR = "red"
-STYLE_CONFLICTED = "magenta"
-STYLE_STAGED = "cyan"
-STYLE_IGNORED = "dim italic"
 STYLE_MODIFIED = "yellow"
 STYLE_UNTRACKED = "bold yellow"
 STYLE_DEFAULT = "white"
@@ -2607,6 +2600,8 @@ class GitHistoryNavTool(App):
             self.title = f"GitHistoryNavTool ({self.repo_root or '.'})"
             self._saved_state = None
             self._current_layout = None
+            # Track current focus selector for save/restore; initialize here
+            self._current_focus = None
             # Track the currently-selected and previous commit hashes
             self.current_hash = None
             self.previous_hash = None
@@ -3105,7 +3100,7 @@ class GitHistoryNavTool(App):
             def _do():
                 sel = str(target)
                 # normalize selector to a bare id (without leading '#')
-                if sel.startswith("#"):
+                                    if prev_id.startswith("#"):
                     key = sel[1:]
                 else:
                     key = sel
@@ -3113,17 +3108,42 @@ class GitHistoryNavTool(App):
                 widget = None
                 label_name = None
 
-                # Reset title label classes
-                try:
-                    title_ids = [
-                        LEFT_FILE_TITLE,
-                        LEFT_HISTORY_TITLE,
-                        RIGHT_HISTORY_TITLE,
-                        RIGHT_FILE_TITLE,
-                        DIFF_TITLE,
-                        HELP_TITLE,
-                    ]
-                    for tid in title_ids:
+                                            try:
+                                                # If the previous id (without '#') == the requested
+                                                # new key, then this is the same widget; skip
+                                                # setting the previous border to avoid rapidly
+                                                # overwriting it (gray then white).
+                                                prev_key = prev_id[1:]
+                                                if prev_key == key:
+                                                    logger.debug(
+                                                        "change_focus: skipping prev border set because prev == key %r (%s:%d)",
+                                                        prev_key,
+                                                        __file__,
+                                                        inspect.currentframe().f_lineno,
+                                                    )
+                                                else:
+                                                    # proceed to set prev border
+                                                    logger.debug(
+                                                        "change_focus: attempting to set prev_widget.styles.border; prev_id=%r prev_widget_type=%r border=%r (%s:%d)",
+                                                        prev_id,
+                                                        type(prev_widget).__name__ if prev_widget is not None else None,
+                                                        ("solid", "gray"),
+                                                        __file__,
+                                                        inspect.currentframe().f_lineno,
+                                                    )
+                                                    prev_widget.styles.border = ("solid", "gray")
+                                                    logger.debug(
+                                                        "change_focus: prev_widget.styles.border set for %r (%s:%d)",
+                                                        prev_id,
+                                                        __file__,
+                                                        inspect.currentframe().f_lineno,
+                                                    )
+                                            except Exception as _ex:
+                                                logger.exception("change_focus: failed setting prev_widget.styles.border for %r", prev_id)
+                                                printException(_ex)
+                                            
+                                            
+                                        
                         try:
                             lbl = self.query_one(f"#{tid}", Label)
                             try:
@@ -3164,8 +3184,13 @@ class GitHistoryNavTool(App):
                 try:
                     if widget is not None:
                         # If there is an existing focused column, set its border to gray
-                        try:
-                            cur_focus = getattr(self, "_current_focus", None) or getattr(self, "_current_focus", None)
+                        try: # ????
+                            cur_focus = self._current_focus
+                            logger.debug(
+                                "change_focus:%d: current focus before change is %r",
+                                inspect.currentframe().f_lineno,
+                                cur_focus,
+                            )
                             if cur_focus:
                                 try:
                                     prev_id = str(cur_focus)
@@ -3178,8 +3203,23 @@ class GitHistoryNavTool(App):
                                             prev_widget = None
                                         if prev_widget is not None:
                                             try:
-                                                prev_widget.styles.border = "solid gray"
+                                                logger.debug(
+                                                    "change_focus:%d: attempting to set prev_widget.styles.border; prev_id=%r prev_widget_type=%r border=%r",
+                                                    inspect.currentframe().f_lineno,
+                                                    prev_id,
+                                                    type(prev_widget).__name__ if prev_widget is not None else None,
+                                                    ("solid", "gray"),
+                                                )
+                                                prev_widget.styles.border = ("solid", "gray")
+                                                logger.debug(
+                                                    "change_focus:%d: prev_widget.styles.border set for %r",
+                                                    inspect.currentframe().f_lineno,
+                                                    prev_id,
+                                                )
                                             except Exception as _ex:
+                                                logger.exception("change_focus:%d: failed setting prev_widget.styles.border for %r", 
+                                                    inspect.currentframe().f_lineno,
+                                                    prev_id)
                                                 printException(_ex)
                                 except Exception as _ex:
                                     printException(_ex)
@@ -3199,8 +3239,23 @@ class GitHistoryNavTool(App):
                         # Now set the new focused widget's border to white
                         try:
                             try:
-                                widget.styles.border = "solid white"
+                                logger.debug(
+                                    "change_focus: attempting to set focused widget.styles.border; key=%r widget_type=%r border=%r (%s:%d)",
+                                    key,
+                                    type(widget).__name__ if widget is not None else None,
+                                    ("solid", "white"),
+                                    __file__,
+                                    inspect.currentframe().f_lineno,
+                                )
+                                widget.styles.border = ("solid", "white")
+                                logger.debug(
+                                    "change_focus: focused widget.styles.border set for %r (%s:%d)",
+                                    key,
+                                    __file__,
+                                    inspect.currentframe().f_lineno,
+                                )
                             except Exception as _ex:
+                                logger.exception("change_focus: failed setting widget.styles.border for %r", key)
                                 printException(_ex)
                                 # Attempt to resolve by id and set border
                                 try:
@@ -3208,11 +3263,19 @@ class GitHistoryNavTool(App):
                                     try:
                                         w = self.query_one(f"#{key}")
                                     except Exception as _ex:
-                                            printException(_ex)
-                                            w = None
+                                        logger.exception("change_focus: query_one failed for %r when setting fallback border", key)
+                                        printException(_ex)
+                                        w = None
                                     if w is not None:
-                                        w.styles.border = "solid white"
+                                        logger.debug(
+                                            "change_focus: setting fallback widget.styles.border for resolved id %r (%s:%d)",
+                                            key,
+                                            __file__,
+                                            inspect.currentframe().f_lineno,
+                                        )
+                                        w.styles.border = ("solid", "white")
                                 except Exception as _ex:
+                                    logger.exception("change_focus: failed setting fallback widget.styles.border for %r", key)
                                     printException(_ex)
                         except Exception as e:
                             self.printException(e, "change_focus: setting focused widget border failed")
