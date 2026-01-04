@@ -384,7 +384,14 @@ def _find_getattr_on_vars(path: Path, varnames: set) -> List[tuple[int, str, str
     return results
 
 
-def check_file(path: Path, check_global_excepts: bool = False, check_bare_excepts: bool = True, check_except_as_print: bool = True, check_pass: bool = True) -> List[str]:
+def check_file(
+    path: Path,
+    check_global_excepts: bool = False,
+    check_bare_excepts: bool = True,
+    check_except_as_print: bool = True,
+    check_pass: bool = True,
+    check_logger_in_try: bool = True,
+) -> List[str]:
     errs: List[str] = []
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -501,6 +508,21 @@ def check_file(path: Path, check_global_excepts: bool = False, check_bare_except
     except Exception as e:
         printException(e)
 
+    # New check: detect try/except handlers whose body only contains a
+    # single logger.<method>(...) call. In such cases the try/except adds
+    # little value and can be removed around the logger call.
+    if check_logger_in_try:
+        try:
+            try:
+                errs += check_logger_in_try_blocks(path)
+            except NameError:
+                # function may be defined later in file; skip
+                pass
+            except Exception as e:
+                printException(e, f"checking logger-in-try in {path}")
+        except Exception as e:
+            printException(e)
+
     return errs
 
 
@@ -546,6 +568,48 @@ def check_unnecessary_pass_in_except(path: Path) -> List[str]:
                             )
             except Exception as e:
                 printException(e, f"walking ExceptHandler in {path}")
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
+    return errs
+
+
+def check_logger_in_try_blocks(path: Path) -> List[str]:
+    """Detect except handlers whose body contains only a logger.<method>(...) call.
+
+    Such try/except blocks are usually unnecessary around a logging call and
+    can be removed. Returns list of error messages with line numbers.
+    """
+    errs: List[str] = []
+    try:
+        src = path.read_text(encoding="utf-8")
+    except Exception as e:
+        printException(e, f"reading {path}")
+        return errs
+    try:
+        tree = ast.parse(src)
+    except Exception as e:
+        printException(e, f"parsing AST for {path}")
+        return errs
+
+    class Visitor(ast.NodeVisitor):
+        def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+            try:
+                body = getattr(node, "body", []) or []
+                if len(body) == 1:
+                    stmt = body[0]
+                    # match logger.<method>(...)
+                    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+                        func = stmt.value.func
+                        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "logger":
+                            lineno = getattr(node, "lineno", None)
+                            method = getattr(func, "attr", "<method>")
+                            if lineno is not None:
+                                errs.append(
+                                    f"{path}:{lineno}: except handler only contains logger.{method}(...); remove the try/except around the logger call"
+                                )
+            except Exception as e:
+                printException(e, f"walking ExceptHandler in {path} for logger-in-try")
             self.generic_visit(node)
 
     Visitor().visit(tree)
@@ -727,11 +791,23 @@ def main(argv: List[str] | None = None) -> int:
         action="store_false",
         help="Skip checking for getattr-not-initialized (default: check)",
     )
+    parser.add_argument("-L",
+        "--no-logger-in-try",
+        dest="check_logger_in_try",
+        action="store_false",
+        help="Skip checking for except handlers that only contain a logger.<method>(...) call (default: check)",
+    )
     parser.add_argument("-i",
         "--getattr-not-initialized",
         dest="enable_getattr_not_initialized",
         action="store_true",
         help="Enable getattr-not-initialized check (opposite of -I).",
+    )
+    parser.add_argument("-l",
+        "--logger-in-try",
+        dest="enable_logger_in_try",
+        action="store_true",
+        help="Enable logger-in-try check (opposite of -L).",
     )
     parser.add_argument("-c",
         "--py-compile",
@@ -769,6 +845,7 @@ def main(argv: List[str] | None = None) -> int:
         args.check_py_compile = False
         args.check_pass = False
         args.check_getattr_not_initialized = False
+        args.check_logger_in_try = False
 
     # Honor explicit small-letter re-enable flags after -N/--NONE
     if args.enable_bare_excepts:
@@ -783,6 +860,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_pass = True
     if args.enable_getattr_not_initialized:
         args.check_getattr_not_initialized = True
+    if getattr(args, "enable_logger_in_try", False):
+        args.check_logger_in_try = True
 
     logger.info("cwd: %s", Path.cwd())
 
@@ -827,7 +906,8 @@ def main(argv: List[str] | None = None) -> int:
                         check_global_excepts=bool(args.check_global_excepts),
                         check_bare_excepts=bool(args.check_bare_excepts),
                         check_except_as_print=bool(args.check_except_as_print),
-                        check_pass=bool(args.check_pass),
+                            check_pass=bool(args.check_pass),
+                            check_logger_in_try=bool(getattr(args, "check_logger_in_try", True)),
                     )
                 # Enforce 'prefer direct attribute access' axiom
                 if args.check_prefer_direct_attrs:
