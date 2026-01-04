@@ -435,7 +435,14 @@ def check_file(
                     # starting with `_use_pass` indicate the handler
                     # intentionally contains only a `4` and shouldn't be
                     # required to call `printException`.
-                    if (isinstance(name, str) and (name.startswith("_use_stderr") or name.startswith("_use_pass"))):
+                    if (
+                        isinstance(name, str)
+                        and (
+                            name.startswith("_use_stderr")
+                            or name.startswith("_use_pass")
+                            or name.startswith("_no_logging")
+                        )
+                    ):
                         continue
                     # Search the except body for a Call that calls
                     # printException (either as Name or attribute) with
