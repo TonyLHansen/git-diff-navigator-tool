@@ -508,14 +508,14 @@ def check_file(
     except Exception as e:
         printException(e)
 
-    # New check: detect try/except handlers whose body only contains a
+    # Detect try/except handlers whose body only contains a
     # single logger.<method>(...) call. In such cases the try/except adds
     # little value and can be removed around the logger call.
     if check_logger_in_try:
         try:
             try:
                 errs += check_logger_in_try_blocks(path)
-            except NameError:
+            except NameError as _use_pass:
                 # function may be defined later in file; skip
                 pass
             except Exception as e:
@@ -575,10 +575,11 @@ def check_unnecessary_pass_in_except(path: Path) -> List[str]:
 
 
 def check_logger_in_try_blocks(path: Path) -> List[str]:
-    """Detect except handlers whose body contains only a logger.<method>(...) call.
+    """Detect try/except blocks where the try body contains only a single
+    `logger.<method>(...)` call. In that case the surrounding try/except is
+    likely unnecessary and can be removed.
 
-    Such try/except blocks are usually unnecessary around a logging call and
-    can be removed. Returns list of error messages with line numbers.
+    Returns list of error messages with line numbers pointing to the `try`.
     """
     errs: List[str] = []
     try:
@@ -593,23 +594,27 @@ def check_logger_in_try_blocks(path: Path) -> List[str]:
         return errs
 
     class Visitor(ast.NodeVisitor):
-        def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        def visit_Try(self, node: ast.Try) -> None:
             try:
+                # Only consider Try nodes that have at least one except handler
+                if not getattr(node, "handlers", None):
+                    return
                 body = getattr(node, "body", []) or []
-                if len(body) == 1:
-                    stmt = body[0]
-                    # match logger.<method>(...)
-                    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-                        func = stmt.value.func
-                        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "logger":
-                            lineno = getattr(node, "lineno", None)
-                            method = getattr(func, "attr", "<method>")
-                            if lineno is not None:
-                                errs.append(
-                                    f"{path}:{lineno}: except handler only contains logger.{method}(...); remove the try/except around the logger call"
-                                )
+                if len(body) != 1:
+                    return
+                stmt = body[0]
+                # match a single logger.<method>(...) expression statement
+                if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+                    func = stmt.value.func
+                    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "logger":
+                        lineno = getattr(node, "lineno", None)
+                        method = getattr(func, "attr", "<method>")
+                        if lineno is not None:
+                            errs.append(
+                                f"{path}:{lineno}: try/except wraps single logger.{method}(...); remove the try/except around the logger call"
+                            )
             except Exception as e:
-                printException(e, f"walking ExceptHandler in {path} for logger-in-try")
+                printException(e, f"walking Try in {path} for logger-in-try")
             self.generic_visit(node)
 
     Visitor().visit(tree)
@@ -860,7 +865,7 @@ def main(argv: List[str] | None = None) -> int:
         args.check_pass = True
     if args.enable_getattr_not_initialized:
         args.check_getattr_not_initialized = True
-    if getattr(args, "enable_logger_in_try", False):
+    if args.enable_logger_in_try:
         args.check_logger_in_try = True
 
     logger.info("cwd: %s", Path.cwd())
@@ -907,7 +912,7 @@ def main(argv: List[str] | None = None) -> int:
                         check_bare_excepts=bool(args.check_bare_excepts),
                         check_except_as_print=bool(args.check_except_as_print),
                             check_pass=bool(args.check_pass),
-                            check_logger_in_try=bool(getattr(args, "check_logger_in_try", True)),
+                            check_logger_in_try=bool(args.check_logger_in_try),
                     )
                 # Enforce 'prefer direct attribute access' axiom
                 if args.check_prefer_direct_attrs:

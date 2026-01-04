@@ -3210,7 +3210,8 @@ class GitHistoryNavTool(App):
                                                 # safe-read previous border
                                                 try:
                                                     prev_border = getattr(prev_widget.styles, "border", None)
-                                                except Exception:
+                                                except Exception as _ex:
+                                                    printException(_ex)
                                                     prev_border = "<unavailable>"
                                                 try:
                                                     logger.debug(
@@ -3246,7 +3247,8 @@ class GitHistoryNavTool(App):
                                                     prev_widget.styles.border = ("solid", "gray")
                                                     try:
                                                         readback = getattr(prev_widget.styles, "border", None)
-                                                    except Exception:
+                                                    except Exception as _ex:
+                                                        printException(_ex)
                                                         readback = "<unavailable>"
                                                     try:
                                                         logger.debug(
@@ -3255,8 +3257,8 @@ class GitHistoryNavTool(App):
                                                             readback,
                                                             prev_id,
                                                         )
-                                                    except Exception:
-                                                        pass
+                                                    except Exception as _ex:
+                                                        printException(_ex)
                                             except Exception as _ex:
                                                 printException(_ex)
                                 except Exception as _ex:
@@ -3272,8 +3274,8 @@ class GitHistoryNavTool(App):
                                     type(widget).__name__ if widget is not None else None,
                                     key,
                                 )
-                            except Exception:
-                                pass
+                            except Exception as _ex:
+                                printException(_ex)
                             self.set_focus(widget)
                         except Exception as e:
                             self.printException(e, f"could not set focus to widget for {target}")
@@ -3297,7 +3299,8 @@ class GitHistoryNavTool(App):
                                 # read current focused widget border safely
                                 try:
                                     cur_border = getattr(widget.styles, "border", None)
-                                except Exception:
+                                except Exception as _ex:
+                                    printException(_ex)
                                     cur_border = "<unavailable>"
                                 try:
                                     logger.debug(
@@ -3312,15 +3315,16 @@ class GitHistoryNavTool(App):
                                     logger.debug(
                                         "change_focus:%d: setting focused widget.styles.border -> %r for key=%r",
                                         inspect.currentframe().f_lineno,
-                                        ("solid", "white"),
+                                        "solid white",
                                         key,
                                     )
                                 except Exception as _ex:
                                     printException(_ex)
-                                widget.styles.border = ("solid", "white")
+                                widget.styles.border = "solid white"
                                 try:
                                     readback = getattr(widget.styles, "border", None)
-                                except Exception:
+                                except Exception as _ex:
+                                    printException(_ex)
                                     readback = "<unavailable>"
                                 try:
                                     logger.debug(
@@ -3329,8 +3333,8 @@ class GitHistoryNavTool(App):
                                         readback,
                                         key,
                                     )
-                                except Exception:
-                                    pass
+                                except Exception as _ex:
+                                    printException(_ex)
                             except Exception as _ex:
                                 printException(_ex)
                                 # Attempt to resolve by id and set border
@@ -3349,9 +3353,9 @@ class GitHistoryNavTool(App):
                                                 ("solid", "white"),
                                                 key,
                                             )
-                                        except Exception:
-                                            pass
-                                        w.styles.border = ("solid", "white")
+                                        except Exception as _ex:
+                                            printException(_ex)
+                                        w.styles.border = "solid white"
                                 except Exception as _ex:
                                     printException(_ex)
                         except Exception as e:
