@@ -50,6 +50,7 @@ if DOLOGGING:
     try:
         logging.getLogger("markdown_it").setLevel(logging.WARNING)
     except Exception as e:
+        printException(e)
         # Best-effort: don't fail if logger config isn't available
         print(f"configure markdown_it logger failed: {e}", file=sys.stderr)
 logger = logging.getLogger(__name__)
@@ -70,7 +71,8 @@ def get_caller_short(limit: int = 6, maxlen: int = 400) -> str:
     try:
         s = "".join(traceback.format_stack(limit=limit))
         return s.replace("\n", " | ")[:maxlen]
-    except Exception:
+    except Exception as _ex:
+        printException(_ex)
         return ""
 
 
@@ -92,6 +94,7 @@ class AppBase(ListView):
             tb = "".join(traceback.format_exception(type(e), e, getattr(e, "__traceback__", None)))
             logger.warning(tb)
         except Exception as e:
+            printException(e)
             logger.debug("printException: failed to format exception traceback: %s", e)
 
     def __init__(self, *args, **kwargs):
@@ -161,7 +164,8 @@ class AppBase(ListView):
         except Exception as e:
             try:
                 self.printException(e, "extracting label text")
-            except Exception:
+            except Exception as _ex:
+                printException(_ex)
                 logger.debug("_extract_label_text fallback logging failed: %s", e)
             return str(lbl)
 
@@ -385,6 +389,7 @@ class AppBase(ListView):
             try:
                 diff_widget.prepDiffList(filename, prev, curr)
             except Exception as exc:
+                printException(exc)
                 try:
                     self.app.push_screen(_TBDModal(str(exc)))
                 except Exception as e:
@@ -739,6 +744,7 @@ class FileListBase(AppBase):
                 return str(renderable)
             return str(lbl)
         except Exception as exc:
+            printException(exc)
             try:
                 self.app.push_screen(_TBDModal(str(exc)))
             except Exception as e:
@@ -814,13 +820,15 @@ class FileListBase(AppBase):
             try:
                 self.prepFileModeFileList(new_path)
             except Exception as e:
+                printException(e)
                 # restore previous app path values on failure
                 try:
                     if prev_app_path is not None:
                         self.app.path = prev_app_path
                     if prev_displayed is not None:
                         self.app.displayed_path = prev_displayed
-                except Exception:
+                except Exception as _ex:
+                    printException(_ex)
                     pass
                 self.printException(e, "preparatory set_path/prepFileModeFileList failed")
                 return
@@ -1044,6 +1052,7 @@ class FileModeFileList(FileListBase):
                 label = child.query_one(Label)
                 item_name = label.text if hasattr(label, "text") else str(label)
             except Exception as exc:
+                printException(exc)
                 try:
                     self.app.push_screen(_TBDModal(str(exc)))
                 except Exception as e:
@@ -1128,6 +1137,7 @@ class FileModeFileList(FileListBase):
                 except Exception as e:
                     self.printException(e, "exception calling _highlight_filename")
             except Exception as exc:
+                printException(exc)
                 try:
                     self.app.push_screen(_TBDModal(str(exc)))
                 except Exception as e:
@@ -1485,6 +1495,7 @@ class RepoModeFileList(FileListBase):
                                         )
                                     )
                                 except Exception as _e:
+                                    printException(_e)
                                     logger.debug("RepoModeFileList._append_buffer: call_after_refresh failed: %s", _e)
                                     try:
                                         self._highlight_filename(fname)
@@ -1786,10 +1797,11 @@ class HistoryListBase(AppBase):
             if cur is None or cur < min_idx:
                 try:
                     self.call_after_refresh(lambda: setattr(self, "index", min_idx))
-                except Exception:
+                except Exception as _ex:
                     try:
                         self.index = min_idx
-                    except Exception:
+                    except Exception as _ex:
+                        printException(_ex)
                         pass
         except Exception as e:
             self.printException(e, "HistoryListBase.on_focus outer failure")
@@ -1807,7 +1819,8 @@ class HistoryListBase(AppBase):
             try:
                 self.app.current_commit_sha = cur_hash
                 self.app.current_prev_sha = prev_hash
-            except Exception:
+            except Exception as _ex:
+                printException(_ex)
                 pass
 
             # Ensure the highlighted item shows visibly; add highlight class and styles
@@ -2087,6 +2100,7 @@ class FileModeHistoryList(HistoryListBase):
                                 # Schedule a single highlight after the DOM refresh; no retry loop needed
                                 self.app.call_after_refresh(lambda: fl._highlight_filename(fname))
                             except Exception as e:
+                                printException(e)
                                 # Fallback to direct call if scheduling fails
                                 try:
                                     fl._highlight_filename(fname)
@@ -2164,6 +2178,7 @@ class FileModeHistoryList(HistoryListBase):
                 current_hash = m1.group(2)
                 previous_hash = m2.group(2)
             except Exception as exc:
+                printException(exc)
                 try:
                     self.app.push_screen(_TBDModal(f"Could not parse hashes: {exc}"))
                 except Exception as e:
@@ -2949,6 +2964,7 @@ class HelpList(AppBase):
                     try:
                         self.app.restore_state()
                     except Exception as e:
+                        printException(e)
                         # If no saved state, fall back to a sensible default
                         self.printException(
                             e, "restore_state failed in HelpList.more_keys; falling back to file_fullscreen"
@@ -3141,7 +3157,8 @@ class GitHistoryTool(App):
         try:
             tb = "".join(traceback.format_exception(type(e), e, getattr(e, "__traceback__", None)))
             logger.warning(tb)
-        except Exception:
+        except Exception as _ex:
+            printException(_ex)
             pass
 
     # Layout helpers on the App so widgets can call `self.app.layout_*`.
@@ -3426,13 +3443,14 @@ class GitHistoryTool(App):
                             lbl = self.query_one(f"#{tid}", Label)
                             try:
                                 lbl.set_class(False, "active")
-                            except Exception:
+                            except Exception as _ex:
                                 try:
                                     # fallback older API
                                     lbl.remove_class("active")
-                                except Exception:
+                                except Exception as _ex:
                                     pass
-                        except Exception:
+                        except Exception as _ex:
+                            printException(_ex)
                             # missing title label: ignore and continue
                             pass
                 except Exception as e:
@@ -3477,7 +3495,8 @@ class GitHistoryTool(App):
                             # If the widget already has a valid selection, preserve it.
                             try:
                                 cur_idx = getattr(widget, "index", None)
-                            except Exception:
+                            except Exception as _ex:
+                                printException(_ex)
                                 cur_idx = None
                             min_idx = getattr(widget, "_min_index", 0) or 0
                             # Only set/reset index if missing or below the minimum selectable index.
@@ -3492,9 +3511,11 @@ class GitHistoryTool(App):
                                     try:
                                         widget.call_after_refresh(lambda: widget._highlight_filename(fname))
                                     except Exception as e:
+                                        printException(e)
                                         try:
                                             self.call_after_refresh(lambda: widget._highlight_filename(fname))
                                         except Exception as e2:
+                                            printException(e2)
                                             try:
                                                 widget._highlight_filename(fname)
                                             except Exception as e3:
@@ -3956,7 +3977,8 @@ class GitHistoryTool(App):
                 if self.initial_file:
                     try:
                         full = os.path.join(self.path, self.initial_file)
-                    except Exception:
+                    except Exception as _ex:
+                        printException(_ex)
                         full = self.path
                     self.file_mode_file_list.prepFileModeFileList(full)
                     self.file_mode_history_list.prepFileModeHistoryList(self.initial_file)
@@ -4236,9 +4258,10 @@ class GitHistoryTool(App):
                         self.current_diff_file = fname
                         try:
                             self.app.current_diff_file = fname
-                        except Exception:
+                        except Exception as _ex:
                             pass
-                    except Exception:
+                    except Exception as _ex:
+                        printException(_ex)
                         pass
                     logger.debug("toggle: prepping file-mode history for fname=%s", fname)
                     self.file_mode_history_list.prepFileModeHistoryList(fname)
@@ -4309,10 +4332,12 @@ def main() -> None:
             try:
                 atexit.register(logging.shutdown)
             except Exception as e:
+                printException(e)
                 logger.warning(f"atexit.register failed: {e}")
             try:
                 logging.shutdown()
-            except Exception:
+            except Exception as _ex:
+                printException(_ex)
                 pass
             sys.exit(0)
 
@@ -4321,6 +4346,7 @@ def main() -> None:
         signal.signal(signal.SIGINT, _term_handler)
 
     except Exception as e:
+        printException(e)
         # If signals/atexit can't be configured, continue without them.
         logger.warning(f"Signal failed: {e}")
         pass
@@ -4330,6 +4356,7 @@ def main() -> None:
 
         _atexit.register(logging.shutdown)
     except Exception as e:
+        printException(e)
         logger.warning(f"could not register logging.shutdown: {e}")
 
     logger.debug(f"invoking GitHistoryTool(path={args.path}, color={not args.no_color}, log_first={args.log_first})")

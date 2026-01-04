@@ -19,7 +19,8 @@ from functools import wraps
 # Optional pygit2 support — best-effort import to enable repo status checks
 try:
     import pygit2  # type: ignore
-except Exception:
+except Exception as _ex:
+    printException(_ex)
     pygit2 = None
 
 # Third-party UI and rendering imports
@@ -170,8 +171,8 @@ def enable_trace_logging(enabled: bool) -> None:
             for h in root.handlers:
                 try:
                     h.setLevel(TRACE)
-                except Exception as e:
-                    logger.warning("Failed to set handler level to TRACE: %s", e)
+                except Exception as _use_stderr:
+                    logger.warning("Failed to set handler level to TRACE: %s", _use_stderr)
             logger.debug("Trace logging enabled")
     except Exception as e:
         printException(e, "enable_trace_logging failed")
@@ -187,6 +188,7 @@ def printException(e: Exception, msg: Optional[str] = None) -> None:
         logger.warning("%s: %s", short_msg, e)
         logger.warning(traceback.format_exc())
     except Exception as e2:
+        printException(e2)
         # Last-resort fallback to stderr — avoid recursive logging
         sys.stderr.write(f"printException fallback: {e}\n")
         sys.stderr.write(f"secondary exception: {e2}\n")
@@ -453,8 +455,8 @@ class AppBase(ListView):
                                     # path on `app.current_path` so other logic
                                     # can rely on a realpath.
                                     self.app.path = raw
-                                except Exception:
-                                    pass
+                                except Exception as _ex:
+                                    printException(_ex)
                                 try:
                                     if os.path.isabs(raw):
                                         full = raw
@@ -463,7 +465,8 @@ class AppBase(ListView):
                                     # Setter canonicalizes via realpath
                                     try:
                                         self.app.current_path = full
-                                    except Exception:
+                                    except Exception as _ex:
+                                        printException(_ex)
                                         # Best-effort fallback: store raw full
                                         try:
                                             self.app._current_path = os.path.realpath(full)
@@ -809,7 +812,6 @@ class FileListBase(AppBase):
                 self.call_after_refresh(lambda: getattr(node, "scroll_visible", lambda *a, **k: None)(True))
             except Exception as e:
                 self.printException(e, "_ensure_index_visible: scroll_visible failed")
-                pass
         except Exception as e:
             self.printException(e, "_ensure_index_visible failed")
 
@@ -920,6 +922,7 @@ class FileListBase(AppBase):
         try:
             return self.text_of(node)
         except Exception as e:
+            printException(e)
             return str(node)
 
     def _enter_directory(self, filename: str) -> None:
@@ -1424,6 +1427,7 @@ class FileModeFileList(FileListBase):
                                 # stores full paths.
                                 hl = self.path
                         except Exception as e:
+                            printException(e)
                             self.printException(
                                 e, "FileModeFileList._activate_or_open highlight filename fallback failed"
                             )
@@ -1549,7 +1553,8 @@ class RepoModeFileList(FileListBase):
                             status = parts[0]
                             path = parts[1] if len(parts) > 1 else parts[0]
                             items.append((status, path))
-                    except subprocess.CalledProcessError:
+                    except subprocess.CalledProcessError as _ex:
+                        printException(_ex)
                         return []
                     except Exception as e:
                         self.printException(e, f"collecting pseudo entries for {pseudo} failed")
@@ -1633,9 +1638,9 @@ class RepoModeFileList(FileListBase):
                             self.append(item)
                         except Exception as e:
                             self.printException(e, "prepRepoModeFileList parsing line failed")
-                except subprocess.CalledProcessError:
+                except subprocess.CalledProcessError as _ex:
                     # Fallback: no diff output
-                    pass
+                    printException(_ex)
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList git diff failed")
 
@@ -1985,9 +1990,9 @@ class FileModeHistoryList(HistoryListBase):
                             self._add_row(text, h)
                         except Exception as e:
                             self.printException(e, "prepFileModeHistoryList parse failed")
-                except subprocess.CalledProcessError:
+                except subprocess.CalledProcessError as _ex:
                     # no history or git failed; fall back to synthetic
-                    pass
+                    printException(_ex)
                 except Exception as e:
                     self.printException(e, "prepFileModeHistoryList git log failed")
 
@@ -2150,8 +2155,8 @@ class RepoModeHistoryList(HistoryListBase):
                             self._add_row(text, commit_hash)
                         except Exception as e:
                             self.printException(e, "prepRepoModeHistoryList parse failed")
-                except subprocess.CalledProcessError:
-                    pass
+                except subprocess.CalledProcessError as _ex:
+                    printException(_ex)
                 except Exception as e:
                     self.printException(e, "prepRepoModeHistoryList git log failed")
             self._populated = True
@@ -2704,6 +2709,7 @@ class GitHistoryNavTool(App):
                 self.diff_list = self.query_one(f"#{DIFF_LIST_ID}", DiffList)
                 self.help_list = self.query_one(f"#{HELP_LIST_ID}", HelpList)
             except Exception as e:
+                printException(e)
                 # composition must match expected ids
                 raise RuntimeError(f"widget resolution failed in on_mount: {e}") from e
 
@@ -3167,17 +3173,18 @@ class GitHistoryNavTool(App):
                                         prev_widget = None
                                         try:
                                             prev_widget = self.query_one(prev_id)
-                                        except Exception:
+                                        except Exception as _ex:
+                                            printException(_ex)
                                             prev_widget = None
                                         if prev_widget is not None:
                                             try:
                                                 prev_widget.styles.border = "solid gray"
-                                            except Exception:
-                                                pass
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
+                                            except Exception as _ex:
+                                                printException(_ex)
+                                except Exception as _ex:
+                                    printException(_ex)
+                        except Exception as _ex:
+                            printException(_ex)
 
                         try:
                             self.set_focus(widget)
@@ -3193,21 +3200,20 @@ class GitHistoryNavTool(App):
                         try:
                             try:
                                 widget.styles.border = "solid white"
-                            except Exception:
+                            except Exception as _ex:
+                                printException(_ex)
                                 # Attempt to resolve by id and set border
                                 try:
                                     w = None
                                     try:
                                         w = self.query_one(f"#{key}")
-                                    except Exception:
-                                        w = None
+                                    except Exception as _ex:
+                                            printException(_ex)
+                                            w = None
                                     if w is not None:
-                                        try:
-                                            w.styles.border = "solid white"
-                                        except Exception:
-                                            pass
-                                except Exception:
-                                    pass
+                                        w.styles.border = "solid white"
+                                except Exception as _ex:
+                                    printException(_ex)
                         except Exception as e:
                             self.printException(e, "change_focus: setting focused widget border failed")
                         # best-effort normalize index/scroll for file lists
@@ -3535,7 +3541,8 @@ def discover_repo_worktree(start_path: str | None) -> str:
     """
     try:
         start = os.path.abspath(start_path or os.getcwd())
-    except Exception:
+    except Exception as _ex:
+        printException(_ex)
         start = os.getcwd()
 
     # Try pygit2 discovery first
@@ -3566,7 +3573,8 @@ def discover_repo_worktree(start_path: str | None) -> str:
         if topo:
             try:
                 worktree = os.path.realpath(topo)
-            except Exception:
+            except Exception as _ex:
+                printException(_ex)
                 logger.debug("discover_repo_worktree: realpath failed for topo=%s", topo)
                 worktree = topo
             logger.debug("discover_repo_worktree: git rev-parse -> %s (worktree=%s)", topo, worktree)

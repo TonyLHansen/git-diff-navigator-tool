@@ -29,7 +29,10 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 
 
-ROOT = Path(__file__).resolve().parents[1]
+# Default scanning root: current working directory. This makes the tool
+# behave as a general-purpose checker that defaults to where it's run.
+# Users may still override with `--root`.
+ROOT = Path.cwd()
 PY_EXT = "*.py"
 
 # How many lines after an except to search for a printException call
@@ -37,7 +40,6 @@ EXCEPT_LOOKAHEAD = 8
 
 
 def list_py_files(root: Path) -> List[Path]:
-    ignore_parts = {"venv-3.14", "venv", ".venv", "__pycache__"}
     files: List[Path] = []
 
     # Also include files that have a python shebang (#!...python) even if
@@ -48,12 +50,26 @@ def list_py_files(root: Path) -> List[Path]:
         try:
             if not p.is_file():
                 continue
-            if any(part in ignore_parts for part in p.parts):
+            # Skip virtualenvs, caches and package dirs to avoid scanning
+            # third-party site-packages and user venvs. Match on path
+            # components (parts) rather than naive substring checks so
+            # names like 'venv-3.14.sv' are correctly excluded.
+            parts_lower = [part.lower() for part in p.parts]
+            skip = False
+            for part in parts_lower:
+                if part in ("__pycache__", ".git", "build", "dist"):
+                    skip = True
+                    break
+                if part.startswith("venv") or part.startswith(".venv") or part.startswith("env") or "site-packages" in part:
+                    skip = True
+                    break
+            if skip:
                 continue
             name = p.name.lower()
-            if "old" in name or "sv" in name:
+            # Keep a light heuristic to ignore backup files named like 'old'
+            if "old." in name or name.startswith("old") or name.endswith("~"):
                 continue
-            if name.suffix == ".py":
+            if p.suffix.lower() == ".py":
                 files.append(p)
                 continue
 
@@ -130,8 +146,7 @@ def _find_bare_except_locations(path: Path) -> List[tuple[int, bool]]:
         def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
             # ast.ExceptHandler.type is None for bare `except:`
             if node.type is None:
-                in_class = "class" in getattr(self, "stack", [])
-                # in_class = "class" in self.stack
+                in_class = "class" in self.stack
                 lineno = getattr(node, "lineno", None)
                 if lineno is not None:
                     results.append((lineno, in_class))
@@ -148,10 +163,12 @@ def _find_except_without_name_locations(path: Path) -> List[int]:
     try:
         src = path.read_text(encoding="utf-8")
     except Exception as e:
+        printException(e, f"reading {path}")
         return []
     try:
         tree = ast.parse(src)
     except Exception as e:
+        printException(e)
         return []
 
     results: List[int] = []
@@ -284,10 +301,12 @@ def _find_parse_args_targets(path: Path) -> set:
     try:
         src = path.read_text(encoding="utf-8")
     except Exception as e:
+        printException(e, f"reading {path}")
         return set()
     try:
         tree = ast.parse(src)
     except Exception as e:
+        printException(e)
         return set()
 
     targets: set = set()
@@ -301,7 +320,7 @@ def _find_parse_args_targets(path: Path) -> set:
                         if isinstance(t, ast.Name):
                             targets.add(t.id)
             except Exception as e:
-                pass
+                printException(e)
             self.generic_visit(node)
 
     Finder().visit(tree)
@@ -316,10 +335,12 @@ def _find_getattr_on_vars(path: Path, varnames: set) -> List[tuple[int, str, str
     try:
         src = path.read_text(encoding="utf-8")
     except Exception as e:
+        printException(e, f"reading {path}")
         return []
     try:
         tree = ast.parse(src)
     except Exception as e:
+        printException(e)
         return []
 
     results: List[tuple[int, str, str]] = []
@@ -342,7 +363,7 @@ def _find_getattr_on_vars(path: Path, varnames: set) -> List[tuple[int, str, str
                                 if lineno is not None:
                                     results.append((lineno, first.id, attr))
             except Exception as e:
-                pass
+                printException(e)
             self.generic_visit(node)
 
     Finder().visit(tree)
@@ -369,6 +390,7 @@ def check_file(path: Path, check_global_excepts: bool = False, check_bare_except
         try:
             no_name_linenos = _find_except_without_name_locations(path)
         except Exception as e:
+            printException(e)
             no_name_linenos = []
         for lineno in no_name_linenos:
             errs.append(f"{path}:{lineno}: 'except [<type>]:' without 'as <var>' detected")
@@ -378,31 +400,78 @@ def check_file(path: Path, check_global_excepts: bool = False, check_bare_except
     # These checks are gated by `check_except_as_print` so they can be
     # disabled independently.
     if check_except_as_print:
-        # Match any `except TYPE as var:` to ensure `var` is used in
-        # a subsequent printException(...) call. This check is separate
-        # from the bare-except detection above.
-        pattern_except_as = re.compile(r"^\s*except\s+(?P<typ>[A-Za-z0-9_\.]+)\s+as\s+(?P<var>[A-Za-z_][A-Za-z0-9_]*)\s*:")
-
-        for i, ln in enumerate(lines, start=1):
-            m = pattern_except_as.match(ln)
-            if m:
-                var = m.group("var")
-                # If the exception identifier is `_use_stderr`, the caller
-                # intentionally uses stderr directly and we don't require
-                # a subsequent printException(...) call.
-                if var == "_use_stderr":
-                    continue
-                # Look ahead for a printException call referencing var
-                found = False
-                for j in range(i, min(i + EXCEPT_LOOKAHEAD, len(lines))):
-                    snippet = lines[j]
-                    if re.search(rf"\b(printException|\.printException)\s*\(.*\b{re.escape(var)}\b", snippet):
-                        found = True
-                        break
-                if not found:
-                    errs.append(
-                        f"{path}:{i}: 'except {m.group('typ')} as {var}:' not followed by printException({var}, ...) within {EXCEPT_LOOKAHEAD} lines"
-                    )
+        # Use AST-based detection: for each ExceptHandler that binds a
+        # name (`except Type as var:`), ensure the handler body contains
+        # a call to `printException(var, ...)` or `.printException(..., var)`.
+        try:
+            tree = ast.parse(text)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ExceptHandler):
+                    name = getattr(node, "name", None)
+                    if name is None:
+                        continue
+                    # `_use_stderr` intentionally writes to stderr; names
+                    # starting with `_use_pass` indicate the handler
+                    # intentionally contains only a `4` and shouldn't be
+                    # required to call `printException`.
+                    if (isinstance(name, str) and (name.startswith("_use_stderr") or name.startswith("_use_pass"))):
+                        continue
+                    # Search the except body for a Call that calls
+                    # printException (either as Name or attribute) with
+                    # the exception variable as an argument.
+                    found = False
+                    for sub in ast.walk(node):
+                        if isinstance(sub, ast.Call):
+                            func = sub.func
+                            is_print = False
+                            if isinstance(func, ast.Name) and func.id == "printException":
+                                is_print = True
+                            elif isinstance(func, ast.Attribute) and func.attr == "printException":
+                                is_print = True
+                            if not is_print:
+                                continue
+                            # Check arguments for a Name matching the exception
+                            for a in list(sub.args) + list(getattr(sub, 'keywords', [])):
+                                # keywords are ast.keyword; check .arg for name and .value for expression
+                                if isinstance(a, ast.keyword):
+                                    val = a.value
+                                else:
+                                    val = a
+                                if isinstance(val, ast.Name) and val.id == name:
+                                    found = True
+                                    break
+                            if found:
+                                break
+                    if not found:
+                        lineno = getattr(node, "lineno", None) or 0
+                        # Determine a printable type name if possible
+                        typ = None
+                        tnode = getattr(node, "type", None)
+                        if isinstance(tnode, ast.Name):
+                            typ = tnode.id
+                        elif isinstance(tnode, ast.Attribute):
+                            # e.g. module.Error
+                            parts = []
+                            cur = tnode
+                            while isinstance(cur, ast.Attribute):
+                                parts.append(cur.attr)
+                                cur = cur.value
+                            if isinstance(cur, ast.Name):
+                                parts.append(cur.id)
+                                typ = ".".join(reversed(parts))
+                        typ = typ or "<type>"
+                        msg = f"{path}:{lineno}: 'except {typ} as {name}:' not followed by printException({name}, ...) in handler body"
+                        # If the except body is a single `pass`, give a more
+                        # actionable message suggesting replacement.
+                        try:
+                            body = getattr(node, "body", []) or []
+                            if len(body) == 1 and isinstance(body[0], ast.Pass):
+                                msg += ". Replace the 'pass' with printException"
+                        except Exception as e:
+                            printException(e, f"inspecting except body in {path}")
+                        errs.append(msg)
+        except Exception as e:
+            printException(e, f"parsing AST for except-as-print in {path}")
 
     # Additional check: flag unnecessary `pass` statements inside
     # `except ... as var:` blocks when other statements are present.
@@ -410,13 +479,13 @@ def check_file(path: Path, check_global_excepts: bool = False, check_bare_except
         if check_pass:
             try:
                 errs += check_unnecessary_pass_in_except(path)
-            except NameError as e:
+            except NameError as _use_pass:
                 # function may be defined later in the file; skip for now
                 pass
             except Exception as e:
                 printException(e, f"checking unnecessary pass in except for {path}")
     except Exception as e:
-        pass
+        printException(e)
 
     return errs
 
@@ -509,6 +578,7 @@ def check_prefer_direct_attrs(path: Path) -> List[str]:
     try:
         parse_args_vars = _find_parse_args_targets(path)
     except Exception as e:
+        printException(e)
         parse_args_vars = set()
 
     if parse_args_vars:
@@ -530,6 +600,7 @@ def run_py_compile(py_files: List[Path]) -> List[Tuple[Path, str]]:
         try:
             subprocess.run([sys.executable, "-m", "py_compile", str(p)], check=True, capture_output=True)
         except subprocess.CalledProcessError as cpe:
+            printException(cpe)
             out = (cpe.stdout or b"").decode("utf-8", errors="replace")
             err = (cpe.stderr or b"").decode("utf-8", errors="replace")
             failures.append((p, out + "\n" + err))
@@ -618,7 +689,7 @@ def main(argv: List[str] | None = None) -> int:
     root = Path(args.root)
 
     # If --NONE specified, disable all checks (convenience shorthand)
-    if getattr(args, "none", False):
+    if args.none:
         args.check_bare_excepts = False
         args.check_except_as_print = False
         args.check_prefer_direct_attrs = False
@@ -626,37 +697,42 @@ def main(argv: List[str] | None = None) -> int:
         args.check_pass = False
 
     # Honor explicit small-letter re-enable flags after --NONE
-    if getattr(args, "enable_bare_excepts", False):
+    if args.enable_bare_excepts:
         args.check_bare_excepts = True
-    if getattr(args, "enable_except_as_print", False):
+    if args.enable_except_as_print:
         args.check_except_as_print = True
-    if getattr(args, "enable_prefer_direct_attrs", False):
+    if args.enable_prefer_direct_attrs:
         args.check_prefer_direct_attrs = True
-    if getattr(args, "enable_py_compile", False):
+    if args.enable_py_compile:
         args.check_py_compile = True
-    if getattr(args, "enable_pass_check", False):
+    if args.enable_pass_check:
         args.check_pass = True
 
+    os.system("/bin/pwd")  # debug
+
     # If explicit files/dirs were provided, use them (override discovery).
-    if getattr(args, "files", None):
+    if args.files:
         supplied: List[Path] = []
         for f in args.files:
+            print(f"Supplied path: {f}")
             p = Path(f)
             if not p.is_absolute():
                 p = root.joinpath(p)
             supplied.append(p)
+            print(f"  resolved to: {p}")
 
         py_files_set = []
         for p in supplied:
             try:
+                print(f"Processing supplied path: {p}")
                 if p.is_dir():
                     for q in list_py_files(p):
+                        print(f"  found: {q}")
                         py_files_set.append(q)
                 elif p.exists():
                     py_files_set.append(p)
-            # except Exception as e:
             except Exception as e:
-                # printException(e, f"processing supplied path {p}")
+                printException(e, f"processing supplied path {p}")
                 continue
         py_files = sorted({p for p in py_files_set})
     else:
@@ -672,13 +748,13 @@ def main(argv: List[str] | None = None) -> int:
                 if args.check_bare_excepts or args.check_except_as_print or args.check_pass:
                     errs += check_file(
                         p,
-                        check_global_excepts=bool(getattr(args, "check_global_excepts", False)),
-                        check_bare_excepts=bool(getattr(args, "check_bare_excepts", True)),
-                        check_except_as_print=bool(getattr(args, "check_except_as_print", True)),
-                        check_pass=bool(getattr(args, "check_pass", True)),
+                        check_global_excepts=bool(args.check_global_excepts),
+                        check_bare_excepts=bool(args.check_bare_excepts),
+                        check_except_as_print=bool(args.check_except_as_print),
+                        check_pass=bool(args.check_pass),
                     )
                 # Enforce 'prefer direct attribute access' axiom
-                if getattr(args, "check_prefer_direct_attrs", True):
+                if args.check_prefer_direct_attrs:
                     try:
                         errs += check_prefer_direct_attrs(p)
                     except Exception as e:
@@ -696,7 +772,7 @@ def main(argv: List[str] | None = None) -> int:
 
     # Always run py_compile as a final gate
     failures = []
-    if getattr(args, "check_py_compile", True):
+    if args.check_py_compile:
         failures = run_py_compile(py_files)
     if failures:
         error_count += len(failures)
