@@ -63,7 +63,7 @@ INLINE_CSS = """
 
 /* Title labels */
 #left-file-title, #left-history-title, #right-history-title, #right-file-title, #diff-title, #help-title {
-    padding: 1 1;
+    padding: 0 1;
     background: $surface;
     color: $text;
 }
