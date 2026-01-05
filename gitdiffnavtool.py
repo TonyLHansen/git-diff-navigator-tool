@@ -2066,57 +2066,40 @@ class FileModeHistoryList(HistoryListBase):
         try:
             logger.debug("prepFileModeHistoryList: path=%r prev_hash=%r curr_hash=%r", path, prev_hash, curr_hash)
             self.clear()
-            # If repository available, call git log --follow for the path
+            # If repository available, collect pseudo-entries (MODS/STAGED)
+            # and commit history via backend helpers.
             repo_root = self.app.repo_root
-            # First, check for working-tree pseudo-entries for this file
             try:
                 try:
-                    # Normalize to repo-relative path for git commands
+                    # Normalize to repo-relative path for backend helpers
                     rel_path = path if not os.path.isabs(path) else os.path.relpath(path, repo_root)
                 except Exception as e:
                     self.printException(e, "prepFileModeHistoryList: computing rel_path failed")
                     rel_path = path
-                # Check unstaged modifications for this file
-                try:
-                    cmd = ["git", "-C", repo_root, "diff", "--name-only", "--", rel_path]
-                    proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList diff --name-only")
-                    mods = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
-                except Exception as e:
-                    self.printException(e, "prepFileModeHistoryList getting modified file failed")
-                    mods = []
-                # Check staged (indexed) changes for this file
-                try:
-                    cmd = ["git", "-C", repo_root, "diff", "--name-only", "--cached", "--", rel_path]
-                    proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList diff --name-only --cached")
-                    staged = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
-                except Exception as e:
-                    self.printException(e, "prepFileModeHistoryList getting staged file failed")
-                    staged = []
-                # Insert MODS then STAGED at the top if present for this file
-                try:
-                    if mods:
-                        self._add_row(f"MODS (modified, unstaged)", "MODS")
-                    if staged:
-                        self._add_row(f"STAGED (staged, uncommitted)", "STAGED")
-                except Exception as e:
-                    self.printException(e, "prepFileModeHistoryList adding pseudo-rows failed")
-            except Exception as e:
-                # Fall through to normal git log population if anything fails
-                self.printException(e, "prepFileModeHistoryList failed")
 
-            if repo_root:
-                try:
-                    # Use pygit2 when available for faster programmatic access;
-                    # otherwise fall back to invoking the git CLI.
-                    entries: list[tuple[str, str, str]] = []
+                pseudo_entries: list[tuple[str, str]] = []
+                entries: list[tuple[str, str, str]] = []
+                if repo_root:
                     try:
-                        if pygit2:
-                            entries = self._prepFileModeHistoryList_from_pygit2(repo_root, rel_path)
+                        if pygit2 and getattr(self.app, "pygit2_repo", None):
+                            pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
                         else:
-                            entries = self._prepFileModeHistoryList_from_git(repo_root, rel_path)
+                            pseudo_entries, entries = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
                     except Exception as e:
-                        self.printException(e, "prepFileModeHistoryList collecting history entries failed")
+                        self.printException(e, "prepFileModeHistoryList collecting history failed")
 
+                # render pseudo entries first
+                try:
+                    for status, desc in pseudo_entries:
+                        try:
+                            self._add_row(desc, status)
+                        except Exception as e:
+                            self.printException(e, "prepFileModeHistoryList adding pseudo-row failed")
+                except Exception as e:
+                    self.printException(e, "prepFileModeHistoryList rendering pseudo entries failed")
+
+                # then render real commit entries
+                try:
                     for h, date_stamp, msg in entries:
                         try:
                             short_hash = h[:12] if h else ""
@@ -2124,11 +2107,8 @@ class FileModeHistoryList(HistoryListBase):
                             self._add_row(text, h)
                         except Exception as e:
                             self.printException(e, "prepFileModeHistoryList parse failed")
-                except subprocess.CalledProcessError as _ex:
-                    # no history or git failed; fall back to synthetic
-                    printException(_ex)
                 except Exception as e:
-                    self.printException(e, "prepFileModeHistoryList git log failed")
+                    self.printException(e, "prepFileModeHistoryList rendering commits failed")
 
             self._populated = True
             # Highlight requested commits when provided. Prefer `curr_hash`
@@ -2163,7 +2143,7 @@ class FileModeHistoryList(HistoryListBase):
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
 
-    def _prepFileModeHistoryList_from_git(self, repo_root: str, rel_path: str) -> list[tuple[str, str, str]]:
+    def _prepFileModeHistoryList_commits_from_git(self, repo_root: str, rel_path: str) -> list[tuple[str, str, str]]:
         """Return a list of (hash, date, subject) using the git CLI."""
         entries: list[tuple[str, str, str]] = []
         try:
@@ -2187,12 +2167,12 @@ class FileModeHistoryList(HistoryListBase):
                     msg = parts[2] if len(parts) > 2 else ""
                     entries.append((h, date_stamp, msg))
                 except Exception as e:
-                    self.printException(e, "_prepFileModeHistoryList_from_git parse failed")
+                    self.printException(e, "_prepFileModeHistoryList_commits_from_git parse failed")
         except Exception as e:
-            self.printException(e, "_prepFileModeHistoryList_from_git failed")
+            self.printException(e, "_prepFileModeHistoryList_commits_from_git failed")
         return entries
 
-    def _prepFileModeHistoryList_from_pygit2(self, repo_root: str, rel_path: str) -> list[tuple[str, str, str]]:
+    def _prepFileModeHistoryList_commits_from_pygit2(self, repo_root: str, rel_path: str) -> list[tuple[str, str, str]]:
         """Return a list of (hash, date, subject) using pygit2.
 
         Note: this implementation does not fully implement `--follow` (rename
@@ -2265,15 +2245,105 @@ class FileModeHistoryList(HistoryListBase):
                             msg = (commit.message or "").splitlines()[0].strip()
                             entries.append((h, date_stamp, msg))
                         except Exception as e:
-                            self.printException(e, "_prepFileModeHistoryList_from_pygit2 entry build failed")
+                            self.printException(e, "_prepFileModeHistoryList_commits_from_pygit2 entry build failed")
                 except Exception as _ex:
                     printException(_ex)
                     continue
         except Exception as e:
-            self.printException(e, "_prepFileModeHistoryList_from_pygit2 failed")
+            self.printException(e, "_prepFileModeHistoryList_commits_from_pygit2 failed")
         return entries
 
     
+    def _prepFileModeHistoryList_for_git(self, repo_root: str, rel_path: str) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
+        """Collect pseudo entries and commits for a single file using git CLI.
+
+        Returns (pseudo_entries, commits) where pseudo_entries is a list of
+        (status, desc) tuples and commits is a list of (hash, date, msg).
+        """
+        pseudo_entries: list[tuple[str, str]] = []
+        commits: list[tuple[str, str, str]] = []
+        try:
+            try:
+                cmd = ["git", "-C", repo_root, "diff", "--name-only", "--", rel_path]
+                proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList diff --name-only")
+                mods = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+            except Exception as e:
+                self.printException(e, "_prepFileModeHistoryList_for_git getting modified file failed")
+                mods = []
+            try:
+                cmd = ["git", "-C", repo_root, "diff", "--name-only", "--cached", "--", rel_path]
+                proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList diff --name-only --cached")
+                staged = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+            except Exception as e:
+                self.printException(e, "_prepFileModeHistoryList_for_git getting staged file failed")
+                staged = []
+
+            try:
+                if mods:
+                    pseudo_entries.append(("MODS", "MODS (modified, unstaged)"))
+                if staged:
+                    pseudo_entries.append(("STAGED", "STAGED (staged, uncommitted)"))
+            except Exception as e:
+                self.printException(e, "_prepFileModeHistoryList_for_git adding pseudo summaries failed")
+
+            try:
+                commits = self._prepFileModeHistoryList_commits_from_git(repo_root, rel_path)
+            except Exception as e:
+                self.printException(e, "_prepFileModeHistoryList_for_git collecting commits failed")
+        except Exception as e:
+            self.printException(e, "_prepFileModeHistoryList_for_git failed")
+        return (pseudo_entries, commits)
+
+    def _prepFileModeHistoryList_for_pygit2(self, repo_root: str, rel_path: str) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
+        """Collect pseudo entries and commits for a single file using pygit2.
+
+        Returns (pseudo_entries, commits) similar to the git helper.
+        """
+        pseudo_entries: list[tuple[str, str]] = []
+        commits: list[tuple[str, str, str]] = []
+        try:
+            try:
+                repo = self.app.pygit2_repo
+            except Exception as _ex:
+                self.printException(_ex, "_prepFileModeHistoryList_for_pygit2: accessing pygit2_repo failed")
+                return (pseudo_entries, commits)
+
+            try:
+                status = repo.status_file(rel_path)
+            except Exception as e:
+                self.printException(e, "_prepFileModeHistoryList_for_pygit2: repo.status_file failed")
+                status = 0
+
+            try:
+                mods_flags = (
+                    pygit2.GIT_STATUS_WT_NEW
+                    | pygit2.GIT_STATUS_WT_MODIFIED
+                    | pygit2.GIT_STATUS_WT_RENAMED
+                    | pygit2.GIT_STATUS_WT_TYPECHANGE
+                    | pygit2.GIT_STATUS_WT_DELETED
+                )
+                index_flags = (
+                    pygit2.GIT_STATUS_INDEX_NEW
+                    | pygit2.GIT_STATUS_INDEX_MODIFIED
+                    | pygit2.GIT_STATUS_INDEX_RENAMED
+                    | pygit2.GIT_STATUS_INDEX_TYPECHANGE
+                    | pygit2.GIT_STATUS_INDEX_DELETED
+                )
+                if status & mods_flags:
+                    pseudo_entries.append(("MODS", "MODS (modified, unstaged)"))
+                if status & index_flags:
+                    pseudo_entries.append(("STAGED", "STAGED (staged, uncommitted)"))
+            except Exception as e:
+                self.printException(e, "_prepFileModeHistoryList_for_pygit2 adding pseudo summaries failed")
+
+            try:
+                commits = self._prepFileModeHistoryList_commits_from_pygit2(repo_root, rel_path)
+            except Exception as e:
+                self.printException(e, "_prepFileModeHistoryList_for_pygit2 collecting commits failed")
+        except Exception as e:
+            self.printException(e, "_prepFileModeHistoryList_for_pygit2 failed")
+        return (pseudo_entries, commits)
+
 
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Open the diff for the selected file commit-pair.
