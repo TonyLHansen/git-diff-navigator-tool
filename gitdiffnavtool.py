@@ -208,38 +208,6 @@ def run_cmd_log(cmd: list[str], label: str | None = None, text: bool = True, cap
     return proc
 
 
-def compare_pygit2_to_git_output(pygout, gitout, context: str | None = None) -> None:
-    """Compare two outputs (pygit2 vs git) and print differences.
-
-    This does a simple textual diff of the pretty-printed representations
-    so structural differences are visible. `context` is an optional label
-    describing where the comparison was invoked.
-    """
-    try:
-        import pprint
-        import difflib
-
-        ctx = f" [{context}]" if context else ""
-        pyg_s = pprint.pformat(pygout, width=120).splitlines()
-        git_s = pprint.pformat(gitout, width=120).splitlines()
-        if pyg_s == git_s:
-            logger.debug("compare_pygit2_to_git_output%s: outputs identical", ctx)
-            return
-        msg = [f"compare_pygit2_to_git_output{ctx}: outputs differ:"]
-        diff = list(difflib.unified_diff(git_s, pyg_s, fromfile="git", tofile="pygit2", lineterm=""))
-        if not diff:
-            msg.append("(difference detected but diff is empty)")
-        else:
-            msg.extend(diff)
-        # Print to stdout for immediate visibility and also log warn.
-        for ln in msg:
-            print(ln)
-            logger.warning(ln)
-    except Exception as e:
-        # Best-effort: don't raise during prep; just log the comparison failure.
-        printException("compare_pygit2_to_git_output failed: %s", e)
-
-
 class AppBase(ListView):
     """Base widget class for list-like components providing shared helpers.
 
@@ -294,6 +262,36 @@ class AppBase(ListView):
             logger.warning("%s stderr (cmd=%s):\n%s", lab, " ".join(cmd), proc.stderr.strip())
         logger.trace("%s stdout (cmd=%s):\n%s", lab, " ".join(cmd), proc.stdout or "")
         return proc
+
+    def compare_pygit2_to_git_output(self, pygout, gitout, context: str | None = None) -> None:
+        """Compare two outputs (pygit2 vs git) and print differences.
+
+        This does a simple textual diff of the pretty-printed representations
+        so structural differences are visible. `context` is an optional label
+        describing where the comparison was invoked.
+        """
+        try:
+            import pprint
+            import difflib
+
+            ctx = f" [{context}]" if context else ""
+            pyg_s = pprint.pformat(pygout, width=120).splitlines()
+            git_s = pprint.pformat(gitout, width=120).splitlines()
+            if pyg_s == git_s:
+                logger.debug("compare_pygit2_to_git_output%s: outputs identical", ctx)
+                return
+            msg = [f"compare_pygit2_to_git_output{ctx}: outputs differ:"]
+            diff = list(difflib.unified_diff(git_s, pyg_s, fromfile="git", tofile="pygit2", lineterm=""))
+            if not diff:
+                msg.append("(difference detected but diff is empty)")
+            else:
+                msg.extend(diff)
+            # Print to stdout for immediate visibility and also log warn.
+            for ln in msg:
+                print(ln)
+                logger.warning(ln)
+        except Exception as e:
+            self.printException(e, "compare_pygit2_to_git_output failed")
 
     def text_of(self, node) -> str:
         """Extract visible text from a ListItem's Label or renderable."""
@@ -1074,7 +1072,7 @@ class FileModeFileList(FileListBase):
                 if self.app.test_pygit2:
                     file_infos = self._prepFileModeFileList_from_pygit2(path, relpath, status_map)
                     file_infos_git = self._prepFileModeFileList_from_git(path, relpath, status_map)
-                    compare_pygit2_to_git_output(file_infos, file_infos_git, "prepFileModeFileList")
+                    self.compare_pygit2_to_git_output(file_infos, file_infos_git, "prepFileModeFileList")
                 elif pygit2:
                     file_infos = self._prepFileModeFileList_from_pygit2(path, relpath, status_map)
                 else:
@@ -1578,7 +1576,7 @@ class RepoModeFileList(FileListBase):
                     if self.app.test_pygit2:
                         entries = self._prepRepoModeFileList_from_pygit2(prev_hash, curr_hash)
                         out_git = self._prepRepoModeFileList_from_git(prev_hash, curr_hash)
-                        compare_pygit2_to_git_output(entries, out_git, "prepRepoModeFileList")
+                        self.compare_pygit2_to_git_output(entries, out_git, "prepRepoModeFileList")
                     elif pygit2:
                         entries = self._prepRepoModeFileList_from_pygit2(prev_hash, curr_hash)
                     else:
@@ -2112,8 +2110,8 @@ class FileModeHistoryList(HistoryListBase):
                             if self.app.test_pygit2:
                                 pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
                                 pseudo_entries_git, entries_git = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
-                                compare_pygit2_to_git_output(pseudo_entries, pseudo_entries_git, "prepFileModeHistoryList pseudo_entries")
-                                compare_pygit2_to_git_output(entries, entries_git, "prepFileModeHistoryList entries")
+                                self.compare_pygit2_to_git_output(pseudo_entries, pseudo_entries_git, "prepFileModeHistoryList pseudo_entries")
+                                self.compare_pygit2_to_git_output(entries, entries_git, "prepFileModeHistoryList entries")
                             elif pygit2:
                                 pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
                             else:
@@ -2454,8 +2452,8 @@ class RepoModeHistoryList(HistoryListBase):
                 if self.app.test_pygit2:
                     pseudo_entries, commits = self._prepRepoModeHistoryList_for_pygit2(repo_path, prev_hash, curr_hash)
                     pseudo_entries_git, commits_git = self._prepRepoModeHistoryList_for_git(repo_path, prev_hash, curr_hash)
-                    compare_pygit2_to_git_output(pseudo_entries, pseudo_entries_git, "prepRepoModeHistoryList pseudo_entries")
-                    compare_pygit2_to_git_output(commits, commits_git, "prepRepoModeHistoryList commits")
+                    self.compare_pygit2_to_git_output(pseudo_entries, pseudo_entries_git, "prepRepoModeHistoryList pseudo_entries")
+                    self.compare_pygit2_to_git_output(commits, commits_git, "prepRepoModeHistoryList commits")
                 elif pygit2:
                     pseudo_entries, commits = self._prepRepoModeHistoryList_for_pygit2(repo_path, prev_hash, curr_hash)
                 else:
