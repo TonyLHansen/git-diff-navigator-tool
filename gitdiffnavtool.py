@@ -15,6 +15,7 @@ import subprocess
 import traceback
 import inspect
 from typing import Optional
+from datetime import datetime
 from functools import wraps
 
 # Optional pygit2 support — best-effort import to enable repo status checks
@@ -1967,24 +1968,19 @@ class FileModeHistoryList(HistoryListBase):
 
             if repo_root:
                 try:
-                    cmd = [
-                        "git",
-                        "-C",
-                        repo_root,
-                        "log",
-                        "--follow",
-                        "--pretty=format:%H\t%ad\t%s",
-                        "--date=short",
-                        "--",
-                        path,
-                    ]
-                    proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList git log")
-                    for ln in (proc.stdout or "").splitlines():
+                    # Use pygit2 when available for faster programmatic access;
+                    # otherwise fall back to invoking the git CLI.
+                    entries: list[tuple[str, str, str]] = []
+                    try:
+                        if pygit2:
+                            entries = self._prepFileModeHistoryList_from_pygit2(repo_root, rel_path)
+                        else:
+                            entries = self._prepFileModeHistoryList_from_git(repo_root, rel_path)
+                    except Exception as e:
+                        self.printException(e, "prepFileModeHistoryList collecting history entries failed")
+
+                    for h, date_stamp, msg in entries:
                         try:
-                            parts = ln.split("\t", 2)
-                            h = parts[0]
-                            date_stamp = parts[1] if len(parts) > 1 else ""
-                            msg = parts[2] if len(parts) > 2 else ""
                             short_hash = h[:12] if h else ""
                             text = f"{date_stamp} {short_hash} {msg}".strip()
                             self._add_row(text, h)
@@ -2028,6 +2024,116 @@ class FileModeHistoryList(HistoryListBase):
                 self.printException(e, "prepFileModeHistoryList: highlight failed")
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
+
+    def _prepFileModeHistoryList_from_git(self, repo_root: str, rel_path: str) -> list[tuple[str, str, str]]:
+        """Return a list of (hash, date, subject) using the git CLI."""
+        entries: list[tuple[str, str, str]] = []
+        try:
+            cmd = [
+                "git",
+                "-C",
+                repo_root,
+                "log",
+                "--follow",
+                "--pretty=format:%H\t%ad\t%s",
+                "--date=short",
+                "--",
+                rel_path,
+            ]
+            proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList git log")
+            for ln in (proc.stdout or "").splitlines():
+                try:
+                    parts = ln.split("\t", 2)
+                    h = parts[0]
+                    date_stamp = parts[1] if len(parts) > 1 else ""
+                    msg = parts[2] if len(parts) > 2 else ""
+                    entries.append((h, date_stamp, msg))
+                except Exception as e:
+                    self.printException(e, "_prepFileModeHistoryList_from_git parse failed")
+        except Exception as e:
+            self.printException(e, "_prepFileModeHistoryList_from_git failed")
+        return entries
+
+    def _prepFileModeHistoryList_from_pygit2(self, repo_root: str, rel_path: str) -> list[tuple[str, str, str]]:
+        """Return a list of (hash, date, subject) using pygit2.
+
+        Note: this implementation does not fully implement `--follow` (rename
+        tracking). It walks commits reachable from HEAD and records commits
+        whose diffs touch `rel_path`.
+        """
+        entries: list[tuple[str, str, str]] = []
+        try:
+            repo = pygit2.Repository(repo_root)
+            try:
+                head = repo.head.target
+            except Exception as _ex:
+                printException(_ex)
+                head = None
+            if head is None:
+                return entries
+            walker = repo.walk(head, pygit2.GIT_SORT_TIME)
+            # Walk commits from HEAD backwards (time order). Maintain a
+            # `search_path` that is updated when we observe renames so we can
+            # follow the file history across rename operations (approx `--follow`).
+            search_path = rel_path
+            for commit in walker:
+                try:
+                    parents = commit.parents
+                    parent = parents[0] if parents else None
+                    if parent is None:
+                        # Initial commit: no parent. Check whether the path
+                        # exists in the commit tree as a proxy for being
+                        # introduced/modified in this commit.
+                        try:
+                            # Will raise KeyError if not present
+                            _ = commit.tree[search_path]
+                            touched = True
+                        except Exception as _no_logging:
+                            touched = False
+                        diff = None
+                    else:
+                        diff = repo.diff(parent.tree, commit.tree)
+                    touched = False
+                    if diff is not None:
+                        for delta in diff.deltas:
+                            try:
+                                oldp = getattr(delta.old_file, "path", None)
+                                newp = getattr(delta.new_file, "path", None)
+                                # Match against the current search_path which may
+                                # be updated when a rename is discovered.
+                                if oldp == search_path or newp == search_path:
+                                    touched = True
+                                    # If this delta represents a rename/copy where
+                                    # the new path equals our search target, update
+                                    # the search_path to the old path so older
+                                    # commits are checked against the previous name.
+                                    try:
+                                        if getattr(delta, "status", None) in (
+                                            pygit2.GIT_DELTA_RENAMED,
+                                            pygit2.GIT_DELTA_COPIED,
+                                        ):
+                                            if newp == search_path and oldp and oldp != newp:
+                                                search_path = oldp
+                                    except Exception as _ex:
+                                        printException(_ex)
+                                    break
+                            except Exception as _ex:
+                                printException(_ex)
+                                continue
+                    if touched:
+                        try:
+                            h = str(commit.id)
+                            date_stamp = datetime.fromtimestamp(commit.author.time).strftime("%Y-%m-%d")
+                            msg = (commit.message or "").splitlines()[0].strip()
+                            entries.append((h, date_stamp, msg))
+                        except Exception as e:
+                            self.printException(e, "_prepFileModeHistoryList_from_pygit2 entry build failed")
+                except Exception as _ex:
+                    printException(_ex)
+                    continue
+        except Exception as e:
+            self.printException(e, "_prepFileModeHistoryList_from_pygit2 failed")
+        return entries
 
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Open the diff for the selected file commit-pair.
