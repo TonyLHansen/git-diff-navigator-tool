@@ -1482,41 +1482,18 @@ class RepoModeFileList(FileListBase):
             pseudo_names = ("MODS", "STAGED")
             pseudo_entries = []
             try:
-
-                def _collect_for(pseudo: str) -> list[tuple[str, str]]:
-                    out = ""
-                    items: list[tuple[str, str]] = []
-                    try:
-                        if pseudo == "MODS":
-                            cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status"]
-                        elif pseudo == "STAGED":
-                            cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status", "--cached"]
-                        else:
-                            cmd = []
-                        if cmd:
-                            proc = self._run_cmd_log(cmd, label="prepRepoModeFileList pseudo diff")
-                            out = proc.stdout or ""
-                        logger.debug(
-                            "prepRepoModeFileList: pseudo %s diff (cmd=%s) output: %s", pseudo, " ".join(cmd), out
-                        )
-                        for ln in out.splitlines():
-                            if not ln:
-                                continue
-                            parts = ln.split("\t", 1)
-                            status = parts[0]
-                            path = parts[1] if len(parts) > 1 else parts[0]
-                            items.append((status, path))
-                    except subprocess.CalledProcessError as _ex:
-                        printException(_ex)
-                        return []
-                    except Exception as e:
-                        self.printException(e, f"collecting pseudo entries for {pseudo} failed")
-                    return items
-
+                # Delegate pseudo-entry collection to backend helpers so
+                # implementations can use either `git` or `pygit2`.
                 if prev_hash in pseudo_names:
-                    pseudo_entries.extend(_collect_for(prev_hash))
+                    if pygit2:
+                        pseudo_entries.extend(self._prepRepoModePseudo_from_pygit2(prev_hash))
+                    else:
+                        pseudo_entries.extend(self._prepRepoModePseudo_from_git(prev_hash))
                 if curr_hash in pseudo_names:
-                    pseudo_entries.extend(_collect_for(curr_hash))
+                    if pygit2:
+                        pseudo_entries.extend(self._prepRepoModePseudo_from_pygit2(curr_hash))
+                    else:
+                        pseudo_entries.extend(self._prepRepoModePseudo_from_git(curr_hash))
                 logger.debug(
                     "prepRepoModeFileList: prev_hash=%r curr_hash=%r pseudo_entries=%r",
                     prev_hash,
