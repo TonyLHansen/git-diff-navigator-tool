@@ -980,47 +980,8 @@ class FileModeFileList(FileListBase):
             # repository isn't available or building the map fails, leave
             # `status_map` as None and fall back to per-file checks later.
             status_map = None
-            try:
-                if not pygit2:
-                    if path.startswith(self.app.repo_root):
-                        prefix = os.path.relpath(path, self.app.repo_root)
-                        if prefix == ".":
-                            prefix = ""
-                        else:
-                            prefix = prefix + os.sep
-                        try:
-                            cmd = ["git", "-C", self.app.repo_root, "status", "--porcelain"]
-                            proc = self._run_cmd_log(cmd, label="prepFileModeFileList git status")
-                            out = proc.stdout or ""
-                            m: dict[str, str] = {}
-                            for ln in out.splitlines():
-                                if not ln:
-                                    continue
-                                logger.debug("prepFileModeFileList: git status line: %s", ln)
-                                code = ln[:2]
-                                logger.debug("prepFileModeFileList: git status code: %s", code)
-                                name = ln[3:].rstrip() if len(ln) > 3 else ""
-                                if "->" in name:
-                                    name = name.split("->")[-1].strip()
-                                logger.debug("prepFileModeFileList: git status file: %s code=%s", name, code)
-                                if prefix:
-                                    if not name.startswith(prefix):
-                                        logger.debug(
-                                            "prepFileModeFileList: skipping file %s as it does not start with prefix %s",
-                                            name,
-                                            prefix,
-                                        )
-                                        continue
-                                    rel = name[len(prefix) :]
-                                else:
-                                    rel = name
-                                m[rel] = code
-                            status_map = m
-                        except Exception as e:
-                            self.printException(e, "prepFileModeFileList: git status subprocess failed")
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList: building status_map failed")
-                status_map = None
+            if not pygit2:
+                status_map = self._prepFileModeFileList_status_map_from_git(path)
 
             # clear and populate
             self.clear()
@@ -1312,6 +1273,55 @@ class FileModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "_prepFileModeFileList_from_pygit2 failed")
         return infos
+
+    def _prepFileModeFileList_status_map_from_git(self, path: str) -> dict | None:
+        """Build a repo-relative porcelain `status_map` for `path` using git CLI.
+
+        Returns a dict mapping repo-relative paths to the two-char porcelain
+        status code (e.g. ' M', 'A ', '??'), or `None` when the map cannot be
+        built or `path` is outside the repository.
+        """
+        try:
+            # Ensure this helper only runs when `path` is inside the repo.
+            if not path.startswith(self.app.repo_root):
+                return None
+
+            prefix = os.path.relpath(path, self.app.repo_root)
+            if prefix == ".":
+                prefix = ""
+            else:
+                prefix = prefix + os.sep
+
+            cmd = ["git", "-C", self.app.repo_root, "status", "--porcelain"]
+            proc = self._run_cmd_log(cmd, label="prepFileModeFileList git status")
+            out = proc.stdout or ""
+            m: dict[str, str] = {}
+            for ln in out.splitlines():
+                if not ln:
+                    continue
+                logger.debug("prepFileModeFileList: git status line: %s", ln)
+                code = ln[:2]
+                logger.debug("prepFileModeFileList: git status code: %s", code)
+                name = ln[3:].rstrip() if len(ln) > 3 else ""
+                if "->" in name:
+                    name = name.split("->")[-1].strip()
+                logger.debug("prepFileModeFileList: git status file: %s code=%s", name, code)
+                if prefix:
+                    if not name.startswith(prefix):
+                        logger.debug(
+                            "prepFileModeFileList: skipping file %s as it does not start with prefix %s",
+                            name,
+                            prefix,
+                        )
+                        continue
+                    rel = name[len(prefix) :]
+                else:
+                    rel = name
+                m[rel] = code
+            return m
+        except Exception as e:
+            self.printException(e, "prepFileModeFileList: building status_map failed")
+            return None
 
     def _nav_dir_if(self, test_fn) -> None:
         try:
