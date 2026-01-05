@@ -170,10 +170,8 @@ def enable_trace_logging(enabled: bool) -> None:
         if enabled:
             root.setLevel(TRACE)
             for h in root.handlers:
-                try:
-                    h.setLevel(TRACE)
-                except Exception as _use_stderr:
-                    logger.warning("Failed to set handler level to TRACE: %s", _use_stderr)
+                h.setLevel(TRACE)
+
             logger.debug("Trace logging enabled")
     except Exception as e:
         printException(e, "enable_trace_logging failed")
@@ -1785,6 +1783,107 @@ class RepoModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "_prepRepoModeFileList_from_pygit2 failed")
         return entries
+
+    def _prepRepoModePseudo_from_git(self, pseudo: str) -> list[tuple[str, str]]:
+        """Collect (status, path) tuples for pseudo refs using git CLI.
+
+        `pseudo` is one of 'MODS' or 'STAGED'. Returns list of (status, path).
+        """
+        out = ""
+        items: list[tuple[str, str]] = []
+        try:
+            if pseudo == "MODS":
+                cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status"]
+            elif pseudo == "STAGED":
+                cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status", "--cached"]
+            else:
+                return []
+            proc = self._run_cmd_log(cmd, label="prepRepoModeFileList pseudo diff")
+            out = proc.stdout or ""
+            for ln in out.splitlines():
+                if not ln:
+                    continue
+                parts = ln.split("\t", 1)
+                status = parts[0]
+                path = parts[1] if len(parts) > 1 else parts[0]
+                items.append((status, path))
+        except subprocess.CalledProcessError as _ex:
+            printException(_ex)
+            return []
+        except Exception as e:
+            self.printException(e, f"_prepRepoModePseudo_from_git failed for {pseudo}")
+            return []
+        return items
+
+    def _prepRepoModePseudo_from_pygit2(self, pseudo: str) -> list[tuple[str, str]]:
+        """Collect (status, path) tuples for pseudo refs using pygit2.
+
+        Map pygit2 status flags to single-letter status codes similar to
+        git's `--name-status` output. Returns list of (status, path).
+        """
+        items: list[tuple[str, str]] = []
+        try:
+            repo = getattr(self.app, "pygit2_repo", None)
+            if not repo:
+                return []
+            try:
+                status_map = repo.status()
+            except Exception as e:
+                self.printException(e, "_prepRepoModePseudo_from_pygit2: repo.status() failed")
+                return []
+            for path, flags in status_map.items():
+                try:
+                    # Determine inclusion based on pseudo type
+                    include = False
+                    if pseudo == "MODS":
+                        # include working-tree changes and untracked
+                        if flags & (
+                            pygit2.GIT_STATUS_WT_NEW
+                            | pygit2.GIT_STATUS_WT_MODIFIED
+                            | pygit2.GIT_STATUS_WT_RENAMED
+                            | pygit2.GIT_STATUS_WT_TYPECHANGE
+                            | pygit2.GIT_STATUS_WT_DELETED
+                        ):
+                            include = True
+                    elif pseudo == "STAGED":
+                        if flags & (
+                            pygit2.GIT_STATUS_INDEX_NEW
+                            | pygit2.GIT_STATUS_INDEX_MODIFIED
+                            | pygit2.GIT_STATUS_INDEX_RENAMED
+                            | pygit2.GIT_STATUS_INDEX_TYPECHANGE
+                            | pygit2.GIT_STATUS_INDEX_DELETED
+                        ):
+                            include = True
+                    if not include:
+                        continue
+
+                    # Map flags to status letter
+                    st = "?"
+                    try:
+                        if flags & pygit2.GIT_STATUS_INDEX_NEW:
+                            st = "A"
+                        elif flags & pygit2.GIT_STATUS_INDEX_MODIFIED:
+                            st = "M"
+                        elif flags & pygit2.GIT_STATUS_INDEX_DELETED:
+                            st = "D"
+                        elif flags & pygit2.GIT_STATUS_WT_NEW:
+                            st = "U"
+                        elif flags & pygit2.GIT_STATUS_WT_MODIFIED:
+                            st = "M"
+                        elif flags & pygit2.GIT_STATUS_WT_DELETED:
+                            st = "D"
+                        elif flags & pygit2.GIT_STATUS_CONFLICTED:
+                            st = "!"
+                    except Exception as _ex:
+                        self.printException(_ex, "_prepRepoModePseudo_from_pygit2: mapping flags failed")
+                        st = "?"
+
+                    items.append((st, path))
+                except Exception as e:
+                    self.printException(e, "_prepRepoModePseudo_from_pygit2 iter failed")
+        except Exception as e:
+            self.printException(e, "_prepRepoModePseudo_from_pygit2 failed")
+        return items
 
 
 class HistoryListBase(AppBase):
