@@ -1547,6 +1547,7 @@ class RepoModeFileList(FileListBase):
                         entries = self._prepRepoModeFileList_from_pygit2(prev_hash, curr_hash)
                     else:
                         entries = self._prepRepoModeFileList_from_git(prev_hash, curr_hash)
+
                     for entry in entries:
                         try:
                             display = entry.get("display") if isinstance(entry, dict) else str(entry)
@@ -2071,13 +2072,10 @@ class FileModeHistoryList(HistoryListBase):
                 pseudo_entries: list[tuple[str, str]] = []
                 entries: list[tuple[str, str, str]] = []
                 if repo_root:
-                    try:
-                        if pygit2:
-                            pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
-                        else:
-                            pseudo_entries, entries = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
-                    except Exception as e:
-                        self.printException(e, "prepFileModeHistoryList collecting history failed")
+                    if pygit2:
+                        pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
+                    else:
+                        pseudo_entries, entries = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
 
                 # render pseudo entries first
                 try:
