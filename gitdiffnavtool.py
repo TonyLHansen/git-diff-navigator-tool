@@ -1192,6 +1192,7 @@ class FileModeFileList(FileListBase):
         super().__init__(*args, **kwargs)
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
 
+
     def _prepFileModeFileList_from_git(self, path: str, relpath: str, status_map: dict | None) -> list[dict]:
         """Return a list of file info dicts for `path` using filesystem/git status.
 
@@ -1540,51 +1541,27 @@ class RepoModeFileList(FileListBase):
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList rendering pseudo entries failed")
             else:
-                # Build git command to list changed files for the provided
-                # commit pair. When both `prev_hash` and `curr_hash` are
-                # provided, run `git diff --name-status prev curr`. When only
-                # a single commit (`curr_hash`) is provided, list the files
-                # changed by that single commit using `git show --name-status`.
+                # Delegate diff collection to helpers so alternate backends
+                # (pygit2 vs git CLI) can provide entries. Each helper returns
+                # a list of dicts with keys: display, full, is_dir.
                 try:
-                    if prev_hash and curr_hash:
-                        cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status", prev_hash, curr_hash]
-                    elif curr_hash:
-                        # List files changed by the single commit `curr_hash`.
-                        # cmd = ["git", "-C", self.app.repo_root, "show", "--name-status", curr_hash]
-                        # cmd = ["git", "-C", self.app.repo_root, "diff-tree", "--no-commit-id", "--name-status", "-r", curr_hash]
-                        cmd = ["git", "-C", self.app.repo_root, "show", "--name-status", "--pretty=format:", curr_hash]
+                    if pygit2 and self.app.pygit2_repo:
+                        entries = self._prepRepoModeFileList_from_pygit2(prev_hash, curr_hash)
                     else:
-                        # No explicit commits: fall back to diff against working tree
-                        cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status"]
-                    # run command
-                    proc = self._run_cmd_log(cmd, label="prepRepoModeFileList git diff")
-                    out = proc.stdout or ""
-                    logger.debug("prepRepoModeFileList: git diff (cmd=%s) output: %s", " ".join(cmd), out)
-                    for ln in out.splitlines():
-                        if not ln:
-                            continue
+                        entries = self._prepRepoModeFileList_from_git(prev_hash, curr_hash)
+                    for entry in entries:
                         try:
-                            parts = ln.split("\t", 1)
-                            status = parts[0]
-                            path = parts[1] if len(parts) > 1 else parts[0]
-                            display = f"{status} {path}"
+                            display = entry.get("display") if isinstance(entry, dict) else str(entry)
                             item = ListItem(Label(Text(display)))
                             try:
-                                if not os.path.isabs(path):
-                                    full = os.path.realpath(os.path.join(self.app.repo_root, path))
-                                else:
-                                    full = os.path.realpath(path)
-                                item._raw_text = full
+                                item._raw_text = entry.get("full", display)
                             except Exception as e:
                                 self.printException(e, "prepRepoModeFileList: resolving full path failed")
-                                item._raw_text = path
-                            item._is_dir = False
+                                item._raw_text = entry.get("full", display)
+                            item._is_dir = entry.get("is_dir", False) if isinstance(entry, dict) else False
                             self.append(item)
                         except Exception as e:
-                            self.printException(e, "prepRepoModeFileList parsing line failed")
-                except subprocess.CalledProcessError as _ex:
-                    # Fallback: no diff output
-                    printException(_ex)
+                            self.printException(e, "prepRepoModeFileList append entry failed")
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList git diff failed")
 
@@ -1691,6 +1668,123 @@ class RepoModeFileList(FileListBase):
         """Same behavior as Right: open the diff for the selected file."""
         logger.debug("RepoModeFileList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_right(event, recursive=True)
+
+    def _prepRepoModeFileList_from_git(self, prev_hash: str | None, curr_hash: str | None) -> list[dict]:
+        """Return a list of dicts for the repo-mode file list using git CLI.
+
+        Each dict contains: display, full, is_dir
+        """
+        entries: list[dict] = []
+        try:
+            if prev_hash and curr_hash:
+                cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status", prev_hash, curr_hash]
+            elif curr_hash:
+                cmd = ["git", "-C", self.app.repo_root, "show", "--name-status", "--pretty=format:", curr_hash]
+            else:
+                cmd = ["git", "-C", self.app.repo_root, "diff", "--name-status"]
+            proc = self._run_cmd_log(cmd, label="prepRepoModeFileList git diff")
+            out = proc.stdout or ""
+            logger.debug("_prepRepoModeFileList_from_git: cmd=%s output=%s", " ".join(cmd), out)
+            for ln in out.splitlines():
+                if not ln:
+                    continue
+                try:
+                    parts = ln.split("\t", 1)
+                    status = parts[0]
+                    path = parts[1] if len(parts) > 1 else parts[0]
+                    display = f"{status} {path}"
+                    try:
+                        if not os.path.isabs(path):
+                            full = os.path.realpath(os.path.join(self.app.repo_root, path))
+                        else:
+                            full = os.path.realpath(path)
+                    except Exception as e:
+                        self.printException(e, "_prepRepoModeFileList_from_git: resolving full path failed")
+                        full = path
+                    entries.append({"display": display, "full": full, "is_dir": False})
+                except Exception as e:
+                    self.printException(e, "_prepRepoModeFileList_from_git parsing line failed")
+        except Exception as e:
+            self.printException(e, "_prepRepoModeFileList_from_git failed")
+        return entries
+
+    def _prepRepoModeFileList_from_pygit2(self, prev_hash: str | None, curr_hash: str | None) -> list[dict]:
+        """Return a list of dicts using pygit2 diffs when available.
+
+        Attempts to compute a diff via pygit2 and map deltas to simple
+        status letters. Falls back to an empty list on error.
+        """
+        entries: list[dict] = []
+        try:
+            try:
+                has_repo = self.app.pygit2_repo
+            except Exception as _ex:
+                self.printException(_ex, "_prepRepoModeFileList_from_pygit2: accessing pygit2_repo failed")
+                has_repo = None
+            if not (pygit2 and has_repo):
+                return entries
+            repo = has_repo
+            diff = None
+            try:
+                if prev_hash and curr_hash:
+                    a = repo.revparse_single(prev_hash)
+                    b = repo.revparse_single(curr_hash)
+                    a_tree = a.tree if hasattr(a, "tree") else a
+                    b_tree = b.tree if hasattr(b, "tree") else b
+                    diff = repo.diff(a_tree, b_tree)
+                elif curr_hash:
+                    c = repo.revparse_single(curr_hash)
+                    parents = list(c.parents)
+                    if parents:
+                        diff = repo.diff(parents[0].tree, c.tree)
+                    else:
+                        diff = repo.diff(None, c.tree)
+                else:
+                    diff = repo.diff()
+            except Exception as e:
+                self.printException(e, "_prepRepoModeFileList_from_pygit2: building diff failed")
+                diff = None
+
+            if diff is None:
+                return entries
+
+            for delta in diff.deltas:
+                try:
+                    path = (delta.new_file.path or delta.old_file.path) if hasattr(delta, "new_file") else None
+                    if not path:
+                        continue
+                    st = "?"
+                    try:
+                        if delta.status == pygit2.GIT_DELTA_ADDED:
+                            st = "A"
+                        elif delta.status == pygit2.GIT_DELTA_MODIFIED:
+                            st = "M"
+                        elif delta.status == pygit2.GIT_DELTA_DELETED:
+                            st = "D"
+                        elif delta.status == pygit2.GIT_DELTA_RENAMED:
+                            st = "R"
+                        elif delta.status == pygit2.GIT_DELTA_COPIED:
+                            st = "C"
+                        elif delta.status == pygit2.GIT_DELTA_CONFLICTED:
+                            st = "!"
+                    except Exception as _ex:
+                        self.printException(_ex, "_prepRepoModeFileList_from_pygit2: mapping delta.status failed")
+                        st = "?"
+                    display = f"{st} {path}"
+                    try:
+                        if not os.path.isabs(path):
+                            full = os.path.realpath(os.path.join(self.app.repo_root, path))
+                        else:
+                            full = os.path.realpath(path)
+                    except Exception as e:
+                        self.printException(e, "_prepRepoModeFileList_from_pygit2: resolving full path failed")
+                        full = path
+                    entries.append({"display": display, "full": full, "is_dir": False})
+                except Exception as e:
+                    self.printException(e, "_prepRepoModeFileList_from_pygit2 iter delta failed")
+        except Exception as e:
+            self.printException(e, "_prepRepoModeFileList_from_pygit2 failed")
+        return entries
 
 
 class HistoryListBase(AppBase):
