@@ -984,7 +984,7 @@ class FileModeFileList(FileListBase):
             status_map = None
             try:
                 if not (self.app.pygit2_repo and pygit2):
-                    if self.app.repo_root and path.startswith(self.app.repo_root):
+                    if path.startswith(self.app.repo_root):
                         prefix = os.path.relpath(path, self.app.repo_root)
                         if prefix == ".":
                             prefix = ""
@@ -1070,204 +1070,38 @@ class FileModeFileList(FileListBase):
                         self.printException(e, "prepFileModeFileList: append parent failed")
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: adding parent directory failed")
+            try:
+                file_infos: list[dict] = []
+                if pygit2 and self.app.pygit2_repo:
+                    file_infos = self._prepFileModeFileList_from_pygit2(path, relpath, status_map)
+                else:
+                    file_infos = self._prepFileModeFileList_from_git(path, relpath, status_map)
 
-            for name in entries:
-                logger.debug("prepFileModeFileList: processing entry %s", name)
-                if name == ".git":
-                    continue
-                try:
-                    full = os.path.join(path, name)
-                    logger.debug("prepFileModeFileList: full path %s", full)
-
-                    # Directories: show arrow tag and trailing slash
-                    if os.path.isdir(full):
-                        tag = "→"
-                        display_name = f"{name}/"
-                        display = f"{tag} {display_name}"
-                        style = STYLE_DIR
-                        item = ListItem(Label(Text(display, style=style)))
-                        try:
-                            item._is_dir = True
-                            item._repo_status = None
-                            item._raw_text = full
-                            item._filename = name
-                            logger.debug("prepFileModeFileList: adding dir item for %s", full)
-                            self.append(item)
-                        except Exception as e:
-                            self.printException(e, "prepFileModeFileList append dir failed")
-                        continue
-
-                    # Files: determine repo status and marker
-                    repo_status = None
-                    style = None
+                for info in file_infos:
                     try:
-                        repo_status = None
-                        style = None
-                        # Compute rel by slicing the canonical repo root from full.
-                        rel = full[len(self.app.repo_root) :]
-                        if rel.startswith(os.sep):
-                            rel = rel[1:]
-                        rel = os.path.normpath(rel) if rel else rel
-                        logger.debug("prepFileModeFileList: rel path %s", rel)
+                        name = info.get("name")
+                        full = info.get("full")
+                        is_dir = info.get("is_dir", False)
+                        raw = info.get("raw", name)
+                        repo_status = info.get("repo_status")
 
-                        if rel:
-                            # Try pygit2 fast-path first (single-file query). If
-                            # unavailable or it fails, fall back to git CLI.
+                        if is_dir:
+                            tag = "→"
+                            display_name = f"{name}/"
+                            display = f"{tag} {display_name}"
+                            style = STYLE_DIR
+                            item = ListItem(Label(Text(display, style=style)))
                             try:
-                                if self.app.pygit2_repo:
-                                    try:
-                                        flags = self.app.pygit2_repo.status_file(rel)
-                                        if flags & pygit2.GIT_STATUS_IGNORED:
-                                            repo_status = "ignored"
-                                        elif flags & pygit2.GIT_STATUS_WT_NEW:
-                                            repo_status = "untracked"
-                                        elif flags & pygit2.GIT_STATUS_CONFLICTED:
-                                            repo_status = "conflicted"
-                                        elif flags & (
-                                            pygit2.GIT_STATUS_INDEX_NEW
-                                            | pygit2.GIT_STATUS_INDEX_MODIFIED
-                                            | pygit2.GIT_STATUS_INDEX_RENAMED
-                                            | pygit2.GIT_STATUS_INDEX_TYPECHANGE
-                                            | pygit2.GIT_STATUS_INDEX_DELETED
-                                        ):
-                                            repo_status = "staged"
-                                        elif flags & pygit2.GIT_STATUS_WT_DELETED:
-                                            repo_status = "wt_deleted"
-                                        elif flags & (
-                                            pygit2.GIT_STATUS_WT_MODIFIED
-                                            | pygit2.GIT_STATUS_WT_RENAMED
-                                            | pygit2.GIT_STATUS_WT_TYPECHANGE
-                                        ):
-                                            repo_status = "modified"
-                                        else:
-                                            repo_status = "tracked_clean"
-                                    except Exception as e:
-                                        self.printException(e, "pygit2 status_file failed")
-                                        repo_status = None
+                                item._is_dir = True
+                                item._repo_status = None
+                                item._raw_text = full
+                                item._filename = name
+                                logger.debug("prepFileModeFileList: adding dir item for %s", full)
+                                self.append(item)
                             except Exception as e:
-                                self.printException(e, "pygit2 status_file outer failed")
-                                repo_status = None
+                                self.printException(e, "prepFileModeFileList append dir failed")
+                            continue
 
-                            if repo_status is None:
-                                # If we built a batch status_map earlier, prefer it
-                                # to avoid per-file `git status` calls.
-                                if status_map is not None:
-                                    try:
-                                        code = status_map.get(rel)
-                                        if code is not None:
-                                            if code == "??":
-                                                repo_status = "untracked"
-                                            elif code == "!!":
-                                                repo_status = "ignored"
-                                            elif "U" in code:
-                                                repo_status = "conflicted"
-                                            elif code[0] != " ":
-                                                repo_status = "staged"
-                                            elif code[1] != " ":
-                                                if code[1] == "D":
-                                                    repo_status = "wt_deleted"
-                                                else:
-                                                    repo_status = "modified"
-                                            else:
-                                                repo_status = "tracked_clean"
-                                        else:
-                                            # Not present in status_map: check tracked via ls-files
-                                            try:
-                                                cmd = [
-                                                    "git",
-                                                    "-C",
-                                                    self.app.repo_root,
-                                                    "ls-files",
-                                                    "--error-unmatch",
-                                                    rel,
-                                                ]
-                                                proc = subprocess.run(cmd, text=True, capture_output=True)
-                                                if proc.stderr:
-                                                    logger.warning(
-                                                        "prepFileModeFileList ls-files stderr (cmd=%s): %s",
-                                                        " ".join(cmd),
-                                                        proc.stderr.strip(),
-                                                    )
-                                                logger.trace(
-                                                    "prepFileModeFileList: git ls-files (cmd=%s) output: %s",
-                                                    " ".join(cmd),
-                                                    proc.stdout or "",
-                                                )
-                                                if proc.returncode == 0:
-                                                    repo_status = "tracked_clean"
-                                                else:
-                                                    if proc.stderr:
-                                                        logger.warning(
-                                                            "ls-files stderr (cmd=%r): %s", cmd, proc.stderr.strip()
-                                                        )
-                                                    repo_status = "untracked"
-                                            except Exception as e:
-                                                repo_status = "untracked"
-                                                self.printException(e, "prepFileModeFileList: ls-files check failed")
-                                    except Exception as e:
-                                        self.printException(e, "status_map processing failed")
-                                        repo_status = "tracked_clean"
-                                else:
-                                    # No batch map: fall back to per-file git status
-                                    try:
-                                        cmd = ["git", "-C", self.app.repo_root, "status", "--porcelain", "--", rel]
-                                        proc = self._run_cmd_log(cmd, label="prepFileModeFileList per-file git status")
-                                        out = proc.stdout.strip() if proc.returncode == 0 and proc.stdout else ""
-                                        if out:
-                                            code = out[:2]
-                                            if code == "??":
-                                                repo_status = "untracked"
-                                            elif code == "!!":
-                                                repo_status = "ignored"
-                                            elif "U" in code:
-                                                repo_status = "conflicted"
-                                            elif code[0] != " ":
-                                                repo_status = "staged"
-                                            elif code[1] != " ":
-                                                if code[1] == "D":
-                                                    repo_status = "wt_deleted"
-                                                else:
-                                                    repo_status = "modified"
-                                            else:
-                                                repo_status = "tracked_clean"
-                                        else:
-                                            try:
-                                                cmd = [
-                                                    "git",
-                                                    "-C",
-                                                    self.app.repo_root,
-                                                    "ls-files",
-                                                    "--error-unmatch",
-                                                    rel,
-                                                ]
-                                                proc = subprocess.run(cmd, text=True, capture_output=True)
-                                                if proc.returncode == 0:
-                                                    repo_status = "tracked_clean"
-                                                else:
-                                                    if proc.stderr:
-                                                        logger.warning(
-                                                            "ls-files stderr (cmd=%s): %s",
-                                                            " ".join(cmd),
-                                                            proc.stderr.strip(),
-                                                        )
-                                                    repo_status = "untracked"
-                                            except Exception as e:
-                                                self.printException(e, "prepFileModeFileList: ls-files check failed")
-                                                repo_status = "untracked"
-                                    except Exception as e:
-                                        self.printException(e, "git status check failed")
-                                        repo_status = "tracked_clean"
-                        else:
-                            # If not inside repo root, treat as untracked for safety
-                            repo_status = "untracked"
-                    except Exception as e:
-                        self.printException(e, "determining repo status failed")
-                        repo_status = None
-
-                    logger.debug("prepFileModeFileList: file %s repo_status=%s", name, repo_status)
-
-                    # Map repo_status to marker and style
-                    try:
                         marker = MARKERS.get(repo_status, " ")
                         if repo_status == "conflicted":
                             style = STYLE_CONFLICTED
@@ -1283,39 +1117,26 @@ class FileModeFileList(FileListBase):
                             style = STYLE_UNTRACKED
                         else:
                             style = STYLE_DEFAULT
-                    except Exception as e:
-                        self.printException(e, "mapping repo_status to marker and style failed")
-                        marker = " "
-                        style = None
 
-                    # Debug: log final decision for this file
-                    # Existence heuristic: treat anything not explicitly 'untracked' as existing
-                    logger.debug(
-                        "prepFileModeFileList: name=%s rel=%r repo_status=%r marker=%r style=%r",
-                        name,
-                        rel,
-                        repo_status,
-                        marker,
-                        style,
-                    )
-
-                    display = f"{marker} {name}"
-                    try:
-                        if style:
-                            item = ListItem(Label(Text(display, style=style)))
-                        else:
-                            item = ListItem(Label(display))
-                        item._repo_status = repo_status
-                        item._is_dir = False
-                        item._raw_text = full
-                        item._filename = name
-                        self.append(item)
+                        display = f"{marker} {name}"
+                        try:
+                            if style:
+                                item = ListItem(Label(Text(display, style=style)))
+                            else:
+                                item = ListItem(Label(display))
+                            item._repo_status = repo_status
+                            item._is_dir = False
+                            item._raw_text = full
+                            item._filename = name
+                            self.append(item)
+                        except Exception as e:
+                            self.printException(e, f"exception appending {name} in prepFileModeFileList")
+                            continue
                     except Exception as e:
-                        self.printException(e, f"exception appending {name} in prepFileModeFileList")
+                        self.printException(e, f"exception processing entry {name}")
                         continue
-                except Exception as e:
-                    self.printException(e, f"exception processing entry {name}")
-                    continue
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList iteration failed")
 
             try:
                 self._populated = True
@@ -1370,6 +1191,128 @@ class FileModeFileList(FileListBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
+
+    def _prepFileModeFileList_from_git(self, path: str, relpath: str, status_map: dict | None) -> list[dict]:
+        """Return a list of file info dicts for `path` using filesystem/git status.
+
+        Each dict contains: name, full, is_dir, raw, repo_status
+        """
+        infos: list[dict] = []
+        try:
+            try:
+                items = sorted(os.listdir(path))
+            except Exception as _ex:
+                self.printException(_ex, "_prepFileModeFileList_from_git: listing path failed")
+                items = []
+            for name in items:
+                try:
+                    if name == ".git":
+                        continue
+                    full = os.path.join(path, name)
+                    is_dir = os.path.isdir(full)
+                    raw = full if is_dir else name
+                    repo_status = None
+                    try:
+                        if relpath:
+                            rel = os.path.join(relpath, name) if relpath else name
+                            rel = os.path.normpath(rel)
+                        else:
+                            rel = name
+                        if status_map is not None:
+                            code = status_map.get(rel)
+                            if code is not None:
+                                if code == "??":
+                                    repo_status = "untracked"
+                                elif code == "!!":
+                                    repo_status = "ignored"
+                                elif "U" in code:
+                                    repo_status = "conflicted"
+                                elif code[0] != " ":
+                                    repo_status = "staged"
+                                elif code[1] != " ":
+                                    if code[1] == "D":
+                                        repo_status = "wt_deleted"
+                                    else:
+                                        repo_status = "modified"
+                                else:
+                                    repo_status = "tracked_clean"
+                        # leave repo_status None if unknown; caller may treat as tracked
+                    except Exception as _ex:
+                        self.printException(_ex, "_prepFileModeFileList_from_git: determining rel/status failed")
+                        repo_status = None
+                    infos.append({"name": name, "full": full, "is_dir": is_dir, "raw": raw, "repo_status": repo_status})
+                except Exception as e:
+                    self.printException(e)
+                    continue
+        except Exception as e:
+            self.printException(e, "_prepFileModeFileList_from_git failed")
+        return infos
+
+    def _prepFileModeFileList_from_pygit2(self, path: str, relpath: str, status_map: dict | None) -> list[dict]:
+        """Return a list of file info dicts using pygit2 when possible.
+
+        For now this attempts to reuse the git-backed implementation for
+        directory listing and augments repo_status via pygit2 if available.
+        Each dict contains: name, full, is_dir, raw, repo_status
+        """
+        infos: list[dict] = []
+
+        try:
+            try:
+                items = sorted(os.listdir(path))
+            except Exception as _ex:
+                self.printException(_ex, "_prepFileModeFileList_from_pygit2: listing path failed")
+                items = []
+
+            repo = self.app.pygit2_repo
+            for name in items:
+                try:
+                    if name == ".git":
+                        continue
+                    full = os.path.join(path, name)
+                    is_dir = os.path.isdir(full)
+                    raw = full if is_dir else name
+                    repo_status = None
+                    if not is_dir:
+                        try:
+                            rel = os.path.join(relpath, name) if relpath else name
+                            rel = os.path.normpath(rel)
+                            flags = repo.status_file(rel)
+                            if flags & pygit2.GIT_STATUS_IGNORED:
+                                repo_status = "ignored"
+                            elif flags & pygit2.GIT_STATUS_WT_NEW:
+                                repo_status = "untracked"
+                            elif flags & pygit2.GIT_STATUS_CONFLICTED:
+                                repo_status = "conflicted"
+                            elif flags & (
+                                pygit2.GIT_STATUS_INDEX_NEW
+                                | pygit2.GIT_STATUS_INDEX_MODIFIED
+                                | pygit2.GIT_STATUS_INDEX_RENAMED
+                                | pygit2.GIT_STATUS_INDEX_TYPECHANGE
+                                | pygit2.GIT_STATUS_INDEX_DELETED
+                            ):
+                                repo_status = "staged"
+                            elif flags & pygit2.GIT_STATUS_WT_DELETED:
+                                repo_status = "wt_deleted"
+                            elif flags & (
+                                pygit2.GIT_STATUS_WT_MODIFIED
+                                | pygit2.GIT_STATUS_WT_RENAMED
+                                | pygit2.GIT_STATUS_WT_TYPECHANGE
+                            ):
+                                repo_status = "modified"
+                            else:
+                                repo_status = "tracked_clean"
+                        except Exception as _ex:
+                            self.printException(_ex, "_prepFileModeFileList_from_pygit2: status_file failed")
+                            repo_status = None
+
+                    infos.append({"name": name, "full": full, "is_dir": is_dir, "raw": raw, "repo_status": repo_status})
+                except Exception as e:
+                    self.printException(e)
+                    continue
+        except Exception as e:
+            self.printException(e, "_prepFileModeFileList_from_pygit2 failed")
+        return infos
 
     def _nav_dir_if(self, test_fn) -> None:
         try:
@@ -2134,6 +2077,8 @@ class FileModeHistoryList(HistoryListBase):
         except Exception as e:
             self.printException(e, "_prepFileModeHistoryList_from_pygit2 failed")
         return entries
+
+    
 
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Open the diff for the selected file commit-pair.
