@@ -980,6 +980,13 @@ class FileModeFileList(FileListBase):
             # repository isn't available or building the map fails, leave
             # `status_map` as None and fall back to per-file checks later.
             status_map = None
+            # When `pygit2` is available we use `repo.status()` directly
+            # inside the pygit2-backed preparers to obtain flags. The
+            # porcelain two-character `status_map` (git CLI `--porcelain`)
+            # is a git/CLI-specific artifact — there is no direct
+            # `_prepFileModeFileList_status_map_from_pygit2` counterpart.
+            # Therefore only compute the porcelain `status_map` when the
+            # git CLI backend is used.
             if not pygit2:
                 status_map = self._prepFileModeFileList_status_map_from_git(path)
 
