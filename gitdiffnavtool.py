@@ -2109,6 +2109,8 @@ class FileModeHistoryList(HistoryListBase):
                             self.printException(e, "prepFileModeHistoryList parse failed")
                 except Exception as e:
                     self.printException(e, "prepFileModeHistoryList rendering commits failed")
+            except Exception as e:
+                self.printException(e, "prepFileModeHistoryList collection/render failed")
 
             self._populated = True
             # Highlight requested commits when provided. Prefer `curr_hash`
@@ -3092,6 +3094,7 @@ class GitHistoryNavTool(App):
                     self.pygit2_repo = pygit2.Repository(self.repo_root)
                 except Exception as e:
                     printException(e, "GitHistoryNavTool.__init__: pygit2.Repository init failed")
+                    pygit2 = None  # disable pygit2 usage on failure
 
             # Optional diff variant arguments indexed by variant_index.
             # index 0 -> None (no extra arg), 1 -> ignore-space-change, 2 -> patience algorithm
