@@ -981,7 +981,7 @@ class FileModeFileList(FileListBase):
             # `status_map` as None and fall back to per-file checks later.
             status_map = None
             try:
-                if not (self.app.pygit2_repo and pygit2):
+                if not pygit2:
                     if path.startswith(self.app.repo_root):
                         prefix = os.path.relpath(path, self.app.repo_root)
                         if prefix == ".":
@@ -1070,7 +1070,7 @@ class FileModeFileList(FileListBase):
                 self.printException(e, "prepFileModeFileList: adding parent directory failed")
             try:
                 file_infos: list[dict] = []
-                if pygit2 and self.app.pygit2_repo:
+                if pygit2:
                     file_infos = self._prepFileModeFileList_from_pygit2(path, relpath, status_map)
                 else:
                     file_infos = self._prepFileModeFileList_from_git(path, relpath, status_map)
@@ -1543,7 +1543,7 @@ class RepoModeFileList(FileListBase):
                 # (pygit2 vs git CLI) can provide entries. Each helper returns
                 # a list of dicts with keys: display, full, is_dir.
                 try:
-                    if pygit2 and self.app.pygit2_repo:
+                    if pygit2:
                         entries = self._prepRepoModeFileList_from_pygit2(prev_hash, curr_hash)
                     else:
                         entries = self._prepRepoModeFileList_from_git(prev_hash, curr_hash)
@@ -1714,14 +1714,9 @@ class RepoModeFileList(FileListBase):
         """
         entries: list[dict] = []
         try:
-            try:
-                has_repo = self.app.pygit2_repo
-            except Exception as _ex:
-                self.printException(_ex, "_prepRepoModeFileList_from_pygit2: accessing pygit2_repo failed")
-                has_repo = None
-            if not (pygit2 and has_repo):
+            if not pygit2:
                 return entries
-            repo = has_repo
+            repo = self.app.pygit2_repo
             diff = None
             try:
                 if prev_hash and curr_hash:
@@ -1823,11 +1818,7 @@ class RepoModeFileList(FileListBase):
         """
         items: list[tuple[str, str]] = []
         try:
-            try:
-                repo = self.app.pygit2_repo
-            except Exception as _ex:
-                self.printException(_ex, "_prepRepoModePseudo_from_pygit2: accessing pygit2_repo failed")
-                return []
+            repo = self.app.pygit2_repo
             try:
                 status_map = repo.status()
             except Exception as e:
@@ -2081,7 +2072,7 @@ class FileModeHistoryList(HistoryListBase):
                 entries: list[tuple[str, str, str]] = []
                 if repo_root:
                     try:
-                        if pygit2 and getattr(self.app, "pygit2_repo", None):
+                        if pygit2:
                             pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
                         else:
                             pseudo_entries, entries = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
@@ -2304,11 +2295,7 @@ class FileModeHistoryList(HistoryListBase):
         pseudo_entries: list[tuple[str, str]] = []
         commits: list[tuple[str, str, str]] = []
         try:
-            try:
-                repo = self.app.pygit2_repo
-            except Exception as _ex:
-                self.printException(_ex, "_prepFileModeHistoryList_for_pygit2: accessing pygit2_repo failed")
-                return (pseudo_entries, commits)
+            repo = self.app.pygit2_repo
 
             try:
                 status = repo.status_file(rel_path)
@@ -2423,12 +2410,7 @@ class RepoModeHistoryList(HistoryListBase):
             self.clear()
             # Collect pseudo-entries and commit rows via backend helpers
             try:
-                try:
-                    has_repo = self.app.pygit2_repo
-                except Exception as _ex:
-                    self.printException(_ex, "prepRepoModeHistoryList: accessing pygit2_repo failed")
-                    has_repo = None
-                if pygit2 and has_repo:
+                if pygit2:
                     pseudo_entries, commits = self._prepRepoModeHistoryList_for_pygit2(repo_path, prev_hash, curr_hash)
                 else:
                     pseudo_entries, commits = self._prepRepoModeHistoryList_for_git(repo_path, prev_hash, curr_hash)
@@ -2608,11 +2590,7 @@ class RepoModeHistoryList(HistoryListBase):
         pseudo_entries: list[tuple[str, str]] = []
         commits: list[tuple[str, str, str]] = []
         try:
-            try:
-                repo = self.app.pygit2_repo
-            except Exception as _ex:
-                self.printException(_ex, "_prepRepoModeHistoryList_for_pygit2: accessing pygit2_repo failed")
-                return (pseudo_entries, commits)
+            repo = self.app.pygit2_repo
 
             # status map: repo.status() -> dict[path] = flags
             try:
