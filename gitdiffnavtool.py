@@ -208,6 +208,38 @@ def run_cmd_log(cmd: list[str], label: str | None = None, text: bool = True, cap
     return proc
 
 
+def compare_pygit2_to_git_output(pygout, gitout, context: str | None = None) -> None:
+    """Compare two outputs (pygit2 vs git) and print differences.
+
+    This does a simple textual diff of the pretty-printed representations
+    so structural differences are visible. `context` is an optional label
+    describing where the comparison was invoked.
+    """
+    try:
+        import pprint
+        import difflib
+
+        ctx = f" [{context}]" if context else ""
+        pyg_s = pprint.pformat(pygout, width=120).splitlines()
+        git_s = pprint.pformat(gitout, width=120).splitlines()
+        if pyg_s == git_s:
+            logger.debug("compare_pygit2_to_git_output%s: outputs identical", ctx)
+            return
+        msg = [f"compare_pygit2_to_git_output{ctx}: outputs differ:"]
+        diff = list(difflib.unified_diff(git_s, pyg_s, fromfile="git", tofile="pygit2", lineterm=""))
+        if not diff:
+            msg.append("(difference detected but diff is empty)")
+        else:
+            msg.extend(diff)
+        # Print to stdout for immediate visibility and also log warn.
+        for ln in msg:
+            print(ln)
+            logger.warning(ln)
+    except Exception as e:
+        # Best-effort: don't raise during prep; just log the comparison failure.
+        printException("compare_pygit2_to_git_output failed: %s", e)
+
+
 class AppBase(ListView):
     """Base widget class for list-like components providing shared helpers.
 
@@ -1038,7 +1070,12 @@ class FileModeFileList(FileListBase):
                 self.printException(e, "prepFileModeFileList: adding parent directory failed")
             try:
                 file_infos: list[dict] = []
-                if pygit2:
+                # When testing, run both backends and compare outputs.
+                if self.app.test_pygit2:
+                    file_infos = self._prepFileModeFileList_from_pygit2(path, relpath, status_map)
+                    file_infos_git = self._prepFileModeFileList_from_git(path, relpath, status_map)
+                    compare_pygit2_to_git_output(file_infos, file_infos_git, "prepFileModeFileList")
+                elif pygit2:
                     file_infos = self._prepFileModeFileList_from_pygit2(path, relpath, status_map)
                 else:
                     file_infos = self._prepFileModeFileList_from_git(path, relpath, status_map)
@@ -1537,7 +1574,12 @@ class RepoModeFileList(FileListBase):
                 # (pygit2 vs git CLI) can provide entries. Each helper returns
                 # a list of dicts with keys: display, full, is_dir.
                 try:
-                    if pygit2:
+                    # When testing, run both backends and compare outputs.
+                    if self.app.test_pygit2:
+                        entries = self._prepRepoModeFileList_from_pygit2(prev_hash, curr_hash)
+                        out_git = self._prepRepoModeFileList_from_git(prev_hash, curr_hash)
+                        compare_pygit2_to_git_output(entries, out_git, "prepRepoModeFileList")
+                    elif pygit2:
                         entries = self._prepRepoModeFileList_from_pygit2(prev_hash, curr_hash)
                     else:
                         entries = self._prepRepoModeFileList_from_git(prev_hash, curr_hash)
@@ -2066,10 +2108,16 @@ class FileModeHistoryList(HistoryListBase):
                 pseudo_entries: list[tuple[str, str]] = []
                 entries: list[tuple[str, str, str]] = []
                 if repo_root:
-                    if pygit2:
-                        pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
-                    else:
-                        pseudo_entries, entries = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
+                            # When testing, run both backends and compare outputs.
+                            if self.app.test_pygit2:
+                                pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
+                                pseudo_entries_git, entries_git = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
+                                compare_pygit2_to_git_output(pseudo_entries, pseudo_entries_git, "prepFileModeHistoryList pseudo_entries")
+                                compare_pygit2_to_git_output(entries, entries_git, "prepFileModeHistoryList entries")
+                            elif pygit2:
+                                pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
+                            else:
+                                pseudo_entries, entries = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
 
                 # render pseudo entries first
                 try:
@@ -2402,7 +2450,13 @@ class RepoModeHistoryList(HistoryListBase):
             self.clear()
             # Collect pseudo-entries and commit rows via backend helpers
             try:
-                if pygit2:
+                # When testing, run both backends and compare outputs.
+                if self.app.test_pygit2:
+                    pseudo_entries, commits = self._prepRepoModeHistoryList_for_pygit2(repo_path, prev_hash, curr_hash)
+                    pseudo_entries_git, commits_git = self._prepRepoModeHistoryList_for_git(repo_path, prev_hash, curr_hash)
+                    compare_pygit2_to_git_output(pseudo_entries, pseudo_entries_git, "prepRepoModeHistoryList pseudo_entries")
+                    compare_pygit2_to_git_output(commits, commits_git, "prepRepoModeHistoryList commits")
+                elif pygit2:
                     pseudo_entries, commits = self._prepRepoModeHistoryList_for_pygit2(repo_path, prev_hash, curr_hash)
                 else:
                     pseudo_entries, commits = self._prepRepoModeHistoryList_for_git(repo_path, prev_hash, curr_hash)
@@ -3032,6 +3086,7 @@ class GitHistoryNavTool(App):
         repo_first: bool,
         repo_hashes: list,
         repo_root: str,
+        test_pygit2: bool = False,
         **kwargs,
     ):
         # Accept CLI options here so the app can inspect them during mount
@@ -3074,6 +3129,9 @@ class GitHistoryNavTool(App):
             # it's a directory, or the dirname when `path` is a file.
             # Use the property setter so the value is canonicalized.
             self._current_path = self.path if os.path.isdir(self.path) else os.path.dirname(self.path)
+            # Test mode: if True, prep helpers will run both pygit2 and git
+            # implementations and compare their outputs for discrepancies.
+            self.test_pygit2 = bool(test_pygit2)
         except Exception as e:
             printException(e, "GitHistoryNavTool.__init__ failed")
 
@@ -4158,6 +4216,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         "-P", "--no-pygit2", dest="no_pygit2", action="store_true", help="disable pygit2 usage even if installed"
     )
     parser.add_argument(
+        "-T",
+        "--test-pygit2",
+        dest="test_pygit2",
+        action="store_true",
+        help="run both pygit2 and git helpers and compare their outputs",
+    )
+    parser.add_argument(
         "-R",
         "--repo-hash",
         dest="repo_hash",
@@ -4211,6 +4276,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             repo_first=args.repo_first,
             repo_hashes=repo_hashes,
             repo_root=repo_root,
+            test_pygit2=bool(args.test_pygit2),
         )
         # Run the textual app (blocks until exit)
         app.run()
