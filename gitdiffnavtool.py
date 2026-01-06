@@ -1214,7 +1214,14 @@ class FileModeFileList(FileListBase):
                         else:
                             rel = name
                         if status_map is not None:
+                            # status_map keys may be relative to the current
+                            # directory (e.g. 'notes.txt') or repo-relative
+                            # (e.g. 'docs/notes.txt') depending on how the
+                            # map was built. Try both forms so subdirectory
+                            # listings match the status_map entries.
                             code = status_map.get(rel)
+                            if code is None:
+                                code = status_map.get(name)
                             if code is not None:
                                 if code == "??":
                                     repo_status = "untracked"
