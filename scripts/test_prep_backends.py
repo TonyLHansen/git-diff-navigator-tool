@@ -17,21 +17,33 @@ from types import SimpleNamespace
 import logging
 import traceback
 
-# Ensure we can import the project module from workspace root
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+# Ensure we can import the project module from workspace root.
+from pathlib import Path
+ROOT = Path(__file__).resolve().parent.parent
+ROOT_STR = str(ROOT)
+if ROOT_STR not in sys.path:
+    sys.path.insert(0, ROOT_STR)
 
-import gitdiffnavtool
+try:
+    import gitdiffnavtool
+except ModuleNotFoundError as _use_stderr:
+    print("gitdiffnavtool module not found; attempting direct load...", file=sys.stderr)
+    # Attempt to load directly from the file if import fails.
+    import importlib.util
+    mod_path = ROOT / "gitdiffnavtool.py"
+    if mod_path.exists():
+        spec = importlib.util.spec_from_file_location("gitdiffnavtool", str(mod_path))
+        gitdiffnavtool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gitdiffnavtool)  # type: ignore
+        sys.modules["gitdiffnavtool"] = gitdiffnavtool
+    else:
+        raise
+
+import pygit2
 
 logger = logging.getLogger(__name__)
 
 LOGPATH = os.path.join(ROOT, "tmp", "debug-prep-test.log")
-
-try:
-    import pygit2  # type: ignore
-except Exception:
-    pygit2 = None
 
 
 def make_dummy(repo_root: str, pyg_repo=None):
@@ -57,6 +69,15 @@ def make_dummy(repo_root: str, pyg_repo=None):
             if proc.stderr:
                 logger.warning("%s stderr: %s", label or "cmd", proc.stderr)
             return proc
+
+        # History-mode helpers: forward to the real implementations on
+        # `gitdiffnavtool.FileModeHistoryList` so the unbound history
+        # preparers can call these methods on `self`.
+        def _prepFileModeHistoryList_commits_from_git(self, repo_root, rel_path):
+            return gitdiffnavtool.FileModeHistoryList._prepFileModeHistoryList_commits_from_git(self, repo_root, rel_path)
+
+        def _prepFileModeHistoryList_commits_from_pygit2(self, repo_root, rel_path):
+            return gitdiffnavtool.FileModeHistoryList._prepFileModeHistoryList_commits_from_pygit2(self, repo_root, rel_path)
 
     return Dummy(repo_root, pyg_repo)
 
@@ -96,8 +117,8 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
             if ".git" in dirnames:
                 try:
                     dirnames.remove(".git")
-                except ValueError:
-                    pass
+                except ValueError as _ex:
+                    gitdiffnavtool.printException(_ex, "prune .git failed")
                 logger.debug("Pruned .git from traversal at: %s", dirpath)
             # Skip .git tree (in case we're currently inside .git)
             if os.path.basename(dirpath) == ".git":
@@ -118,7 +139,7 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
             try:
                 status_map = status_map_fn(dummy, dirpath)
             except Exception as e:
-                dummy.printException(e, "status_map failed")
+                printException(e, "status_map failed")
                 status_map = None
 
             git_succeeded = False
@@ -127,14 +148,14 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
                 git_list = git_method(dummy, dirpath, rel, status_map)
                 git_succeeded = True
             except Exception as e:
-                dummy.printException(e, "git_method failed")
+                printException(e, "git_method failed")
                 git_list = []
 
             try:
                 pyg_list = pyg_method(dummy, dirpath, rel)
                 pyg_succeeded = True
             except Exception as e:
-                dummy.printException(e, "pyg_method failed")
+                printException(e, "pyg_method failed")
                 pyg_list = []
 
 
@@ -170,14 +191,14 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
                         pseudo_git, commits_git = hist_git_fn(dummy, root, rel_file)
                         hist_git_ok = True
                     except Exception as e:
-                        dummy.printException(e, "_prepFileModeHistoryList_for_git failed")
+                        printException(e, "_prepFileModeHistoryList_for_git failed")
                         pseudo_git = []
                         commits_git = []
                     try:
                         pseudo_pyg, commits_pyg = hist_pyg_fn(dummy, root, rel_file)
                         hist_pyg_ok = True
                     except Exception as e:
-                        dummy.printException(e, "_prepFileModeHistoryList_for_pygit2 failed")
+                        gitdiffnavtool.printException(e, "_prepFileModeHistoryList_for_pygit2 failed")
                         pseudo_pyg = []
                         commits_pyg = []
 
@@ -197,7 +218,7 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
                         else:
                             logger.info("history outputs identical for %s", os.path.join(dirpath, test_file))
             except Exception as e:
-                dummy.printException(e, "history-mode test iteration failed")
+                printException(e, "history-mode test iteration failed")
             if max_dirs and dirs_seen >= max_dirs:
                 break
 

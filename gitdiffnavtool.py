@@ -2272,7 +2272,16 @@ class FileModeHistoryList(HistoryListBase):
                         diff = None
                     else:
                         diff = repo.diff(parent.tree, commit.tree)
-                    touched = False
+                        try:
+                            # Enable find_similar/rename detection so we approximate
+                            # `git log --follow` behavior and can follow renames.
+                            diff.find_similar()
+                        except Exception as _ex:
+                            # Non-fatal: continue processing deltas even if
+                            # rename detection couldn't be enabled.
+                            self.printException(_ex)
+                        # For non-initial commits, start with touched False
+                        touched = False
                     if diff is not None:
                         for delta in diff.deltas:
                             try:
@@ -2339,6 +2348,20 @@ class FileModeHistoryList(HistoryListBase):
                 self.printException(e, "_prepFileModeHistoryList_for_git getting staged file failed")
                 staged = []
 
+            # Also consult `git status --porcelain` to detect untracked/ignored
+            try:
+                cmd = ["git", "-C", repo_root, "status", "--porcelain", "--", rel_path]
+                proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList git status --porcelain")
+                por = (proc.stdout or "").splitlines()
+                if por:
+                    code = por[0][:2]
+                    if code == "??":
+                        pseudo_entries.append(("UNTRACKED", "UNTRACKED (untracked)"))
+                    elif code == "!!":
+                        pseudo_entries.append(("IGNORED", "IGNORED (ignored)"))
+            except Exception as e:
+                self.printException(e, "_prepFileModeHistoryList_for_git git status check failed")
+
             try:
                 if mods:
                     pseudo_entries.append(("MODS", "MODS (modified, unstaged)"))
@@ -2372,13 +2395,21 @@ class FileModeHistoryList(HistoryListBase):
                 status = 0
 
             try:
-                mods_flags = (
-                    pygit2.GIT_STATUS_WT_NEW
-                    | pygit2.GIT_STATUS_WT_MODIFIED
-                    | pygit2.GIT_STATUS_WT_RENAMED
-                    | pygit2.GIT_STATUS_WT_TYPECHANGE
-                    | pygit2.GIT_STATUS_WT_DELETED
-                )
+                # Treat untracked (WT_NEW) separately so it matches git
+                # `status --porcelain` semantics (emit UNTRACKED, not MODS).
+                wt_new = getattr(pygit2, "GIT_STATUS_WT_NEW", 0)
+                if status & wt_new:
+                    pseudo_entries.append(("UNTRACKED", "UNTRACKED (untracked)"))
+                else:
+                    mods_flags = (
+                        pygit2.GIT_STATUS_WT_MODIFIED
+                        | pygit2.GIT_STATUS_WT_RENAMED
+                        | pygit2.GIT_STATUS_WT_TYPECHANGE
+                        | pygit2.GIT_STATUS_WT_DELETED
+                    )
+                    if status & mods_flags:
+                        pseudo_entries.append(("MODS", "MODS (modified, unstaged)"))
+
                 index_flags = (
                     pygit2.GIT_STATUS_INDEX_NEW
                     | pygit2.GIT_STATUS_INDEX_MODIFIED
@@ -2386,8 +2417,6 @@ class FileModeHistoryList(HistoryListBase):
                     | pygit2.GIT_STATUS_INDEX_TYPECHANGE
                     | pygit2.GIT_STATUS_INDEX_DELETED
                 )
-                if status & mods_flags:
-                    pseudo_entries.append(("MODS", "MODS (modified, unstaged)"))
                 if status & index_flags:
                     pseudo_entries.append(("STAGED", "STAGED (staged, uncommitted)"))
             except Exception as e:
