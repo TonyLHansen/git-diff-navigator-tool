@@ -15,6 +15,7 @@ import pprint
 import difflib
 from types import SimpleNamespace
 import logging
+import traceback
 
 # Ensure we can import the project module from workspace root
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -42,8 +43,13 @@ def make_dummy(repo_root: str, pyg_repo=None):
             self.app = SimpleNamespace(repo_root=repo_root, pygit2_repo=pyg_repo)
 
         def printException(self, e: Exception, msg: str | None = None):
-            # Log exceptions via module logger
-            logger.warning("printException: %s %s", msg or "", e)
+            # Log exceptions with full traceback via module logger
+            #try:
+            #    tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            #except Exception:
+            #    tb = str(e)
+            #logger.exception("printException: %s\n%s", msg or "", tb)
+            logger.exception("printException: %s", msg or "")
 
         def _run_cmd_log(self, cmd, label: str | None = None, text: bool = True, capture_output: bool = True):
             # Minimal wrapper to match AppBase behavior
@@ -78,6 +84,9 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
     git_method = gitdiffnavtool.FileModeFileList._prepFileModeFileList_from_git
     pyg_method = gitdiffnavtool.FileModeFileList._prepFileModeFileList_from_pygit2
     status_map_fn = gitdiffnavtool.FileModeFileList._prepFileModeFileList_status_map_from_git
+    # History preparer unbound refs
+    hist_git_fn = gitdiffnavtool.FileModeHistoryList._prepFileModeHistoryList_for_git
+    hist_pyg_fn = gitdiffnavtool.FileModeHistoryList._prepFileModeHistoryList_for_pygit2
 
     dirs_seen = 0
     diffs_found = 0
@@ -131,17 +140,64 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
 
             if not(git_succeeded and pyg_succeeded):
                 logger.error("Skipping diff: one or both methods failed in %s", dirpath)
-                continue
-            
-            diffs = compare_lists(git_list, pyg_list, dirpath)
-            if diffs:
-                diffs_found += 1
-                logger.error("DIFF FOUND for path %s:", dirpath)
-                logger.info("%s", "\n".join(diffs))
             else:
-                logger.info("outputs identical")
+                # Compare outputs                
+                diffs = compare_lists(git_list, pyg_list, dirpath)
+                if diffs:
+                        diffs_found += 1
+                        logger.error("DIFF FOUND for path %s:", dirpath)
+                        logger.info("%s", "\n".join(diffs))
+                else:
+                        logger.info("outputs identical")
 
             dirs_seen += 1
+            # --- History-mode checks: test the history preparers on one file in this dir ---
+            try:
+                # Find first non-dot regular file to exercise history helpers
+                test_file = None
+                for name in filenames:
+                    if name.startswith("."):
+                        continue
+                    full = os.path.join(dirpath, name)
+                    if os.path.isfile(full):
+                        test_file = name
+                        break
+                if test_file:
+                    rel_file = os.path.join(rel, test_file) if rel else test_file
+                    rel_file = os.path.normpath(rel_file)
+                    hist_git_ok = hist_pyg_ok = False
+                    try:
+                        pseudo_git, commits_git = hist_git_fn(dummy, root, rel_file)
+                        hist_git_ok = True
+                    except Exception as e:
+                        dummy.printException(e, "_prepFileModeHistoryList_for_git failed")
+                        pseudo_git = []
+                        commits_git = []
+                    try:
+                        pseudo_pyg, commits_pyg = hist_pyg_fn(dummy, root, rel_file)
+                        hist_pyg_ok = True
+                    except Exception as e:
+                        dummy.printException(e, "_prepFileModeHistoryList_for_pygit2 failed")
+                        pseudo_pyg = []
+                        commits_pyg = []
+
+                    if not(hist_git_ok and hist_pyg_ok):
+                        logger.error("Skipping history diff: one or both history methods failed for %s/%s", dirpath, test_file)
+                    else:
+                        # Compare pseudo entries and commit lists
+                        diffs_pe = compare_lists(pseudo_git, pseudo_pyg, f"history_pseudo: {dirpath}/{test_file}")
+                        diffs_commits = compare_lists(commits_git, commits_pyg, f"history_commits: {dirpath}/{test_file}")
+                        if diffs_pe or diffs_commits:
+                            diffs_found += 1
+                            logger.error("HISTORY DIFF FOUND for %s/%s", dirpath, test_file)
+                            if diffs_pe:
+                                logger.info("%s", "\n".join(diffs_pe))
+                            if diffs_commits:
+                                logger.info("%s", "\n".join(diffs_commits))
+                        else:
+                            logger.info("history outputs identical for %s", os.path.join(dirpath, test_file))
+            except Exception as e:
+                dummy.printException(e, "history-mode test iteration failed")
             if max_dirs and dirs_seen >= max_dirs:
                 break
 
@@ -172,7 +228,7 @@ def main(argv=None):
     else:
         level = logging.WARNING
     fh.setLevel(level)
-    fh.setFormatter(logging.Formatter("%(message)s"))
+    fh.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
     logger.addHandler(fh)
     logger.setLevel(level)
 
