@@ -82,7 +82,15 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
     dirs_seen = 0
     diffs_found = 0
     for dirpath, dirnames, filenames in os.walk(root):
-            # Skip .git tree
+            logger.debug("Walking to: %s", dirpath)
+            # Prune .git from dirnames so we don't descend into git internals
+            if ".git" in dirnames:
+                try:
+                    dirnames.remove(".git")
+                except ValueError:
+                    pass
+                logger.debug("Pruned .git from traversal at: %s", dirpath)
+            # Skip .git tree (in case we're currently inside .git)
             if os.path.basename(dirpath) == ".git":
                 logger.debug("Skipping .git directory: %s", dirpath)
                 continue
