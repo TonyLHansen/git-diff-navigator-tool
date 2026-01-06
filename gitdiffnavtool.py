@@ -1003,21 +1003,14 @@ class FileModeFileList(FileListBase):
             relpath = path[len(self.app.repo_root) + 1 :]
             logger.debug(f"prepFileModeFileList: path='{path}' relpath={relpath}")
 
-            # Build a batched `status_map` once per directory when `pygit2` is
-            # unavailable. This avoids per-file `git status` calls for large
-            # directories. `status_map` maps repository-relative paths to the
-            # two-char porcelain status code (e.g. ' M', 'A ', '??'). If the
-            # repository isn't available or building the map fails, leave
-            # `status_map` as None and fall back to per-file checks later.
+            # Build a per-directory porcelain `status_map` mapping
+            # repo-relative paths -> git porcelain two-char codes (index+worktree).
+            # Examples: ' M' (worktree modified), 'A ' (staged/index added),
+            # '??' (untracked), '!!' (ignored); codes containing 'U' indicate
+            # conflicts. Compute the map only when using the git backend or
+            # when `--test-pygit2` is enabled.
             status_map = None
-            # When `pygit2` is available we use `repo.status()` directly
-            # inside the pygit2-backed preparers to obtain flags. The
-            # porcelain two-character `status_map` (git CLI `--porcelain`)
-            # is a git/CLI-specific artifact — there is no direct
-            # `_prepFileModeFileList_status_map_from_pygit2` counterpart.
-            # Therefore only compute the porcelain `status_map` when the
-            # git CLI backend is used.
-            if not pygit2:
+            if self.app.test_pygit2 or not pygit2:
                 status_map = self._prepFileModeFileList_status_map_from_git(path)
 
             # clear and populate
@@ -1070,11 +1063,11 @@ class FileModeFileList(FileListBase):
                 file_infos: list[dict] = []
                 # When testing, run both backends and compare outputs.
                 if self.app.test_pygit2:
-                    file_infos = self._prepFileModeFileList_from_pygit2(path, relpath, status_map)
+                    file_infos = self._prepFileModeFileList_from_pygit2(path, relpath)
                     file_infos_git = self._prepFileModeFileList_from_git(path, relpath, status_map)
                     self.compare_pygit2_to_git_output(file_infos, file_infos_git, "prepFileModeFileList")
                 elif pygit2:
-                    file_infos = self._prepFileModeFileList_from_pygit2(path, relpath, status_map)
+                    file_infos = self._prepFileModeFileList_from_pygit2(path, relpath)
                 else:
                     file_infos = self._prepFileModeFileList_from_git(path, relpath, status_map)
 
@@ -1238,7 +1231,23 @@ class FileModeFileList(FileListBase):
                                         repo_status = "modified"
                                 else:
                                     repo_status = "tracked_clean"
-                        # leave repo_status None if unknown; caller may treat as tracked
+                            else:
+                                # Not present in porcelain `status_map`. If the
+                                # file is tracked according to git, mark it as
+                                # a clean tracked file so callers observing
+                                # `repo_status` see an explicit value instead
+                                # of None. Use `git ls-files --error-unmatch` as
+                                # a cheap check for tracked-ness.
+                                try:
+                                    proc = self._run_cmd_log(
+                                        ["git", "-C", self.app.repo_root, "ls-files", "--error-unmatch", rel],
+                                        label="_prepFileModeFileList_from_git ls-files",
+                                    )
+                                    if getattr(proc, "returncode", 1) == 0:
+                                        repo_status = "tracked_clean"
+                                except Exception as _ex:
+                                    self.printException(_ex, "_prepFileModeFileList_from_git: ls-files check failed")
+                        # leave repo_status None if unknown and not tracked
                     except Exception as _ex:
                         self.printException(_ex, "_prepFileModeFileList_from_git: determining rel/status failed")
                         repo_status = None
@@ -1250,7 +1259,7 @@ class FileModeFileList(FileListBase):
             self.printException(e, "_prepFileModeFileList_from_git failed")
         return infos
 
-    def _prepFileModeFileList_from_pygit2(self, path: str, relpath: str, status_map: dict | None) -> list[dict]:
+    def _prepFileModeFileList_from_pygit2(self, path: str, relpath: str) -> list[dict]:
         """Return a list of file info dicts using pygit2 when possible.
 
         For now this attempts to reuse the git-backed implementation for
@@ -1303,6 +1312,10 @@ class FileModeFileList(FileListBase):
                             ):
                                 repo_status = "modified"
                             else:
+                                # Match git-backed helper behavior: leave unknown/clean
+                                # tracked files as None so callers can treat them
+                                # consistently when `status_map` is absent.
+                                # This status represents "tracked_clean" files. None
                                 repo_status = "tracked_clean"
                         except Exception as _ex:
                             self.printException(_ex, "_prepFileModeFileList_from_pygit2: status_file failed")
@@ -1334,7 +1347,9 @@ class FileModeFileList(FileListBase):
             else:
                 prefix = prefix + os.sep
 
-            cmd = ["git", "-C", self.app.repo_root, "status", "--porcelain"]
+            # Include ignored entries so porcelain emits '!!' for ignored files
+            # and '??' for untracked files which we parse below.
+            cmd = ["git", "-C", self.app.repo_root, "status", "--porcelain", "--ignored"]
             proc = self._run_cmd_log(cmd, label="prepFileModeFileList git status")
             out = proc.stdout or ""
             m: dict[str, str] = {}
@@ -3117,7 +3132,7 @@ class GitHistoryNavTool(App):
                     self.pygit2_repo = pygit2.Repository(self.repo_root)
                 except Exception as e:
                     printException(e, "GitHistoryNavTool.__init__: pygit2.Repository init failed")
-                    pygit2 = None  # disable pygit2 usage on failure
+                    globals()["pygit2"] = None  # disable pygit2 usage on failure (module-level)
 
             # Optional diff variant arguments indexed by variant_index.
             # index 0 -> None (no extra arg), 1 -> ignore-space-change, 2 -> patience algorithm
