@@ -1232,19 +1232,27 @@ class FileModeFileList(FileListBase):
                                 else:
                                     repo_status = "tracked_clean"
                             else:
-                                # Not present in porcelain `status_map`. If the
-                                # file is tracked according to git, mark it as
-                                # a clean tracked file so callers observing
-                                # `repo_status` see an explicit value instead
-                                # of None. Use `git ls-files --error-unmatch` as
-                                # a cheap check for tracked-ness.
+                                # Not present in porcelain `status_map`.
+                                # For files, use `git ls-files --error-unmatch`
+                                # to detect tracked files and mark them
+                                # explicitly as `tracked_clean`. Do not run
+                                # this check for directories — leave directory
+                                # `repo_status` as None to match pygit2.
                                 try:
-                                    proc = self._run_cmd_log(
-                                        ["git", "-C", self.app.repo_root, "ls-files", "--error-unmatch", rel],
-                                        label="_prepFileModeFileList_from_git ls-files",
-                                    )
-                                    if getattr(proc, "returncode", 1) == 0:
-                                        repo_status = "tracked_clean"
+                                    if not is_dir:
+                                        proc = self._run_cmd_log(
+                                            [
+                                                "git",
+                                                "-C",
+                                                self.app.repo_root,
+                                                "ls-files",
+                                                "--error-unmatch",
+                                                rel,
+                                            ],
+                                            label="_prepFileModeFileList_from_git ls-files",
+                                        )
+                                        if getattr(proc, "returncode", 1) == 0:
+                                            repo_status = "tracked_clean"
                                 except Exception as _ex:
                                     self.printException(_ex, "_prepFileModeFileList_from_git: ls-files check failed")
                         # leave repo_status None if unknown and not tracked
