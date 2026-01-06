@@ -225,12 +225,79 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
     return dirs_seen, diffs_found
 
 
+def run_repo_history_tests(root: str, prev_hash: str | None = None, curr_hash: str | None = None) -> tuple[int, int]:
+    """Run repository-wide history preparers and compare git vs pygit2 outputs.
+
+    Returns (pseudo_diffs, commit_diffs) counts.
+    """
+    root = os.path.abspath(root)
+    if not os.path.isdir(root):
+        print(f"Not a directory: {root}")
+        return 0, 0
+
+    # Build dummy and unbound refs
+    pyg_repo = pygit2.Repository(root)
+    dummy = make_dummy(root, pyg_repo)
+
+    repo_git_fn = gitdiffnavtool.RepoModeHistoryList._prepRepoModeHistoryList_for_git
+    repo_pyg_fn = gitdiffnavtool.RepoModeHistoryList._prepRepoModeHistoryList_for_pygit2
+
+    pseudo_diffs = 0
+    commit_diffs = 0
+    git_worked = pyg_worked = False
+
+    try:
+        try:
+            pseudo_git, commits_git = repo_git_fn(dummy, root, prev_hash, curr_hash)
+        except Exception as e:
+            dummy.printException(e, "_prepRepoModeHistoryList_for_git failed")
+            pseudo_git = []
+            commits_git = []
+        else:
+            git_worked = True
+
+        try:
+            pseudo_pyg, commits_pyg = repo_pyg_fn(dummy, root, prev_hash, curr_hash)
+        except Exception as e:
+            dummy.printException(e, "_prepRepoModeHistoryList_for_pygit2 failed")
+            pseudo_pyg = []
+            commits_pyg = []
+        else:
+            pyg_worked = True
+        if not (git_worked and pyg_worked):
+            dummy.printException(Exception("Skipping repo-history diff: one or both methods failed"))
+            return pseudo_diffs, commit_diffs
+        
+        diffs_pe = compare_lists(pseudo_git, pseudo_pyg, "repo_history_pseudo")
+        diffs_c = compare_lists(commits_git, commits_pyg, "repo_history_commits")
+        if diffs_pe:
+            pseudo_diffs = 1
+            logger.error("REPO HISTORY PSEUDO DIFF FOUND:")
+            logger.info("%s", "\n".join(diffs_pe))
+        else:
+            logger.info("repo pseudo entries identical")
+        if diffs_c:
+            commit_diffs = 1
+            logger.error("REPO HISTORY COMMITS DIFF FOUND:")
+            logger.info("%s", "\n".join(diffs_c))
+        else:
+            logger.info("repo commits identical")
+    except Exception as e:
+        # Unexpected top-level failure
+        dummy.printException(e, "run_repo_history_tests failed")
+
+    return pseudo_diffs, commit_diffs
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Test FileModeFileList backends and diff outputs")
     ap.add_argument("path", help="Repository root path to test")
     ap.add_argument("--max", type=int, default=None, help="Max directories to check")
     ap.add_argument("-o", "--output", dest="output", default=LOGPATH, help="Log output file (default tmp/debug-prep-test.log)")
     ap.add_argument("-v", "--verbosity", dest="verbose", action="count", default=0, help="Increase verbosity (-v for INFO, -vv for DEBUG)")
+    ap.add_argument("--repo-history", dest="repo_history", action="store_true", help="Run repository-wide history preparers and compare outputs")
+    ap.add_argument("--prev", dest="prev", default=None, help="Previous commit hash for repo-history tests")
+    ap.add_argument("--curr", dest="curr", default=None, help="Current commit hash for repo-history tests")
     args = ap.parse_args(argv)
 
     # Fail fast if pygit2 is required but not importable at module load time.
@@ -254,6 +321,9 @@ def main(argv=None):
     logger.setLevel(level)
 
     dirs_seen, diffs_found = run(args.path, max_dirs=args.max)
+    if args.repo_history:
+        pe, cc = run_repo_history_tests(args.path, prev_hash=args.prev, curr_hash=args.curr)
+        diffs_found += pe + cc
     print(f"Checked {dirs_seen} directories; diffs in {diffs_found}; log: {args.output}")
     return 1 if diffs_found else 0
 
