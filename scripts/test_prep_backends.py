@@ -139,7 +139,7 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
             try:
                 status_map = status_map_fn(dummy, dirpath)
             except Exception as e:
-                printException(e, "status_map failed")
+                gitdiffnavtool.printException(e, "status_map failed")
                 status_map = None
 
             git_succeeded = False
@@ -148,14 +148,14 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
                 git_list = git_method(dummy, dirpath, rel, status_map)
                 git_succeeded = True
             except Exception as e:
-                printException(e, "git_method failed")
+                gitdiffnavtool.printException(e, "git_method failed")
                 git_list = []
 
             try:
                 pyg_list = pyg_method(dummy, dirpath, rel)
                 pyg_succeeded = True
             except Exception as e:
-                printException(e, "pyg_method failed")
+                gitdiffnavtool.printException(e, "pyg_method failed")
                 pyg_list = []
 
 
@@ -167,7 +167,7 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
                 if diffs:
                         diffs_found += 1
                         logger.error("DIFF FOUND for path %s:", dirpath)
-                        logger.info("%s", "\n".join(diffs))
+                        logger.info("\n%s", "\n".join(diffs))
                 else:
                         logger.info("outputs identical")
 
@@ -191,7 +191,7 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
                         pseudo_git, commits_git = hist_git_fn(dummy, root, rel_file)
                         hist_git_ok = True
                     except Exception as e:
-                        printException(e, "_prepFileModeHistoryList_for_git failed")
+                        gitdiffnavtool.printException(e, "_prepFileModeHistoryList_for_git failed")
                         pseudo_git = []
                         commits_git = []
                     try:
@@ -212,13 +212,13 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
                             diffs_found += 1
                             logger.error("HISTORY DIFF FOUND for %s/%s", dirpath, test_file)
                             if diffs_pe:
-                                logger.info("%s", "\n".join(diffs_pe))
+                                logger.info("\n%s", "\n".join(diffs_pe))
                             if diffs_commits:
-                                logger.info("%s", "\n".join(diffs_commits))
+                                logger.info("\n%s", "\n".join(diffs_commits))
                         else:
                             logger.info("history outputs identical for %s", os.path.join(dirpath, test_file))
             except Exception as e:
-                printException(e, "history-mode test iteration failed")
+                gitdiffnavtool.printException(e, "history-mode test iteration failed")
             if max_dirs and dirs_seen >= max_dirs:
                 break
 
@@ -264,22 +264,24 @@ def run_repo_history_tests(root: str, prev_hash: str | None = None, curr_hash: s
             commits_pyg = []
         else:
             pyg_worked = True
+
         if not (git_worked and pyg_worked):
             dummy.printException(Exception("Skipping repo-history diff: one or both methods failed"))
             return pseudo_diffs, commit_diffs
         
         diffs_pe = compare_lists(pseudo_git, pseudo_pyg, "repo_history_pseudo")
+        # Compare commits directly; repo helpers return newest-first ordering
         diffs_c = compare_lists(commits_git, commits_pyg, "repo_history_commits")
         if diffs_pe:
             pseudo_diffs = 1
             logger.error("REPO HISTORY PSEUDO DIFF FOUND:")
-            logger.info("%s", "\n".join(diffs_pe))
+            logger.info("\n%s", "\n".join(diffs_pe))
         else:
             logger.info("repo pseudo entries identical")
         if diffs_c:
             commit_diffs = 1
             logger.error("REPO HISTORY COMMITS DIFF FOUND:")
-            logger.info("%s", "\n".join(diffs_c))
+            logger.info("\n%s", "\n".join(diffs_c))
         else:
             logger.info("repo commits identical")
     except Exception as e:

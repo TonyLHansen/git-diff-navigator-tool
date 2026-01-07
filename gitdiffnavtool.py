@@ -15,7 +15,7 @@ import subprocess
 import traceback
 import inspect
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from functools import wraps
 
 # Optional pygit2 support — best-effort import to enable repo status checks
@@ -326,6 +326,34 @@ class AppBase(ListView):
         except Exception as e:
             self.printException(e, "extracting label text")
             return str(lbl)
+
+    def _date_key(self, t: tuple[str, str, str]):
+        """Convert a (hash, date, msg) tuple's ISO date to a datetime for sorting.
+
+        Returns `datetime.min` when the date is missing or unparsable so
+        sorting remains robust.
+        """
+        try:
+            ds = t[1] if len(t) > 1 else ""
+            if ds:
+                try:
+                    # Prefer full ISO datetime parsing when available
+                    dt_obj = datetime.fromisoformat(ds)
+                except Exception as e:
+                    self.printException(e, f"parsing ISO datetime '{ds}' failed, trying date-only") 
+                    try:
+                        dt_obj = datetime.strptime(ds, "%Y-%m-%d")
+                    except Exception as e2:
+                        self.printException(e2, f"parsing date-only '{ds}' failed, using datetime.min")
+                        dt_obj = datetime.min
+            else:
+                dt_obj = datetime.min
+            # Return (datetime, hash) so sorting is deterministic; datetime
+            # may include time when provided in ISO format.
+            return (dt_obj, t[0] if len(t) > 0 else "")
+        except Exception as _ex:
+            self.printException(_ex, f"_date_key failed for tuple: {t}")
+            return (datetime.min, "")
 
     def nodes(self):
         """Return the underlying nodes list or an empty list if unset.
@@ -1172,11 +1200,11 @@ class FileModeFileList(FileListBase):
                     try:
                         self.call_after_refresh(self._highlight_top)
                     except Exception as e:
-                        self.printException(e)
+                        self.printException(e, "prepFileModeFileList: scheduling _highlight_top failed")
                         try:
                             self._highlight_top()
                         except Exception as e2:
-                            self.printException(e2, "immediate _highlight_top fallback failed")
+                            self.printException(e2, "prepFileModeFileList: immediate _highlight_top fallback failed")
             except Exception as e:
                 self.printException(e)
         except Exception as e:
@@ -1268,7 +1296,7 @@ class FileModeFileList(FileListBase):
                         repo_status = None
                     infos.append({"name": name, "full": full, "is_dir": is_dir, "raw": raw, "repo_status": repo_status})
                 except Exception as e:
-                    self.printException(e)
+                    self.printException(e, "_prepFileModeFileList_from_git: processing file info failed")
                     continue
         except Exception as e:
             self.printException(e, "_prepFileModeFileList_from_git failed")
@@ -1284,13 +1312,26 @@ class FileModeFileList(FileListBase):
         infos: list[dict] = []
 
         try:
+            repo = self.app.pygit2_repo
+            logger.debug(
+                "_prepRepoModeHistoryList_for_pygit2: entry path=%r repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r",
+                path,
+                self.app.repo_root,
+                bool(pygit2),
+                repr(repo),
+            )
+            if repo is None:
+                logger.warning(
+                    "_prepRepoModeHistoryList_for_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed"
+                )
+                return infos
+
             try:
                 items = sorted(os.listdir(path))
             except Exception as _ex:
                 self.printException(_ex, "_prepFileModeFileList_from_pygit2: listing path failed")
                 items = []
 
-            repo = self.app.pygit2_repo
             for name in items:
                 try:
                     if name == ".git":
@@ -1566,6 +1607,23 @@ class RepoModeFileList(FileListBase):
                         pseudo_entries.extend(self._prepRepoModePseudo_from_pygit2(curr_hash))
                     else:
                         pseudo_entries.extend(self._prepRepoModePseudo_from_git(curr_hash))
+                # If both prev and curr were pseudo names their collected
+                # entries may overlap (a file can be both STAGED and MODS).
+                # Prefer entries from `curr_hash` when duplicates appear by
+                # removing earlier duplicates and keeping the last occurrence.
+                try:
+                    seen = set()
+                    dedup = []
+                    for status, path in reversed(pseudo_entries):
+                        if path in seen:
+                            continue
+                        seen.add(path)
+                        dedup.append((status, path))
+                    dedup.reverse()
+                    pseudo_entries = dedup
+                except Exception as e:
+                    self.printException(e, "prepRepoModeFileList deduplicating pseudo_entries failed")
+
                 logger.debug(
                     "prepRepoModeFileList: prev_hash=%r curr_hash=%r pseudo_entries=%r",
                     prev_hash,
@@ -1782,6 +1840,11 @@ class RepoModeFileList(FileListBase):
             if not pygit2:
                 return entries
             repo = self.app.pygit2_repo
+            logger.debug("_prepRepoModeFileList_from_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r", self.app.repo_root, bool(pygit2), repr(repo))
+            if repo is None:
+                logger.warning("_prepRepoModeFileList_from_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed")
+                return entries
+            
             diff = None
             try:
                 if prev_hash and curr_hash:
@@ -1884,6 +1947,11 @@ class RepoModeFileList(FileListBase):
         items: list[tuple[str, str]] = []
         try:
             repo = self.app.pygit2_repo
+            logger.debug("_prepRepoModePseudo_from_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r", self.app.repo_root, bool(pygit2), repr(repo))
+            if repo is None:
+                logger.warning("_prepRepoModePseudo_from_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed")
+                return items
+            
             try:
                 status_map = repo.status()
             except Exception as e:
@@ -2159,8 +2227,17 @@ class FileModeHistoryList(HistoryListBase):
 
                 # then render real commit entries
                 try:
-                    for h, date_stamp, msg in entries:
+                    for ts, h, msg in entries:
                         try:
+                            # format timestamp for display
+                            try:
+                                if hasattr(ts, "strftime"):
+                                    date_stamp = ts.strftime("%Y-%m-%dT%H:%M:%S")
+                                else:
+                                    date_stamp = str(ts)
+                            except Exception as _ex:
+                                self.printException(_ex, f"_date_key failed for tuple: {(ts, h, msg)}")
+                                date_stamp = str(ts)
                             short_hash = h[:12] if h else ""
                             text = f"{date_stamp} {short_hash} {msg}".strip()
                             self._add_row(text, h)
@@ -2214,8 +2291,7 @@ class FileModeHistoryList(HistoryListBase):
                 repo_root,
                 "log",
                 "--follow",
-                "--pretty=format:%H\t%ad\t%s",
-                "--date=short",
+                "--pretty=format:%H\t%aI\t%s",
                 "--",
                 rel_path,
             ]
@@ -2224,13 +2300,27 @@ class FileModeHistoryList(HistoryListBase):
                 try:
                     parts = ln.split("\t", 2)
                     h = parts[0]
-                    date_stamp = parts[1] if len(parts) > 1 else ""
+                    date_s = parts[1] if len(parts) > 1 else ""
                     msg = parts[2] if len(parts) > 2 else ""
-                    entries.append((h, date_stamp, msg))
+                    try:
+                        dt = datetime.fromisoformat(date_s) if date_s else datetime.min
+                    except Exception as _ex:
+                        self.printException(_ex, f"_prepFileModeHistoryList_commits_from_git failed parsing ISO datetime '{date_s}'")
+                        try:
+                            dt = datetime.strptime(date_s, "%Y-%m-%d") if date_s else datetime.min
+                        except Exception as _ex:
+                            self.printException(_ex, f"_prepFileModeHistoryList_commits_from_git failed parsing date-only '{date_s}'")
+                            dt = datetime.min
+                    entries.append((dt, h, msg))
                 except Exception as e:
                     self.printException(e, "_prepFileModeHistoryList_commits_from_git parse failed")
         except Exception as e:
             self.printException(e, "_prepFileModeHistoryList_commits_from_git failed")
+        # Ensure newest-first ordering by natural tuple ordering (datetime first)
+        try:
+            entries.sort(reverse=True)
+        except Exception as _ex:
+            self.printException(_ex, "_prepFileModeHistoryList_commits_from_git sorting failed")
         return entries
 
     def _prepFileModeHistoryList_commits_from_pygit2(self, repo_root: str, rel_path: str) -> list[tuple[str, str, str]]:
@@ -2242,7 +2332,12 @@ class FileModeHistoryList(HistoryListBase):
         """
         entries: list[tuple[str, str, str]] = []
         try:
-            repo = pygit2.Repository(repo_root)
+            repo = self.app.pygit2_repo
+            logger.debug("_prepFileModeHistoryList_commits_from_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r", repo_root, bool(pygit2), repr(repo))
+            if repo is None:
+                logger.warning("_prepFileModeHistoryList_commits_from_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed")
+                return entries
+            
             try:
                 head = repo.head.target
             except Exception as _ex:
@@ -2311,9 +2406,26 @@ class FileModeHistoryList(HistoryListBase):
                     if touched:
                         try:
                             h = str(commit.id)
-                            date_stamp = datetime.fromtimestamp(commit.author.time).strftime("%Y-%m-%d")
+                            try:
+                                ts = commit.author.time
+                                off = getattr(commit.author, "offset", None)
+                                if off is not None:
+                                    tz = timezone(timedelta(minutes=off))
+                                    dt = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(tz)
+                                else:
+                                    dt = datetime.fromtimestamp(ts)
+                                date_stamp = dt.strftime("%Y-%m-%dT%H:%M:%S")
+                            except Exception as _ex:
+                                self.printException(_ex, "_prepFileModeHistoryList_commits_from_pygit2 failed parsing commit timestamp")
+                                date_stamp = ""
                             msg = (commit.message or "").splitlines()[0].strip()
-                            entries.append((h, date_stamp, msg))
+                            # store datetime object first for natural sorting
+                            try:
+                                dt
+                            except NameError as _ex:
+                                self.printException(_ex, "_prepFileModeHistoryList_commits_from_pygit2: dt undefined, using datetime.min")
+                                dt = datetime.min
+                            entries.append((dt, h, msg))
                         except Exception as e:
                             self.printException(e, "_prepFileModeHistoryList_commits_from_pygit2 entry build failed")
                 except Exception as _ex:
@@ -2321,6 +2433,11 @@ class FileModeHistoryList(HistoryListBase):
                     continue
         except Exception as e:
             self.printException(e, "_prepFileModeHistoryList_commits_from_pygit2 failed")
+        # Ensure newest-first ordering by natural tuple ordering (datetime first)
+        try:
+            entries.sort(reverse=True)
+        except Exception as _ex:
+            self.printException(_ex, "_prepFileModeHistoryList_commits_from_pygit2 sorting failed")
         return entries
 
     
@@ -2387,6 +2504,10 @@ class FileModeHistoryList(HistoryListBase):
         commits: list[tuple[str, str, str]] = []
         try:
             repo = self.app.pygit2_repo
+            logger.debug("_prepFileModeHistoryList_for_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r", repo_root, bool(pygit2), repr(repo))
+            if repo is None:    
+                logger.warning("_prepFileModeHistoryList_for_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed")
+                return (pseudo_entries, commits)
 
             try:
                 status = repo.status_file(rel_path)
@@ -2523,32 +2644,57 @@ class RepoModeHistoryList(HistoryListBase):
                     if pseudo_entries:
                         # pseudo_entries contains tuples like (status, path) and may include MODS/STAGED labels
                         for status, path in pseudo_entries:
+                            logger.debug("prepRepoModeHistoryList: processing pseudo-entry: %r %r", status, path)
                             # status may be 'MODS' or 'STAGED' summary rows represented specially
                             if status in ("MODS", "STAGED"):
                                 # path carries the count/caption
+                                logger.debug("prepRepoModeHistoryList: adding pseudo-summary row: %r %r", path, status)
                                 self._add_row(path, status)
                                 continue
                             # otherwise these are file tuples (status, path)
                             display = f"{status} {path}"
-                            item = ListItem(Label(Text(display)))
+                            # Use _add_row so row padding/formatting matches commits
                             try:
-                                if not os.path.isabs(path):
-                                    full = os.path.realpath(os.path.join(self.app.repo_root, path))
-                                else:
-                                    full = os.path.realpath(path)
-                                item._raw_text = full
+                                logger.debug("prepRepoModeHistoryList: adding pseudo file row: %r %r", display, status)
+                                self._add_row(display, status)
                             except Exception as e:
-                                self.printException(e, "prepRepoModeHistoryList: resolving full path failed")
-                                item._raw_text = path
-                            item._is_dir = False
-                            self.append(item)
+                                self.printException(e, "prepRepoModeHistoryList: adding pseudo row failed")
+                                continue
+                            # Attach metadata similar to previous manual creation
+                            try:
+                                nodes = self.nodes()
+                                if nodes:
+                                    last = nodes[-1]
+                                    try:
+                                        if not os.path.isabs(path):
+                                            full = os.path.realpath(os.path.join(self.app.repo_root, path))
+                                        else:
+                                            full = os.path.realpath(path)
+                                        setattr(last, "_raw_text", full)
+                                    except Exception as e:
+                                        self.printException(e, "prepRepoModeHistoryList: resolving full path failed")
+                                        setattr(last, "_raw_text", path)
+                                    try:
+                                        setattr(last, "_is_dir", False)
+                                    except Exception as e:
+                                        self.printException(e, "prepRepoModeHistoryList: setting _is_dir failed")
+                            except Exception as e:
+                                self.printException(e, "prepRepoModeHistoryList setting pseudo row metadata failed")
                 except Exception as e:
                     self.printException(e, "prepRepoModeHistoryList adding pseudo-rows failed")
 
                 # Render commit rows
                 try:
-                    for commit_hash, date_stamp, msg in commits:
+                    for ts, commit_hash, msg in commits:
                         try:
+                            try:
+                                if hasattr(ts, "strftime"):
+                                    date_stamp = ts.strftime("%Y-%m-%dT%H:%M:%S")
+                                else:
+                                    date_stamp = str(ts)
+                            except Exception as _ex:
+                                self.printException(_ex, "prepRepoModeHistoryList: date_stamp formatting failed")
+                                date_stamp = str(ts)
                             short_hash = commit_hash[:12] if commit_hash else ""
                             text = f"{date_stamp} {short_hash} {msg}"
                             self._add_row(text, commit_hash)
@@ -2635,20 +2781,52 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e, "_prepRepoModeHistoryList_for_git getting staged files failed")
                 staged = []
 
-            # add summary pseudo rows first if present
+            # add summary pseudo rows first if present and attach timestamps
             try:
+                # Compute timestamp for most recently modified working-tree file
+                mods_ts = ""
+                try:
+                    latest_m = None
+                    for p in mods:
+                        try:
+                            full = os.path.join(self.app.repo_root, p)
+                            if os.path.exists(full):
+                                m = os.path.getmtime(full)
+                                if latest_m is None or m > latest_m:
+                                    latest_m = m
+                        except Exception as e:
+                            self.printException(e, "_prepRepoModeHistoryList_for_git skipping file mtime due to error")
+                            continue
+                    if latest_m is not None:
+                        mods_ts = " " + datetime.fromtimestamp(latest_m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+                except Exception as _ex:
+                    self.printException(_ex, "_prepRepoModeHistoryList_for_git computing mods timestamp failed")
+
+                # Compute timestamp for index (last staged change)
+                staged_ts = ""
+                try:
+                    idx_path = os.path.join(self.app.repo_root, ".git", "index")
+                    if os.path.exists(idx_path):
+                        m = os.path.getmtime(idx_path)
+                        staged_ts = " " + datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+                except Exception as _ex:
+                    self.printException(_ex, "_prepRepoModeHistoryList_for_git computing staged timestamp failed")
+
                 if mods:
-                    pseudo_entries.append(("MODS", f"MODS ({len(mods)} modified file{'s' if len(mods) != 1 else ''})"))
+                    date_part = mods_ts.strip() if mods_ts else ""
+                    status_short = "MODS"
+                    msg = f"({len(mods)} modified file{'s' if len(mods) != 1 else ''})"
+                    display = f"{date_part} {status_short[:12]} {msg}".strip()
+                    pseudo_entries.append(("MODS", display))
                 if staged:
-                    pseudo_entries.append(("STAGED", f"STAGED ({len(staged)} staged file{'s' if len(staged) != 1 else ''})"))
+                    date_part = staged_ts.strip() if staged_ts else ""
+                    status_short = "STAGED"
+                    msg = f"({len(staged)} staged file{'s' if len(staged) != 1 else ''})"
+                    display = f"{date_part} {status_short[:12]} {msg}".strip()
+                    pseudo_entries.append(("STAGED", display))
             except Exception as e:
                 self.printException(e, "_prepRepoModeHistoryList_for_git adding pseudo summaries failed")
 
-            # then include the individual file entries for visibility
-            for p in mods:
-                pseudo_entries.append(("M", p))
-            for p in staged:
-                pseudo_entries.append(("S", p))
 
             # collect commits
             try:
@@ -2658,8 +2836,7 @@ class RepoModeHistoryList(HistoryListBase):
                         "-C",
                         self.app.repo_root,
                         "log",
-                        "--pretty=format:%H\t%ad\t%s",
-                        "--date=short",
+                        "--pretty=format:%H\t%aI\t%s",
                         "-n",
                         "200",
                     ]
@@ -2670,9 +2847,18 @@ class RepoModeHistoryList(HistoryListBase):
                         try:
                             parts = ln.split("\t", 2)
                             commit_hash = parts[0]
-                            date_stamp = parts[1] if len(parts) > 1 else ""
+                            date_s = parts[1] if len(parts) > 1 else ""
                             msg = parts[2] if len(parts) > 2 else ""
-                            commits.append((commit_hash, date_stamp, msg))
+                            try:
+                                dt = datetime.fromisoformat(date_s) if date_s else datetime.min
+                            except Exception as _ex:
+                                self.printException(_ex, f"_prepRepoModeHistoryList_for_git failed parsing ISO datetime '{date_s}'")
+                                try:
+                                    dt = datetime.strptime(date_s, "%Y-%m-%d") if date_s else datetime.min
+                                except Exception as _ex:
+                                    self.printException(_ex, f"_prepRepoModeHistoryList_for_git failed parsing date-only '{date_s}'")
+                                    dt = datetime.min
+                            commits.append((dt, commit_hash, msg))
                         except Exception as e:
                             self.printException(e, "_prepRepoModeHistoryList_for_git parse failed")
             except subprocess.CalledProcessError as _ex:
@@ -2681,6 +2867,11 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e, "_prepRepoModeHistoryList_for_git git log failed")
         except Exception as e:
             self.printException(e, "_prepRepoModeHistoryList_for_git failed")
+        # Sort commits newest-first by natural tuple ordering (datetime first)
+        try:
+            commits.sort(reverse=True)
+        except Exception as _ex:
+            self.printException(_ex, "_prepRepoModeHistoryList_for_git sorting failed")
         return (pseudo_entries, commits)
 
     def _prepRepoModeHistoryList_for_pygit2(
@@ -2702,9 +2893,12 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e, "_prepRepoModeHistoryList_for_pygit2: repo.status() failed")
                 status_map = {}
 
+            # Exclude WT_NEW from `mods` so it matches `git diff` behavior
+            # (which doesn't list untracked files). Treat WT_NEW separately
+            # if callers need untracked information.
+            wt_new = getattr(pygit2, "GIT_STATUS_WT_NEW", 0)
             mods = [p for p, f in status_map.items() if f & (
-                pygit2.GIT_STATUS_WT_NEW
-                | pygit2.GIT_STATUS_WT_MODIFIED
+                pygit2.GIT_STATUS_WT_MODIFIED
                 | pygit2.GIT_STATUS_WT_RENAMED
                 | pygit2.GIT_STATUS_WT_TYPECHANGE
                 | pygit2.GIT_STATUS_WT_DELETED
@@ -2718,17 +2912,52 @@ class RepoModeHistoryList(HistoryListBase):
             )]
 
             try:
+                # Compute timestamp for most recently modified working-tree file
+                mods_ts = ""
+                try:
+                    latest_m = None
+                    for p in mods:
+                        try:
+                            full = os.path.join(self.app.repo_root, p)
+                            if os.path.exists(full):
+                                m = os.path.getmtime(full)
+                                if latest_m is None or m > latest_m:
+                                    latest_m = m
+                        except Exception as e:
+                            self.printException(e, "_prepRepoModeHistoryList_for_pygit2 skipping file mtime due to error")
+                            continue
+                    if latest_m is not None:
+                        mods_ts = " " + datetime.fromtimestamp(latest_m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+                except Exception as _ex:
+                    self.printException(_ex, "_prepRepoModeHistoryList_for_pygit2 computing mods timestamp failed")
+
+                # Compute timestamp for index (last staged change)
+                staged_ts = ""
+                try:
+                    idx_path = os.path.join(self.app.repo_root, ".git", "index")
+                    if os.path.exists(idx_path):
+                        m = os.path.getmtime(idx_path)
+                        staged_ts = " " + datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+                except Exception as _ex:
+                    self.printException(_ex, "_prepRepoModeHistoryList_for_pygit2 computing staged timestamp failed")
+
                 if mods:
-                    pseudo_entries.append(("MODS", f"MODS ({len(mods)} modified file{'s' if len(mods) != 1 else ''})"))
+                    date_part = mods_ts.strip() if mods_ts else ""
+                    status_short = "MODS"
+                    msg = f"({len(mods)} modified file{'s' if len(mods) != 1 else ''})"
+                    display = f"{date_part} {status_short[:12]} {msg}".strip()
+                    pseudo_entries.append(("MODS", display))
+                    logger.debug("_prepRepoModeHistoryList_for_pygit2: detected modified files: %r", mods)
                 if staged:
-                    pseudo_entries.append(("STAGED", f"STAGED ({len(staged)} staged file{'s' if len(staged) != 1 else ''})"))
+                    date_part = staged_ts.strip() if staged_ts else ""
+                    status_short = "STAGED"
+                    msg = f"({len(staged)} staged file{'s' if len(staged) != 1 else ''})"
+                    display = f"{date_part} {status_short[:12]} {msg}".strip()
+                    pseudo_entries.append(("STAGED", display))
+                    logger.debug("_prepRepoModeHistoryList_for_pygit2: detected staged files: %r", staged)
             except Exception as e:
                 self.printException(e, "_prepRepoModeHistoryList_for_pygit2 adding pseudo summaries failed")
 
-            for p in mods:
-                pseudo_entries.append(("M", p))
-            for p in staged:
-                pseudo_entries.append(("S", p))
 
             # Walk commits
             try:
@@ -2743,15 +2972,31 @@ class RepoModeHistoryList(HistoryListBase):
                     count = 0
                     for c in walker:
                         try:
-                            commit_hash = c.id.hex
+                            commit_hash = str(c.id)
                             # use author time for date
                             t = getattr(c.author, "time", None)
                             if t:
-                                date_stamp = datetime.fromtimestamp(t).strftime("%Y-%m-%d")
+                                try:
+                                    off = getattr(c.author, "offset", None)
+                                    if off is not None:
+                                        tz = timezone(timedelta(minutes=off))
+                                        dt = datetime.fromtimestamp(t, tz=timezone.utc).astimezone(tz)
+                                    else:
+                                        dt = datetime.fromtimestamp(t)
+                                    date_stamp = dt.strftime("%Y-%m-%dT%H:%M:%S")
+                                except Exception as _ex:
+                                    self.printException(_ex, "_prepRepoModeHistoryList_for_pygit2 failed parsing commit timestamp")
+                                    date_stamp = ""
                             else:
                                 date_stamp = ""
                             msg = (c.message or "").splitlines()[0]
-                            commits.append((commit_hash, date_stamp, msg))
+                            # ensure dt exists when t missing
+                            try:
+                                dt
+                            except NameError as _ex:
+                                self.printException(_ex, "_prepRepoModeHistoryList_for_pygit2: dt undefined, using datetime.min")
+                                dt = datetime.min
+                            commits.append((dt, commit_hash, msg))
                             count += 1
                             if count >= 200:
                                 break
@@ -2761,6 +3006,13 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e, "_prepRepoModeHistoryList_for_pygit2 commit walk failed")
         except Exception as e:
             self.printException(e, "_prepRepoModeHistoryList_for_pygit2 failed")
+        # Sort commits newest-first by natural tuple ordering (datetime first)
+        try:
+            commits.sort(reverse=True)
+        except Exception as _ex:
+            self.printException(_ex, "_prepRepoModeHistoryList_for_pygit2 sorting failed")
+        logger.trace("Pseudo_entries: %r", pseudo_entries)
+        logger.trace("Commits: %r", commits)
         return (pseudo_entries, commits)
 
     def key_right(self, event: events.Key | None = None) -> None:
@@ -2873,7 +3125,14 @@ class DiffList(AppBase):
                 try:
                     repo_root = self.app.repo_root
                     pseudo_names = ("MODS", "STAGED")
-                    use_cached = prev == "STAGED" or curr == "STAGED"
+                    # Determine whether metadata diff should use --cached.
+                    # When comparing STAGED <-> MODS prefer non-cached (index
+                    # vs working tree). Otherwise use --cached if either side
+                    # is STAGED so we compare index to HEAD when appropriate.
+                    if prev in pseudo_names and curr in pseudo_names and {prev, curr} == {"STAGED", "MODS"}:
+                        use_cached = False
+                    else:
+                        use_cached = prev == "STAGED" or curr == "STAGED"
                     meta_cmd = ["git", "-C", repo_root, "diff"]
                     if use_cached:
                         meta_cmd.append("--cached")
@@ -2903,7 +3162,18 @@ class DiffList(AppBase):
                     self.printException(e, "prepDiffList: metadata diff failed")
 
             # Save output lines on the object and render via helper
-            self.output = out.splitlines() if out else []
+            # Prepend a human-readable header describing the diff context
+            try:
+                header = f"Diff for {filename} between {prev} and {curr}"
+            except Exception:
+                header = "Diff"
+            self.output = [header] + (out.splitlines() if out else [])
+            # Ensure the header line is not selectable by setting the
+            # minimum selectable index to 1 so navigation skips it.
+            try:
+                self._min_index = 1
+            except Exception as e:
+                self.printException(e, "prepDiffList: setting _min_index failed")
             # Record the active variant for future re-renders
             self.variant = variant_index
             # Update go-back state only.
@@ -2974,7 +3244,7 @@ class DiffList(AppBase):
         """Clear and render `self.output` honoring `self._colorized`."""
         try:
             self.clear()
-            for ln in self.output or []:
+            for i, ln in enumerate(self.output or []):
                 try:
                     style = None
                     if self._colorized:
@@ -2987,9 +3257,18 @@ class DiffList(AppBase):
                         elif ln.startswith("diff --git") or ln.startswith("index "):
                             style = "bold white"
                     if style:
-                        self.append(ListItem(Label(Text(ln, style=style))))
+                        item = ListItem(Label(Text(ln, style=style)))
                     else:
-                        self.append(ListItem(Label(Text(ln))))
+                        item = ListItem(Label(Text(ln)))
+                    # Make the first line (our diff header) unselectable so
+                    # navigation/highlight skips it.
+                    try:
+                        if i == 0:
+                            item._selectable = False
+                            item._diff_header = True
+                    except Exception as _ex:
+                        self.printException(_ex, "_render_output: setting header metadata failed")
+                    self.append(item)
                 except Exception as e:
                     self.printException(e, "_render_output append failed")
         except Exception as e:
@@ -3175,8 +3454,10 @@ class GitHistoryNavTool(App):
                 try:
                     self.pygit2_repo = pygit2.Repository(self.repo_root)
                 except Exception as e:
-                    printException(e, "GitHistoryNavTool.__init__: pygit2.Repository init failed")
+                    self.printException(e, "GitHistoryNavTool.__init__: #3 pygit2.Repository init failed")
                     globals()["pygit2"] = None  # disable pygit2 usage on failure (module-level)
+            logger.debug("GitHistoryNavTool.__init__: pygit2=%r, pygit2_repo=%r", pygit2, self.pygit2_repo)
+            logger.debug("================================================")
 
             # Optional diff variant arguments indexed by variant_index.
             # index 0 -> None (no extra arg), 1 -> ignore-space-change, 2 -> patience algorithm
@@ -3189,8 +3470,11 @@ class GitHistoryNavTool(App):
             # Test mode: if True, prep helpers will run both pygit2 and git
             # implementations and compare their outputs for discrepancies.
             self.test_pygit2 = bool(test_pygit2)
+            if self.test_pygit2 and not pygit2:
+                logger.warning("GitHistoryNavTool.__init__: test_pygit2=True but pygit2 module not available; disabling test mode")
+                self.test_pygit2 = False
         except Exception as e:
-            printException(e, "GitHistoryNavTool.__init__ failed")
+            self.printException(e, "GitHistoryNavTool.__init__ failed")
 
     @property
     def current_path(self) -> str | None:
@@ -3526,7 +3810,15 @@ class GitHistoryNavTool(App):
 
             # Build command considering pseudo-names
             if prev in pseudo_names or curr in pseudo_names:
-                use_cached = prev == "STAGED" or curr == "STAGED"
+                # When both sides are pseudo (e.g. STAGED and MODS) prefer
+                # the working-tree vs index comparison (git diff) so users
+                # see what is staged vs what is modified. Only use
+                # --cached when appropriate (e.g. comparing staged vs a
+                # concrete commit).
+                if prev in pseudo_names and curr in pseudo_names and {prev, curr} == {"STAGED", "MODS"}:
+                    use_cached = False
+                else:
+                    use_cached = prev == "STAGED" or curr == "STAGED"
                 cmd = _base_diff(use_cached=use_cached)
                 # If a concrete ref is provided (not pseudo) include it
                 if prev and prev not in pseudo_names and curr and curr not in pseudo_names:

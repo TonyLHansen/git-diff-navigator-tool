@@ -488,7 +488,7 @@ def check_file(
                                 parts.append(cur.id)
                                 typ = ".".join(reversed(parts))
                         typ = typ or "<type>"
-                        msg = f"{path}:{lineno}: 'except {typ} as {name}:' not followed by printException({name}, ...) in handler body"
+                        msg = f"{path}:{lineno}: 'except {typ} as {name}:' not followed by printException({name}, ...) or self.printException({name}, ...) in handler body"
                         # If the except body is a single `pass`, give a more
                         # actionable message suggesting replacement.
                         try:
@@ -507,9 +507,9 @@ def check_file(
         if check_pass:
             try:
                 errs += check_unnecessary_pass_in_except(path)
-            except NameError as _use_pass:
+            except NameError as e:
                 # function may be defined later in the file; skip for now
-                pass
+                printException(e, f"check_unnecessary_pass_in_except not available yet for {path}")
             except Exception as e:
                 printException(e, f"checking unnecessary pass in except for {path}")
     except Exception as e:
@@ -522,9 +522,9 @@ def check_file(
         try:
             try:
                 errs += check_logger_in_try_blocks(path)
-            except NameError as _use_pass:
+            except NameError as e:
                 # function may be defined later in file; skip
-                pass
+                printException(e, f"check_logger_in_try_blocks not available yet for {path}")
             except Exception as e:
                 printException(e, f"checking logger-in-try in {path}")
         except Exception as e:
