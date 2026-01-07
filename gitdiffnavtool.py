@@ -138,6 +138,9 @@ STYLE_FILELIST_KEY = "dim"
 # Header row text for file lists (unselectable)
 FILELIST_KEY_ROW_TEXT = "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
 
+# Number of characters to display for short hashes
+HASH_LENGTH = 12
+
 
 # --- Logging setup --------------------------------------------------------
 # NOTE: logging is configured in `main()` when `--debug` is passed.
@@ -1568,7 +1571,7 @@ class RepoModeFileList(FileListBase):
                     def _short(h: str | None) -> str:
                         if not h:
                             return "None"
-                        return h[:12] if len(h) > 12 else h
+                        return h[:HASH_LENGTH] if len(h) > HASH_LENGTH else h
 
                     hash_text = f"Hashes: prev={_short(prev_hash)}  curr={_short(curr_hash)}"
                     hash_item = ListItem(Label(Text(hash_text, style=STYLE_FILELIST_KEY)))
@@ -2238,7 +2241,7 @@ class FileModeHistoryList(HistoryListBase):
                             except Exception as _ex:
                                 self.printException(_ex, f"_date_key failed for tuple: {(ts, h, msg)}")
                                 date_stamp = str(ts)
-                            short_hash = h[:12] if h else ""
+                            short_hash = h[:HASH_LENGTH] if h else ""
                             text = f"{date_stamp} {short_hash} {msg}".strip()
                             self._add_row(text, h)
                         except Exception as e:
@@ -2695,7 +2698,7 @@ class RepoModeHistoryList(HistoryListBase):
                             except Exception as _ex:
                                 self.printException(_ex, "prepRepoModeHistoryList: date_stamp formatting failed")
                                 date_stamp = str(ts)
-                            short_hash = commit_hash[:12] if commit_hash else ""
+                            short_hash = commit_hash[:HASH_LENGTH] if commit_hash else ""
                             text = f"{date_stamp} {short_hash} {msg}"
                             self._add_row(text, commit_hash)
                         except Exception as e:
@@ -2816,13 +2819,13 @@ class RepoModeHistoryList(HistoryListBase):
                     date_part = mods_ts.strip() if mods_ts else ""
                     status_short = "MODS"
                     msg = f"({len(mods)} modified file{'s' if len(mods) != 1 else ''})"
-                    display = f"{date_part} {status_short[:12]} {msg}".strip()
+                    display = f"{date_part} {status_short[:HASH_LENGTH]} {msg}".strip()
                     pseudo_entries.append(("MODS", display))
                 if staged:
                     date_part = staged_ts.strip() if staged_ts else ""
                     status_short = "STAGED"
                     msg = f"({len(staged)} staged file{'s' if len(staged) != 1 else ''})"
-                    display = f"{date_part} {status_short[:12]} {msg}".strip()
+                    display = f"{date_part} {status_short[:HASH_LENGTH]} {msg}".strip()
                     pseudo_entries.append(("STAGED", display))
             except Exception as e:
                 self.printException(e, "_prepRepoModeHistoryList_for_git adding pseudo summaries failed")
@@ -2945,7 +2948,7 @@ class RepoModeHistoryList(HistoryListBase):
                     date_part = mods_ts.strip() if mods_ts else ""
                     status_short = "MODS"
                     msg = f"({len(mods)} modified file{'s' if len(mods) != 1 else ''})"
-                    display = f"{date_part} {status_short[:12]} {msg}".strip()
+                    display = f"{date_part} {status_short[:HASH_LENGTH]} {msg}".strip()
                     pseudo_entries.append(("MODS", display))
                     logger.debug("_prepRepoModeHistoryList_for_pygit2: detected modified files: %r", mods)
                 if staged:
@@ -3164,7 +3167,15 @@ class DiffList(AppBase):
             # Save output lines on the object and render via helper
             # Prepend a human-readable header describing the diff context
             try:
-                header = f"Diff for {filename} between {prev} and {curr}"
+                try:
+                    p_short = prev[:HASH_LENGTH] if prev else "None"
+                except Exception:
+                    p_short = str(prev)
+                try:
+                    c_short = curr[:HASH_LENGTH] if curr else "None"
+                except Exception:
+                    c_short = str(curr)
+                header = f"Diff for {filename} between {p_short} and {c_short}"
             except Exception:
                 header = "Diff"
             self.output = [header] + (out.splitlines() if out else [])
