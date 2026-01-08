@@ -227,6 +227,8 @@ class AppBase(ListView):
         self.current_prev_sha = None
         self.current_commit_sha = None
         self.current_diff_file = None
+        # Ensure scroll helper attribute exists for static checks
+        self.scroll_to_widget = None
         # When True the next watch_index-triggered scroll should animate
         # (used by page up / page down handlers to make the jump more
         # visually noticeable).
@@ -3258,16 +3260,26 @@ class DiffList(AppBase):
             # Save output lines on the object and render via helper
             # Prepend a human-readable header describing the diff context
             try:
+                p_short = prev[:HASH_LENGTH] if prev else "None"
+                c_short = curr[:HASH_LENGTH] if curr else "None"
+
                 try:
-                    p_short = prev[:HASH_LENGTH] if prev else "None"
-                except Exception:
-                    p_short = str(prev)
-                try:
-                    c_short = curr[:HASH_LENGTH] if curr else "None"
-                except Exception:
-                    c_short = str(curr)
-                header = f"Diff for {filename} between {p_short} and {c_short}"
-            except Exception:
+                    variant_arg = None
+                    try:
+                        app = self.app
+                        if app and hasattr(app, "diff_variants") and 0 <= variant_index < len(app.diff_variants):
+                            variant_arg = app.diff_variants[variant_index]
+                    except Exception as e:
+                        self.printException(e, "prepDiffList: retrieving app.diff_variants failed")
+                        variant_arg = None
+                    vdisp = variant_arg if variant_arg else "default"
+                    vspace = " " if variant_arg else ""
+                    header = f"'Diff{vspace}{vdisp}' for {filename} between {p_short} and {c_short}"
+                except Exception as e:
+                    self.printException(e, "prepDiffList: building header failed")
+                    header = f"Diff for {filename} between {p_short} and {c_short}"
+            except Exception as e:
+                self.printException(e, "prepDiffList: header preparation failed")
                 header = "Diff"
             self.output = [header] + (out.splitlines() if out else [])
             # Ensure the header line is not selectable by setting the
