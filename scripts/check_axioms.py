@@ -520,14 +520,12 @@ def check_file(
     # single logger.<method>(...) call. In such cases the try/except adds
     # little value and can be removed around the logger call.
     if check_logger_in_try:
-            try:
-                errs += check_logger_in_try_blocks(path)
-            except NameError as e:
-                printException(e, f"check_logger_in_try_blocks not available yet for {path}")
-            except Exception as e:
-                printException(e, f"checking logger-in-try in {path}")
+        try:
+            errs += check_logger_in_try_blocks(path)
+        except NameError as e:
+            printException(e, f"check_logger_in_try_blocks not available yet for {path}")
         except Exception as e:
-            printException(e)
+            printException(e, f"checking logger-in-try in {path}")
 
     return errs
 
@@ -568,10 +566,10 @@ def check_unnecessary_pass_in_except(path: Path) -> List[Tuple[str, int, str]]:
                 for s in body:
                     if isinstance(s, ast.Pass):
                         lineno = getattr(s, "lineno", None)
-                            if lineno is not None:
-                                errs.append(
-                                    (str(path), lineno, "unnecessary 'pass' in except block that also contains other statements (e.g., printException)")
-                                )
+                        if lineno is not None:
+                            errs.append(
+                                (str(path), lineno, "unnecessary 'pass' in except block that also contains other statements (e.g., printException)")
+                            )
             except Exception as e:
                 printException(e, f"walking ExceptHandler in {path}")
             self.generic_visit(node)
@@ -627,6 +625,91 @@ def check_logger_in_try_blocks(path: Path) -> List[Tuple[str, int, str]]:
     return errs
 
 
+def check_imports_module_level(path: Path) -> List[Tuple[str, int, str]]:
+    """Flag Import/ImportFrom nodes that are not at module top-level.
+
+    Allows imports inside `if TYPE_CHECKING:` blocks.
+    """
+    errs: List[Tuple[str, int, str]] = []
+    try:
+        src = path.read_text(encoding="utf-8")
+    except Exception as e:
+        printException(e, f"reading {path}")
+        return errs
+    try:
+        tree = ast.parse(src)
+    except Exception as e:
+        printException(e, f"parsing AST for {path}")
+        return errs
+
+    def if_is_type_checking(node: ast.If) -> bool:
+        t = getattr(node, "test", None)
+        # NAME: TYPE_CHECKING
+        if isinstance(t, ast.Name) and t.id == "TYPE_CHECKING":
+            return True
+        # attr: typing.TYPE_CHECKING
+        if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.attr == "TYPE_CHECKING":
+            return True
+        return False
+
+    class Visitor(ast.NodeVisitor):
+        def __init__(self):
+            self.stack: List[ast.AST] = []
+
+        def generic_visit(self, node: ast.AST) -> None:
+            self.stack.append(node)
+            super().generic_visit(node)
+            self.stack.pop()
+
+        def _is_in_non_module(self) -> bool:
+            # Consider ancestors other than ast.Module and TYPE_CHECKING ifs.
+            non_module_ancs: List[ast.AST] = []
+            for anc in self.stack:
+                if isinstance(anc, ast.Module):
+                    continue
+                if isinstance(anc, ast.If) and if_is_type_checking(anc):
+                    continue
+                non_module_ancs.append(anc)
+
+            # No non-module ancestors -> module-level
+            if not non_module_ancs:
+                return False
+
+            # Allow imports inside a module-level `try:` or inside its `except:`
+            # handlers. That corresponds to non-module ancestors being a Try and
+            # optionally an ExceptHandler. If there are other non-module
+            # ancestors (e.g., a function or class), treat as non-module.
+            allowed = all(isinstance(a, (ast.Try, ast.ExceptHandler)) for a in non_module_ancs)
+            if allowed:
+                return False
+
+            return True
+
+        def visit_Import(self, node: ast.Import) -> None:
+            try:
+                if self._is_in_non_module():
+                    names = [a.name for a in node.names]
+                    lineno = getattr(node, "lineno", 0)
+                    errs.append((str(path), lineno, f"import {', '.join(names)} not at module level; move imports to top-level"))
+            except Exception as e:
+                printException(e, f"inspecting Import in {path}")
+            self.generic_visit(node)
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            try:
+                if self._is_in_non_module():
+                    module = node.module or "<module>"
+                    names = [a.name for a in node.names]
+                    lineno = getattr(node, "lineno", 0)
+                    errs.append((str(path), lineno, f"from {module} import {', '.join(names)} not at module level; move imports to top-level"))
+            except Exception as e:
+                printException(e, f"inspecting ImportFrom in {path}")
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
+    return errs
+
+
 def check_prefer_direct_attrs(path: Path) -> List[Tuple[str, int, str]]:
     """Enforce the axiom: prefer direct attribute access when attributes are
     assigned in __init__ or on_mount. Finds getattr(self, 'attr', ...) uses
@@ -660,9 +743,8 @@ def check_prefer_direct_attrs(path: Path) -> List[Tuple[str, int, str]]:
             if right in assigned_attrs:
                 errs.append((str(path), lineno, f"{func} used for guaranteed attribute '{attr}' (prefer direct access)"))
         else:
-            else:
-                if attr in assigned_attrs:
-                    errs.append((str(path), lineno, f"{func}(self, '{attr}', ...) used but '{attr}' is assigned in __init__/on_mount; prefer direct access"))
+            if attr in assigned_attrs:
+                errs.append((str(path), lineno, f"{func}(self, '{attr}', ...) used but '{attr}' is assigned in __init__/on_mount; prefer direct access"))
 
     # Also flag getattr usage on argparse Namespace objects returned by parse_args()
     try:
@@ -797,7 +879,7 @@ def main(argv: List[str] | None = None) -> int:
         action="store_true",
         help="Enable prefer-direct-attrs check (opposite of -D)."
     )
-    parser.add_argument("-I",
+    parser.add_argument("-T",
         "--no-getattr-not-initialized",
         dest="check_getattr_not_initialized",
         action="store_false",
@@ -809,11 +891,24 @@ def main(argv: List[str] | None = None) -> int:
         action="store_false",
         help="Skip checking for except handlers that only contain a logger.<method>(...) call (default: check)",
     )
-    parser.add_argument("-i",
+    parser.add_argument("-t",
         "--getattr-not-initialized",
         dest="enable_getattr_not_initialized",
         action="store_true",
-        help="Enable getattr-not-initialized check (opposite of -I).",
+        help="Enable getattr-not-initialized check (opposite of -T).",
+    )
+    # Import-location checks: ensure imports are at module level
+    parser.add_argument("-I",
+        "--no-check-imports",
+        dest="check_imports",
+        action="store_false",
+        help="Skip checking for imports-at-module-level (default: check)",
+    )
+    parser.add_argument("-i",
+        "--check-imports",
+        dest="enable_check_imports",
+        action="store_true",
+        help="Enable imports-at-module-level check (opposite of -I).",
     )
     parser.add_argument("-l",
         "--logger-in-try",
@@ -858,6 +953,7 @@ def main(argv: List[str] | None = None) -> int:
         args.check_pass = False
         args.check_getattr_not_initialized = False
         args.check_logger_in_try = False
+        args.check_imports = False
 
     # Honor explicit small-letter re-enable flags after -N/--NONE
     if args.enable_bare_excepts:
@@ -874,6 +970,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_getattr_not_initialized = True
     if args.enable_logger_in_try:
         args.check_logger_in_try = True
+    if getattr(args, "enable_check_imports", False):
+        args.check_imports = True
 
     logger.info("cwd: %s", Path.cwd())
 
@@ -933,6 +1031,12 @@ def main(argv: List[str] | None = None) -> int:
                         errs += check_getattr_not_initialized(p)
                     except Exception as e:
                         printException(e, f"check_getattr_not_initialized failed for {p}")
+                # Enforce 'imports at module level' axiom
+                if getattr(args, "check_imports", False):
+                    try:
+                        errs += check_imports_module_level(p)
+                    except Exception as e:
+                        printException(e, f"check_imports_module_level failed for {p}")
             except Exception as e:
                 printException(e, f"error checking {p}")
             if errs:
