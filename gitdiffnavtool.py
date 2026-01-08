@@ -3483,15 +3483,13 @@ Diff Column:
 - Commands when focused:
     - `toggle-color` / `c`: toggle colorized diff output.
     - `cycle-diff-variant` / `d`: cycle to the next diff variant (e.g. ignore-space-change, patience).
-    - `find` / `f`: search within the diff output.
 
 Command palette (^P):
 - Press Ctrl-P (Textual command palette) to run commands directly. Useful
     commands to wire up include:
     - `open-file`, `diff <file> [prev] <curr>`, `file-history <path>`,
         `goto-commit <hash>`, `toggle-color`, `next-hunk`, `prev-hunk`,
-        `stage <path>`, `unstage <path>`, `refresh`, `run-prep-harness`,
-        `check-axioms`, `use-pygit2 on|off`.
+        `stage <path>`, `unstage <path>`, `refresh`, `use-pygit2 on|off`.
 
 Tips and behavior notes:
 - Short commit hashes are shown using the app's `HASH_LENGTH` constant.
