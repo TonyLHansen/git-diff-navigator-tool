@@ -54,6 +54,25 @@ def printException(e: Exception, msg: Optional[str] = None) -> None:
         sys.stderr.write(f"secondary exception: {_use_stderr}\n")
 
 
+def load_source_and_ast(path: Path) -> Tuple[str, Optional[ast.AST]]:
+    """Read a file and return (source_text, parsed_ast) or (text, None) on failure.
+
+    This centralizes reading and parsing so callers can avoid repeated
+    parse attempts and gracefully handle parse failures.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        printException(e, f"reading {path}")
+        return "", None
+    try:
+        tree = ast.parse(text, filename=str(path))
+    except Exception as e:
+        printException(e, f"parsing {path}")
+        return text, None
+    return text, tree
+
+
 def list_py_files(root: Path) -> List[Path]:
     files: List[Path] = []
 
@@ -119,22 +138,12 @@ def list_py_files(root: Path) -> List[Path]:
     return files
 
 
-def _find_bare_except_locations(path: Path) -> List[tuple[int, bool]]:
+def _find_bare_except_locations(path: Path, text: str, tree: ast.AST) -> List[tuple[int, bool]]:
     """Return list of (lineno, in_class) for bare `except:` handlers in AST.
 
     `in_class` is True when the except is inside a ClassDef (i.e., a method),
     False otherwise.
     """
-    try:
-        src = path.read_text(encoding="utf-8")
-    except Exception as e:
-        printException(e, f"reading {path}")
-        return []
-    try:
-        tree = ast.parse(src)
-    except Exception as e:
-        printException(e, f"parsing AST for {path}")
-        return []
 
     results: List[tuple[int, bool]] = []
 
@@ -170,20 +179,10 @@ def _find_bare_except_locations(path: Path) -> List[tuple[int, bool]]:
     return results
 
 
-def _find_except_without_name_locations(path: Path) -> List[int]:
+def _find_except_without_name_locations(path: Path, text: str, tree: ast.AST) -> List[int]:
     """Return line numbers for ExceptHandler nodes that specify an
     exception type but do not bind it with `as <var>`.
     """
-    try:
-        src = path.read_text(encoding="utf-8")
-    except Exception as e:
-        printException(e, f"reading {path}")
-        return []
-    try:
-        tree = ast.parse(src)
-    except Exception as e:
-        printException(e)
-        return []
 
     results: List[int] = []
 
@@ -203,22 +202,11 @@ def _find_except_without_name_locations(path: Path) -> List[int]:
     return results
 
 
-def _collect_self_assigned_attrs(path: Path) -> dict:
+def _collect_self_assigned_attrs(path: Path, text: str, tree: ast.AST) -> dict:
     """Collect attributes assigned to `self` in `__init__` or `on_mount` per class.
 
     Returns mapping class_name -> set(attribute names)
     """
-    try:
-        src = path.read_text(encoding="utf-8")
-    except Exception as e:
-        printException(e, f"reading {path}")
-        return {}
-    try:
-        tree = ast.parse(src)
-    except Exception as e:
-        printException(e, f"parsing AST for {path}")
-        return {}
-
     classes: dict = {}
 
     class Collector(ast.NodeVisitor):
@@ -247,22 +235,12 @@ def _collect_self_assigned_attrs(path: Path) -> dict:
     return classes
 
 
-def _find_getattr_on_self(path: Path) -> List[tuple[int, str, str]]:
+def _find_getattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[int, str, str]]:
     """Find usages of getattr(self, 'attr', ...) and return list of (lineno, attrname, func).
 
     `func` is the function name used ('getattr'). Does not currently
     attempt to resolve dynamic attribute names.
     """
-    try:
-        src = path.read_text(encoding="utf-8")
-    except Exception as e:
-        printException(e, f"reading {path}")
-        return []
-    try:
-        tree = ast.parse(src)
-    except Exception as e:
-        printException(e, f"parsing AST for {path}")
-        return []
 
     results: List[tuple[int, str]] = []
 
@@ -309,21 +287,11 @@ def _find_getattr_on_self(path: Path) -> List[tuple[int, str, str]]:
     return results
 
 
-def _find_parse_args_targets(path: Path) -> set:
+def _find_parse_args_targets(path: Path, text: str, tree: ast.AST) -> set:
     """Return set of variable names assigned from a call to `*.parse_args()`.
 
     e.g. `args = parser.parse_args()` -> returns {'args'}
     """
-    try:
-        src = path.read_text(encoding="utf-8")
-    except Exception as e:
-        printException(e, f"reading {path}")
-        return set()
-    try:
-        tree = ast.parse(src)
-    except Exception as e:
-        printException(e)
-        return set()
 
     targets: set = set()
 
@@ -343,21 +311,11 @@ def _find_parse_args_targets(path: Path) -> set:
     return targets
 
 
-def _find_getattr_on_vars(path: Path, varnames: set) -> List[tuple[int, str, str, str]]:
+def _find_getattr_on_vars(path: Path, varnames: set, text: str, tree: ast.AST) -> List[tuple[int, str, str, str]]:
     """Find usages of getattr(var, 'attr', ...) where var is in varnames.
 
     Returns list of (lineno, varname, attrname, func) where `func` is 'getattr'.
     """
-    try:
-        src = path.read_text(encoding="utf-8")
-    except Exception as e:
-        printException(e, f"reading {path}")
-        return []
-    try:
-        tree = ast.parse(src)
-    except Exception as e:
-        printException(e)
-        return []
 
     results: List[tuple[int, str, str]] = []
 
@@ -388,19 +346,20 @@ def _find_getattr_on_vars(path: Path, varnames: set) -> List[tuple[int, str, str
 
 def check_file(
     path: Path,
-    check_global_excepts: bool = False,
-    check_bare_excepts: bool = True,
-    check_except_as_print: bool = True,
-    check_pass: bool = True,
-    check_logger_in_try: bool = True,
+    text: str,
+    tree: ast.AST,
+    check_global_excepts: bool,
+    check_bare_excepts: bool,
+    check_except_as_print: bool,
+    check_pass: bool,
+    check_logger_in_try: bool,
 ) -> List[Tuple[str, int, str]]:
     errs: List[Tuple[str, int, str]] = []
-    text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
     # Detect bare excepts (only inside classes by default)
     try:
-        bare_locations = _find_bare_except_locations(path)
+        bare_locations = _find_bare_except_locations(path, text=text, tree=tree)
     except Exception as e:
         printException(e, f"finding bare excepts in {path}")
         bare_locations = []
@@ -411,7 +370,7 @@ def check_file(
                 errs.append((str(path), lineno, "bare 'except:' detected"))
         # Also flag `except Name:` (type present but no `as var`)
         try:
-            no_name_linenos = _find_except_without_name_locations(path)
+            no_name_linenos = _find_except_without_name_locations(path, text=text, tree=tree)
         except Exception as e:
             printException(e)
             no_name_linenos = []
@@ -427,7 +386,6 @@ def check_file(
         # name (`except Type as var:`), ensure the handler body contains
         # a call to `printException(var, ...)` or `.printException(..., var)`.
         try:
-            tree = ast.parse(text)
             for node in ast.walk(tree):
                 if isinstance(node, ast.ExceptHandler):
                     name = getattr(node, "name", None)
@@ -508,7 +466,7 @@ def check_file(
     try:
         if check_pass:
             try:
-                errs += check_unnecessary_pass_in_except(path)
+                errs += check_unnecessary_pass_in_except(path, text=text, tree=tree)
             except NameError as e:
                 printException(e, f"check_unnecessary_pass_in_except not available yet for {path}")
             except Exception as e:
@@ -521,7 +479,7 @@ def check_file(
     # little value and can be removed around the logger call.
     if check_logger_in_try:
         try:
-            errs += check_logger_in_try_blocks(path)
+            errs += check_logger_in_try_blocks(path, text=text, tree=tree)
         except NameError as e:
             printException(e, f"check_logger_in_try_blocks not available yet for {path}")
         except Exception as e:
@@ -530,23 +488,13 @@ def check_file(
     return errs
 
 
-def check_unnecessary_pass_in_except(path: Path) -> List[Tuple[str, int, str]]:
+def check_unnecessary_pass_in_except(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """Find `pass` statements inside `except ... as var:` blocks when other statements are present.
 
     Reports each `pass` statement's line number when the except-handler body
     contains at least one `pass` and at least one other statement.
     """
     errs: List[Tuple[str, int, str]] = []
-    try:
-        src = path.read_text(encoding="utf-8")
-    except Exception as e:
-        printException(e, f"reading {path}")
-        return errs
-    try:
-        tree = ast.parse(src)
-    except Exception as e:
-        printException(e, f"parsing AST for {path}")
-        return errs
 
     class Visitor(ast.NodeVisitor):
         def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
@@ -578,7 +526,7 @@ def check_unnecessary_pass_in_except(path: Path) -> List[Tuple[str, int, str]]:
     return errs
 
 
-def check_logger_in_try_blocks(path: Path) -> List[Tuple[str, int, str]]:
+def check_logger_in_try_blocks(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """Detect try/except blocks where the try body contains only a single
     `logger.<method>(...)` call. In that case the surrounding try/except is
     likely unnecessary and can be removed.
@@ -586,16 +534,6 @@ def check_logger_in_try_blocks(path: Path) -> List[Tuple[str, int, str]]:
     Returns list of error messages with line numbers pointing to the `try`.
     """
     errs: List[Tuple[str, int, str]] = []
-    try:
-        src = path.read_text(encoding="utf-8")
-    except Exception as e:
-        printException(e, f"reading {path}")
-        return errs
-    try:
-        tree = ast.parse(src)
-    except Exception as e:
-        printException(e, f"parsing AST for {path}")
-        return errs
 
     class Visitor(ast.NodeVisitor):
         def visit_Try(self, node: ast.Try) -> None:
@@ -625,22 +563,12 @@ def check_logger_in_try_blocks(path: Path) -> List[Tuple[str, int, str]]:
     return errs
 
 
-def check_imports_module_level(path: Path) -> List[Tuple[str, int, str]]:
+def check_imports_module_level(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """Flag Import/ImportFrom nodes that are not at module top-level.
 
     Allows imports inside `if TYPE_CHECKING:` blocks.
     """
     errs: List[Tuple[str, int, str]] = []
-    try:
-        src = path.read_text(encoding="utf-8")
-    except Exception as e:
-        printException(e, f"reading {path}")
-        return errs
-    try:
-        tree = ast.parse(src)
-    except Exception as e:
-        printException(e, f"parsing AST for {path}")
-        return errs
 
     def if_is_type_checking(node: ast.If) -> bool:
         t = getattr(node, "test", None)
@@ -710,15 +638,15 @@ def check_imports_module_level(path: Path) -> List[Tuple[str, int, str]]:
     return errs
 
 
-def check_prefer_direct_attrs(path: Path) -> List[Tuple[str, int, str]]:
+def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """Enforce the axiom: prefer direct attribute access when attributes are
     assigned in __init__ or on_mount. Finds getattr(self, 'attr', ...) uses
     where `attr` was assigned earlier in the class and reports them.
     """
     errs: List[Tuple[str, int, str]] = []
     try:
-        classes = _collect_self_assigned_attrs(path)
-        getattr_uses = _find_getattr_on_self(path)
+        classes = _collect_self_assigned_attrs(path, text=text, tree=tree)
+        getattr_uses = _find_getattr_on_self(path, text=text, tree=tree)
     except Exception as e:
         printException(e, f"collecting class attrs/getattr usages in {path}")
         return errs
@@ -735,7 +663,7 @@ def check_prefer_direct_attrs(path: Path) -> List[Tuple[str, int, str]]:
     for s in classes.values():
         assigned_attrs.update(s)
 
-    for lineno, attr, func in _find_getattr_on_self(path):
+    for lineno, attr, func in getattr_uses:
         # attr may be "app.current_path" style when getattr called on self.app
         if "." in attr:
             # treat 'app.current_path' -> attribute name 'current_path'
@@ -748,14 +676,14 @@ def check_prefer_direct_attrs(path: Path) -> List[Tuple[str, int, str]]:
 
     # Also flag getattr usage on argparse Namespace objects returned by parse_args()
     try:
-        parse_args_vars = _find_parse_args_targets(path)
+        parse_args_vars = _find_parse_args_targets(path, text=text, tree=tree)
     except Exception as e:
         printException(e)
         parse_args_vars = set()
 
     if parse_args_vars:
         try:
-            getattr_on_args = _find_getattr_on_vars(path, parse_args_vars)
+            getattr_on_args = _find_getattr_on_vars(path, parse_args_vars, text=text, tree=tree)
             for lineno, varname, attr, func in getattr_on_args:
                 errs.append(
                     (str(path), lineno, f"{func}({varname}, '{attr}', ...) used on parse_args() result; prefer direct access {varname}.{attr}")
@@ -766,7 +694,7 @@ def check_prefer_direct_attrs(path: Path) -> List[Tuple[str, int, str]]:
     return errs
 
 
-def check_getattr_not_initialized(path: Path) -> List[Tuple[str, int, str]]:
+def check_getattr_not_initialized(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """Flag getattr(self, 'attr', ...) usages where `attr` is not assigned in __init__/on_mount.
 
     This helps catch cases where code relies on implicit attributes that should
@@ -774,8 +702,8 @@ def check_getattr_not_initialized(path: Path) -> List[Tuple[str, int, str]]:
     """
     errs: List[Tuple[str, int, str]] = []
     try:
-        classes = _collect_self_assigned_attrs(path)
-        getattr_uses = _find_getattr_on_self(path)
+        classes = _collect_self_assigned_attrs(path, text=text, tree=tree)
+        getattr_uses = _find_getattr_on_self(path, text=text, tree=tree)
     except Exception as e:
         printException(e, f"collecting class attrs/getattr usages in {path}")
         return errs
@@ -1010,31 +938,40 @@ def main(argv: List[str] | None = None) -> int:
         for p in py_files:
             errs: List[Tuple[str, int, str]] = []
             try:
+                # Parse the file once up-front. If parsing fails, emit an
+                # error and skip further AST-dependent checks for this file.
+                text, tree = load_source_and_ast(p)
+                if tree is None:
+                    print(f"{p}: could not be parsed as Python source; skipping AST-based checks")
+                    continue
+
                 if args.check_bare_excepts or args.check_except_as_print or args.check_pass:
                     errs += check_file(
                         p,
-                        check_global_excepts=bool(args.check_global_excepts),
-                        check_bare_excepts=bool(args.check_bare_excepts),
-                        check_except_as_print=bool(args.check_except_as_print),
-                            check_pass=bool(args.check_pass),
-                            check_logger_in_try=bool(args.check_logger_in_try),
+                        text,
+                        tree,
+                        bool(args.check_global_excepts),
+                        bool(args.check_bare_excepts),
+                        bool(args.check_except_as_print),
+                        bool(args.check_pass),
+                        bool(args.check_logger_in_try),
                     )
                 # Enforce 'prefer direct attribute access' axiom
                 if args.check_prefer_direct_attrs:
                     try:
-                        errs += check_prefer_direct_attrs(p)
+                        errs += check_prefer_direct_attrs(p, text=text, tree=tree)
                     except Exception as e:
                         printException(e, f"check_prefer_direct_attrs failed for {p}")
                 # Enforce 'getattr-not-initialized' axiom
                 if args.check_getattr_not_initialized:
                     try:
-                        errs += check_getattr_not_initialized(p)
+                        errs += check_getattr_not_initialized(p, text=text, tree=tree)
                     except Exception as e:
                         printException(e, f"check_getattr_not_initialized failed for {p}")
                 # Enforce 'imports at module level' axiom
                 if args.check_imports:
                     try:
-                        errs += check_imports_module_level(p)
+                        errs += check_imports_module_level(p, text=text, tree=tree)
                     except Exception as e:
                         printException(e, f"check_imports_module_level failed for {p}")
             except Exception as e:
