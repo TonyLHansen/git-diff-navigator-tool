@@ -346,3 +346,112 @@ Keys
   Save an SVG 'screenshot' of the current screen
   Theme
   Change the current theme
+
+
+
+
+
+       return self.key_right(event, recursive=True)
+
+
+HELP_TEXT = """
+# <div align="center">**gitdiffnavtool help**</div>
+
+Overview:
+- gitdiffnavtool is a terminal UI for exploring a Git repository: the
+    left/right columns show file trees and per-file history, the central
+    commit lists show repository history, and the diff column shows patches
+    for a selected file/commit pair. It can use the `git` CLI or `pygit2`
+    as backends for status and history operations.
+
+Invocation:
+- Run `gitdiffnavtool [path]` to open the app for `path` (directory or
+    file). Use `--repo-root` to override detected repo root. Use
+    `--no-color` to disable colored diffs and `--test-pygit2` to run
+    both backends for parity checks.
+
+Basic navigation:
+- Arrow keys / vim keys: Up / Down / PageUp / PageDown / Home / End move
+    the selection within the focused column.
+- Right (or Enter): open/enter the selected row (enter directories,
+    open file history or diff depending on focus).
+- Left: go back / close / move focus to the previous column.
+- `q` (or Ctrl-Q): quit the application.
+
+Global actions:
+- `c`: toggle colorized diffs on/off.
+- `d`: save the current diff to a file (when a diff is visible).
+- `f`: find/search within the current diff output.
+- `h` or `?`: show this help screen.
+
+Column-specific information and commands:
+
+Left File Column (Files):
+- Shows directory tree or file list for the working tree path.
+- Right on a directory: enter that directory.
+- Right on a tracked file: open the file's history in the right-side
+    history column.
+- Commands when focused:
+    - `open-file <path>`: open the specified file (relative or absolute).
+    - `reveal <path>`: open the containing folder in the system file
+        manager or terminal.
+
+Left History Column (File History for left pane):
+- Shows commits affecting the file selected in the left file pane.
+- Mark a row with `m` to select it as the `prev` commit; navigate to a
+    second row and press Right to diff between the two marked rows.
+- Right on a row: open the diff for that file between the selected
+    commit pair.
+
+Right History Column (Repository History):
+- Shows repository-wide commits (newest first). Use this to pick commit
+    ranges to inspect repository-wide changes.
+- Press `m` on a row to mark it (acts as one side of a commit pair).
+- With a commit pair selected, press Right to populate the Right File
+    Column with the files changed between those commits.
+
+Right File Column (Files for selected commit-pair or pseudo refs):
+- When populated from a repo commit pair you will see per-file status
+    markers (A/M/D/U/!) followed by the filename.
+- Special pseudo-rows: `MODS` and `STAGED` appear at the top when the
+    selected refs are the working tree/index. Expanding `MODS` shows the
+    modified (unstaged) files; expanding `STAGED` shows staged changes.
+- Right on a file row: open the file-level diff between the selected
+    commit pair (or between index and working-tree when using `STAGED`/`MODS`).
+
+Diff Column:
+- Shows the textual patch for the current file/commit pair. The first
+    line is a one-line header describing the file and the two refs being
+    compared and is not selectable.
+- Hunk navigation: `next-hunk` and `prev-hunk` commands (or mapped
+    keys) jump between `@@ ... @@` hunks.
+- Commands when focused:
+    - `toggle-color` / `c`: toggle colorized diff output.
+    - `save-diff` / `d`: write the current diff to a file.
+    - `find` / `f`: search within the diff output.
+
+Command palette (^P):
+- Press Ctrl-P (Textual command palette) to run commands directly. Useful
+    commands to wire up include:
+    - `open-file`, `diff <file> [prev] <curr>`, `file-history <path>`,
+        `goto-commit <hash>`, `toggle-color`, `next-hunk`, `prev-hunk`,
+        `stage <path>`, `unstage <path>`, `refresh`, `run-prep-harness`,
+        `check-axioms`, `use-pygit2 on|off`.
+
+Tips and behavior notes:
+- Short commit hashes are shown using the app's `HASH_LENGTH` constant.
+- `MODS` lists working-tree modifications (unstaged); `STAGED` lists
+    index changes. When diffing between `STAGED` and `MODS` the UI shows
+    the comparison the user expects (index vs working-tree).
+- The app caches a `pygit2.Repository` instance when available to avoid
+    repeated repo construction; use `--test-pygit2` to force parity
+    comparisons between `pygit2` and the `git` CLI.
+
+Extensibility:
+- Commands and behaviors are pluggable — the command palette can be
+    extended to call internal helpers (e.g. `build_diff_cmd`) or shell
+    out to project scripts such as `scripts/check_axioms.py`.
+
+For more advanced usage or to run the developer harnesses, see the
+project `README.md` and the `scripts/` directory.
+"""

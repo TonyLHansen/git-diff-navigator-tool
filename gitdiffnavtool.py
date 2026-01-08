@@ -10,121 +10,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import sys
-import subprocess
-import traceback
-import inspect
-from typing import Optional
-from datetime import datetime, timezone, timedelta
-from functools import wraps
-import pprint
-import difflib
-import re
-
-# Optional pygit2 support — best-effort import to enable repo status checks
-try:
-    import pygit2  # type: ignore
-except Exception as _no_logging:
-    pygit2 = None
-
-# Third-party UI and rendering imports
-from rich.text import Text
-from rich.markdown import Markdown
-from textual import events
-from textual.app import App
-from textual.containers import Horizontal, Vertical
-from textual.widgets import ListView, Label, ListItem, Footer, Header
-
-# --- Constants -------------------------------------------------------------
-# Highlight constants (defaults)
-HIGHLIGHT_FILELIST_BG = "#f1c40f"
-
-HIGHLIGHT_REPOLIST_BG = "#3333CC"
-
-# Diff-list specific highlight background
-HIGHLIGHT_DIFF_BG = "#2ecc71"
-
-# Help-list specific highlight background
-HIGHLIGHT_HELP_BG = "#95a5a6"
-
-# Default highlight background used when a widget doesn't specify one
-HIGHLIGHT_DEFAULT_BG = "light_gray"
-
-# Status markers mapping used to render the left-most TAG for file rows.
-# Keys correspond to computed repo statuses (strings used by preparatory APIs).
-MARKERS = {
-    "conflicted": "!",
-    "staged": "A",
-    "wt_deleted": "D",
-    "ignored": "I",
-    "modified": "M",
-    "untracked": "U",
-    "tracked_clean": " ",
-}
-
-# Inline CSS used by the Textual App (can be edited in-place)
-INLINE_CSS = """
-/* gitdiffnavtool inline CSS */
-
-/* Title labels */
-#left-file-title, #left-history-title, #right-history-title, #right-file-title, #diff-title, #help-title {
-    padding: 0 1;
-    background: $surface;
-    color: $text;
-}
-
-.title.active {
-    background: $accent-darken-1;
-    color: white;
-    text-style: bold;
-}
-
-/* Simple column spacing */
-ListView {
-    padding: 0 1;
-}
-
-/* Highlight active list item */
-ListItem.active {
-    background: $accent-darken-1;
-    color: white;
-}
-
-"""
-
-
-# Canonical widget and label IDs (six canonical widgets)
-LEFT_FILE_LIST_ID = "left-file-list"
-LEFT_FILE_TITLE = "left-file-title"
-
-LEFT_HISTORY_LIST_ID = "left-history-list"
-LEFT_HISTORY_TITLE = "left-history-title"
-
-RIGHT_FILE_LIST_ID = "right-file-list"
-RIGHT_FILE_TITLE = "right-file-title"
-
-RIGHT_HISTORY_LIST_ID = "right-history-list"
-RIGHT_HISTORY_TITLE = "right-history-title"
-
-DIFF_LIST_ID = "diff-list"
-DIFF_TITLE = "diff-title"
-
-HELP_LIST_ID = "help-list"
-HELP_TITLE = "help-title"
-
-# Footer text used when switching to file-history view
-RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
-# Footer text used when showing the left history pane
-LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
-# Footer text used when showing the left file list
-LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
-# Footer text used when showing the right file list (file list view)
-RIGHT_FILE_FOOTER = Text("Files: press Left to return")
-# Footer text used for help screen
-HELP_FOOTER = Text("Help: press Enter to return")
-# Footer text used when showing the diff for a history/file selection
-HISTORY_FILE_DIFF_FOOTER = Text("Diff: press Left to return to files")
-
+ 
 # Common styles used across file/history preparers
 STYLE_DIR = "white on blue"
 STYLE_PARENT = STYLE_DIR
@@ -143,36 +29,7 @@ STYLE_FILELIST_KEY = "dim"
 FILELIST_KEY_ROW_TEXT = "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
 
 # Number of characters to display for short hashes
-HASH_LENGTH = 12
-
-
-# --- Logging setup --------------------------------------------------------
-# NOTE: logging is configured in `main()` when `--debug` is passed.
-
-logger = logging.getLogger(__name__)
-
-# Define a TRACE level lower than DEBUG and add a convenience `trace` method
-# so callers can emit very-verbose trace messages when enabled.
-TRACE = 5
-logging.addLevelName(TRACE, "TRACE")
-
-
-def _logger_trace(self, msg, *args, **kwargs):
-    if self.isEnabledFor(TRACE):
-        self._log(TRACE, msg, args, **kwargs)
-
-
-setattr(logging.Logger, "trace", _logger_trace)
-
-
-def enable_trace_logging(enabled: bool) -> None:
-    """Enable or disable TRACE-level logging across the root logger and handlers.
-
-    When enabled this sets the root logger and all its handlers to the numeric
-    TRACE level so `logger.trace(...)` messages are emitted. When disabled this
-    does nothing (existing logging configuration remains).
-    """
-    try:
+ 
         root = logging.getLogger()
         if enabled:
             root.setLevel(TRACE)
@@ -3511,6 +3368,33 @@ class DiffList(AppBase):
             self.printException(e, "DiffList.key_enter failed")
 
 
+HELP_TEXT = """
+# <div align="center">**gitdiffnavtool help**</div>
+
+Overview:
+- gitdiffnavtool is a terminal UI for exploring a Git repository: the
+    left/right columns show file trees and per-file history, the central
+    commit lists show repository history, and the diff column shows patches
+    for a selected file/commit pair. It can use the `git` CLI or `pygit2`
+    as backends for status and history operations.
+
+Invocation:
+- Run `gitdiffnavtool [path]` to open the app for `path` (directory or
+    file). Use `--repo-root` to override detected repo root. Use
+    `--no-color` to disable colored diffs and `--test-pygit2` to run
+    both backends for parity checks.
+
+Basic navigation:
+- Arrow keys / vim keys: Up / Down / PageUp / PageDown / Home / End move
+    the selection within the focused column.
+- Right (or Enter): open/enter the selected row (enter directories,
+    open file history or diff depending on focus).
+- Left: go back / close / move focus to the previous column.
+- `q` (or Ctrl-Q): quit the application.
+
+```
+"""
+
 class HelpList(AppBase):
     """Renders help text as list rows and allows restoring previous state."""
 
@@ -3527,11 +3411,15 @@ class HelpList(AppBase):
                 # is its own ListItem. This preserves Markdown formatting
                 # while allowing the ListView to provide scrolling behavior.
                 blocks = re.split(r"\n\s*\n", HELP_TEXT.strip())
-                for blk in blocks:
+                for i, blk in enumerate(blocks):
                     if not blk:
                         continue
                     try:
                         self.append(ListItem(Label(Markdown(blk))))
+                        # Add a spacer row after each block to provide visual
+                        # separation when rendered in the ListView.
+                        if i != len(blocks) - 1:
+                            self.append(ListItem(Label(Text(""))))
                     except Exception as e:
                         self.printException(e, "prepHelp append failed for Markdown block")
             except Exception as e:
@@ -4145,49 +4033,36 @@ class GitHistoryNavTool(App):
                         RIGHT_HISTORY_TITLE,
                         RIGHT_FILE_TITLE,
                         DIFF_TITLE,
-                        HELP_TITLE,
                     ]
-                    for tid in title_ids:
-                        try:
-                            lbl = self.query_one(f"#{tid}", Label)
-                            try:
-                                lbl.set_class(False, "active")
-                            except Exception as e:
-                                self.printException(e, "change_focus resetting title label class failed")
-                                try:
-                                    lbl.remove_class("active")
-                                except Exception as e:
-                                    self.printException(e, "change_focus removing title label class failed")
-                        except Exception as e:
-                            self.printException(e, "change_focus querying title label failed")
-                except Exception as e:
-                    self.printException(e, "change_focus resetting title label classes failed")
 
-                if key == LEFT_FILE_LIST_ID:
-                    widget = self.file_mode_file_list
-                    label_name = LEFT_FILE_TITLE
-                elif key == LEFT_HISTORY_LIST_ID:
-                    widget = self.repo_mode_history_list
-                    label_name = LEFT_HISTORY_TITLE
-                elif key == RIGHT_FILE_LIST_ID:
-                    widget = self.repo_mode_file_list
-                    label_name = RIGHT_FILE_TITLE
-                elif key == RIGHT_HISTORY_LIST_ID:
-                    widget = self.file_mode_history_list
-                    label_name = RIGHT_HISTORY_TITLE
-                elif key == DIFF_LIST_ID:
-                    widget = self.diff_list
-                    label_name = DIFF_TITLE
-                elif key == HELP_LIST_ID:
-                    widget = self.help_list
-                    label_name = HELP_TITLE
-                else:
-                    logger.warning(
-                        "change_focus:%d: unknown canonical focus target %r",
-                        inspect.currentframe().f_lineno,
-                        target,
-                    )
-                    return
+                    if key == LEFT_FILE_LIST_ID:
+                        widget = self.file_mode_file_list
+                        label_name = LEFT_FILE_TITLE
+                    elif key == LEFT_HISTORY_LIST_ID:
+                        widget = self.repo_mode_history_list
+                        label_name = LEFT_HISTORY_TITLE
+                    elif key == RIGHT_FILE_LIST_ID:
+                        widget = self.repo_mode_file_list
+                        label_name = RIGHT_FILE_TITLE
+                    elif key == RIGHT_HISTORY_LIST_ID:
+                        widget = self.file_mode_history_list
+                        label_name = RIGHT_HISTORY_TITLE
+                    elif key == DIFF_LIST_ID:
+                        widget = self.diff_list
+                        label_name = DIFF_TITLE
+                    elif key == HELP_LIST_ID:
+                        widget = self.help_list
+                        label_name = HELP_TITLE
+                    else:
+                        logger.warning(
+                            "change_focus:%d: unknown canonical focus target %r",
+                            inspect.currentframe().f_lineno,
+                            target,
+                        )
+                        return
+
+                except Exception as e:
+                    self.printException(e, "change_focus: determine target failed")
 
                 try:
                     if widget is not None:
