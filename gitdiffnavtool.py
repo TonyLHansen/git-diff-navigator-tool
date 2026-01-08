@@ -28,6 +28,7 @@ except Exception as _no_logging:
 
 # Third-party UI and rendering imports
 from rich.text import Text
+from rich.markdown import Markdown
 from textual import events
 from textual.app import App
 from textual.containers import Horizontal, Vertical
@@ -230,7 +231,8 @@ class AppBase(ListView):
         self.current_commit_sha = None
         self.current_diff_file = None
         # Ensure scroll helper attribute exists for static checks
-        self.scroll_to_widget = None
+        # Do not override Textual's `scroll_to_widget` method here; rely on
+        # ListView/Textual to provide the implementation at runtime.
         # When True the next watch_index-triggered scroll should animate
         # (used by page up / page down handlers to make the jump more
         # visually noticeable).
@@ -3271,7 +3273,7 @@ class DiffList(AppBase):
                     except Exception as e:
                         self.printException(e, "prepDiffList: retrieving app.diff_variants failed")
                         variant_arg = None
-                    vdisp = variant_arg if variant_arg else "default"
+                    vdisp = variant_arg if variant_arg else ""
                     vspace = " " if variant_arg else ""
                     header = f"'Diff{vspace}{vdisp}' for {filename} between {p_short} and {c_short}"
                 except Exception as e:
@@ -3487,11 +3489,17 @@ class HelpList(AppBase):
         try:
             logger.debug("prepHelp: invoked")
             self.clear()
-            for ln in HELP_TEXT.strip().splitlines():
-                try:
-                    self.append(ListItem(Label(Text(ln))))
-                except Exception as e:
-                    self.printException(e, "prepHelp append failed")
+            try:
+                # Render help text line-by-line to ensure compatibility with
+                # Label/Text expectations (avoid passing a Markdown renderable
+                # directly to Label which Textual may not handle uniformly).
+                for ln in HELP_TEXT.splitlines():
+                    try:
+                        self.append(ListItem(Label(Text(ln))))
+                    except Exception as e:
+                        self.printException(e, "prepHelp append failed for line")
+            except Exception as e:
+                self.printException(e, "prepHelp append failed")
             self._populated = True
             try:
                 self._highlight_top()
