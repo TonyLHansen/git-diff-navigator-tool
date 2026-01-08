@@ -87,6 +87,12 @@ def make_dummy(repo_root: str, pyg_repo=None):
             # Delegate formatting/appending of pseudo summary rows
             return gitdiffnavtool.AppBase._format_pseudo_summary(self, pseudo_entries)
 
+        def _append_file_row(self, display: str, full_path: str, is_dir: bool = False, status: str | None = None):
+            # Delegate AppBase._append_file_row so tests can use the same
+            # row-creation logic as the UI widgets when preparers are
+            # invoked unbound on this dummy object.
+            return gitdiffnavtool.AppBase._append_file_row(self, display, full_path, is_dir=is_dir, status=status)
+
         def _parse_git_log_lines(self, lines):
             return gitdiffnavtool.AppBase._parse_git_log_lines(self, lines)
 

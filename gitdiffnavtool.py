@@ -328,6 +328,49 @@ class AppBase(ListView):
         except Exception as e:
             self.printException(e, "_format_pseudo_summary failed")
 
+    def _append_file_row(self, display: str, full_path: str, is_dir: bool = False, status: str | None = None) -> None:
+        """Append a file-list row and attach canonical metadata.
+
+        Creates a ListItem with the provided `display` text, appends it to
+        this list, and attaches helpful metadata used by preparers and
+        navigation helpers:
+        - `_raw_text`: canonical full path used for matching
+        - `_filename`: basename for quick name comparisons
+        - `_is_dir`: boolean flag when the row represents a directory
+        - `_repo_status`: optional repository status string (e.g. 'M', 'A')
+
+        All exceptions are logged via `printException` so callers may use
+        this in test or UI paths without raising.
+        """
+        try:
+            item = ListItem(Label(Text(display)))
+            try:
+                item._raw_text = full_path
+            except Exception as e:
+                self.printException(e, "_append_file_row: setting _raw_text failed")
+                item._raw_text = display
+            try:
+                item._filename = os.path.basename(full_path) if full_path else display
+            except Exception as e:
+                self.printException(e, "_append_file_row: setting _filename failed")
+                item._filename = display
+            try:
+                item._is_dir = bool(is_dir)
+            except Exception as e:
+                self.printException(e, "_append_file_row: setting _is_dir failed")
+                item._is_dir = False
+            try:
+                if status is not None:
+                    item._repo_status = status
+            except Exception as e:
+                self.printException(e, "_append_file_row: setting _repo_status failed")
+            try:
+                self.append(item)
+            except Exception as e:
+                self.printException(e, "_append_file_row: append failed")
+        except Exception as e:
+            self.printException(e, "_append_file_row failed")
+
     def _parse_git_log_lines(self, lines: list[str]) -> list[tuple[datetime, str, str]]:
         """Parse lines produced by `git log --pretty=format:%H\t%aI\t%s`.
 
