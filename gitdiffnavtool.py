@@ -2256,6 +2256,53 @@ class FileModeHistoryList(HistoryListBase):
 
                 # render pseudo entries first
                 try:
+                    # Attach timestamps for MODS/STAGED similar to repo-mode helper
+                    try:
+                        if repo_root and pseudo_entries:
+                            full_path = path if os.path.isabs(path) else os.path.realpath(os.path.join(repo_root, path))
+                            # compute file mtime for MODS
+                            try:
+                                mods_ts = ""
+                                if os.path.exists(full_path):
+                                    m = os.path.getmtime(full_path)
+                                    mods_ts = datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+                            except Exception as _ex:
+                                self.printException(_ex, "prepFileModeHistoryList computing file mtime failed")
+
+                            # compute index mtime for STAGED
+                            try:
+                                staged_ts = ""
+                                idx_path = os.path.join(repo_root, ".git", "index")
+                                if os.path.exists(idx_path):
+                                    m = os.path.getmtime(idx_path)
+                                    staged_ts = datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+                            except Exception as _ex:
+                                self.printException(_ex, "prepFileModeHistoryList computing index mtime failed")
+
+                            # rewrite pseudo_entries in-place with date prefixes when appropriate
+                            new_pseudo: list[tuple[str, str]] = []
+                            for status, desc in pseudo_entries:
+                                try:
+                                    if status == "MODS":
+                                        date_part = mods_ts or ""
+                                        status_short = "MODS"
+                                        msg = desc if desc else "(modified, unstaged)"
+                                        display = f"{date_part} {status_short[:HASH_LENGTH]} {msg}".strip()
+                                        new_pseudo.append((status, display))
+                                    elif status == "STAGED":
+                                        date_part = staged_ts or ""
+                                        status_short = "STAGED"
+                                        msg = desc if desc else "(staged, uncommitted)"
+                                        display = f"{date_part} {status_short[:HASH_LENGTH]} {msg}".strip()
+                                        new_pseudo.append((status, display))
+                                    else:
+                                        new_pseudo.append((status, desc))
+                                except Exception as _ex:
+                                    self.printException(_ex, "prepFileModeHistoryList rewriting pseudo entry failed")
+                            pseudo_entries = new_pseudo
+                    except Exception as _ex:
+                        self.printException(_ex, "prepFileModeHistoryList preparing pseudo timestamps failed")
+
                     for status, desc in pseudo_entries:
                         try:
                             self._add_row(desc, status)
