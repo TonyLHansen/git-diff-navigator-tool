@@ -17,6 +17,8 @@ import inspect
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from functools import wraps
+import pprint
+import difflib
 
 # Optional pygit2 support — best-effort import to enable repo status checks
 try:
@@ -276,9 +278,6 @@ class AppBase(ListView):
         describing where the comparison was invoked.
         """
         try:
-            import pprint
-            import difflib
-
             ctx = f" [{context}]" if context else ""
             pyg_s = pprint.pformat(pygout, width=120).splitlines()
             git_s = pprint.pformat(gitout, width=120).splitlines()

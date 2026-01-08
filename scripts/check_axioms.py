@@ -970,7 +970,7 @@ def main(argv: List[str] | None = None) -> int:
         args.check_getattr_not_initialized = True
     if args.enable_logger_in_try:
         args.check_logger_in_try = True
-    if getattr(args, "enable_check_imports", False):
+    if args.enable_check_imports:
         args.check_imports = True
 
     logger.info("cwd: %s", Path.cwd())
@@ -1032,7 +1032,7 @@ def main(argv: List[str] | None = None) -> int:
                     except Exception as e:
                         printException(e, f"check_getattr_not_initialized failed for {p}")
                 # Enforce 'imports at module level' axiom
-                if getattr(args, "check_imports", False):
+                if args.check_imports:
                     try:
                         errs += check_imports_module_level(p)
                     except Exception as e:
