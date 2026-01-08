@@ -70,6 +70,29 @@ def make_dummy(repo_root: str, pyg_repo=None):
                 logger.warning("%s stderr: %s", label or "cmd", proc.stderr)
             return proc
 
+        def _run_git_lines(self, cmd, label: str | None = None):
+            # Delegate to AppBase._run_git_lines so tests exercise the
+            # same wrapper logic used by the real widgets.
+            return gitdiffnavtool.AppBase._run_git_lines(self, cmd, label=label)
+
+        def _canonical_relpath(self, path: str, repo_root: str) -> str:
+            # Delegate canonicalization to AppBase helper
+            return gitdiffnavtool.AppBase._canonical_relpath(self, path, repo_root)
+
+        def _compute_pseudo_timestamps(self, repo_root: str, mods: list[str], single_path: str):
+            # Delegate to AppBase implementation so tests use same logic
+            return gitdiffnavtool.AppBase._compute_pseudo_timestamps(self, repo_root, mods, single_path)
+
+        def _format_pseudo_summary(self, pseudo_entries: list[tuple[str, str]]):
+            # Delegate formatting/appending of pseudo summary rows
+            return gitdiffnavtool.AppBase._format_pseudo_summary(self, pseudo_entries)
+
+        def _parse_git_log_lines(self, lines):
+            return gitdiffnavtool.AppBase._parse_git_log_lines(self, lines)
+
+        def _format_commit_row(self, ts, h, msg):
+            return gitdiffnavtool.HistoryListBase._format_commit_row(self, ts, h, msg)
+
         # History-mode helpers: forward to the real implementations on
         # `gitdiffnavtool.FileModeHistoryList` so the unbound history
         # preparers can call these methods on `self`.

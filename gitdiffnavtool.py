@@ -270,6 +270,89 @@ class AppBase(ListView):
         logger.trace("%s stdout (cmd=%s):\n%s", lab, " ".join(cmd), proc.stdout or "")
         return proc
 
+    def _run_git_lines(self, cmd: list[str], label: str | None = None) -> list[str]:
+        """Run a git command and return non-empty output lines.
+
+        Uses `_run_cmd_log` for consistent logging; returns an empty list
+        on error and logs the exception via `printException`.
+        """
+        try:
+            proc = self._run_cmd_log(cmd, label=label)
+            out = proc.stdout or ""
+            return [ln for ln in out.splitlines() if ln.strip()]
+        except Exception as e:
+            self.printException(e, f"_run_git_lines: {label or 'git'}")
+            return []
+
+    def _canonical_relpath(self, path: str, repo_root: str) -> str:
+        """Return a canonical realpath for `path` using `repo_root` for
+        repository-relative paths.
+
+        If `path` is absolute it is normalized via `os.path.realpath`.
+        On error returns the original `path`.
+        """
+        try:
+            if os.path.isabs(path):
+                    return os.path.realpath(path)
+            return os.path.realpath(os.path.join(repo_root, path))
+        except Exception as e:
+            self.printException(e, "_canonical_relpath failed")
+            return path
+
+    def _format_pseudo_summary(self, pseudo_entries: list[tuple[str, str]]) -> None:
+        """Append pseudo-summary rows (e.g. MODS/STAGED/UNTRACKED) to this list.
+
+        Centralized helper used by file- and repo-mode preparers to ensure
+        consistent display formatting and metadata attachment.
+        """
+        try:
+            for status, path in pseudo_entries:
+                try:
+                    display = f"{status} {path}"
+                    item = ListItem(Label(Text(display)))
+                    try:
+                        full = self._canonical_relpath(path, self.app.repo_root)
+                        item._raw_text = full
+                    except Exception as e:
+                        self.printException(e, "_format_pseudo_summary: resolving full path failed")
+                        item._raw_text = path
+                    item._is_dir = False
+                    self.append(item)
+                except Exception as e:
+                    self.printException(e, "_format_pseudo_summary append pseudo entry failed")
+        except Exception as e:
+            self.printException(e, "_format_pseudo_summary failed")
+
+    def _parse_git_log_lines(self, lines: list[str]) -> list[tuple[datetime, str, str]]:
+        """Parse lines produced by `git log --pretty=format:%H\t%aI\t%s`.
+
+        Returns a list of tuples (datetime, hash, subject). On parse errors
+        datetimes default to `datetime.min` so sorting remains robust.
+        """
+        out: list[tuple[datetime, str, str]] = []
+        try:
+            for ln in lines:
+                try:
+                    parts = ln.split("\t", 2)
+                    h = parts[0] if parts else ""
+                    date_s = parts[1] if len(parts) > 1 else ""
+                    msg = parts[2] if len(parts) > 2 else ""
+                    try:
+                        dt = datetime.fromisoformat(date_s) if date_s else datetime.min
+                    except Exception as _ex:
+                        self.printException(_ex, f"_parse_git_log_lines failed ISO parse for '{date_s}'")
+                        try:
+                            dt = datetime.strptime(date_s, "%Y-%m-%d") if date_s else datetime.min
+                        except Exception as _ex2:
+                            self.printException(_ex2, f"_parse_git_log_lines failed parsing date '{date_s}'")
+                            dt = datetime.min
+                    out.append((dt, h, msg))
+                except Exception as e:
+                    self.printException(e, "_parse_git_log_lines line parse failed")
+        except Exception as e:
+            self.printException(e, "_parse_git_log_lines failed")
+        return out
+
     def compare_pygit2_to_git_output(self, pygout, gitout, context: str | None = None) -> None:
         """Compare two outputs (pygit2 vs git) and print differences.
 
@@ -359,7 +442,7 @@ class AppBase(ListView):
             self.printException(_ex, f"_date_key failed for tuple: {t}")
             return (datetime.min, "")
 
-    def _compute_pseudo_timestamps(self, repo_root: str, mods: list[str] | None = None, single_path: str | None = None) -> tuple[str, str]:
+    def _compute_pseudo_timestamps(self, repo_root: str, mods: list[str], single_path: str) -> tuple[str, str]:
         """Compute timestamps for pseudo-summary rows.
 
         Returns (mods_ts, staged_ts) where each is an ISO-like timestamp
@@ -614,10 +697,7 @@ class AppBase(ListView):
                 # comparisons against `_raw_text` (which we now store as
                 # full paths for repo-mode rows) succeed.
                 try:
-                    if os.path.isabs(match):
-                        match_full = os.path.realpath(match)
-                    else:
-                        match_full = os.path.realpath(os.path.join(self.app.repo_root, match))
+                    match_full = self._canonical_relpath(match, self.app.repo_root)
                 except Exception as e:
                     match_full = match
                     self.printException(e, "_highlight_match: normalizing match failed")
@@ -628,11 +708,7 @@ class AppBase(ListView):
                         h = getattr(node, "_hash", None)
                         try:
                             if raw is not None:
-                                node_full = (
-                                    raw
-                                    if os.path.isabs(raw)
-                                    else os.path.realpath(os.path.join(self.app.repo_root, raw))
-                                )
+                                node_full = self._canonical_relpath(raw, self.app.repo_root)
                             else:
                                 node_full = None
                         except Exception as e:
@@ -994,10 +1070,7 @@ class FileListBase(AppBase):
             try:
                 match_full = None
                 if filename:
-                    if os.path.isabs(filename):
-                        match_full = os.path.realpath(filename)
-                    else:
-                        match_full = os.path.realpath(os.path.join(self.app.repo_root, filename))
+                    match_full = self._canonical_relpath(filename, self.app.repo_root)
             except Exception as e:
                 match_full = filename
                 self.printException(e, "_highlight_filename: normalizing filename failed")
@@ -1009,11 +1082,7 @@ class FileListBase(AppBase):
                     raw = getattr(node, "_raw_text", None)
                     if raw is not None and match_full is not None:
                         try:
-                            node_full = (
-                                raw
-                                if os.path.isabs(raw)
-                                else os.path.realpath(os.path.join(self.app.repo_root, raw))
-                            )
+                            node_full = self._canonical_relpath(raw, self.app.repo_root)
                         except Exception as e:
                             node_full = raw
                             self.printException(e, "_highlight_filename: computing node_full failed")
@@ -1024,8 +1093,8 @@ class FileListBase(AppBase):
                                 self.printException(e, "_highlight_filename: scheduling index set failed")
                                 try:
                                     self._activate_index(i)
-                                except Exception as e:
-                                    self.printException(e, "setting index in _highlight_filename")
+                                except Exception as e2:
+                                    self.printException(e2, "setting index in _highlight_filename")
                             return
                     try:
                         text = self.text_of(node)
@@ -1724,23 +1793,7 @@ class RepoModeFileList(FileListBase):
             if pseudo_entries:
                 # Render collected pseudo entries and skip the git-diff-with-refs path
                 try:
-                    for status, path in pseudo_entries:
-                        try:
-                            display = f"{status} {path}"
-                            item = ListItem(Label(Text(display)))
-                            try:
-                                if not os.path.isabs(path):
-                                    full = os.path.realpath(os.path.join(self.app.repo_root, path))
-                                else:
-                                    full = os.path.realpath(path)
-                                item._raw_text = full
-                            except Exception as e:
-                                self.printException(e, "prepRepoModeFileList: resolving full path failed")
-                                item._raw_text = path
-                            item._is_dir = False
-                            self.append(item)
-                        except Exception as e:
-                            self.printException(e, "prepRepoModeFileList append pseudo entry failed")
+                    self._format_pseudo_summary(pseudo_entries)
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList rendering pseudo entries failed")
             else:
@@ -2129,6 +2182,26 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "HistoryListBase._add_row failed")
 
+    def _format_commit_row(self, ts, h: str | None, msg: str) -> str:
+        """Return a formatted commit row string for display.
+
+        Centralized so formatting is consistent across preparers.
+        """
+        try:
+            try:
+                if hasattr(ts, "strftime"):
+                    date_stamp = ts.strftime("%Y-%m-%dT%H:%M:%S")
+                else:
+                    date_stamp = str(ts)
+            except Exception as _ex:
+                self.printException(_ex, f"_format_commit_row failed formatting date for {(ts,h,msg)}")
+                date_stamp = str(ts)
+            short_hash = (h or "")[:HASH_LENGTH]
+            return f"{date_stamp} {short_hash} {msg}".strip()
+        except Exception as e:
+            self.printException(e, "_format_commit_row failed")
+            return f"{h or ''} {msg}".strip()
+
     def toggle_check_current(self, idx: int | None = None) -> None:
         try:
             if idx is None:
@@ -2309,7 +2382,7 @@ class FileModeHistoryList(HistoryListBase):
                     try:
                         if repo_root and pseudo_entries:
                             full_path = path if os.path.isabs(path) else os.path.realpath(os.path.join(repo_root, path))
-                            mods_ts, staged_ts = self._compute_pseudo_timestamps(repo_root, single_path=full_path)
+                            mods_ts, staged_ts = self._compute_pseudo_timestamps(repo_root, mods=[], single_path=full_path)
 
                             # rewrite pseudo_entries in-place with date prefixes when appropriate
                             new_pseudo: list[tuple[str, str]] = []
@@ -2356,17 +2429,8 @@ class FileModeHistoryList(HistoryListBase):
                 try:
                     for ts, h, msg in entries:
                         try:
-                            # format timestamp for display
-                            try:
-                                if hasattr(ts, "strftime"):
-                                    date_stamp = ts.strftime("%Y-%m-%dT%H:%M:%S")
-                                else:
-                                    date_stamp = str(ts)
-                            except Exception as _ex:
-                                self.printException(_ex, f"_date_key failed for tuple: {(ts, h, msg)}")
-                                date_stamp = str(ts)
-                            short_hash = h[:HASH_LENGTH] if h else ""
-                            text = f"{date_stamp} {short_hash} {msg}".strip()
+                            # Use centralized formatter for commit rows
+                            text = self._format_commit_row(ts, h, msg)
                             self._add_row(text, h)
                         except Exception as e:
                             self.printException(e, "prepFileModeHistoryList parse failed")
@@ -2423,24 +2487,8 @@ class FileModeHistoryList(HistoryListBase):
                 rel_path,
             ]
             proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList git log")
-            for ln in (proc.stdout or "").splitlines():
-                try:
-                    parts = ln.split("\t", 2)
-                    h = parts[0]
-                    date_s = parts[1] if len(parts) > 1 else ""
-                    msg = parts[2] if len(parts) > 2 else ""
-                    try:
-                        dt = datetime.fromisoformat(date_s) if date_s else datetime.min
-                    except Exception as _ex:
-                        self.printException(_ex, f"_prepFileModeHistoryList_commits_from_git failed parsing ISO datetime '{date_s}'")
-                        try:
-                            dt = datetime.strptime(date_s, "%Y-%m-%d") if date_s else datetime.min
-                        except Exception as _ex:
-                            self.printException(_ex, f"_prepFileModeHistoryList_commits_from_git failed parsing date-only '{date_s}'")
-                            dt = datetime.min
-                    entries.append((dt, h, msg))
-                except Exception as e:
-                    self.printException(e, "_prepFileModeHistoryList_commits_from_git parse failed")
+            lines = (proc.stdout or "").splitlines()
+            entries = self._parse_git_log_lines(lines)
         except Exception as e:
             self.printException(e, "_prepFileModeHistoryList_commits_from_git failed")
         # Ensure newest-first ordering by natural tuple ordering (datetime first)
@@ -2579,15 +2627,13 @@ class FileModeHistoryList(HistoryListBase):
         try:
             try:
                 cmd = ["git", "-C", repo_root, "diff", "--name-only", "--", rel_path]
-                proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList diff --name-only")
-                mods = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+                mods = self._run_git_lines(cmd, label="prepFileModeHistoryList diff --name-only")
             except Exception as e:
                 self.printException(e, "_prepFileModeHistoryList_for_git getting modified file failed")
                 mods = []
             try:
                 cmd = ["git", "-C", repo_root, "diff", "--name-only", "--cached", "--", rel_path]
-                proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList diff --name-only --cached")
-                staged = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+                staged = self._run_git_lines(cmd, label="prepFileModeHistoryList diff --name-only --cached")
             except Exception as e:
                 self.printException(e, "_prepFileModeHistoryList_for_git getting staged file failed")
                 staged = []
@@ -2595,8 +2641,7 @@ class FileModeHistoryList(HistoryListBase):
             # Also consult `git status --porcelain` to detect untracked/ignored
             try:
                 cmd = ["git", "-C", repo_root, "status", "--porcelain", "--", rel_path]
-                proc = self._run_cmd_log(cmd, label="prepFileModeHistoryList git status --porcelain")
-                por = (proc.stdout or "").splitlines()
+                por = self._run_git_lines(cmd, label="prepFileModeHistoryList git status --porcelain")
                 if por:
                     code = por[0][:2]
                     if code == "??":
@@ -2911,7 +2956,7 @@ class RepoModeHistoryList(HistoryListBase):
             # add summary pseudo rows first if present and attach timestamps
             try:
                 try:
-                    mods_ts, staged_ts = self._compute_pseudo_timestamps(self.app.repo_root, mods=mods)
+                    mods_ts, staged_ts = self._compute_pseudo_timestamps(self.app.repo_root, mods=mods, single_path="")
                 except Exception as _ex:
                     self.printException(_ex, "_prepRepoModeHistoryList_for_git computing pseudo timestamps failed")
 
