@@ -3103,7 +3103,7 @@ class RepoModeHistoryList(HistoryListBase):
 
 
 HELP_TEXT = """
-gitdiffnavtool help
+# <div align="center">**gitdiffnavtool help**</div>
 
 Overview:
 - gitdiffnavtool is a terminal UI for exploring a Git repository: the
