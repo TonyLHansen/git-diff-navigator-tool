@@ -158,6 +158,11 @@ logging.addLevelName(TRACE, "TRACE")
 
 
 def _logger_trace(self, msg, *args, **kwargs):
+    """Logger method implementing TRACE-level logging.
+
+    Attached to `logging.Logger` as `trace`; emits the message at the
+    numeric TRACE level when enabled.
+    """
     if self.isEnabledFor(TRACE):
         self._log(TRACE, msg, args, **kwargs)
 
@@ -762,18 +767,33 @@ class AppBase(ListView):
     # `call_after_refresh` remain small and identical behavior isn't
     # duplicated across the codebase.
     def _safe_set_index(self, new_index: int) -> None:
+        """Safely set the widget `index` attribute.
+
+        Wraps the assignment in a try/except and forwards exceptions to
+        `printException` so callers can schedule this to run after UI
+        refresh without raising.
+        """
         try:
             setattr(self, "index", new_index)
         except Exception as e:
             self.printException(e, "_safe_set_index failed")
 
     def _safe_activate_index(self, idx: int) -> None:
+        """Invoke `_activate_index` and handle any exceptions.
+
+        Intended to be called from lambdas passed to `call_after_refresh`.
+        """
         try:
             self._activate_index(idx)
         except Exception as e:
             self.printException(e, "_safe_activate_index failed")
 
     def _safe_scroll_to_widget(self, node, animate: bool = False) -> None:
+        """Scroll the given `node` into view (safe wrapper).
+
+        Uses the framework `scroll_to_widget` API when available and logs
+        exceptions instead of raising so UI callbacks remain stable.
+        """
         try:
             # Prefer the framework-provided scroll, if present.
             self.scroll_to_widget(node, animate=animate)
@@ -781,12 +801,21 @@ class AppBase(ListView):
             self.printException(e, "_safe_scroll_to_widget failed")
 
     def _safe_node_scroll_visible(self, node, visible: bool = True) -> None:
+        """Call a node's `scroll_visible` method safely.
+
+        This is a non-fatal fallback used when the widget-level
+        `scroll_to_widget` API is not available.
+        """
         try:
             getattr(node, "scroll_visible", lambda *a, **k: None)(visible)
         except Exception as e:
             self.printException(e, "_safe_node_scroll_visible failed")
 
     def _safe_highlight_match(self, match: Optional[str]) -> None:
+        """Safe wrapper around `_highlight_match` that logs failures.
+
+        Useful for scheduling highlight operations after UI refresh.
+        """
         try:
             self._highlight_match(match)
         except Exception as e:
