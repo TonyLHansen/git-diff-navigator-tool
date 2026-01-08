@@ -359,6 +359,55 @@ class AppBase(ListView):
             self.printException(_ex, f"_date_key failed for tuple: {t}")
             return (datetime.min, "")
 
+    def _compute_pseudo_timestamps(self, repo_root: str, mods: list[str] | None = None, single_path: str | None = None) -> tuple[str, str]:
+        """Compute timestamps for pseudo-summary rows.
+
+        Returns (mods_ts, staged_ts) where each is an ISO-like timestamp
+        string (no leading space) or empty string when unavailable.
+        - When `mods` is provided, compute the latest mtime among those files.
+        - When `single_path` is provided, compute the mtime for that file.
+        `staged_ts` is computed from `.git/index` mtime when available.
+        """
+        mods_ts = ""
+        try:
+            if mods:
+                latest_m = None
+                for p in mods:
+                    try:
+                        full = os.path.join(repo_root, p)
+                        if os.path.exists(full):
+                            m = os.path.getmtime(full)
+                            if latest_m is None or m > latest_m:
+                                latest_m = m
+                    except Exception as _ex:
+                        self.printException(_ex, "_compute_pseudo_timestamps skipping file mtime due to error")
+                        continue
+                if latest_m is not None:
+                    mods_ts = datetime.fromtimestamp(latest_m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+            elif single_path:
+                try:
+                    if os.path.exists(single_path):
+                        m = os.path.getmtime(single_path)
+                        mods_ts = datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+                except Exception as _ex:
+                    self.printException(_ex, "_compute_pseudo_timestamps computing single_path mtime failed")
+        except Exception as e:
+            self.printException(e, "_compute_pseudo_timestamps failed computing mods_ts")
+
+        staged_ts = ""
+        try:
+            try:
+                idx_path = os.path.join(repo_root, ".git", "index")
+                if os.path.exists(idx_path):
+                    m = os.path.getmtime(idx_path)
+                    staged_ts = datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+            except Exception as _ex:
+                self.printException(_ex, "_compute_pseudo_timestamps computing staged timestamp failed")
+        except Exception as e:
+            self.printException(e, "_compute_pseudo_timestamps failed computing staged_ts")
+
+        return (mods_ts, staged_ts)
+
     def nodes(self):
         """Return the underlying nodes list or an empty list if unset.
 
@@ -2256,28 +2305,11 @@ class FileModeHistoryList(HistoryListBase):
 
                 # render pseudo entries first
                 try:
-                    # Attach timestamps for MODS/STAGED similar to repo-mode helper
+                    # Attach timestamps for MODS/STAGED using centralized helper
                     try:
                         if repo_root and pseudo_entries:
                             full_path = path if os.path.isabs(path) else os.path.realpath(os.path.join(repo_root, path))
-                            # compute file mtime for MODS
-                            try:
-                                mods_ts = ""
-                                if os.path.exists(full_path):
-                                    m = os.path.getmtime(full_path)
-                                    mods_ts = datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
-                            except Exception as _ex:
-                                self.printException(_ex, "prepFileModeHistoryList computing file mtime failed")
-
-                            # compute index mtime for STAGED
-                            try:
-                                staged_ts = ""
-                                idx_path = os.path.join(repo_root, ".git", "index")
-                                if os.path.exists(idx_path):
-                                    m = os.path.getmtime(idx_path)
-                                    staged_ts = datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
-                            except Exception as _ex:
-                                self.printException(_ex, "prepFileModeHistoryList computing index mtime failed")
+                            mods_ts, staged_ts = self._compute_pseudo_timestamps(repo_root, single_path=full_path)
 
                             # rewrite pseudo_entries in-place with date prefixes when appropriate
                             new_pseudo: list[tuple[str, str]] = []
@@ -2286,13 +2318,22 @@ class FileModeHistoryList(HistoryListBase):
                                     if status == "MODS":
                                         date_part = mods_ts or ""
                                         status_short = "MODS"
-                                        msg = desc if desc else "(modified, unstaged)"
+                                        raw = desc or "(modified, unstaged)"
+                                        # Avoid duplicating the status word if desc already contains it
+                                        if raw.upper().startswith(status):
+                                            msg = raw[len(status):].strip()
+                                        else:
+                                            msg = raw
                                         display = f"{date_part} {status_short[:HASH_LENGTH]} {msg}".strip()
                                         new_pseudo.append((status, display))
                                     elif status == "STAGED":
                                         date_part = staged_ts or ""
                                         status_short = "STAGED"
-                                        msg = desc if desc else "(staged, uncommitted)"
+                                        raw = desc or "(staged, uncommitted)"
+                                        if raw.upper().startswith(status):
+                                            msg = raw[len(status):].strip()
+                                        else:
+                                            msg = raw
                                         display = f"{date_part} {status_short[:HASH_LENGTH]} {msg}".strip()
                                         new_pseudo.append((status, display))
                                     else:
@@ -2869,34 +2910,10 @@ class RepoModeHistoryList(HistoryListBase):
 
             # add summary pseudo rows first if present and attach timestamps
             try:
-                # Compute timestamp for most recently modified working-tree file
-                mods_ts = ""
                 try:
-                    latest_m = None
-                    for p in mods:
-                        try:
-                            full = os.path.join(self.app.repo_root, p)
-                            if os.path.exists(full):
-                                m = os.path.getmtime(full)
-                                if latest_m is None or m > latest_m:
-                                    latest_m = m
-                        except Exception as e:
-                            self.printException(e, "_prepRepoModeHistoryList_for_git skipping file mtime due to error")
-                            continue
-                    if latest_m is not None:
-                        mods_ts = " " + datetime.fromtimestamp(latest_m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+                    mods_ts, staged_ts = self._compute_pseudo_timestamps(self.app.repo_root, mods=mods)
                 except Exception as _ex:
-                    self.printException(_ex, "_prepRepoModeHistoryList_for_git computing mods timestamp failed")
-
-                # Compute timestamp for index (last staged change)
-                staged_ts = ""
-                try:
-                    idx_path = os.path.join(self.app.repo_root, ".git", "index")
-                    if os.path.exists(idx_path):
-                        m = os.path.getmtime(idx_path)
-                        staged_ts = " " + datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
-                except Exception as _ex:
-                    self.printException(_ex, "_prepRepoModeHistoryList_for_git computing staged timestamp failed")
+                    self.printException(_ex, "_prepRepoModeHistoryList_for_git computing pseudo timestamps failed")
 
                 if mods:
                     date_part = mods_ts.strip() if mods_ts else ""
