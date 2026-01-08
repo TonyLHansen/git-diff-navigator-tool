@@ -99,6 +99,12 @@ def make_dummy(repo_root: str, pyg_repo=None):
         def _format_commit_row(self, ts, h, msg):
             return gitdiffnavtool.HistoryListBase._format_commit_row(self, ts, h, msg)
 
+        def _finalize_prep(self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None):
+            # Delegate HistoryListBase._finalize_prep so unbound preparers
+            # invoked on the Dummy run the same highlight and app-state
+            # synchronization logic used by widgets.
+            return gitdiffnavtool.HistoryListBase._finalize_prep(self, curr_hash=curr_hash, prev_hash=prev_hash, path=path)
+
         # History-mode helpers: forward to the real implementations on
         # `gitdiffnavtool.FileModeHistoryList` so the unbound history
         # preparers can call these methods on `self`.

@@ -2415,6 +2415,69 @@ class HistoryListBase(AppBase):
             self.printException(e, "_compute_selected_pair failed")
             return (None, None)
 
+    def _finalize_prep(self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None) -> None:
+        """Finalize post-prep UI actions: highlighting and app state sync.
+
+        Centralizes the common sequence run after preparers finish: select or
+        highlight the requested commit (`curr_hash` preferred), mark
+        `prev_hash` when provided, or fall back to highlighting the top
+        row. Also updates `app.current_hash`, `app.previous_hash`, and
+        optionally `app.current_path` when `path` is provided.
+
+        All exceptions are caught and logged so preparers can call this
+        helper without raising.
+        """
+        try:
+            try:
+                if curr_hash:
+                    try:
+                        self._highlight_match(curr_hash)
+                    except Exception as e:
+                        self.printException(e, "_finalize_prep: _highlight_match failed for curr_hash")
+                elif prev_hash:
+                    # Attempt to find the node matching prev_hash and mark it
+                    try:
+                        for i, node in enumerate(self.nodes()):
+                            if getattr(node, "_hash", None) == prev_hash:
+                                try:
+                                    self.toggle_check_current(i)
+                                except Exception as e:
+                                    self.printException(e, "_finalize_prep: toggle_check_current failed")
+                                break
+                    except Exception as e:
+                        self.printException(e, "_finalize_prep: locating prev_hash failed")
+                else:
+                    try:
+                        self._highlight_top()
+                    except Exception as e:
+                        self.printException(e, "_finalize_prep: _highlight_top failed")
+            except Exception as e:
+                self.printException(e, "_finalize_prep: highlight/marking step failed")
+
+            # Update app-level hashes/path conservatively
+            try:
+                if curr_hash is not None or prev_hash is not None:
+                    try:
+                        self.app.current_hash = curr_hash
+                        self.app.previous_hash = prev_hash
+                    except Exception as _ex:
+                        self.printException(_ex, "_finalize_prep: updating app hashes failed")
+                else:
+                    try:
+                        # Compute selection-based pair and record it
+                        self._compute_selected_pair()
+                    except Exception as _ex:
+                        self.printException(_ex, "_finalize_prep: _compute_selected_pair failed")
+                    try:
+                        if path is not None:
+                            self.app.current_path = path
+                    except Exception as _ex:
+                        self.printException(_ex, "_finalize_prep: setting app.current_path failed")
+            except Exception as e:
+                self.printException(e, "_finalize_prep: app state sync failed")
+        except Exception as e:
+            self.printException(e, "_finalize_prep failed")
+
 
 class FileModeHistoryList(HistoryListBase):
     """History list for a single file's history. Stubbed prep method."""
