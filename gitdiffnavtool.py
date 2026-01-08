@@ -230,9 +230,6 @@ class AppBase(ListView):
         self.current_prev_sha = None
         self.current_commit_sha = None
         self.current_diff_file = None
-        # Ensure scroll helper attribute exists for static checks
-        # Do not override Textual's `scroll_to_widget` method here; rely on
-        # ListView/Textual to provide the implementation at runtime.
         # When True the next watch_index-triggered scroll should animate
         # (used by page up / page down handlers to make the jump more
         # visually noticeable).
@@ -396,7 +393,7 @@ class AppBase(ListView):
                     "_activate_index: old=%r new=%r highlight_style=%s", old, new_index, self.highlight_bg_style
                 )
                 # Schedule the index change after the UI refresh.
-                self.call_after_refresh(lambda: setattr(self, "index", new_index))
+                self.call_after_refresh(lambda: self._safe_set_index(new_index))
             except Exception as e:
                 self.printException(e, "_activate_index: scheduling index set failed")
                 logger.debug("_activate_index: falling back to direct index set -> %s", new_index)
@@ -468,11 +465,11 @@ class AppBase(ListView):
                         logger.debug("watch_index: scroll animate=%s for index %s", animate, new)
                         if hasattr(self, "scroll_to_widget"):
                             try:
-                                self.call_after_refresh(lambda: self.scroll_to_widget(node_new, animate=animate))
+                                self.call_after_refresh(lambda: self._safe_scroll_to_widget(node_new, animate=animate))
                             except Exception as e:
                                 self.printException(e, "watch_index: scroll_to_widget(animate=) failed")
                                 try:
-                                    self.call_after_refresh(lambda: self.scroll_to_widget(node_new))
+                                    self.call_after_refresh(lambda: self._safe_scroll_to_widget(node_new))
                                 except Exception as e2:
                                     self.printException(e2, "watch_index: scroll_to_widget(node_new) fallback failed")
                         else:
@@ -481,7 +478,7 @@ class AppBase(ListView):
                                 # it (non-animated) as a fallback.
                                 logger.debug("watch_index: scheduling node_new.scroll_visible for index %s", new)
                                 self.call_after_refresh(
-                                    lambda: getattr(node_new, "scroll_visible", lambda *a, **k: None)(True)
+                                    lambda: self._safe_node_scroll_visible(node_new, True)
                                 )
                             except Exception as e:
                                 self.printException(e, "watch_index: node_new.scroll_visible failed")
@@ -626,13 +623,48 @@ class AppBase(ListView):
         try:
             top = self._min_index or 0
             try:
-                self.call_after_refresh(lambda: self._activate_index(top))
+                self.call_after_refresh(lambda: self._safe_activate_index(top))
             except Exception as e:
                 self.printException(e, "_highlight_top: scheduling index set failed")
                 # Fall back to direct activation if scheduling fails
                 self._activate_index(top)
         except Exception as e:
             self.printException(e, "AppBase._highlight_top failed")
+
+    # Consolidated safe-call helpers used for scheduling post-refresh actions.
+    # These centralize try/except logic so lambdas passed to
+    # `call_after_refresh` remain small and identical behavior isn't
+    # duplicated across the codebase.
+    def _safe_set_index(self, new_index: int) -> None:
+        try:
+            setattr(self, "index", new_index)
+        except Exception as e:
+            self.printException(e, "_safe_set_index failed")
+
+    def _safe_activate_index(self, idx: int) -> None:
+        try:
+            self._activate_index(idx)
+        except Exception as e:
+            self.printException(e, "_safe_activate_index failed")
+
+    def _safe_scroll_to_widget(self, node, animate: bool = False) -> None:
+        try:
+            # Prefer the framework-provided scroll, if present.
+            self.scroll_to_widget(node, animate=animate)
+        except Exception as e:
+            self.printException(e, "_safe_scroll_to_widget failed")
+
+    def _safe_node_scroll_visible(self, node, visible: bool = True) -> None:
+        try:
+            getattr(node, "scroll_visible", lambda *a, **k: None)(visible)
+        except Exception as e:
+            self.printException(e, "_safe_node_scroll_visible failed")
+
+    def _safe_highlight_match(self, match: Optional[str]) -> None:
+        try:
+            self._highlight_match(match)
+        except Exception as e:
+            self.printException(e, "_safe_highlight_match failed")
 
     # Key handlers: prefer `key_` methods on widgets instead of an `on_key` dispatcher.
     # Implement navigation handlers as `key_*` methods so subclasses may override
@@ -866,13 +898,13 @@ class FileListBase(AppBase):
             # Prefer Textual's scroll_to_widget when available
             if hasattr(self, "scroll_to_widget"):
                 try:
-                    self.call_after_refresh(lambda: self.scroll_to_widget(node, animate=False))
+                    self.call_after_refresh(lambda: self._safe_scroll_to_widget(node, animate=False))
                     return
                 except Exception as e:
                     self.printException(e, "_ensure_index_visible: scroll_to_widget failed")
             # Fallback to node.scroll_visible if provided
             try:
-                self.call_after_refresh(lambda: getattr(node, "scroll_visible", lambda *a, **k: None)(True))
+                self.call_after_refresh(lambda: self._safe_node_scroll_visible(node, True))
             except Exception as e:
                 self.printException(e, "_ensure_index_visible: scroll_visible failed")
         except Exception as e:
@@ -937,7 +969,7 @@ class FileListBase(AppBase):
                             self.printException(e, "_highlight_filename: computing node_full failed")
                         if node_full == match_full:
                             try:
-                                self.call_after_refresh(lambda: self._activate_index(i))
+                                self.call_after_refresh(lambda: self._safe_activate_index(i))
                             except Exception as e:
                                 self.printException(e, "_highlight_filename: scheduling index set failed")
                                 try:
@@ -952,7 +984,7 @@ class FileListBase(AppBase):
                         text = str(node)
                     if text == filename:
                         try:
-                            self.call_after_refresh(lambda: self._activate_index(i))
+                            self.call_after_refresh(lambda: self._safe_activate_index(i))
                         except Exception as e:
                             self.printException(e, "_highlight_filename: scheduling index set failed")
                             try:
@@ -1190,7 +1222,7 @@ class FileModeFileList(FileListBase):
                         except Exception as e:
                             self.printException(e, "prepFileModeFileList: candidate path adjustment failed")
                             candidate = hl
-                        self.call_after_refresh(lambda: self._highlight_match(candidate))
+                        self.call_after_refresh(lambda: self._safe_highlight_match(candidate))
                         # After highlighting, ensure the selected node is visible
                         try:
                             self.call_after_refresh(self._ensure_index_visible)
