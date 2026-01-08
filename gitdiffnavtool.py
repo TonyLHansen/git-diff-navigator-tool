@@ -19,6 +19,7 @@ from datetime import datetime, timezone, timedelta
 from functools import wraps
 import pprint
 import difflib
+import re
 
 # Optional pygit2 support — best-effort import to enable repo status checks
 try:
@@ -3522,14 +3523,17 @@ class HelpList(AppBase):
             logger.debug("prepHelp: invoked")
             self.clear()
             try:
-                # Render help text line-by-line to ensure compatibility with
-                # Label/Text expectations (avoid passing a Markdown renderable
-                # directly to Label which Textual may not handle uniformly).
-                for ln in HELP_TEXT.splitlines():
+                # Split help text into paragraph/block chunks so each block
+                # is its own ListItem. This preserves Markdown formatting
+                # while allowing the ListView to provide scrolling behavior.
+                blocks = re.split(r"\n\s*\n", HELP_TEXT.strip())
+                for blk in blocks:
+                    if not blk:
+                        continue
                     try:
-                        self.append(ListItem(Label(Text(ln))))
+                        self.append(ListItem(Label(Markdown(blk))))
                     except Exception as e:
-                        self.printException(e, "prepHelp append failed for line")
+                        self.printException(e, "prepHelp append failed for Markdown block")
             except Exception as e:
                 self.printException(e, "prepHelp append failed")
             self._populated = True
