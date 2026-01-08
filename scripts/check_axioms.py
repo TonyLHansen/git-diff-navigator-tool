@@ -393,8 +393,8 @@ def check_file(
     check_except_as_print: bool = True,
     check_pass: bool = True,
     check_logger_in_try: bool = True,
-) -> List[str]:
-    errs: List[str] = []
+) -> List[Tuple[str, int, str]]:
+    errs: List[Tuple[str, int, str]] = []
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
@@ -408,7 +408,7 @@ def check_file(
     if check_bare_excepts:
         for lineno, in_class in bare_locations:
             if in_class or check_global_excepts:
-                errs.append(f"{path}:{lineno}: bare 'except:' detected")
+                errs.append((str(path), lineno, "bare 'except:' detected"))
         # Also flag `except Name:` (type present but no `as var`)
         try:
             no_name_linenos = _find_except_without_name_locations(path)
@@ -416,7 +416,7 @@ def check_file(
             printException(e)
             no_name_linenos = []
         for lineno in no_name_linenos:
-            errs.append(f"{path}:{lineno}: 'except [<type>]:' without 'as <var>' detected")
+            errs.append((str(path), lineno, "'except [<type>]:' without 'as <var>' detected"))
 
     # Detect 'except Exception:' without 'as' and ensure except-as blocks
     # reference the exception variable in a subsequent printException call.
@@ -490,7 +490,7 @@ def check_file(
                                 parts.append(cur.id)
                                 typ = ".".join(reversed(parts))
                         typ = typ or "<type>"
-                        msg = f"{path}:{lineno}: 'except {typ} as {name}:' not followed by printException({name}, ...) or self.printException({name}, ...) in handler body"
+                        msg = f"'except {typ} as {name}:' not followed by printException({name}, ...) or self.printException({name}, ...) in handler body"
                         # If the except body is a single `pass`, give a more
                         # actionable message suggesting replacement.
                         try:
@@ -499,7 +499,7 @@ def check_file(
                                 msg += ". Replace the 'pass' with printException"
                         except Exception as e:
                             printException(e, f"inspecting except body in {path}")
-                        errs.append(msg)
+                        errs.append((str(path), lineno, msg))
         except Exception as e:
             printException(e, f"parsing AST for except-as-print in {path}")
 
@@ -510,7 +510,6 @@ def check_file(
             try:
                 errs += check_unnecessary_pass_in_except(path)
             except NameError as e:
-                # function may be defined later in the file; skip for now
                 printException(e, f"check_unnecessary_pass_in_except not available yet for {path}")
             except Exception as e:
                 printException(e, f"checking unnecessary pass in except for {path}")
@@ -521,11 +520,9 @@ def check_file(
     # single logger.<method>(...) call. In such cases the try/except adds
     # little value and can be removed around the logger call.
     if check_logger_in_try:
-        try:
             try:
                 errs += check_logger_in_try_blocks(path)
             except NameError as e:
-                # function may be defined later in file; skip
                 printException(e, f"check_logger_in_try_blocks not available yet for {path}")
             except Exception as e:
                 printException(e, f"checking logger-in-try in {path}")
@@ -535,13 +532,13 @@ def check_file(
     return errs
 
 
-def check_unnecessary_pass_in_except(path: Path) -> List[str]:
+def check_unnecessary_pass_in_except(path: Path) -> List[Tuple[str, int, str]]:
     """Find `pass` statements inside `except ... as var:` blocks when other statements are present.
 
     Reports each `pass` statement's line number when the except-handler body
     contains at least one `pass` and at least one other statement.
     """
-    errs: List[str] = []
+    errs: List[Tuple[str, int, str]] = []
     try:
         src = path.read_text(encoding="utf-8")
     except Exception as e:
@@ -571,10 +568,10 @@ def check_unnecessary_pass_in_except(path: Path) -> List[str]:
                 for s in body:
                     if isinstance(s, ast.Pass):
                         lineno = getattr(s, "lineno", None)
-                        if lineno is not None:
-                            errs.append(
-                                f"{path}:{lineno}: unnecessary 'pass' in except block that also contains other statements (e.g., printException)"
-                            )
+                            if lineno is not None:
+                                errs.append(
+                                    (str(path), lineno, "unnecessary 'pass' in except block that also contains other statements (e.g., printException)")
+                                )
             except Exception as e:
                 printException(e, f"walking ExceptHandler in {path}")
             self.generic_visit(node)
@@ -583,14 +580,14 @@ def check_unnecessary_pass_in_except(path: Path) -> List[str]:
     return errs
 
 
-def check_logger_in_try_blocks(path: Path) -> List[str]:
+def check_logger_in_try_blocks(path: Path) -> List[Tuple[str, int, str]]:
     """Detect try/except blocks where the try body contains only a single
     `logger.<method>(...)` call. In that case the surrounding try/except is
     likely unnecessary and can be removed.
 
     Returns list of error messages with line numbers pointing to the `try`.
     """
-    errs: List[str] = []
+    errs: List[Tuple[str, int, str]] = []
     try:
         src = path.read_text(encoding="utf-8")
     except Exception as e:
@@ -620,7 +617,7 @@ def check_logger_in_try_blocks(path: Path) -> List[str]:
                         method = getattr(func, "attr", "<method>")
                         if lineno is not None:
                             errs.append(
-                                f"{path}:{lineno}: try/except wraps single logger.{method}(...); remove the try/except around the logger call"
+                                (str(path), lineno, f"try/except wraps single logger.{method}(...); remove the try/except around the logger call")
                             )
             except Exception as e:
                 printException(e, f"walking Try in {path} for logger-in-try")
@@ -630,12 +627,12 @@ def check_logger_in_try_blocks(path: Path) -> List[str]:
     return errs
 
 
-def check_prefer_direct_attrs(path: Path) -> List[str]:
+def check_prefer_direct_attrs(path: Path) -> List[Tuple[str, int, str]]:
     """Enforce the axiom: prefer direct attribute access when attributes are
     assigned in __init__ or on_mount. Finds getattr(self, 'attr', ...) uses
     where `attr` was assigned earlier in the class and reports them.
     """
-    errs: List[str] = []
+    errs: List[Tuple[str, int, str]] = []
     try:
         classes = _collect_self_assigned_attrs(path)
         getattr_uses = _find_getattr_on_self(path)
@@ -661,10 +658,11 @@ def check_prefer_direct_attrs(path: Path) -> List[str]:
             # treat 'app.current_path' -> attribute name 'current_path'
             right = attr.split(".", 1)[1]
             if right in assigned_attrs:
-                errs.append(f"{path}:{lineno}: {func} used for guaranteed attribute '{attr}' (prefer direct access)")
+                errs.append((str(path), lineno, f"{func} used for guaranteed attribute '{attr}' (prefer direct access)"))
         else:
-            if attr in assigned_attrs:
-                errs.append(f"{path}:{lineno}: {func}(self, '{attr}', ...) used but '{attr}' is assigned in __init__/on_mount; prefer direct access")
+            else:
+                if attr in assigned_attrs:
+                    errs.append((str(path), lineno, f"{func}(self, '{attr}', ...) used but '{attr}' is assigned in __init__/on_mount; prefer direct access"))
 
     # Also flag getattr usage on argparse Namespace objects returned by parse_args()
     try:
@@ -678,7 +676,7 @@ def check_prefer_direct_attrs(path: Path) -> List[str]:
             getattr_on_args = _find_getattr_on_vars(path, parse_args_vars)
             for lineno, varname, attr, func in getattr_on_args:
                 errs.append(
-                    f"{path}:{lineno}: {func}({varname}, '{attr}', ...) used on parse_args() result; prefer direct access {varname}.{attr}"
+                    (str(path), lineno, f"{func}({varname}, '{attr}', ...) used on parse_args() result; prefer direct access {varname}.{attr}")
                 )
         except Exception as e:
             printException(e, f"checking parse_args getattr usages in {path}")
@@ -686,13 +684,13 @@ def check_prefer_direct_attrs(path: Path) -> List[str]:
     return errs
 
 
-def check_getattr_not_initialized(path: Path) -> List[str]:
+def check_getattr_not_initialized(path: Path) -> List[Tuple[str, int, str]]:
     """Flag getattr(self, 'attr', ...) usages where `attr` is not assigned in __init__/on_mount.
 
     This helps catch cases where code relies on implicit attributes that should
     instead be initialized in the class initializer or guarded before use.
     """
-    errs: List[str] = []
+    errs: List[Tuple[str, int, str]] = []
     try:
         classes = _collect_self_assigned_attrs(path)
         getattr_uses = _find_getattr_on_self(path)
@@ -711,12 +709,12 @@ def check_getattr_not_initialized(path: Path) -> List[str]:
             right = attr.split(".", 1)[1]
             if right not in assigned_attrs:
                 errs.append(
-                    f"{path}:{lineno}: {func} used for attribute '{attr}' but '{right}' is not initialized in __init__/on_mount"
+                    (str(path), lineno, f"{func} used for attribute '{attr}' but '{right}' is not initialized in __init__/on_mount")
                 )
         else:
             if attr not in assigned_attrs:
                 errs.append(
-                    f"{path}:{lineno}: {func}(self, '{attr}', ...) used but '{attr}' is not initialized in __init__/on_mount"
+                    (str(path), lineno, f"{func}(self, '{attr}', ...) used but '{attr}' is not initialized in __init__/on_mount")
                 )
 
     return errs
@@ -910,9 +908,9 @@ def main(argv: List[str] | None = None) -> int:
     error_count = 0
 
     if not args.compile_only:
-        all_errs: List[str] = []
+        all_errs: List[Tuple[str, int, str]] = []
         for p in py_files:
-            errs: List[str] = []
+            errs: List[Tuple[str, int, str]] = []
             try:
                 if args.check_bare_excepts or args.check_except_as_print or args.check_pass:
                     errs += check_file(
@@ -941,9 +939,12 @@ def main(argv: List[str] | None = None) -> int:
                 all_errs.extend(errs)
         if all_errs:
             error_count += len(all_errs)
+            # Sort errors by file path then numeric line number
+            all_errs.sort(key=lambda t: (t[0], t[1]))
+
             print("Axiom violations detected:")
-            for e in all_errs:
-                print(e)
+            for fpath, lineno, msg in all_errs:
+                print(f"{fpath}:{lineno}: {msg}")
             print()
 
     # Always run py_compile as a final gate
