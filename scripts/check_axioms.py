@@ -247,10 +247,11 @@ def _collect_self_assigned_attrs(path: Path) -> dict:
     return classes
 
 
-def _find_getattr_on_self(path: Path) -> List[tuple[int, str]]:
-    """Find usages of getattr(self, 'attr', ...) and return list of (lineno, attrname).
+def _find_getattr_on_self(path: Path) -> List[tuple[int, str, str]]:
+    """Find usages of getattr(self, 'attr', ...) and return list of (lineno, attrname, func).
 
-    Does not currently attempt to resolve dynamic attribute names.
+    `func` is the function name used ('getattr'). Does not currently
+    attempt to resolve dynamic attribute names.
     """
     try:
         src = path.read_text(encoding="utf-8")
@@ -273,6 +274,7 @@ def _find_getattr_on_self(path: Path) -> List[tuple[int, str]]:
         def visit_Call(self, node: ast.Call) -> None:
             # match getattr(self, 'attr', ...)
             try:
+                # match getattr(self, 'attr', ...)
                 if isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) >= 2:
                     first = node.args[0]
                     second = node.args[1]
@@ -284,13 +286,13 @@ def _find_getattr_on_self(path: Path) -> List[tuple[int, str]]:
                         if isinstance(attr_name, str):
                             lineno = getattr(node, "lineno", None)
                             if lineno is not None:
-                                results.append((lineno, attr_name))
-                # also match getattr(self, 'x') when first arg is Attribute like self.app
+                                results.append((lineno, attr_name, node.func.id))
+                # also match getattr(self.attr, 'name', ...) when first arg is Attribute like self.app
                 if isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) >= 2:
                     first = node.args[0]
                     second = node.args[1]
                     if isinstance(first, ast.Attribute) and isinstance(first.value, ast.Name) and first.value.id == "self":
-                        # getattr(self.something, 'attr', ...)
+                        # getattr(self.something, 'attr', ...) or hasattr(self.something, 'attr')
                         if has_ast_Str and isinstance(second, ast.Str):
                             attr_name = second.s
                         else:
@@ -298,7 +300,7 @@ def _find_getattr_on_self(path: Path) -> List[tuple[int, str]]:
                         if isinstance(attr_name, str):
                             lineno = getattr(node, "lineno", None)
                             if lineno is not None:
-                                results.append((lineno, f"{first.attr}.{attr_name}"))
+                                results.append((lineno, f"{first.attr}.{attr_name}", node.func.id))
             except Exception as e:
                 printException(e, f"error walking AST for getattr detection in {path}")
             self.generic_visit(node)
@@ -341,10 +343,10 @@ def _find_parse_args_targets(path: Path) -> set:
     return targets
 
 
-def _find_getattr_on_vars(path: Path, varnames: set) -> List[tuple[int, str, str]]:
+def _find_getattr_on_vars(path: Path, varnames: set) -> List[tuple[int, str, str, str]]:
     """Find usages of getattr(var, 'attr', ...) where var is in varnames.
 
-    Returns list of (lineno, varname, attrname).
+    Returns list of (lineno, varname, attrname, func) where `func` is 'getattr'.
     """
     try:
         src = path.read_text(encoding="utf-8")
@@ -375,7 +377,7 @@ def _find_getattr_on_vars(path: Path, varnames: set) -> List[tuple[int, str, str
                             if isinstance(attr, str):
                                 lineno = getattr(node, "lineno", None)
                                 if lineno is not None:
-                                    results.append((lineno, first.id, attr))
+                                    results.append((lineno, first.id, attr, node.func.id))
             except Exception as e:
                 printException(e)
             self.generic_visit(node)
@@ -653,16 +655,16 @@ def check_prefer_direct_attrs(path: Path) -> List[str]:
     for s in classes.values():
         assigned_attrs.update(s)
 
-    for lineno, attr in _find_getattr_on_self(path):
+    for lineno, attr, func in _find_getattr_on_self(path):
         # attr may be "app.current_path" style when getattr called on self.app
         if "." in attr:
             # treat 'app.current_path' -> attribute name 'current_path'
             right = attr.split(".", 1)[1]
             if right in assigned_attrs:
-                errs.append(f"{path}:{lineno}: getattr used for guaranteed attribute '{attr}' (prefer direct access)")
+                errs.append(f"{path}:{lineno}: {func} used for guaranteed attribute '{attr}' (prefer direct access)")
         else:
             if attr in assigned_attrs:
-                errs.append(f"{path}:{lineno}: getattr(self, '{attr}', ...) used but '{attr}' is assigned in __init__/on_mount; prefer direct access")
+                errs.append(f"{path}:{lineno}: {func}(self, '{attr}', ...) used but '{attr}' is assigned in __init__/on_mount; prefer direct access")
 
     # Also flag getattr usage on argparse Namespace objects returned by parse_args()
     try:
@@ -674,9 +676,9 @@ def check_prefer_direct_attrs(path: Path) -> List[str]:
     if parse_args_vars:
         try:
             getattr_on_args = _find_getattr_on_vars(path, parse_args_vars)
-            for lineno, varname, attr in getattr_on_args:
+            for lineno, varname, attr, func in getattr_on_args:
                 errs.append(
-                    f"{path}:{lineno}: getattr({varname}, '{attr}', ...) used on parse_args() result; prefer direct access {varname}.{attr}"
+                    f"{path}:{lineno}: {func}({varname}, '{attr}', ...) used on parse_args() result; prefer direct access {varname}.{attr}"
                 )
         except Exception as e:
             printException(e, f"checking parse_args getattr usages in {path}")
@@ -703,18 +705,18 @@ def check_getattr_not_initialized(path: Path) -> List[str]:
     for s in classes.values():
         assigned_attrs.update(s)
 
-    for lineno, attr in getattr_uses:
+    for lineno, attr, func in getattr_uses:
         # attr may be 'app.current_path' style when getattr called on self.app
         if "." in attr:
             right = attr.split(".", 1)[1]
             if right not in assigned_attrs:
                 errs.append(
-                    f"{path}:{lineno}: getattr used for attribute '{attr}' but '{right}' is not initialized in __init__/on_mount"
+                    f"{path}:{lineno}: {func} used for attribute '{attr}' but '{right}' is not initialized in __init__/on_mount"
                 )
         else:
             if attr not in assigned_attrs:
                 errs.append(
-                    f"{path}:{lineno}: getattr(self, '{attr}', ...) used but '{attr}' is not initialized in __init__/on_mount"
+                    f"{path}:{lineno}: {func}(self, '{attr}', ...) used but '{attr}' is not initialized in __init__/on_mount"
                 )
 
     return errs
