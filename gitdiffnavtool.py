@@ -944,7 +944,40 @@ class AppBase(ListView):
             self._highlight_match(match)
         except Exception as e:
             self.printException(e, "_safe_highlight_match failed")
+    def _finalize_prep_common(self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None) -> None:
+        """Shared app-level sync used by all preparers.
 
+        This function performs the conservative updates to the application
+        state (`app.current_hash`, `app.previous_hash`, `app.current_path`)
+        and invokes `_compute_selected_pair` when appropriate. It does not
+        perform widget-specific highlighting or marking.
+        """
+        try:
+            try:
+                if curr_hash is not None or prev_hash is not None:
+                    try:
+                        self.app.current_hash = curr_hash
+                        self.app.previous_hash = prev_hash
+                    except Exception as _ex:
+                        self.printException(_ex, "_finalize_prep_common: updating app hashes failed")
+                else:
+                    try:
+                        if hasattr(self, "_compute_selected_pair"):
+                            try:
+                                self._compute_selected_pair()
+                            except Exception as _ex:
+                                self.printException(_ex, "_finalize_prep_common: _compute_selected_pair failed")
+                    except Exception as e:
+                        self.printException(e, "_finalize_prep_common: computing selected pair failed")
+                    try:
+                        if path is not None:
+                            self.app.current_path = path
+                    except Exception as _ex:
+                        self.printException(_ex, "_finalize_prep_common: setting app.current_path failed")
+            except Exception as e:
+                self.printException(e, "_finalize_prep_common: app state sync failed")
+        except Exception as e:
+            self.printException(e, "_finalize_prep_common failed")
     # Key handlers: prefer `key_` methods on widgets instead of an `on_key` dispatcher.
     # Implement navigation handlers as `key_*` methods so subclasses may override
     # them individually and keep key logic co-located with widget state.
@@ -1268,6 +1301,36 @@ class FileListBase(AppBase):
                     self.printException(e, "_highlight_filename: checking node failed")
         except Exception as e:
             self.printException(e, "_highlight_filename failed")
+            
+    def _finalize_filelist_prep(self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None) -> None:
+        """Finalize for file-list widgets: highlight by filename/path then sync common state."""
+        try:
+            try:
+                if path is not None:
+                    try:
+                        # Prefer filename/path highlighting when a path is provided
+                        self._highlight_filename(path)
+                    except Exception as e:
+                        self.printException(e, "FileListBase._finalize_filelist_prep: _highlight_filename failed")
+                elif curr_hash:
+                    try:
+                        self._highlight_match(curr_hash)
+                    except Exception as e:
+                        self.printException(e, "FileListBase._finalize_filelist_prep: _highlight_match failed")
+                else:
+                    try:
+                        self._highlight_top()
+                    except Exception as e:
+                        self.printException(e, "FileListBase._finalize_filelist_prep: _highlight_top failed")
+            except Exception as e:
+                self.printException(e, "FileListBase._finalize_filelist_prep: highlight step failed")
+
+            try:
+                self._finalize_prep_common(curr_hash=curr_hash, prev_hash=prev_hash, path=path)
+            except Exception as e:
+                self.printException(e, "FileListBase._finalize_filelist_prep: _finalize_prep_common failed")
+        except Exception as e:
+            self.printException(e, "FileListBase._finalize_filelist_prep failed")
 
     def watch_index(self, old, new) -> None:
         # Placeholder watch — concrete subclasses may override
@@ -1522,7 +1585,7 @@ class FileModeFileList(FileListBase):
             # get consistent app/hash/path synchronization.
             try:
                 self._populated = True
-                self._finalize_prep(curr_hash=None, prev_hash=None, path=path)
+                self._finalize_filelist_prep(curr_hash=None, prev_hash=None, path=path)
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: finalize failed")
         except Exception as e:
@@ -2028,7 +2091,7 @@ class RepoModeFileList(FileListBase):
 
             # Run centralized finalization so UI/app state is kept consistent
             try:
-                self._finalize_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=highlight_filename if highlight_filename else None)
+                self._finalize_filelist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=highlight_filename if highlight_filename else None)
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: finalize failed")
         except Exception as e:
@@ -2510,17 +2573,12 @@ class HistoryListBase(AppBase):
             self.printException(e, "_compute_selected_pair failed")
             return (None, None)
 
-    def _finalize_prep(self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None) -> None:
-        """Finalize post-prep UI actions: highlighting and app state sync.
+    def _finalize_historylist_prep(self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None) -> None:
+        """History-specific finalization then call shared common sync.
 
-        Centralizes the common sequence run after preparers finish: select or
-        highlight the requested commit (`curr_hash` preferred), mark
-        `prev_hash` when provided, or fall back to highlighting the top
-        row. Also updates `app.current_hash`, `app.previous_hash`, and
-        optionally `app.current_path` when `path` is provided.
-
-        All exceptions are caught and logged so preparers can call this
-        helper without raising.
+        This implements history-only behavior (e.g. marking a previously
+        checked commit via `toggle_check_current`) and defers app-level
+        state synchronization to `_finalize_prep_common`.
         """
         try:
             try:
@@ -2528,50 +2586,41 @@ class HistoryListBase(AppBase):
                     try:
                         self._highlight_match(curr_hash)
                     except Exception as e:
-                        self.printException(e, "_finalize_prep: _highlight_match failed for curr_hash")
+                        self.printException(e, "HistoryListBase._finalize_historylist_prep: _highlight_match failed")
                 elif prev_hash:
-                    # Attempt to find the node matching prev_hash and mark it
                     try:
-                        for i, node in enumerate(self.nodes()):
-                            if getattr(node, "_hash", None) == prev_hash:
+                        if hasattr(self, "toggle_check_current"):
+                            for i, node in enumerate(self.nodes()):
                                 try:
-                                    self.toggle_check_current(i)
+                                    if getattr(node, "_hash", None) == prev_hash:
+                                        try:
+                                            self.toggle_check_current(i)
+                                        except Exception as e:
+                                            self.printException(e, "HistoryListBase._finalize_historylist_prep: toggle_check_current failed")
+                                        break
                                 except Exception as e:
-                                    self.printException(e, "_finalize_prep: toggle_check_current failed")
-                                break
+                                    self.printException(e, "HistoryListBase._finalize_historylist_prep: checking node failed")
+                        else:
+                            try:
+                                self._highlight_top()
+                            except Exception as e:
+                                self.printException(e, "HistoryListBase._finalize_historylist_prep: _highlight_top failed")
                     except Exception as e:
-                        self.printException(e, "_finalize_prep: locating prev_hash failed")
+                        self.printException(e, "HistoryListBase._finalize_historylist_prep: locating prev_hash failed")
                 else:
                     try:
                         self._highlight_top()
                     except Exception as e:
-                        self.printException(e, "_finalize_prep: _highlight_top failed")
+                        self.printException(e, "HistoryListBase._finalize_historylist_prep: _highlight_top failed")
             except Exception as e:
-                self.printException(e, "_finalize_prep: highlight/marking step failed")
+                self.printException(e, "HistoryListBase._finalize_historylist_prep: highlight step failed")
 
-            # Update app-level hashes/path conservatively
             try:
-                if curr_hash is not None or prev_hash is not None:
-                    try:
-                        self.app.current_hash = curr_hash
-                        self.app.previous_hash = prev_hash
-                    except Exception as _ex:
-                        self.printException(_ex, "_finalize_prep: updating app hashes failed")
-                else:
-                    try:
-                        # Compute selection-based pair and record it
-                        self._compute_selected_pair()
-                    except Exception as _ex:
-                        self.printException(_ex, "_finalize_prep: _compute_selected_pair failed")
-                    try:
-                        if path is not None:
-                            self.app.current_path = path
-                    except Exception as _ex:
-                        self.printException(_ex, "_finalize_prep: setting app.current_path failed")
+                self._finalize_prep_common(curr_hash=curr_hash, prev_hash=prev_hash, path=path)
             except Exception as e:
-                self.printException(e, "_finalize_prep: app state sync failed")
+                self.printException(e, "HistoryListBase._finalize_historylist_prep: _finalize_prep_common failed")
         except Exception as e:
-            self.printException(e, "_finalize_prep failed")
+            self.printException(e, "HistoryListBase._finalize_historylist_prep failed")
 
 
 class FileModeHistoryList(HistoryListBase):
@@ -2671,7 +2720,7 @@ class FileModeHistoryList(HistoryListBase):
 
             self._populated = True
             try:
-                self._finalize_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=path)
+                self._finalize_historylist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=path)
             except Exception as e:
                 self.printException(e, "prepFileModeHistoryList: finalize failed")
         except Exception as e:
@@ -3133,7 +3182,7 @@ class RepoModeHistoryList(HistoryListBase):
             # Centralize post-prep finalization so hashes/selection/path
             # synchronization happens in one place.
             try:
-                self._finalize_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=repo_path)
+                self._finalize_historylist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=repo_path)
             except Exception as e:
                 self.printException(e, "prepRepoModeHistoryList: finalize failed")
         except Exception as e:
@@ -3557,7 +3606,7 @@ class DiffList(AppBase):
                 self.printException(e, "prepDiffList: highlight failed")
 
             try:
-                self._finalize_prep(curr_hash=curr, prev_hash=prev, path=filename)
+                self._finalize_prep_common(curr_hash=curr, prev_hash=prev, path=filename)
             except Exception as e:
                 self.printException(e, "prepDiffList: finalize failed")
         except Exception as e:
