@@ -1517,6 +1517,14 @@ class FileModeFileList(FileListBase):
                             self.printException(e2, "prepFileModeFileList: immediate _highlight_top fallback failed")
             except Exception as e:
                 self.printException(e)
+
+            # Mark populated and run centralized finalization so callers
+            # get consistent app/hash/path synchronization.
+            try:
+                self._populated = True
+                self._finalize_prep(curr_hash=None, prev_hash=None, path=path)
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: finalize failed")
         except Exception as e:
             self.printException(e, "prepFileModeFileList failed")
 
@@ -2017,6 +2025,12 @@ class RepoModeFileList(FileListBase):
                     self._highlight_top()
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: highlight failed")
+
+            # Run centralized finalization so UI/app state is kept consistent
+            try:
+                self._finalize_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=highlight_filename if highlight_filename else None)
+            except Exception as e:
+                self.printException(e, "prepRepoModeFileList: finalize failed")
         except Exception as e:
             self.printException(e, "prepRepoModeFileList failed")
 
@@ -3114,7 +3128,14 @@ class RepoModeHistoryList(HistoryListBase):
                     # Fallback: run immediately if scheduling isn't available
                     _compute_and_log()
             except Exception as e:
-                self.printException(e, "prepRepoModeHistoryList: scheduling compute_selected_pair failed")
+                self.printException(e, "prepRepoModeHistoryList: compute selected pair failed")
+
+            # Centralize post-prep finalization so hashes/selection/path
+            # synchronization happens in one place.
+            try:
+                self._finalize_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=repo_path)
+            except Exception as e:
+                self.printException(e, "prepRepoModeHistoryList: finalize failed")
         except Exception as e:
             self.printException(e, "prepRepoModeHistoryList failed")
 
@@ -3534,6 +3555,11 @@ class DiffList(AppBase):
                 self._highlight_top()
             except Exception as e:
                 self.printException(e, "prepDiffList: highlight failed")
+
+            try:
+                self._finalize_prep(curr_hash=curr, prev_hash=prev, path=filename)
+            except Exception as e:
+                self.printException(e, "prepDiffList: finalize failed")
         except Exception as e:
             self.printException(e, "prepDiffList failed")
 
