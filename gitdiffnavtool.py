@@ -608,15 +608,12 @@ class AppBase(ListView):
 
         staged_ts = ""
         try:
-            try:
-                idx_path = os.path.join(repo_root, ".git", "index")
-                if os.path.exists(idx_path):
-                    m = os.path.getmtime(idx_path)
-                    staged_ts = datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
-            except Exception as _ex:
-                self.printException(_ex, "_compute_pseudo_timestamps computing staged timestamp failed")
-        except Exception as e:
-            self.printException(e, "_compute_pseudo_timestamps failed computing staged_ts")
+            idx_path = os.path.join(repo_root, ".git", "index")
+            if os.path.exists(idx_path):
+                m = os.path.getmtime(idx_path)
+                staged_ts = datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception as _ex:
+            self.printException(_ex, "_compute_pseudo_timestamps computing staged timestamp failed")
 
         return (mods_ts, staged_ts)
 
@@ -953,31 +950,29 @@ class AppBase(ListView):
         perform widget-specific highlighting or marking.
         """
         try:
-            try:
-                if curr_hash is not None or prev_hash is not None:
-                    try:
-                        self.app.current_hash = curr_hash
-                        self.app.previous_hash = prev_hash
-                    except Exception as _ex:
-                        self.printException(_ex, "_finalize_prep_common: updating app hashes failed")
-                else:
-                    try:
-                        if hasattr(self, "_compute_selected_pair"):
-                            try:
-                                self._compute_selected_pair()
-                            except Exception as _ex:
-                                self.printException(_ex, "_finalize_prep_common: _compute_selected_pair failed")
-                    except Exception as e:
-                        self.printException(e, "_finalize_prep_common: computing selected pair failed")
-                    try:
-                        if path is not None:
-                            self.app.current_path = path
-                    except Exception as _ex:
-                        self.printException(_ex, "_finalize_prep_common: setting app.current_path failed")
-            except Exception as e:
-                self.printException(e, "_finalize_prep_common: app state sync failed")
+            if curr_hash is not None or prev_hash is not None:
+                try:
+                    self.app.current_hash = curr_hash
+                    self.app.previous_hash = prev_hash
+                except Exception as _ex:
+                    self.printException(_ex, "_finalize_prep_common: updating app hashes failed")
+            else:
+                try:
+                    if hasattr(self, "_compute_selected_pair"):
+                        try:
+                            self._compute_selected_pair()
+                        except Exception as _ex:
+                            self.printException(_ex, "_finalize_prep_common: _compute_selected_pair failed")
+                except Exception as e:
+                    self.printException(e, "_finalize_prep_common: computing selected pair failed")
+                try:
+                    if path is not None:
+                        self.app.current_path = path
+                except Exception as _ex:
+                    self.printException(_ex, "_finalize_prep_common: setting app.current_path failed")
         except Exception as e:
-            self.printException(e, "_finalize_prep_common failed")
+            self.printException(e, "_finalize_prep_common: app state sync failed")
+
     # Key handlers: prefer `key_` methods on widgets instead of an `on_key` dispatcher.
     # Implement navigation handlers as `key_*` methods so subclasses may override
     # them individually and keep key logic co-located with widget state.
@@ -2543,13 +2538,10 @@ class HistoryListBase(AppBase):
                 # History ordering: lower index == newer, higher index == older
                 if marked_idx > idx:
                     # marked is older
+                    # update app-level hashes for other components
                     try:
-                        # update app-level hashes for other components
-                        try:
-                            self.app.current_hash = selected_hash
-                            self.app.previous_hash = marked_hash
-                        except Exception as e:
-                            self.printException(e, "updating app-level hashes failed")
+                        self.app.current_hash = selected_hash
+                        self.app.previous_hash = marked_hash
                     except Exception as e:
                         self.printException(e, "updating app-level hashes failed")
                     return (marked_hash, selected_hash)
@@ -4573,55 +4565,52 @@ class GitHistoryNavTool(App):
                 try:
                     if widget is not None:
                         # If there is an existing focused column, set its border to gray
+                        # Force all canonical candidate widgets to gray borders,
+                        # then we'll set the chosen widget to white below.
                         try:
-                            # Force all canonical candidate widgets to gray borders,
-                            # then we'll set the chosen widget to white below.
-                            try:
-                                candidates = [
-                                    ("left_file_list", self.file_mode_file_list),
-                                    ("left_history_list", self.repo_mode_history_list),
-                                    ("right_file_list", self.repo_mode_file_list),
-                                    ("right_history_list", self.file_mode_history_list),
-                                    ("diff_list", self.diff_list),
-                                    ("help_list", self.help_list),
-                                ]
-                                for cname, w in candidates:
+                            candidates = [
+                                ("left_file_list", self.file_mode_file_list),
+                                ("left_history_list", self.repo_mode_history_list),
+                                ("right_file_list", self.repo_mode_file_list),
+                                ("right_history_list", self.file_mode_history_list),
+                                ("diff_list", self.diff_list),
+                                ("help_list", self.help_list),
+                            ]
+                            for cname, w in candidates:
+                                try:
+                                    if w is None:
+                                        continue
                                     try:
-                                        if w is None:
-                                            continue
-                                        try:
-                                            before = getattr(w.styles, "border", None)
-                                        except Exception as _ex:
-                                            printException(_ex)
-                                            before = "<unavailable>"
-                                        try:
-                                            logger.debug(
-                                                "change_focus:%d: forcing gray border for %s (before=%r)",
-                                                inspect.currentframe().f_lineno,
-                                                cname,
-                                                before,
-                                            )
-                                        except Exception as _ex:
-                                            printException(_ex)
-                                        w.styles.border = ("solid", "gray")
-                                        try:
-                                            readback = getattr(w.styles, "border", None)
-                                        except Exception as _ex:
-                                            printException(_ex)
-                                            readback = "<unavailable>"
-                                        try:
-                                            logger.debug(
-                                                "change_focus:%d: forced gray border readback=%r for %s",
-                                                inspect.currentframe().f_lineno,
-                                                readback,
-                                                cname,
-                                            )
-                                        except Exception as _ex:
-                                            printException(_ex)
+                                        before = getattr(w.styles, "border", None)
                                     except Exception as _ex:
                                         printException(_ex)
-                            except Exception as _ex:
-                                printException(_ex)
+                                        before = "<unavailable>"
+                                    try:
+                                        logger.debug(
+                                            "change_focus:%d: forcing gray border for %s (before=%r)",
+                                            inspect.currentframe().f_lineno,
+                                            cname,
+                                            before,
+                                        )
+                                    except Exception as _ex:
+                                        printException(_ex)
+                                    w.styles.border = ("solid", "gray")
+                                    try:
+                                        readback = getattr(w.styles, "border", None)
+                                    except Exception as _ex:
+                                        printException(_ex)
+                                        readback = "<unavailable>"
+                                    try:
+                                        logger.debug(
+                                            "change_focus:%d: forced gray border readback=%r for %s",
+                                            inspect.currentframe().f_lineno,
+                                            readback,
+                                            cname,
+                                        )
+                                    except Exception as _ex:
+                                        printException(_ex)
+                                except Exception as _ex:
+                                    printException(_ex)
                         except Exception as _ex:
                             printException(_ex)
 
@@ -4654,79 +4643,77 @@ class GitHistoryNavTool(App):
 
                         # Now set the new focused widget's border to white
                         try:
+                            # read current focused widget border safely
                             try:
-                                # read current focused widget border safely
-                                try:
-                                    cur_border = getattr(widget.styles, "border", None)
-                                except Exception as _ex:
-                                    printException(_ex)
-                                    cur_border = "<unavailable>"
-                                try:
-                                    logger.debug(
-                                        "change_focus:%d: focused widget before set border=%r key=%r",
-                                        inspect.currentframe().f_lineno,
-                                        cur_border,
-                                        key,
-                                    )
-                                except Exception as _ex:
-                                    printException(_ex)
-                                try:
-                                    logger.debug(
-                                        "change_focus:%d: setting focused widget.styles.border -> %r for key=%r",
-                                        inspect.currentframe().f_lineno,
-                                        ("solid", "white"),
-                                        key,
-                                    )
-                                except Exception as _ex:
-                                    printException(_ex)
-                                widget.styles.border = ("solid", "white")
-                                try:
-                                    readback = getattr(widget.styles, "border", None)
-                                except Exception as _ex:
-                                    printException(_ex)
-                                    readback = "<unavailable>"
-                                try:
-                                    logger.debug(
-                                        "change_focus:%d: focused widget.styles.border readback=%r key=%r",
-                                        inspect.currentframe().f_lineno,
-                                        readback,
-                                        key,
-                                    )
-                                except Exception as _ex:
-                                    printException(_ex)
+                                cur_border = getattr(widget.styles, "border", None)
                             except Exception as _ex:
                                 printException(_ex)
-                                # Attempt to resolve by id and set border
+                                cur_border = "<unavailable>"
+                            try:
+                                logger.debug(
+                                    "change_focus:%d: focused widget before set border=%r key=%r",
+                                    inspect.currentframe().f_lineno,
+                                    cur_border,
+                                    key,
+                                )
+                            except Exception as _ex:
+                                printException(_ex)
+                            try:
+                                logger.debug(
+                                    "change_focus:%d: setting focused widget.styles.border -> %r for key=%r",
+                                    inspect.currentframe().f_lineno,
+                                    ("solid", "white"),
+                                    key,
+                                )
+                            except Exception as _ex:
+                                printException(_ex)
+                            widget.styles.border = ("solid", "white")
+                            try:
+                                readback = getattr(widget.styles, "border", None)
+                            except Exception as _ex:
+                                printException(_ex)
+                                readback = "<unavailable>"
+                            try:
+                                logger.debug(
+                                    "change_focus:%d: focused widget.styles.border readback=%r key=%r",
+                                    inspect.currentframe().f_lineno,
+                                    readback,
+                                    key,
+                                )
+                            except Exception as _ex:
+                                printException(_ex)
+                        except Exception as _ex:
+                            printException(_ex)
+                            # Attempt to resolve by id and set border
+                            try:
+                                w = None
                                 try:
-                                    w = None
-                                    try:
-                                        w = self.query_one(f"#{key}")
-                                    except Exception as _ex:
-                                        printException(_ex)
-                                        w = None
-                                    if w is not None:
-                                        try:
-                                            logger.debug(
-                                                "change_focus:%d: setting fallback widget.styles.border -> %r for resolved id=%r",
-                                                inspect.currentframe().f_lineno,
-                                                ("solid", "white"),
-                                                key,
-                                            )
-                                        except Exception as _ex:
-                                            printException(_ex)
-                                        w.styles.border = ("solid", "white")
+                                    w = self.query_one(f"#{key}")
                                 except Exception as _ex:
                                     printException(_ex)
-                        except Exception as e:
-                            self.printException(e, "change_focus: setting focused widget border failed")
-                        # best-effort normalize index/scroll for file lists
-                        try:
-                            if hasattr(widget, "index"):
-                                idx = getattr(widget, "index", None)
-                                if idx is None:
-                                    widget.index = getattr(widget, "_min_index", 0) or 0
-                        except Exception as e:
-                            self.printException(e, f"could not normalize index/scroll for widget {target}")
+                                    w = None
+                                if w is not None:
+                                    try:
+                                        logger.debug(
+                                            "change_focus:%d: setting fallback widget.styles.border -> %r for resolved id=%r",
+                                            inspect.currentframe().f_lineno,
+                                            ("solid", "white"),
+                                            key,
+                                        )
+                                    except Exception as _ex:
+                                        printException(_ex)
+                                    w.styles.border = ("solid", "white")
+                            except Exception as _ex:
+                                printException(_ex)
+
+                    # best-effort normalize index/scroll for file lists
+                    try:
+                        if hasattr(widget, "index"):
+                            idx = getattr(widget, "index", None)
+                            if idx is None:
+                                widget.index = getattr(widget, "_min_index", 0) or 0
+                    except Exception as e:
+                        self.printException(e, f"could not normalize index/scroll for widget {target}")
 
                 except Exception as e:
                     self.printException(e, f"could not focus resolved widget for {target}")
