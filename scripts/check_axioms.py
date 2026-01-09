@@ -11,6 +11,8 @@ Checks implemented:
   variable in a subsequent call to `.printException(` or `printException(`
   within the next N lines.
 - Run `python -m py_compile` on all .py files and surface failures.
+ - Detect redundant nested `try`/`except` where an outer `try` contains
+     a single inner `try` (both with handlers) which is likely accidental.
 
 Exit code: 0 if no violations, 1 otherwise.
 """
@@ -563,6 +565,43 @@ def check_logger_in_try_blocks(path: Path, text: str, tree: ast.AST) -> List[Tup
     return errs
 
 
+def check_redundant_nested_try(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
+    """Detect nested `try`/`except` where the outer `try` body is a single
+    inner `try` (both having except handlers). This pattern is usually
+    redundant (an accidental duplication of handlers) and should be merged.
+
+    Returns list of (path, lineno, msg) with lineno pointing to the outer
+    `try` node.
+    """
+    errs: List[Tuple[str, int, str]] = []
+
+    class Visitor(ast.NodeVisitor):
+        def visit_Try(self, node: ast.Try) -> None:
+            try:
+                body = getattr(node, "body", []) or []
+                # If the try body's sole statement is another Try and both
+                # the inner and outer Try nodes have exception handlers,
+                # flag this as likely redundant.
+                if len(body) == 1 and isinstance(body[0], ast.Try):
+                    inner = body[0]
+                    if getattr(node, "handlers", None) and getattr(inner, "handlers", None):
+                        lineno = getattr(node, "lineno", None)
+                        if lineno is not None:
+                            errs.append(
+                                (
+                                    str(path),
+                                    lineno,
+                                    "redundant nested try/except: outer try contains only an inner try with handlers; merge handlers and remove redundant outer try",
+                                )
+                            )
+            except Exception as e:
+                printException(e, f"walking Try in {path} for redundant nested try")
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
+    return errs
+
+
 def check_imports_module_level(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """Flag Import/ImportFrom nodes that are not at module top-level.
 
@@ -782,7 +821,7 @@ def main(argv: List[str] | None = None) -> int:
         action="store_false",
         help="Skip checking for unnecessary 'pass' inside except-as blocks (default: check)",
     )
-    parser.add_argument("-N", "--NONE",
+    parser.add_argument("--NONE",
         dest="none",
         action="store_true",
         help="Disable all checks (equivalent to -B -E -D -C)",
@@ -824,6 +863,19 @@ def main(argv: List[str] | None = None) -> int:
         dest="enable_getattr_not_initialized",
         action="store_true",
         help="Enable getattr-not-initialized check (opposite of -T).",
+    )
+    # Redundant nested try/except check: -N disables, -n enables
+    parser.add_argument("-N",
+        "--no-nested-try-except",
+        dest="check_nested_try",
+        action="store_false",
+        help="Skip checking for redundant nested try/except (default: check)",
+    )
+    parser.add_argument("-n",
+        "--nested-try-except",
+        dest="enable_nested_try",
+        action="store_true",
+        help="Enable nested-try-except check (opposite of -N).",
     )
     # Import-location checks: ensure imports are at module level
     parser.add_argument("-I",
@@ -883,6 +935,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_logger_in_try = False
         args.check_imports = False
 
+    # Honor explicit enable flags after -N/--NONE
+
     # Honor explicit small-letter re-enable flags after -N/--NONE
     if args.enable_bare_excepts:
         args.check_bare_excepts = True
@@ -900,6 +954,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_logger_in_try = True
     if args.enable_check_imports:
         args.check_imports = True
+    if args.enable_nested_try:
+        args.check_nested_try = True
 
     logger.info("cwd: %s", Path.cwd())
 
@@ -974,6 +1030,12 @@ def main(argv: List[str] | None = None) -> int:
                         errs += check_imports_module_level(p, text=text, tree=tree)
                     except Exception as e:
                         printException(e, f"check_imports_module_level failed for {p}")
+                # Detect redundant nested try/except patterns
+                if args.check_nested_try:
+                    try:
+                        errs += check_redundant_nested_try(p, text=text, tree=tree)
+                    except Exception as e:
+                        printException(e, f"check_redundant_nested_try failed for {p}")
             except Exception as e:
                 printException(e, f"error checking {p}")
             if errs:
