@@ -329,45 +329,95 @@ class AppBase(ListView):
             self.printException(e, "_format_pseudo_summary failed")
 
     def _append_file_row(self, display: str, full_path: str, is_dir: bool = False, status: str | None = None) -> None:
-        """Append a file-list row and attach canonical metadata.
+        """Append a file-list row with consistent marker and status styling.
 
-        Creates a ListItem with the provided `display` text, appends it to
-        this list, and attaches helpful metadata used by preparers and
-        navigation helpers:
-        - `_raw_text`: canonical full path used for matching
-        - `_filename`: basename for quick name comparisons
-        - `_is_dir`: boolean flag when the row represents a directory
-        - `_repo_status`: optional repository status string (e.g. 'M', 'A')
+        This centralizes file-row display so repo- and file-mode preparers
+        use identical formatting. The left-most marker is chosen from
+        `MARKERS` based on `status`. A style is applied using the project's
+        `STYLE_*` constants. Metadata attached to the ListItem:
+        - `_raw_text`: canonical full path
+        - `_filename`: basename
+        - `_is_dir`: bool
+        - `_repo_status`: optional status string
 
-        All exceptions are logged via `printException` so callers may use
-        this in test or UI paths without raising.
+        Exceptions are logged via `printException` so callers needn't
+        handle failures.
         """
         try:
-            item = ListItem(Label(Text(display)))
             try:
-                item._raw_text = full_path
-            except Exception as e:
-                self.printException(e, "_append_file_row: setting _raw_text failed")
-                item._raw_text = display
+                canonical = self._canonical_relpath(full_path, self.app.repo_root) if full_path else full_path
+            except Exception as _ex:
+                self.printException(_ex, "_append_file_row: canonicalizing path failed")
+                canonical = full_path
+
+            # Determine marker and style from status
             try:
-                item._filename = os.path.basename(full_path) if full_path else display
-            except Exception as e:
-                self.printException(e, "_append_file_row: setting _filename failed")
+                marker = MARKERS.get(status, MARKERS.get("tracked_clean", " "))
+            except Exception as _ex:
+                self.printException(_ex, "_append_file_row: computing marker failed")
+                marker = " "
+
+            try:
+                if status == "conflicted":
+                    style = STYLE_CONFLICTED
+                elif status == "staged":
+                    style = STYLE_STAGED
+                elif status == "wt_deleted":
+                    style = STYLE_WT_DELETED
+                elif status == "ignored":
+                    style = STYLE_IGNORED
+                elif status == "modified":
+                    style = STYLE_MODIFIED
+                elif status == "untracked":
+                    style = STYLE_UNTRACKED
+                else:
+                    style = STYLE_DEFAULT
+            except Exception as _ex:
+                self.printException(_ex, "_append_file_row: selecting style failed")
+                style = STYLE_DEFAULT
+
+            # Compose display with left marker
+            try:
+                display_text = f"{marker} {display}" if marker else display
+            except Exception as _ex:
+                self.printException(_ex, "_append_file_row: composing display failed")
+                display_text = display
+
+            try:
+                lbl = Label(Text(display_text, style=style))
+                item = ListItem(lbl)
+            except Exception as _ex:
+                self.printException(_ex, "_append_file_row: building ListItem failed")
+                item = ListItem(Label(display))
+
+            try:
+                item._raw_text = canonical
+            except Exception as _ex:
+                self.printException(_ex, "_append_file_row: setting _raw_text failed")
+                item._raw_text = full_path or display
+
+            try:
+                item._filename = os.path.basename(canonical) if canonical else (os.path.basename(full_path) if full_path else display)
+            except Exception as _ex:
+                self.printException(_ex, "_append_file_row: setting _filename failed")
                 item._filename = display
+
             try:
                 item._is_dir = bool(is_dir)
-            except Exception as e:
-                self.printException(e, "_append_file_row: setting _is_dir failed")
+            except Exception as _ex:
+                self.printException(_ex, "_append_file_row: setting _is_dir failed")
                 item._is_dir = False
+
             try:
                 if status is not None:
                     item._repo_status = status
-            except Exception as e:
-                self.printException(e, "_append_file_row: setting _repo_status failed")
+            except Exception as _ex:
+                self.printException(_ex, "_append_file_row: setting _repo_status failed")
+
             try:
                 self.append(item)
-            except Exception as e:
-                self.printException(e, "_append_file_row: append failed")
+            except Exception as _ex:
+                self.printException(_ex, "_append_file_row: append failed")
         except Exception as e:
             self.printException(e, "_append_file_row failed")
 
@@ -427,6 +477,37 @@ class AppBase(ListView):
                 logger.warning(ln)
         except Exception as e:
             self.printException(e, "compare_pygit2_to_git_output failed")
+
+    def _compare_backends(self, gitout, pygout, context: str | None = None) -> list[str]:
+        """Compare two backend outputs and return unified diff lines.
+
+        Produces a unified diff between the `gitout` and `pygout` Python
+        data structures (pretty-printed). Returns an empty list when
+        outputs are identical. When differences are present, the diff
+        lines are returned and also logged at WARNING level for visibility.
+
+        `context` is an optional label describing where the comparison
+        was invoked (e.g. a path or preparer name).
+        """
+        try:
+            ctx = f" [{context}]" if context else ""
+            g = pprint.pformat(gitout, width=120).splitlines()
+            p = pprint.pformat(pygout, width=120).splitlines()
+            if g == p:
+                logger.debug("_compare_backends%s: outputs identical", ctx)
+                return []
+            diff = list(difflib.unified_diff(g, p, fromfile="git", tofile="pygit2", lineterm=""))
+            if not diff:
+                msg = [f"_compare_backends{ctx}: difference detected but diff is empty"]
+            else:
+                msg = [f"_compare_backends{ctx}: outputs differ:"] + diff
+            for ln in msg:
+                print(ln)
+                logger.warning(ln)
+            return diff
+        except Exception as e:
+            self.printException(e, "_compare_backends failed")
+            return []
 
     def text_of(self, node) -> str:
         """Extract visible text from a ListItem's Label or renderable."""
@@ -2575,35 +2656,10 @@ class FileModeHistoryList(HistoryListBase):
                 self.printException(e, "prepFileModeHistoryList collection/render failed")
 
             self._populated = True
-            # Highlight requested commits when provided. Prefer `curr_hash`
-            # and mark `prev_hash` if present; otherwise highlight top.
             try:
-                if curr_hash:
-                    self._highlight_match(curr_hash)
-                elif prev_hash:
-                    for i, node in enumerate(self.nodes()):
-                        if getattr(node, "_hash", None) == prev_hash:
-                            try:
-                                self.toggle_check_current(i)
-                            except Exception as e:
-                                self.printException(e, "prepFileModeHistoryList toggle_check_current failed")
-                            break
-                else:
-                    self._highlight_top()
+                self._finalize_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=path)
             except Exception as e:
-                self.printException(e, "prepFileModeHistoryList: highlight failed")
-            # Ensure app-level hashes/path are updated immediately after prep
-            try:
-                if curr_hash is not None or prev_hash is not None:
-                    self.app.current_hash = curr_hash
-                    self.app.previous_hash = prev_hash
-                else:
-                    # compute and record selected pair based on current index
-                    self._compute_selected_pair()
-                    # record the file associated with this history list
-                    self.app.current_path = path
-            except Exception as e:
-                self.printException(e, "prepFileModeHistoryList: highlight failed")
+                self.printException(e, "prepFileModeHistoryList: finalize failed")
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
 

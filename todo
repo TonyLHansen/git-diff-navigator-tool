@@ -1,3 +1,10 @@
+```markdown
+Project refactor TODO - history preparers
+
+Goal: extract duplicated logic between file-mode and repo-mode history preparers
+into small, testable helper methods. For each helper:
+- implement helper in the indicated class
+```markdown
 Project refactor TODO - history preparers
 
 Goal: extract duplicated logic between file-mode and repo-mode history preparers
@@ -9,35 +16,96 @@ into small, testable helper methods. For each helper:
 
 Workflow: go slowly, one helper at a time. Mark items as done as tests pass.
 
-- [ ] 1. Add `AppBase._run_git_lines(repo_root: str, args: list[str], label: str) -> list[str]`
-      - implemented: `AppBase._run_git_lines(cmd: list[str], label: str|None) -> list[str]`
-      - replaced raw `subprocess` calls in one `_prep..._for_git` site and updated tests
+- [x] 1. Add `AppBase._run_git_lines(cmd: list[str], label: str|None) -> list[str]`
+      - implemented and used by preparers; tests updated
 
-- [ ] 2. Add `AppBase._canonical_relpath(path: str, repo_root: str) -> str`
-      - implemented: `AppBase._canonical_relpath(path: str, repo_root: str) -> str` (normalizes to realpath)
+- [x] 2. Add `AppBase._canonical_relpath(path: str, repo_root: str) -> str`
+      - implemented (normalizes to realpath)
 
 - [x] 3. Add `AppBase._compute_pseudo_timestamps(repo_root: str, mods: list[str], single_path: str) -> (mods_ts, staged_ts)`
-      - completed: computes latest mtime for `mods` or for a single path, and index mtime
+      - implemented: computes latest mtime for `mods` or a single path, plus `.git/index` mtime
 
- - [x] 4. Add `AppBase._format_pseudo_summary(pseudo_entries: list[tuple[str,str]])`
-       - implemented: central helper appended pseudo-summary rows and attached metadata; repo- and file-mode preparers now use it
+- [x] 4. Add `AppBase._format_pseudo_summary(pseudo_entries: list[tuple[str,str]])`
+      - implemented: central helper appends pseudo-summary rows and attaches metadata
 
-- [ ] 5. Add `AppBase._parse_git_log_lines(lines: list[str]) -> list[tuple[datetime,str,str]]`
-      - centralize robust parsing of git log output
+- [x] 5. Add `AppBase._parse_git_log_lines(lines: list[str]) -> list[tuple[datetime,str,str]]`
+      - implemented: robust parsing for `git log --pretty=format:%H\t%aI\t%s` lines
 
 - [x] 6. Add `HistoryListBase._format_commit_row(dt: datetime, hash: str, msg: str) -> str`
       - implemented: centralized commit row formatting used by history preparers
 
-- [ ] 7. Add `AppBase._append_file_row(display: str, full_path: str, is_dir: bool=False, status: str|None=None)`
-      - append a ListItem and attach `_raw_text`, `_is_dir`, optional `_status`
+- [x] 7. Add `AppBase._append_file_row(display: str, full_path: str, is_dir: bool=False, status: str|None=None)`
+      - implemented: appends ListItem and attaches `_raw_text`, `_filename`, `_is_dir`, optional `_repo_status`
 
-- [ ] 8. Add `HistoryListBase._finalize_prep(curr_hash: str|None, prev_hash: str|None, path: str|None)`
-      - encapsulate highlight + app state update logic used after prep
+- [x] 8. Add `HistoryListBase._finalize_prep(curr_hash: str|None, prev_hash: str|None, path: str|None)`
+      - implemented: centralized post-prep highlight/marking and app-state sync
 
-- [ ] 9. Replace duplicated `pygit2 vs git` parity test scaffolding with `AppBase._compare_backends`
+- [x] 9. Replace duplicated parity scaffolding with `AppBase._compare_backends`
+      - implemented: central comparison + logging helper and test delegator
 
-- [ ] 10. Run full regression: `scripts/test_prep_backends.py ../test-repo` and then `scripts/check_axioms.py`.
+- [x] 10. Run full regression: `scripts/test_prep_backends.py ../test-repo` and `scripts/check_axioms.py`.
+      - executed: parity tests show 0 diffs; axiom checker OK
+
+- [x] 11. Add docstrings to small safe helpers and logger
+      - implemented: `_logger_trace` and `_safe_*` wrappers documented
+
+```markdown
+Project refactor TODO - history preparers
+
+Goal: extract duplicated logic between file-mode and repo-mode history preparers
+into small, testable helper methods. For each helper:
+- implement helper in the indicated class
+- update one `_prep` function to use it
+- run `scripts/test_prep_backends.py ../test-repo` and `scripts/check_axioms.py`
+- when green, update the corresponding other preparer to use it and test again
+
+Workflow: go slowly, one helper at a time. Mark items as done as tests pass.
+
+- [x] 1. Add `AppBase._run_git_lines(cmd: list[str], label: str|None) -> list[str]`
+      - implemented and used by preparers; tests updated
+
+- [x] 2. Add `AppBase._canonical_relpath(path: str, repo_root: str) -> str`
+      - implemented (normalizes to realpath)
+
+- [x] 3. Add `AppBase._compute_pseudo_timestamps(repo_root: str, mods: list[str], single_path: str) -> (mods_ts, staged_ts)`
+      - implemented: computes latest mtime for `mods` or a single path, plus `.git/index` mtime
+
+- [x] 4. Add `AppBase._format_pseudo_summary(pseudo_entries: list[tuple[str,str]])`
+      - implemented: central helper appends pseudo-summary rows and attaches metadata
+
+- [x] 5. Add `AppBase._parse_git_log_lines(lines: list[str]) -> list[tuple[datetime,str,str]]`
+      - implemented: robust parsing for `git log --pretty=format:%H\t%aI\t%s` lines
+
+- [x] 6. Add `HistoryListBase._format_commit_row(dt: datetime, hash: str, msg: str) -> str`
+      - implemented: centralized commit row formatting used by history preparers
+
+- [x] 7. Add `AppBase._append_file_row(display: str, full_path: str, is_dir: bool=False, status: str|None=None)`
+      - implemented: appends ListItem and attaches `_raw_text`, `_filename`, `_is_dir`, optional `_repo_status`
+
+- [x] 8. Add `HistoryListBase._finalize_prep(curr_hash: str|None, prev_hash: str|None, path: str|None)`
+      - implemented: centralized post-prep highlight/marking and app-state sync
+
+- [x] 9. Replace duplicated parity scaffolding with `AppBase._compare_backends`
+      - implemented: central comparison + logging helper and test delegator
+
+- [x] 10. Run full regression: `scripts/test_prep_backends.py ../test-repo` and `scripts/check_axioms.py`.
+      - executed: parity tests show 0 diffs; axiom checker OK
+
+- [x] 11. Add docstrings to small safe helpers and logger
+      - implemented: `_logger_trace` and `_safe_*` wrappers documented
+
+Next tasks (suggested)
+
+- [x] 12. Refactor preparers to consistently call `HistoryListBase._finalize_prep` at end of prep functions
+      - Updated `FileModeHistoryList.prepFileModeHistoryList` to call `_finalize_prep` and ran tests (parity/axioms OK)
+
+- [x] 13. Small improvements to `_append_file_row` formatting and status markers
+      - Implemented: `_append_file_row` now applies `MARKERS` and status-based `STYLE_*` formatting; tests run OK
+
+- [ ] 14. Consider extracting more test helpers into `scripts/test_prep_backends.py::Dummy` for parity coverage
 
 Notes:
-- Each TODO item should be completed, tested, and marked checked before moving to the next.
-- Tests will be run against `../test-repo` as requested.
+- Follow the one-helper → update-one-prep → run-tests discipline.
+- When adding helpers that tests may exercise, add delegators to the `Dummy` class in `scripts/test_prep_backends.py`.
+
+``` 

@@ -105,6 +105,11 @@ def make_dummy(repo_root: str, pyg_repo=None):
             # synchronization logic used by widgets.
             return gitdiffnavtool.HistoryListBase._finalize_prep(self, curr_hash=curr_hash, prev_hash=prev_hash, path=path)
 
+        def _compare_backends(self, gitout, pygout, context: str | None = None):
+            # Delegate AppBase._compare_backends so tests exercise the
+            # same comparison and logging behavior as the real widgets.
+            return gitdiffnavtool.AppBase._compare_backends(self, gitout, pygout, context=context)
+
         # History-mode helpers: forward to the real implementations on
         # `gitdiffnavtool.FileModeHistoryList` so the unbound history
         # preparers can call these methods on `self`.
