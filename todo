@@ -37,8 +37,9 @@ Workflow: go slowly, one helper at a time. Mark items as done as tests pass.
       - [x] 12. `FileListBase._list_directory(path)` implemented (safe os.listdir wrapper)
       - [x] 13. `FileListBase._build_status_map(path)` implemented (centralized status_map construction)
       - [x] 14. `FileListBase._populate_from_file_infos(file_infos)` implemented (centralized row creation)
-      - [x] 15. `FileModeFileList.prepFileModeFileList` updated to use helpers; parity & axioms OK
-      - [x] 16. `RepoModeFileList.prepRepoModeFileList` updated to use helpers; parity & axioms OK
+      - [x] 15. `FileListBase._render_parent_entry_if_needed(path)` implemented (centralized parent `..` row)
+      - [x] 16. `FileModeFileList.prepFileModeFileList` updated to use helpers; parity & axioms OK
+      - [x] 17. `RepoModeFileList.prepRepoModeFileList` updated to use helpers; parity & axioms OK
 
       Next actions (suggested):
 

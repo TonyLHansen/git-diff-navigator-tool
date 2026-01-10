@@ -1367,6 +1367,60 @@ class FileListBase(AppBase):
             self.printException(e, f"_list_directory: reading {path} failed")
             return []
 
+    def _render_parent_entry_if_needed(self, path: str) -> None:
+        """Add a parent (`..`) entry when `path` is not the repo root.
+
+        Creates a non-selectable ListItem with metadata `_filename='..'` and
+        `_is_dir=True` and appends it to the list. Safe no-op on error.
+        """
+        try:
+            parent = os.path.dirname(path)
+            logger.debug("_render_parent_entry_if_needed: path=%s parent=%s", path, parent)
+            if parent and parent != path and path != self.app.repo_root:
+                try:
+                    parent_item = ListItem(Label(Text(f"← ..", style=STYLE_PARENT)))
+                    try:
+                        parent_item._filename = ".."
+                        parent_item._is_dir = True
+                        parent_item._raw_text = parent
+                        logger.debug("_render_parent_entry_if_needed: adding parent dir item for %s", parent_item._raw_text)
+                    except Exception as e:
+                        self.printException(e, "_render_parent_entry_if_needed: setting parent item attributes failed")
+                    try:
+                        self.append(parent_item)
+                    except Exception as e:
+                        self.printException(e, "_render_parent_entry_if_needed: append parent failed")
+                except Exception as e:
+                    self.printException(e, "_render_parent_entry_if_needed: creating parent item failed")
+        except Exception as e:
+            self.printException(e, "_render_parent_entry_if_needed failed")
+
+    def _render_hash_header(self, prev_hash: str | None, curr_hash: str | None) -> None:
+        """Render the non-selectable hash header row for repo-mode file lists.
+
+        The header is appended as a `ListItem` with `_hash_header=True` and
+        `_selectable=False` so navigation logic can skip it.
+        """
+        try:
+            def _short(h: str | None) -> str:
+                if not h:
+                    return "None"
+                return h[:HASH_LENGTH] if len(h) > HASH_LENGTH else h
+
+            hash_text = f"Hashes: prev={_short(prev_hash)}  curr={_short(curr_hash)}"
+            try:
+                hash_item = ListItem(Label(Text(hash_text, style=STYLE_FILELIST_KEY)))
+                try:
+                    hash_item._hash_header = True
+                    hash_item._selectable = False
+                    self.append(hash_item)
+                except Exception as e:
+                    self.printException(e, "_render_hash_header: appending hash header failed")
+            except Exception as e:
+                self.printException(e, "_render_hash_header: creating hash header failed")
+        except Exception as e:
+            self.printException(e, "_render_hash_header failed")
+
     def _build_status_map(self, path: str) -> dict | None:
         """Build and return a porcelain `status_map` for `path` or None.
 
@@ -1530,27 +1584,7 @@ class FileModeFileList(FileListBase):
             logger.debug(f"prepFileModeFileList: entries in {path}: {entries}")
             # Optionally add a parent entry when appropriate
             try:
-                parent = os.path.dirname(path)
-                logger.debug("prepFileModeFileList: path=%s parent=%s", path, parent)
-                # Only add a parent entry when appropriate and when the
-                # current path is not the repository root. Use the canonical
-                # `app.repo_root` provided by the application (widgets are
-                # expected to have this set by `GitHistoryNavTool`).
-                # Only add parent entry when not at the repo root. Compare
-                # directly to the app-provided `repo_root` per project axiom.
-                if parent and parent != path and path != self.app.repo_root:
-                    parent_item = ListItem(Label(Text(f"← ..", style=STYLE_PARENT)))
-                    try:
-                        parent_item._filename = ".."
-                        parent_item._is_dir = True
-                        parent_item._raw_text = parent
-                        logger.debug("prepFileModeFileList: adding parent dir item for %s", parent_item._raw_text)
-                    except Exception as e:
-                        self.printException(e, "prepFileModeFileList: setting parent item attributes failed")
-                    try:
-                        self.append(parent_item)
-                    except Exception as e:
-                        self.printException(e, "prepFileModeFileList: append parent failed")
+                self._render_parent_entry_if_needed(path)
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: adding parent directory failed")
             try:
@@ -2037,23 +2071,7 @@ class RepoModeFileList(FileListBase):
             self.clear()
             # Insert a hash header and the unselectable key legend header at the top
             try:
-                try:
-
-                    def _short(h: str | None) -> str:
-                        if not h:
-                            return "None"
-                        return h[:HASH_LENGTH] if len(h) > HASH_LENGTH else h
-
-                    hash_text = f"Hashes: prev={_short(prev_hash)}  curr={_short(curr_hash)}"
-                    hash_item = ListItem(Label(Text(hash_text, style=STYLE_FILELIST_KEY)))
-                    try:
-                        hash_item._hash_header = True
-                        hash_item._selectable = False
-                        self.append(hash_item)
-                    except Exception as e:
-                        self.printException(e, "prepRepoModeFileList: appending hash header failed")
-                except Exception as e:
-                    self.printException(e, "prepRepoModeFileList: creating hash header failed")
+                self._render_hash_header(prev_hash, curr_hash)
                 # Then append the existing key legend row so it appears below
                 # the hashes header.
                 try:
