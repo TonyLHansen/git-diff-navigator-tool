@@ -1421,6 +1421,57 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, "_render_hash_header failed")
 
+    def _schedule_highlight_and_visibility(self, highlight: str | None, base_path: str | None = None) -> None:
+        """Schedule highlighting and ensure the selected node is visible.
+
+        If `highlight` is provided, resolve it to an absolute candidate inside
+        `base_path` (or this widget's `self.path`) when it's not already
+        absolute, schedule a safe highlight match, and then schedule index
+        visibility. When no `highlight` is provided schedule the logical
+        top highlight.
+        """
+        try:
+            if highlight:
+                try:
+                    candidate = highlight
+                    if not os.path.isabs(candidate):
+                        if base_path is None:
+                            try:
+                                bp = self.path
+                            except Exception:
+                                bp = "."
+                        else:
+                            bp = base_path
+                        candidate = os.path.join(bp, candidate)
+                except Exception as e:
+                    self.printException(e, "_schedule_highlight_and_visibility: candidate adjustment failed")
+                    candidate = highlight
+
+                try:
+                    self.call_after_refresh(lambda: self._safe_highlight_match(candidate))
+                except Exception as e:
+                    self.printException(e, "_schedule_highlight_and_visibility: scheduling highlight failed")
+                    try:
+                        self._highlight_match(candidate)
+                    except Exception as e2:
+                        self.printException(e2, "_schedule_highlight_and_visibility: immediate highlight failed")
+
+                try:
+                    self.call_after_refresh(self._ensure_index_visible)
+                except Exception as e:
+                    self.printException(e, "_schedule_highlight_and_visibility: scheduling _ensure_index_visible failed")
+            else:
+                try:
+                    self.call_after_refresh(self._highlight_top)
+                except Exception as e:
+                    self.printException(e, "_schedule_highlight_and_visibility: scheduling _highlight_top failed")
+                    try:
+                        self._highlight_top()
+                    except Exception as e2:
+                        self.printException(e2, "_schedule_highlight_and_visibility: immediate _highlight_top fallback failed")
+        except Exception as e:
+            self.printException(e, "_schedule_highlight_and_visibility failed")
+
     def _build_status_map(self, path: str) -> dict | None:
         """Build and return a porcelain `status_map` for `path` or None.
 
@@ -1677,19 +1728,8 @@ class FileModeFileList(FileListBase):
                         # highlighting by the canonical full path inside this list's
                         # directory so matches against `_raw_text` succeed when rows
                         # store absolute paths (common for file lists).
-                        try:
-                            candidate = hl
-                            if not os.path.isabs(candidate):
-                                candidate = os.path.join(self.path, candidate)
-                        except Exception as e:
-                            self.printException(e, "prepFileModeFileList: candidate path adjustment failed")
-                            candidate = hl
-                        self.call_after_refresh(lambda: self._safe_highlight_match(candidate))
-                        # After highlighting, ensure the selected node is visible
-                        try:
-                            self.call_after_refresh(self._ensure_index_visible)
-                        except Exception as e:
-                            self.printException(e, "prepFileModeFileList: scheduling _ensure_index_visible failed")
+                        # Schedule highlight and ensure visibility using helper
+                        self._schedule_highlight_and_visibility(hl, base_path=path)
                     except Exception as e:
                         self.printException(e, "prepFileModeFileList: scheduling highlight failed")
                         try:
