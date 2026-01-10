@@ -769,6 +769,56 @@ def check_getattr_not_initialized(path: Path, text: str, tree: ast.AST) -> List[
     return errs
 
 
+def check_docstrings(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
+    """Ensure module-level functions and class methods have docstrings.
+
+    Reports each function/method missing a docstring as an axiom violation.
+    Skips nested functions defined inside other functions to avoid noise.
+    """
+    errs: List[Tuple[str, int, str]] = []
+
+    class Visitor(ast.NodeVisitor):
+        def __init__(self):
+            self.stack: List[ast.AST] = []
+
+        def generic_visit(self, node: ast.AST) -> None:
+            self.stack.append(node)
+            super().generic_visit(node)
+            self.stack.pop()
+
+        def _check_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            # Only consider functions directly under Module (module-level)
+            # or directly under ClassDef (methods). Skip nested functions.
+            parent = self.stack[-1] if self.stack else None
+            if not isinstance(parent, (ast.Module, ast.ClassDef)):
+                return
+            # Skip constructors; __init__ often intentionally lacks docstrings
+            if getattr(node, "name", None) == "__init__":
+                return
+            try:
+                doc = ast.get_docstring(node)
+                if doc is None:
+                    kind = "method" if isinstance(parent, ast.ClassDef) else "function"
+                    lineno = getattr(node, "lineno", 0)
+                    errs.append((str(path), lineno, f"{kind} '{node.name}' missing docstring"))
+            except Exception as e:
+                printException(e, f"checking docstring for {getattr(node, 'name', '<anon>')} in {path}")
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self._check_function(node)
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self._check_function(node)
+            self.generic_visit(node)
+
+    try:
+        Visitor().visit(tree)
+    except Exception as e:
+        printException(e, f"walking AST for docstring checks in {path}")
+    return errs
+
+
 def run_py_compile(py_files: List[Path]) -> List[Tuple[Path, str]]:
     failures: List[Tuple[Path, str]] = []
     for p in py_files:
@@ -877,6 +927,18 @@ def main(argv: List[str] | None = None) -> int:
         action="store_true",
         help="Enable nested-try-except check (opposite of -N).",
     )
+    parser.add_argument("-S",
+        "--no-check-docstrings",
+        dest="check_docstrings",
+        action="store_false",
+        help="Skip checking that functions/methods have docstrings (default: check)",
+    )
+    parser.add_argument("-s",
+        "--check-docstrings",
+        dest="enable_check_docstrings",
+        action="store_true",
+        help="Enable docstring checks (opposite of -S).",
+    )
     # Import-location checks: ensure imports are at module level
     parser.add_argument("-I",
         "--no-check-imports",
@@ -934,6 +996,7 @@ def main(argv: List[str] | None = None) -> int:
         args.check_getattr_not_initialized = False
         args.check_logger_in_try = False
         args.check_imports = False
+        args.check_docstrings = False
 
     # Honor explicit enable flags after -N/--NONE
 
@@ -956,6 +1019,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_imports = True
     if args.enable_nested_try:
         args.check_nested_try = True
+    if getattr(args, "enable_check_docstrings", False):
+        args.check_docstrings = True
 
     logger.info("cwd: %s", Path.cwd())
 
@@ -1024,6 +1089,12 @@ def main(argv: List[str] | None = None) -> int:
                         errs += check_getattr_not_initialized(p, text=text, tree=tree)
                     except Exception as e:
                         printException(e, f"check_getattr_not_initialized failed for {p}")
+                # Enforce docstring presence for module-level functions and class methods
+                if getattr(args, "check_docstrings", True):
+                    try:
+                        errs += check_docstrings(p, text=text, tree=tree)
+                    except Exception as e:
+                        printException(e, f"check_docstrings failed for {p}")
                 # Enforce 'imports at module level' axiom
                 if args.check_imports:
                     try:
