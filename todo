@@ -12,125 +12,59 @@ preparers into small, testable helper methods. For each helper:
 Workflow: go slowly, one helper at a time. Mark items as done as tests pass.
 
 - [x] 1. Add `AppBase._run_git_lines(cmd: list[str], label: str|None) -> list[str]`
-      - implemented and used by preparers; tests updated
+      # Project refactor TODO — history preparers
 
-- [x] 2. Add `AppBase._canonical_relpath(path: str, repo_root: str) -> str`
-      - implemented (normalizes to realpath)
+      Goal: extract duplicated logic between file-mode and repo-mode preparers into
+      small, testable helpers. Work slowly: implement one helper, update one prep
+      function to use it, run parity & axioms, then update the counterpart.
 
-- [x] 3. Add `AppBase._compute_pseudo_timestamps(repo_root: str, mods: list[str], single_path: str) -> (mods_ts, staged_ts)`
-      - implemented: computes latest mtime for `mods` or a single path, plus `.git/index` mtime
+      Completed checklist (refactor items implemented and tested):
 
-- [x] 4. Add `AppBase._format_pseudo_summary(pseudo_entries: list[tuple[str,str]])`
-      - implemented: central helper appends pseudo-summary rows and attaches metadata
+      - [x] 1. `AppBase._run_git_lines(cmd, label)` implemented
+      - [x] 2. `AppBase._canonical_relpath(path, repo_root)` implemented
+      - [x] 3. `AppBase._compute_pseudo_timestamps(repo_root, mods, single_path)` implemented
+      - [x] 4. `AppBase._format_pseudo_summary(pseudo_entries)` implemented
+      - [x] 5. `AppBase._parse_git_log_lines(lines)` implemented
+      - [x] 6. `HistoryListBase._format_commit_row(dt, hash, msg)` implemented
+      - [x] 7. `AppBase._append_file_row(display, full_path, is_dir=False, status=None)` implemented
+      - [x] 8. `HistoryListBase._finalize_prep(curr_hash, prev_hash, path)` implemented
+      - [x] 9. `AppBase._compare_backends` parity helper implemented
+      - [x] 10. Ran full regression (`scripts/test_prep_backends.py`, `scripts/check_axioms.py`) — parity=0 diffs, axioms OK
+      - [x] 11. Docstrings added to small helpers and logger wrappers
 
-- [x] 5. Add `AppBase._parse_git_log_lines(lines: list[str]) -> list[tuple[datetime,str,str]]`
-      - implemented: robust parsing for `git log --pretty=format:%H\t%aI\t%s` lines
+      File-list preparer refactor (implemented steps):
 
-- [x] 6. Add `HistoryListBase._format_commit_row(dt: datetime, hash: str, msg: str) -> str`
-      - implemented: centralized commit row formatting used by history preparers
+      - [x] 12. `FileListBase._list_directory(path)` implemented (safe os.listdir wrapper)
+      - [x] 13. `FileListBase._build_status_map(path)` implemented (centralized status_map construction)
+      - [x] 14. `FileListBase._populate_from_file_infos(file_infos)` implemented (centralized row creation)
+      - [x] 15. `FileModeFileList.prepFileModeFileList` updated to use helpers; parity & axioms OK
+      - [x] 16. `RepoModeFileList.prepRepoModeFileList` updated to use helpers; parity & axioms OK
 
-- [x] 7. Add `AppBase._append_file_row(display: str, full_path: str, is_dir: bool=False, status: str|None=None)`
-      - implemented: appends ListItem and attaches `_raw_text`, `_filename`, `_is_dir`, optional `_repo_status`
+      Next actions (suggested):
 
-- [x] 8. Add `HistoryListBase._finalize_prep(curr_hash: str|None, prev_hash: str|None, path: str|None)`
-      - implemented: centralized post-prep highlight/marking and app-state sync
+      - Run the full application to smoke-test UI behavior:
 
-- [x] 9. Replace duplicated parity scaffolding with `AppBase._compare_backends`
-      - implemented: central comparison + logging helper and test delegator
+      ```bash
+      python3 gitdiffnavtool.py
+      ```
 
-- [x] 10. Run full regression: `scripts/test_prep_backends.py ../test-repo` and `scripts/check_axioms.py`.
-      - executed: parity tests show 0 diffs; axiom checker OK
+      - Continue extracting smaller helpers (e.g., `_render_parent_entry_if_needed`, `_render_hash_header`, `_schedule_highlight_and_visibility`) to further simplify prep functions.
 
-- [x] 11. Add docstrings to small safe helpers and logger
-      - implemented: `_logger_trace` and `_safe_*` wrappers documented
+      Testing reminders:
 
-Next tasks (suggested)
-
-- [x] 12. Refactor preparers to consistently call `HistoryListBase._finalize_prep` at end of prep functions
-      - Updated `FileModeHistoryList.prepFileModeHistoryList` to call `_finalize_prep` and ran tests (parity/axioms OK)
-
-- [x] 13. Small improvements to `_append_file_row` formatting and status markers
-      - Implemented: `_append_file_row` now applies `MARKERS` and status-based `STYLE_*` formatting; tests run OK
-
-- [x] 14. Consider extracting more test helpers into `scripts/test_prep_backends.py::Dummy` for parity coverage
-
-Notes:
-
-- Follow the one-helper → update-one-prep → run-tests discipline.
-- When adding helpers that tests may exercise, add delegators to the `Dummy` class in `scripts/test_prep_backends.py`.
-
-After every modification, run these checkers:
+      After each helper change:
 
 ```bash
 python3 scripts/test_prep_backends.py ../test-repo
 python3 scripts/check_axioms.py
 ```
 
+      Notes:
+
+      - Keep helpers small and preserve `ListItem` metadata fields (`_raw_text`, `_filename`, `_is_dir`, `_repo_status`).
+      - When a helper is exercised by parity tests, add a delegator to `scripts/test_prep_backends.py::Dummy` so both backends remain comparable.
+
+      Status: file-list preparer refactor completed for implemented helpers; repository tests passing.
+
+
 ```
-
-## Planned refactor: File-list preparers
-
-Goal: reduce duplication between `FileModeFileList` and `RepoModeFileList` by
-extracting small, testable helpers into `FileListBase` (or a new helper
-module) and updating the preparers one-at-a-time.
-
-Steps:
-
-- **Analyze duplication**: inspect `FileModeFileList.prepFileModeFileList`
-      and `RepoModeFileList.prepRepoModeFileList` to identify common flows:
-      - directory listing and sorting
-      - unselectable key header insertion (`_add_filelist_key_header`)
-      - file/dir row formatting and metadata attachment (use `_append_file_row`)
-      - status_map construction (git porcelain vs pygit2)
-      - highlight scheduling and visibility (`_highlight_filename`, `_ensure_index_visible`)
-
-- **Design helpers** (minimal public surface):
-      - `_build_status_map(path) -> dict | None`
-      - `_populate_from_infos(file_infos: list[dict]) -> None` — appends rows
-      - `_list_directory(path) -> list[str]` — wrapper over `os.listdir` with logging
-      - `_finalize_filelist_prep(curr_hash=None, prev_hash=None, path=None)` — already present
-
-- **Refactor workflow** (one helper at a time):
-      1. Implement the helper in `FileListBase`.
-      2. Update `FileModeFileList.prepFileModeFileList` to use the helper.
-      3. Run `python3 scripts/test_prep_backends.py ../test-repo` and `python3 scripts/check_axioms.py`.
-      4. If green, update `RepoModeFileList.prepRepoModeFileList` to use the helper and test again.
-
-- **Testing & Dummy harness**: when a helper is referenced by tests, add a delegator to `scripts/test_prep_backends.py::Dummy` to preserve parity testing.
-
-- **Acceptance criteria**:
-      - No parity diffs reported by `scripts/test_prep_backends.py`.
-      - `scripts/check_axioms.py` reports no violations.
-      - Runtime behavior is unchanged for file-mode and repo-mode file lists.
-
-Placeholders / notes:
-
-- Keep helper implementations small and focused — prefer composition over
-      large shared monoliths.
-- Preserve existing metadata fields on `ListItem` (`_raw_text`, `_filename`, `_is_dir`, `_repo_status`) so other code continues to work.
-- Ensure highlight behavior retains previous semantics: `highlight_filename` overrides commit-based highlighting.
-
-### Proposed helper signatures (to implement in `FileListBase`)
-
-Add the following helpers to centralize file-list preparer logic. Keep each helper small and focused; prefer single-responsibility and clear inputs/outputs to aid unit testing.
-
-- `_build_status_map(self, path: str) -> dict[str, str] | None`
-      - Build and return a porcelain `status_map` for `path` (repo-relative keys -> two-char codes) or `None` when unavailable.
-
-- `_list_directory(self, path: str) -> list[str]`
-      - Wrapper around `os.listdir(path)` returning a sorted list of entries; logs and returns [] on error.
-
-- `_populate_from_file_infos(self, file_infos: list[dict]) -> None`
-      - Given a list of dicts (keys: `name`, `full`, `is_dir`, `raw`, `repo_status`), append appropriately-styled `ListItem`s and attach `_raw_text`, `_filename`, `_is_dir`, and `_repo_status` metadata.
-
-- `_render_parent_entry_if_needed(self, path: str) -> None`
-      - Add a parent directory entry (`..`) when `path` is not the repo root.
-
-- `_render_hash_header(self, prev_hash: str | None, curr_hash: str | None) -> None`
-      - Add a non-selectable header row showing short hashes (used by `RepoModeFileList`).
-
-- `_schedule_highlight_and_visibility(self, highlight_filename: str | None, highlight_candidate: str | None = None) -> None`
-      - Schedule highlighting and ensure the selected node is visible; encapsulates `call_after_refresh` usage and fallbacks.
-
-Rationale: these helpers correspond directly to repeated blocks in `FileModeFileList.prepFileModeFileList` and `RepoModeFileList.prepRepoModeFileList` (status_map creation, directory listing, header insertion, row appends, and highlight scheduling). Implementing them will make the preparers one-liners that orchestrate backend collection + these helpers, greatly simplifying testing and maintenance.
-

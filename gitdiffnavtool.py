@@ -1354,6 +1354,106 @@ class FileListBase(AppBase):
         # Default: log and do nothing. Subclasses should override to change mode.
         logger.debug("enter directory requested: %s", filename)
 
+    def _list_directory(self, path: str) -> list[str]:
+        """Return a sorted list of entries in `path`.
+
+        Safe wrapper around `os.listdir` that logs and returns an empty
+        list on error so callers don't need try/except every time.
+        """
+        try:
+            entries = sorted(os.listdir(path))
+            return entries
+        except Exception as e:
+            self.printException(e, f"_list_directory: reading {path} failed")
+            return []
+
+    def _build_status_map(self, path: str) -> dict | None:
+        """Build and return a porcelain `status_map` for `path` or None.
+
+        When `self.app.test_pygit2` is true we still prefer the git CLI map
+        for parity testing. If `pygit2` is available and not testing,
+        return None so callers may rely on pygit2-based per-file status
+        helpers instead of a precomputed map.
+        """
+        try:
+            if self.app.test_pygit2 or not pygit2:
+                return self._prepFileModeFileList_status_map_from_git(path)
+            return None
+        except Exception as e:
+            self.printException(e, "_build_status_map failed")
+            return None
+
+    def _populate_from_file_infos(self, file_infos: list[dict]) -> None:
+        """Append ListItems for each dict in `file_infos`.
+
+        Each dict is expected to have keys: `name`, `full`, `is_dir`, `raw`, `repo_status`.
+        This centralizes the row-creation logic used by file-list preparers.
+        """
+        try:
+            for info in file_infos:
+                try:
+                    name = info.get("name")
+                    full = info.get("full")
+                    is_dir = info.get("is_dir", False)
+                    raw = info.get("raw", name)
+                    repo_status = info.get("repo_status")
+
+                    if is_dir:
+                        tag = "→"
+                        display_name = f"{name}/"
+                        display = f"{tag} {display_name}"
+                        style = STYLE_DIR
+                        item = ListItem(Label(Text(display, style=style)))
+                        try:
+                            item._is_dir = True
+                            item._repo_status = None
+                            item._raw_text = full
+                            item._filename = name
+                            logger.debug("_populate_from_file_infos: adding dir item for %s", full)
+                            self.append(item)
+                        except Exception as e:
+                            self.printException(e, "_populate_from_file_infos append dir failed")
+                        continue
+
+                    marker = MARKERS.get(repo_status, " ")
+                    if repo_status == "conflicted":
+                        style = STYLE_CONFLICTED
+                    elif repo_status == "staged":
+                        style = STYLE_STAGED
+                    elif repo_status == "wt_deleted":
+                        style = STYLE_WT_DELETED
+                    elif repo_status == "ignored":
+                        style = STYLE_IGNORED
+                    elif repo_status == "modified":
+                        style = STYLE_MODIFIED
+                    elif repo_status == "untracked":
+                        style = STYLE_UNTRACKED
+                    else:
+                        style = STYLE_DEFAULT
+
+                    display = f"{marker} {name}"
+                    try:
+                        if style:
+                            item = ListItem(Label(Text(display, style=style)))
+                        else:
+                            item = ListItem(Label(display))
+                        item._repo_status = repo_status
+                        item._is_dir = False
+                        item._raw_text = full
+                        item._filename = name
+                        self.append(item)
+                    except Exception as e:
+                        self.printException(e, f"_populate_from_file_infos appending {name} failed")
+                        continue
+                except Exception as e:
+                    self.printException(e, f"_populate_from_file_infos processing entry failed")
+                    continue
+        except Exception as e:
+            self.printException(e, "_populate_from_file_infos failed")
+        except Exception as e:
+            self.printException(e, "_build_status_map failed")
+            return None
+
 
 class FileModeFileList(FileListBase):
     """File-mode file list: shows files for a working tree path.
@@ -1403,11 +1503,9 @@ class FileModeFileList(FileListBase):
             # repo-relative paths -> git porcelain two-char codes (index+worktree).
             # Examples: ' M' (worktree modified), 'A ' (staged/index added),
             # '??' (untracked), '!!' (ignored); codes containing 'U' indicate
-            # conflicts. Compute the map only when using the git backend or
-            # when `--test-pygit2` is enabled.
-            status_map = None
-            if self.app.test_pygit2 or not pygit2:
-                status_map = self._prepFileModeFileList_status_map_from_git(path)
+            # conflicts. Use the centralized helper which respects the
+            # `test_pygit2` flag and backend availability.
+            status_map = self._build_status_map(path)
 
             # clear and populate
             self.clear()
@@ -1418,9 +1516,9 @@ class FileModeFileList(FileListBase):
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: adding filelist key header failed")
 
-            # List directory contents
+            # List directory contents (use helper)
             try:
-                entries = sorted(os.listdir(path))
+                entries = self._list_directory(path)
             except Exception as e:
                 self.printException(e, f"Error reading {path}")
                 try:
@@ -2030,19 +2128,30 @@ class RepoModeFileList(FileListBase):
                     else:
                         entries = self._prepRepoModeFileList_from_git(prev_hash, curr_hash)
 
-                    for entry in entries:
-                        try:
-                            display = entry.get("display") if isinstance(entry, dict) else str(entry)
-                            item = ListItem(Label(Text(display)))
+                    # Normalize entries and delegate row creation to shared helper
+                    try:
+                        file_infos: list[dict] = []
+                        for entry in entries:
                             try:
-                                item._raw_text = entry.get("full", display)
-                            except Exception as e:
-                                self.printException(e, "prepRepoModeFileList: resolving full path failed")
-                                item._raw_text = entry.get("full", display)
-                            item._is_dir = entry.get("is_dir", False) if isinstance(entry, dict) else False
-                            self.append(item)
-                        except Exception as e:
-                            self.printException(e, "prepRepoModeFileList append entry failed")
+                                if isinstance(entry, dict):
+                                    display = entry.get("display")
+                                    full = entry.get("full", display)
+                                    is_dir = entry.get("is_dir", False)
+                                else:
+                                    display = str(entry)
+                                    full = display
+                                    is_dir = False
+                                name = os.path.basename(full) if full else display
+                                file_infos.append({"name": name, "full": full, "is_dir": is_dir, "raw": full, "repo_status": None})
+                            except Exception as _ex:
+                                self.printException(_ex, "prepRepoModeFileList: normalizing entry failed")
+                                continue
+                        try:
+                            self._populate_from_file_infos(file_infos)
+                        except Exception as _ex:
+                            self.printException(_ex, "prepRepoModeFileList: populating entries failed")
+                    except Exception as e:
+                        self.printException(e, "prepRepoModeFileList processing entries failed")
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList git diff failed")
 
