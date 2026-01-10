@@ -836,139 +836,160 @@ def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="check_axioms.py")
     parser.add_argument("--root", "-r", default=str(ROOT), help="Project root to scan")
     parser.add_argument("--compile-only", action="store_true", help="Only run py_compile checks")
-    parser.add_argument("-g",
-        "--check-global-excepts",
-        action="store_true",
-        help="Also flag bare 'except:' in global functions and modules (off by default)",
-    )
-    parser.add_argument("-B",
+
+    # Paired options are represented as mutually-exclusive groups so users
+    # cannot accidentally pass both the enable and disable variants.
+    # Alphabetical ordering of groups: B, C, D, E, I, L, N, P, S, T
+    gb = parser.add_mutually_exclusive_group()
+    gb.add_argument("-B",
         "--no-bare-excepts",
         dest="check_bare_excepts",
         action="store_false",
         help="Skip checking for bare 'except:' (default: check)",
     )
-    parser.add_argument("-E",
-        "--no-except-as-print",
-        dest="check_except_as_print",
-        action="store_false",
-        help="Skip checking that 'except Exception as e:' is followed by a printException call (default: check)",
-    )
-    parser.add_argument("-D",
-        "--no-prefer-direct-attrs",
-        dest="check_prefer_direct_attrs",
-        action="store_false",
-        help="Skip checking for prefer-direct-attribute usages (default: check)",
-    )
-    parser.add_argument("-C",
-        "--no-py-compile",
-        dest="check_py_compile",
-        action="store_false",
-        help="Skip running py_compile on files (default: run)",
-    )
-    parser.add_argument("-P",
-        "--no-pass-check",
-        dest="check_pass",
-        action="store_false",
-        help="Skip checking for unnecessary 'pass' inside except-as blocks (default: check)",
-    )
-    parser.add_argument("--NONE",
-        dest="none",
-        action="store_true",
-        help="Disable all checks (equivalent to -B -E -D -C)",
-    )
-    # Short enable flags (opposites of -B/-E/-D/-C) — useful when combined
-    # with --NONE to selectively re-enable specific checks.
-    parser.add_argument("-b",
+    gb.add_argument("-b",
         "--bare-excepts",
         dest="enable_bare_excepts",
         action="store_true",
         help="Enable bare-excepts check (opposite of -B)."
     )
-    parser.add_argument("-e",
-        "--except-as-print",
-        dest="enable_except_as_print",
+    parser.add_argument("-g",
+        "--check-global-excepts",
         action="store_true",
-        help="Enable except-as-print check (opposite of -E)."
+        help="Also flag bare 'except:' in global functions and modules (off by default)",
     )
-    parser.add_argument("-d",
-        "--prefer-direct-attrs",
-        dest="enable_prefer_direct_attrs",
-        action="store_true",
-        help="Enable prefer-direct-attrs check (opposite of -D)."
-    )
-    parser.add_argument("-T",
-        "--no-getattr-not-initialized",
-        dest="check_getattr_not_initialized",
+
+    gc = parser.add_mutually_exclusive_group()
+    gc.add_argument("-C",
+        "--no-py-compile",
+        dest="check_py_compile",
         action="store_false",
-        help="Skip checking for getattr-not-initialized (default: check)",
+        help="Skip running py_compile on files (default: run)",
     )
-    parser.add_argument("-L",
-        "--no-logger-in-try",
-        dest="check_logger_in_try",
-        action="store_false",
-        help="Skip checking for except handlers that only contain a logger.<method>(...) call (default: check)",
-    )
-    parser.add_argument("-t",
-        "--getattr-not-initialized",
-        dest="enable_getattr_not_initialized",
-        action="store_true",
-        help="Enable getattr-not-initialized check (opposite of -T).",
-    )
-    # Redundant nested try/except check: -N disables, -n enables
-    parser.add_argument("-N",
-        "--no-nested-try-except",
-        dest="check_nested_try",
-        action="store_false",
-        help="Skip checking for redundant nested try/except (default: check)",
-    )
-    parser.add_argument("-n",
-        "--nested-try-except",
-        dest="enable_nested_try",
-        action="store_true",
-        help="Enable nested-try-except check (opposite of -N).",
-    )
-    parser.add_argument("-S",
-        "--no-check-docstrings",
-        dest="check_docstrings",
-        action="store_false",
-        help="Skip checking that functions/methods have docstrings (default: check)",
-    )
-    parser.add_argument("-s",
-        "--check-docstrings",
-        dest="enable_check_docstrings",
-        action="store_true",
-        help="Enable docstring checks (opposite of -S).",
-    )
-    # Import-location checks: ensure imports are at module level
-    parser.add_argument("-I",
-        "--no-check-imports",
-        dest="check_imports",
-        action="store_false",
-        help="Skip checking for imports-at-module-level (default: check)",
-    )
-    parser.add_argument("-i",
-        "--check-imports",
-        dest="enable_check_imports",
-        action="store_true",
-        help="Enable imports-at-module-level check (opposite of -I).",
-    )
-    parser.add_argument("-l",
-        "--logger-in-try",
-        dest="enable_logger_in_try",
-        action="store_true",
-        help="Enable logger-in-try check (opposite of -L).",
-    )
-    parser.add_argument("-c",
+    gc.add_argument("-c",
         "--py-compile",
         dest="enable_py_compile",
         action="store_true",
         help="Enable py_compile checks (opposite of -C)."
     )
-    parser.add_argument("-p",
+
+    gd = parser.add_mutually_exclusive_group()
+    gd.add_argument("-D",
+        "--no-prefer-direct-attrs",
+        dest="check_prefer_direct_attrs",
+        action="store_false",
+        help="Skip checking for prefer-direct-attribute usages (default: check)",
+    )
+    gd.add_argument("-d",
+        "--prefer-direct-attrs",
+        dest="enable_prefer_direct_attrs",
+        action="store_true",
+        help="Enable prefer-direct-attrs check (opposite of -D)."
+    )
+
+    ge = parser.add_mutually_exclusive_group()
+    ge.add_argument("-E",
+        "--no-except-as-print",
+        dest="check_except_as_print",
+        action="store_false",
+        help="Skip checking that 'except Exception as e:' is followed by a printException call (default: check)",
+    )
+    ge.add_argument("-e",
+        "--except-as-print",
+        dest="enable_except_as_print",
+        action="store_true",
+        help="Enable except-as-print check (opposite of -E)."
+    )
+
+    gi = parser.add_mutually_exclusive_group()
+    gi.add_argument("-I",
+        "--no-check-imports",
+        dest="check_imports",
+        action="store_false",
+        help="Skip checking for imports-at-module-level (default: check)",
+    )
+    gi.add_argument("-i",
+        "--check-imports",
+        dest="enable_check_imports",
+        action="store_true",
+        help="Enable imports-at-module-level check (opposite of -I).",
+    )
+
+    gl = parser.add_mutually_exclusive_group()
+    gl.add_argument("-L",
+        "--no-logger-in-try",
+        dest="check_logger_in_try",
+        action="store_false",
+        help="Skip checking for except handlers that only contain a logger.<method>(...) call (default: check)",
+    )
+    gl.add_argument("-l",
+        "--logger-in-try",
+        dest="enable_logger_in_try",
+        action="store_true",
+        help="Enable logger-in-try check (opposite of -L).",
+    )
+
+    gn = parser.add_mutually_exclusive_group()
+    gn.add_argument("-N",
+        "--no-nested-try-except",
+        dest="check_nested_try",
+        action="store_false",
+        help="Skip checking for redundant nested try/except (default: check)",
+    )
+    gn.add_argument("-n",
+        "--nested-try-except",
+        dest="enable_nested_try",
+        action="store_true",
+        help="Enable nested-try-except check (opposite of -N).",
+    )
+
+    gp = parser.add_mutually_exclusive_group()
+    gp.add_argument("-P",
+        "--no-pass-check",
+        dest="check_pass",
+        action="store_false",
+        help="Skip checking for unnecessary 'pass' inside except-as blocks (default: check)",
+    )
+    gp.add_argument("-p",
         "--pass-check",
         dest="enable_pass_check",
         action="store_true",
         help="Enable unnecessary-pass check (opposite of -P)."
+    )
+
+    gs = parser.add_mutually_exclusive_group()
+    gs.add_argument("-S",
+        "--no-check-docstrings",
+        dest="check_docstrings",
+        action="store_false",
+        help="Skip checking that functions/methods have docstrings (default: check)",
+    )
+    gs.add_argument("-s",
+        "--check-docstrings",
+        dest="enable_check_docstrings",
+        action="store_true",
+        help="Enable docstring checks (opposite of -S).",
+    )
+
+    gt = parser.add_mutually_exclusive_group()
+    gt.add_argument("-T",
+        "--no-getattr-not-initialized",
+        dest="check_getattr_not_initialized",
+        action="store_false",
+        help="Skip checking for getattr-not-initialized (default: check)",
+    )
+    gt.add_argument("-t",
+        "--getattr-not-initialized",
+        dest="enable_getattr_not_initialized",
+        action="store_true",
+        help="Enable getattr-not-initialized check (opposite of -T).",
+    )
+    
+    # `--NONE` convenience flag: keep near the end of the options list
+    parser.add_argument("--NONE",
+        dest="none",
+        action="store_true",
+        help="Disable all checks (equivalent to -B -E -D -C etc.)",
     )
     parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=0,
         help="Increase verbosity (specify multiple times for more detail)."
