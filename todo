@@ -31,6 +31,7 @@ Workflow: go slowly, one helper at a time. Mark items as done as tests pass.
       - [x] 9. `AppBase._compare_backends` parity helper implemented
       - [x] 10. Ran full regression (`scripts/test_prep_backends.py`, `scripts/check_axioms.py`) — parity=0 diffs, axioms OK
       - [x] 11. Docstrings added to small helpers and logger wrappers
+      - [x] 11a. Added docstrings to remaining preparer methods (`prepFileModeFileList`, `prepRepoModeFileList`, `prepFileModeHistoryList`, `prepRepoModeHistoryList`)
 
       File-list preparer refactor (implemented steps):
 

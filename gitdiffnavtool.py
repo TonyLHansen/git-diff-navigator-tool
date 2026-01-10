@@ -1344,6 +1344,11 @@ class FileListBase(AppBase):
         logger.debug("list view highlighted: %s", event)
 
     def _child_filename(self, node) -> str:
+        """Return the filename or visible text for a child `node`.
+
+        Safe wrapper around `text_of` that falls back to stringifying the
+        node when extraction fails.
+        """
         try:
             return self.text_of(node)
         except Exception as e:
@@ -1351,8 +1356,12 @@ class FileListBase(AppBase):
             return str(node)
 
     def _enter_directory(self, filename: str) -> None:
-        # Default: log and do nothing. Subclasses should override to change mode.
-        logger.debug("enter directory requested: %s", filename)
+        """Handle a request to enter the directory named `filename`.
+
+        Default implementation logs the request; subclasses may override to
+        change the UI mode or update the widget to display the directory.
+        """
+        logger.debug("enter directory requested and ignored: %s", filename)
 
     def _list_directory(self, path: str) -> list[str]:
         """Return a sorted list of entries in `path`.
@@ -1569,6 +1578,12 @@ class FileModeFileList(FileListBase):
     """
 
     def prepFileModeFileList(self, path: str, highlight_filename: str | None = None) -> None:
+        """Populate this widget with the file list for `path`.
+
+        `highlight_filename` if provided will be highlighted in the list; if
+        `path` names a file the file's containing directory is listed and the
+        filename is used as the highlight candidate.
+        """
         try:
             logger.debug("prepFileModeFileList: path=%r highlight_filename=%r", path, highlight_filename)
             # Canonicalize path and allow callers to pass a file to highlight
@@ -1986,6 +2001,13 @@ class FileModeFileList(FileListBase):
             return None
 
     def _nav_dir_if(self, test_fn) -> None:
+        """If the currently-selected node is a directory and `test_fn` returns
+        True for its name, navigate into that directory.
+
+        `test_fn` is a callable that accepts the filename and returns a
+        boolean indicating whether to enter the directory. This centralizes
+        the enter-dir logic used by several key handlers.
+        """
         try:
             idx = self.index or 0
             nodes = self.nodes()
@@ -2010,6 +2032,15 @@ class FileModeFileList(FileListBase):
         enter_dir_test_fn=lambda name: True,
         allow_file_open: bool = True,
     ) -> None:
+        """Activate the selected node or open its history if it's a file.
+
+        - If the selected node is a directory and `enter_dir_test_fn(name)`
+          returns True, navigate into it.
+        - If the selected node is a file and `allow_file_open` is True,
+          open the file's history via `prepFileModeHistoryList` unless the
+          file is untracked.
+        The `event` (if provided) will be stopped to prevent further handling.
+        """
         try:
             if event is not None:
                 try:
@@ -2028,50 +2059,39 @@ class FileModeFileList(FileListBase):
             repo_status = getattr(item, "_repo_status", None)
 
             if is_dir:
-                if enter_dir_test_fn(name) and raw:
-                    try:
-                        # If navigating up to the parent entry ('..'), pass the
-                        # current directory basename as the highlight filename
-                        # so the parent listing highlights the directory we
-                        # came from.
-                        hl = None
+                try:
+                    if enter_dir_test_fn(name):
                         try:
-                            if name == "..":
-                                # Pass the full directory path so the highlight
-                                # matcher can match the node `_raw_text` which
-                                # stores full paths.
-                                hl = self.path
+                            self.prepFileModeFileList(raw)
                         except Exception as e:
-                            printException(e)
-                            self.printException(
-                                e, "FileModeFileList._activate_or_open highlight filename fallback failed"
-                            )
-
-                        # Record the app-level path for downstream components
-                        try:
-                            self.app.path = raw
-                        except Exception as e:
-                            self.printException(e, "FileModeFileList._activate_or_open setting app.path failed")
-                        self.prepFileModeFileList(raw, highlight_filename=hl)
-                    except Exception as e:
-                        self.printException(e, "FileModeFileList._activate_or_open prep failed")
+                            self.printException(e, "_activate_or_open: prepFileModeFileList failed")
+                except Exception as e:
+                    self.printException(e, "_activate_or_open: enter_dir_test_fn failed")
                 return
 
-            # File selected: open repo view for tracked files only (when allowed)
-            if raw and repo_status not in ("untracked", "ignored") and allow_file_open:
-                try:
-                    try:
-                        self.app.path = raw
-                    except Exception as e:
-                        self.printException(e, "FileModeFileList._activate_or_open setting app.path failed")
-                    self.app.file_mode_history_list.prepFileModeHistoryList(raw)
-                    try:
-                        # Switch UI to file-history layout and focus
-                        self.app.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
-                    except Exception as e:
-                        self.printException(e, "FileModeFileList._activate_or_open change_state failed")
-                except Exception as e:
-                    self.printException(e, "FileModeFileList._activate_or_open repo open failed")
+            # Not a directory — possibly open file in history view
+            if not allow_file_open:
+                return
+            try:
+                if repo_status in ("untracked", "ignored"):
+                    # Opening untracked or ignored files doesn't make sense in history
+                    # view; log and ignore.
+                    logger.debug("_activate_or_open: skipping open for %s file %s", repo_status, raw)
+                    return
+            except Exception as e:
+                self.printException(e, "_activate_or_open: repo_status check failed")
+
+            try:
+                # Default behavior: switch to file-history mode for the file
+                self.prepFileModeHistoryList(raw)
+            except Exception as e:
+                self.printException(e, "_activate_or_open: prepFileModeHistoryList failed")
+
+            try:
+                # Switch UI to file-history layout and focus
+                self.app.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
+            except Exception as e:
+                self.printException(e, "FileModeFileList._activate_or_open change_state failed")
         except Exception as e:
             self.printException(e, "FileModeFileList._activate_or_open failed")
 
@@ -2102,6 +2122,12 @@ class RepoModeFileList(FileListBase):
     def prepRepoModeFileList(
         self, prev_hash: str | None, curr_hash: str | None, highlight_filename: str | None = None
     ) -> None:
+        """Populate this widget with files changed between `prev_hash` and `curr_hash`.
+
+        If either hash is a pseudo-name (e.g. 'MODS' or 'STAGED') the
+        corresponding pseudo-entries are collected and rendered instead of
+        delegating to `git diff`.
+        """
         try:
             logger.debug(
                 "prepRepoModeFileList: prev_hash=%r curr_hash=%r highlight_filename=%r",
@@ -2787,6 +2813,11 @@ class FileModeHistoryList(HistoryListBase):
     """History list for a single file's history. Stubbed prep method."""
 
     def prepFileModeHistoryList(self, path: str, prev_hash: str | None = None, curr_hash: str | None = None) -> None:
+        """Prepare the commit history listing for a single file at `path`.
+
+        `prev_hash` and `curr_hash` may be provided to restrict the commit
+        range; when omitted the full history is used.
+        """
         try:
             logger.debug("prepFileModeHistoryList: path=%r prev_hash=%r curr_hash=%r", path, prev_hash, curr_hash)
             self.clear()
@@ -3207,6 +3238,11 @@ class RepoModeHistoryList(HistoryListBase):
     def prepRepoModeHistoryList(
         self, repo_path: str | None = None, prev_hash: str | None = None, curr_hash: str | None = None
     ) -> None:
+        """Prepare the repository-wide commit history view.
+
+        `repo_path` may narrow the view to a subpath; `prev_hash` and
+        `curr_hash` may be used to constrain the commit range.
+        """
         try:
             logger.debug(
                 "prepRepoModeHistoryList: repo_path=%r prev_hash=%r curr_hash=%r", repo_path, prev_hash, curr_hash
