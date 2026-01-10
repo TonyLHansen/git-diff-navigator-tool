@@ -76,6 +76,11 @@ def load_source_and_ast(path: Path) -> Tuple[str, Optional[ast.AST]]:
 
 
 def list_py_files(root: Path) -> List[Path]:
+    """Return a list of Python files under `root` (heuristic).
+
+    Includes files ending in `.py` and files with a Python shebang.
+    Skips common virtualenv/site-packages and backup files.
+    """
     files: List[Path] = []
 
     # Also include files that have a python shebang (#!...python) even if
@@ -356,6 +361,11 @@ def check_file(
     check_pass: bool,
     check_logger_in_try: bool,
 ) -> List[Tuple[str, int, str]]:
+    """Run the core AST-based checks for bare excepts, except-as-print, and related checks.
+
+    Returns a list of (filepath, lineno, message) tuples for violations detected
+    within this file's AST.
+    """
     errs: List[Tuple[str, int, str]] = []
     lines = text.splitlines()
 
@@ -629,6 +639,10 @@ def check_imports_module_level(path: Path, text: str, tree: ast.AST) -> List[Tup
             self.stack.pop()
 
         def _is_in_non_module(self) -> bool:
+            """Return True when the current node stack indicates non-module scope.
+
+            Treats TYPE_CHECKING `if` blocks and module top-level as module scope.
+            """
             # Consider ancestors other than ast.Module and TYPE_CHECKING ifs.
             non_module_ancs: List[ast.AST] = []
             for anc in self.stack:
@@ -787,6 +801,11 @@ def check_docstrings(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, in
             self.stack.pop()
 
         def _check_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            """Check a function node for a missing docstring when it's a
+            module-level function or a direct method of a class.
+
+            Nested functions are skipped.
+            """
             # Only consider functions directly under Module (module-level)
             # or directly under ClassDef (methods). Skip nested functions.
             parent = self.stack[-1] if self.stack else None
@@ -794,6 +813,12 @@ def check_docstrings(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, in
                 return
             # Skip constructors; __init__ often intentionally lacks docstrings
             if getattr(node, "name", None) == "__init__":
+                return
+            # Skip visitor hooks and other AST NodeVisitor methods to avoid
+            # noisy reports for many nested helper classes that implement
+            # `visit_*` methods.
+            name = getattr(node, "name", "")
+            if name.startswith("visit_") or name == "generic_visit":
                 return
             try:
                 doc = ast.get_docstring(node)
@@ -820,6 +845,10 @@ def check_docstrings(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, in
 
 
 def run_py_compile(py_files: List[Path]) -> List[Tuple[Path, str]]:
+    """Run `py_compile` on each path in `py_files` and return failures.
+
+    Each failure is (Path, combined_output_str).
+    """
     failures: List[Tuple[Path, str]] = []
     for p in py_files:
         try:
@@ -833,6 +862,11 @@ def run_py_compile(py_files: List[Path]) -> List[Tuple[Path, str]]:
 
 
 def main(argv: List[str] | None = None) -> int:
+    """Command-line entry point for the axiom checker.
+
+    Parses flags, discovers Python files, runs AST checks and `py_compile`.
+    Returns exit code 0 on success, 1 on violations.
+    """
     parser = argparse.ArgumentParser(prog="check_axioms.py")
     parser.add_argument("--root", "-r", default=str(ROOT), help="Project root to scan")
     parser.add_argument("--compile-only", action="store_true", help="Only run py_compile checks")
@@ -1040,7 +1074,7 @@ def main(argv: List[str] | None = None) -> int:
         args.check_imports = True
     if args.enable_nested_try:
         args.check_nested_try = True
-    if getattr(args, "enable_check_docstrings", False):
+    if args.enable_check_docstrings:
         args.check_docstrings = True
 
     logger.info("cwd: %s", Path.cwd())
@@ -1111,7 +1145,7 @@ def main(argv: List[str] | None = None) -> int:
                     except Exception as e:
                         printException(e, f"check_getattr_not_initialized failed for {p}")
                 # Enforce docstring presence for module-level functions and class methods
-                if getattr(args, "check_docstrings", True):
+                if args.check_docstrings:
                     try:
                         errs += check_docstrings(p, text=text, tree=tree)
                     except Exception as e:
