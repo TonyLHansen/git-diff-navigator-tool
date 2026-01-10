@@ -55,74 +55,71 @@ def make_dummy(repo_root: str, pyg_repo=None):
             self.app = SimpleNamespace(repo_root=repo_root, pygit2_repo=pyg_repo)
 
         def printException(self, e: Exception, msg: str | None = None):
-            # Log exceptions with full traceback via module logger
-            #try:
-            #    tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            #except Exception:
-            #    tb = str(e)
-            #logger.exception("printException: %s\n%s", msg or "", tb)
+            """Log an exception and associated message to the test logger."""
             logger.exception("printException: %s", msg or "")
 
         def _run_cmd_log(self, cmd, label: str | None = None, text: bool = True, capture_output: bool = True):
-            # Minimal wrapper to match AppBase behavior
+            """Run a command and return the CompletedProcess, logging stderr."""
             proc = subprocess.run(cmd, text=text, capture_output=capture_output)
             if proc.stderr:
                 logger.warning("%s stderr: %s", label or "cmd", proc.stderr)
             return proc
 
         def _run_git_lines(self, cmd, label: str | None = None):
-            # Delegate to AppBase._run_git_lines so tests exercise the
-            # same wrapper logic used by the real widgets.
+            """Delegate to `AppBase._run_git_lines` to obtain git output lines."""
             return gitdiffnavtool.AppBase._run_git_lines(self, cmd, label=label)
 
         def _canonical_relpath(self, path: str, repo_root: str) -> str:
-            # Delegate canonicalization to AppBase helper
+            """Delegate path canonicalization to `AppBase._canonical_relpath`."""
             return gitdiffnavtool.AppBase._canonical_relpath(self, path, repo_root)
 
         def _compute_pseudo_timestamps(self, repo_root: str, mods: list[str], single_path: str):
-            # Delegate to AppBase implementation so tests use same logic
+            """Forward to `AppBase._compute_pseudo_timestamps` for test parity."""
             return gitdiffnavtool.AppBase._compute_pseudo_timestamps(self, repo_root, mods, single_path)
 
         def _format_pseudo_summary(self, pseudo_entries: list[tuple[str, str]]):
-            # Delegate formatting/appending of pseudo summary rows
+            """Format pseudo-entry summary rows using the AppBase helper."""
             return gitdiffnavtool.AppBase._format_pseudo_summary(self, pseudo_entries)
 
         def _append_file_row(self, display: str, full_path: str, is_dir: bool = False, status: str | None = None):
-            # Delegate AppBase._append_file_row so tests can use the same
-            # row-creation logic as the UI widgets when preparers are
-            # invoked unbound on this dummy object.
+            """Append a file row by delegating to `AppBase._append_file_row`."""
             return gitdiffnavtool.AppBase._append_file_row(self, display, full_path, is_dir=is_dir, status=status)
 
         def _parse_git_log_lines(self, lines):
+            """Parse git log lines using the AppBase helper."""
             return gitdiffnavtool.AppBase._parse_git_log_lines(self, lines)
 
         def _format_commit_row(self, ts, h, msg):
+            """Format a commit row via `HistoryListBase._format_commit_row`."""
             return gitdiffnavtool.HistoryListBase._format_commit_row(self, ts, h, msg)
 
         def _finalize_prep(self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None):
-            # Delegate HistoryListBase._finalize_prep so unbound preparers
-            # invoked on the Dummy run the same highlight and app-state
-            # synchronization logic used by widgets.
+            """Finalize preparer state by delegating to `HistoryListBase._finalize_prep`."""
             return gitdiffnavtool.HistoryListBase._finalize_prep(self, curr_hash=curr_hash, prev_hash=prev_hash, path=path)
 
         def _compare_backends(self, gitout, pygout, context: str | None = None):
-            # Delegate AppBase._compare_backends so tests exercise the
-            # same comparison and logging behavior as the real widgets.
+            """Compare backend outputs by delegating to `AppBase._compare_backends`."""
             return gitdiffnavtool.AppBase._compare_backends(self, gitout, pygout, context=context)
 
         # History-mode helpers: forward to the real implementations on
         # `gitdiffnavtool.FileModeHistoryList` so the unbound history
         # preparers can call these methods on `self`.
         def _prepFileModeHistoryList_commits_from_git(self, repo_root, rel_path):
+            """Delegate history-commit extraction to `FileModeHistoryList._prepFileModeHistoryList_commits_from_git`."""
             return gitdiffnavtool.FileModeHistoryList._prepFileModeHistoryList_commits_from_git(self, repo_root, rel_path)
 
         def _prepFileModeHistoryList_commits_from_pygit2(self, repo_root, rel_path):
+            """Delegate history-commit extraction to `FileModeHistoryList._prepFileModeHistoryList_commits_from_pygit2`."""
             return gitdiffnavtool.FileModeHistoryList._prepFileModeHistoryList_commits_from_pygit2(self, repo_root, rel_path)
 
     return Dummy(repo_root, pyg_repo)
 
 
 def compare_lists(git_list, pyg_list, context: str) -> list[str]:
+    """Return a unified diff (as list of lines) comparing `git_list` and `pyg_list`.
+
+    An empty list is returned when the lists are identical.
+    """
     g = pprint.pformat(git_list, width=120).splitlines()
     p = pprint.pformat(pyg_list, width=120).splitlines()
     if g == p:
@@ -131,6 +128,10 @@ def compare_lists(git_list, pyg_list, context: str) -> list[str]:
 
 
 def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
+    """Walk `root` exercising FileModeFileList preparers and compare outputs.
+
+    Returns a tuple of (dirs_seen, diffs_found).
+    """
     root = os.path.abspath(root)
     if not os.path.isdir(root):
         print(f"Not a directory: {root}")
@@ -332,6 +333,11 @@ def run_repo_history_tests(root: str, prev_hash: str | None = None, curr_hash: s
 
 
 def main(argv=None):
+    """Command-line entry point for `test_prep_backends`.
+
+    Parses CLI arguments, runs preparer tests and writes a summary log.
+    Returns exit code 0 on success (no diffs), non-zero otherwise.
+    """
     ap = argparse.ArgumentParser(description="Test FileModeFileList backends and diff outputs")
     ap.add_argument("path", help="Repository root path to test")
     ap.add_argument("--max", type=int, default=None, help="Max directories to check")
