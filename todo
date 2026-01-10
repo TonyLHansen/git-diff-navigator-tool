@@ -40,6 +40,7 @@ Workflow: go slowly, one helper at a time. Mark items as done as tests pass.
       - [x] 15. `FileListBase._render_parent_entry_if_needed(path)` implemented (centralized parent `..` row)
       - [x] 16. `FileModeFileList.prepFileModeFileList` updated to use helpers; parity & axioms OK
       - [x] 17. `RepoModeFileList.prepRepoModeFileList` updated to use helpers; parity & axioms OK
+      - [x] 18. `FileListBase._schedule_highlight_and_visibility(highlight, base_path)` implemented (centralized highlight scheduling)
 
       Next actions (suggested):
 

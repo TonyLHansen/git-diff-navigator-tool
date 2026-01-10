@@ -1438,7 +1438,8 @@ class FileListBase(AppBase):
                         if base_path is None:
                             try:
                                 bp = self.path
-                            except Exception:
+                            except Exception as e:
+                                self.printException(e, "_schedule_highlight_and_visibility: reading self.path failed")
                                 bp = "."
                         else:
                             bp = base_path
