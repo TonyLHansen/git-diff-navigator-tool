@@ -4046,7 +4046,7 @@ class DiffList(AppBase):
 
 
 HELP_TEXT = """
-# <div align="center">**gitdiffnavtool help**</div>
+# gitdiffnavtool help
 
 Overview:
 - gitdiffnavtool is a terminal UI for exploring a Git repository: the
@@ -4178,6 +4178,8 @@ class HelpList(AppBase):
                             self.append(ListItem(Label(Text(sep))))
                         else:
                             sep = ""
+                        # Render each block using Markdown; allow the renderer
+                        # to determine spacing/formatting (including H1).
                         self.append(ListItem(Label(Markdown(blk))))
                     except Exception as e:
                         self.printException(e, "prepHelp append failed for Markdown block")
