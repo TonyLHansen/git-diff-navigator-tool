@@ -1909,7 +1909,7 @@ class FileModeFileList(FileListBase):
         try:
             repo = self.app.pygit2_repo
             logger.debug(
-                "_prepRepoModeHistoryList_for_pygit2: entry path=%r repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r",
+                "_prepFileModeFileList_from_pygit2: entry path=%r repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r",
                 path,
                 self.app.repo_root,
                 bool(pygit2),
@@ -1917,7 +1917,7 @@ class FileModeFileList(FileListBase):
             )
             if repo is None:
                 logger.warning(
-                    "_prepRepoModeHistoryList_for_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed"
+                    "_prepFileModeFileList_from_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed"
                 )
                 return infos
 
@@ -4057,12 +4057,13 @@ Overview:
 
 Invocation:
 - Run `gitdiffnavtool [path]` to open the app for `path` (directory or
-    file). Use `--repo-root` to override detected repo root. Use
-    `--no-color` to disable colored diffs and `--test-pygit2` to run
-    both backends for parity checks.
+    file).
+- Run `gitdiffnavtool --repo-hash hash1 [--repo-hash hash2] [path]` to open
+    the app in repository mode, comparing `hash1` and `hash2`.
+- Use `--no-color` to disable colored diffs.
 
 Basic navigation:
-- Arrow keys / vim keys: Up / Down / PageUp / PageDown / Home / End move
+- Arrow keys: Up / Down / PageUp / PageDown / Home / End move
     the selection within the focused column.
 - Right (or Enter): open/enter the selected row (enter directories,
     open file history or diff depending on focus).
@@ -4072,7 +4073,6 @@ Basic navigation:
 Global actions:
 - `c`: toggle colorized diffs on/off.
 - `d`: save the current diff to a file (when a diff is visible).
-- `f`: find/search within the current diff output.
 - `h` or `?`: show this help screen.
 
 Column-specific information and commands:
@@ -4082,10 +4082,6 @@ Left File Column (Files):
 - Right on a directory: enter that directory.
 - Right on a tracked file: open the file's history in the right-side
     history column.
-- Commands when focused:
-    - `open-file <path>`: open the specified file (relative or absolute).
-    - `reveal <path>`: open the containing folder in the system file
-        manager or terminal.
 
 Left History Column (File History for left pane):
 - Shows commits affecting the file selected in the left file pane.
@@ -4114,8 +4110,6 @@ Diff Column:
 - Shows the textual patch for the current file/commit pair. The first
     line is a one-line header describing the file and the two refs being
     compared and is not selectable.
-- Hunk navigation: `next-hunk` and `prev-hunk` commands (or mapped
-    keys) jump between `@@ ... @@` hunks.
 - Commands when focused:
     - `toggle-color` / `c`: toggle colorized diff output.
     - `cycle-diff-variant` / `d`: cycle to the next diff variant (e.g. ignore-space-change, patience).
@@ -4129,20 +4123,12 @@ Command palette (^P):
 
 Tips and behavior notes:
 - Short commit hashes are shown using the app's `HASH_LENGTH` constant.
-- `MODS` lists working-tree modifications (unstaged); `STAGED` lists
-    index changes. When diffing between `STAGED` and `MODS` the UI shows
-    the comparison the user expects (index vs working-tree).
-- The app caches a `pygit2.Repository` instance when available to avoid
-    repeated repo construction; use `--test-pygit2` to force parity
-    comparisons between `pygit2` and the `git` CLI.
-
-Extensibility:
-- Commands and behaviors are pluggable — the command palette can be
-    extended to call internal helpers (e.g. `build_diff_cmd`) or shell
-    out to project scripts such as `scripts/check_axioms.py`.
-
-For more advanced usage or to run the developer harnesses, see the
-project `README.md` and the `scripts/` directory.
+- `MODS` lists working-tree modifications (unstaged).
+- `STAGED` lists index changes (files that were added (staged) but not committed).
+- When diffing between `STAGED` and `MODS` the UI shows the comparison the user
+    expects (index vs working-tree).
+- If available, the app uses `pygit2` for its work. If `pygit2` is not installed or
+    cannot open the repository, the app falls back to using the `git` CLI.
 """
 
 
@@ -4400,47 +4386,54 @@ class GitHistoryNavTool(App):
                             self.printException(e, "on_mount: change_state for file_fullscreen failed")
                     except Exception as e:
                         self.printException(e, "on_mount: prepFileModeFileList failed")
-                else:
+else:
                     # If starting in repo-first mode, pre-populate the left
                     # repository-history widget so the UI shows commits immediately.
                     try:
-                        self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".")
+                        # Normalize CLI-provided repo hashes (first -> curr, second -> prev)
+                        rh = getattr(self, "repo_hashes", []) or []
+                        prev = None
+                        curr = None
+                        if rh:
+                            if len(rh) == 1:
+                                curr = rh[0]
+                            else:
+                                curr = rh[0]
+                                prev = rh[1]
+
+                        # Call preparer once with any provided hashes so it may
+                        # highlight/mark the requested commits during prep.
+                        try:
+                            if curr is not None or prev is not None:
+                                self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".", prev_hash=prev, curr_hash=curr)
+                            else:
+                                self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".")
+                        except Exception as e:
+                            self.printException(e, "on_mount: prepRepoModeHistoryList failed")
+
+                        # Record the requested values for later use.
+                        try:
+                            self.current_prev_sha = prev
+                            self.current_commit_sha = curr
+                        except Exception as e:
+                            self.printException(e, "setting current_prev_sha and current_commit_sha failed")
+
+                        # If starting in repo-first mode and hashes were given,
+                        # populate the repo file list so the right column shows files.
+                        try:
+                            if self.repo_first and (curr is not None or prev is not None):
+                                self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
+                        except Exception as e:
+                            self.printException(e, "preparing repo mode file list failed")
+
                         # Centralize layout/focus/footer handling via change_state.
                         try:
                             self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
                         except Exception as e:
                             self.printException(e, "on_mount: change_state for history_fullscreen failed")
                     except Exception as e:
-                        self.printException(e, "on_mount: prepRepoModeHistoryList failed")
-                    # If repo hashes were provided on the command line, use them
-                    try:
-                        rh = self.repo_hashes or []
-                        if rh:
-                            # Normalize to up to two values: previous, current
-                            prev = None
-                            curr = None
-                            if len(rh) == 1:
-                                curr = rh[0]
-                            else:
-                                prev = rh[0]
-                                curr = rh[1]
-                            try:
-                                self.current_prev_sha = prev
-                                self.current_commit_sha = curr
-                            except Exception as e:
-                                self.printException(e, "setting current_prev_sha and current_commit_sha failed")
-                            try:
-                                # If starting in repo-first mode, populate the repo file list
-                                # with the specified hashes so the UI reflects them immediately.
-                                if self.repo_first:
-                                    try:
-                                        self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
-                                    except Exception as e:
-                                        self.printException(e, "preparing repo mode file list failed")
-                            except Exception as e:
-                                self.printException(e, "on_mount: initializing repo hashes failed")
-                    except Exception as e:
-                        self.printException(e, "on_mount: initializing repo hashes failed")
+                        self.printException(e, "on_mount: repo-first initialization failed")
+
 
                     # Ensure help content is prepared so help is immediately available
                     try:
@@ -5490,8 +5483,4 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as e:
-        printException(e, "fatal error in gitdiffnavtool")
-        raise
+    sys.exit(main())
