@@ -664,163 +664,116 @@ class AppBase(ListView):
             self.printException(e, "_activate_index failed")
 
     def watch_index(self, old: int | None, new: int | None) -> None:
-        """Called when `index` changes — update visual highlighting here.
+        # Delegate to a helper that performs common highlight/scroll behavior
+        try:
+            node_new = self.watch_index_helper(old, new)
+            # Dispatch to widget-specific hooks so subclass behavior is
+            # implemented in `watch_filelist_index` / `watch_history_index`
+            try:
+                if getattr(self, "is_history_list", False):
+                    try:
+                        self.watch_history_index(old, new, node_new)
+                    except Exception as e:
+                        self.printException(e, "watch_index: watch_history_index hook failed")
+                elif getattr(self, "is_file_list", False):
+                    try:
+                        self.watch_filelist_index(old, new, node_new)
+                    except Exception as e:
+                        self.printException(e, "watch_index: watch_filelist_index hook failed")
+                else:
+                    logger.debug("watch_index: no specific hook for widget %s", type(self).__name__)
+            except Exception as e:
+                self.printException(e, "watch_index: dispatch to hooks failed")
+        except Exception as e:
+            self.printException(e, "watch_index failed")
 
-        This runs after Textual applies its own highlight, so applying
-        inline styles here overrides the default selection background.
+    def watch_index_helper(self, old: int | None, new: int | None):
+        """Common highlight and scroll behavior extracted from previous watch_index.
+
+        Returns the `node_new` (or None) so callers/hooks may inspect it.
         """
         try:
             nodes = self.nodes()
             if not nodes:
-                return
-            # determine repo vs file highlight colors
+                return None
             highlight_bg = self.highlight_bg_style
             text_color = "white"
-
-            logger.debug("watch_index: old=%r new=%r nodes=%d", old, new, len(nodes))
-            # remove style/class from old if it exists. Preserve a "marked"
-            # appearance for rows that are single-marked (node._checked).
+            node_old = None
             if old is not None and 0 <= old < len(nodes):
                 try:
                     node_old = nodes[old]
-                    try:
-                        node_old.remove_class("active")
-                    except Exception as e:
-                        self.printException(e, "watch_index: remove_class failed")
-                    try:
-                        # If the old node is marked (single-mark semantics),
-                        # keep a marked-style background/color instead of
-                        # clearing everything; otherwise clear inline styles.
-                        if getattr(node_old, "_checked", False):
-                            try:
-                                node_old.styles.background = "red"
-                                node_old.styles.color = "white"
-                                node_old.styles.text_style = "bold"
-                            except Exception as e:
-                                self.printException(e, "watch_index: applying marked styles to old failed")
-                        else:
-                            node_old.styles.background = None
-                            node_old.styles.color = None
-                            node_old.styles.text_style = None
-                            logger.debug("watch_index: cleared styles for old index %s", old)
-                    except Exception as e:
-                        self.printException(e, "watch_index: clearing old styles failed")
-                except Exception as e:
-                    self.printException(e, "watch_index: deactivating old failed")
+                except Exception:
+                    node_old = None
 
-            # apply style/class to new
+            logger.debug("watch_index_helper: old=%r new=%r nodes=%d", old, new, len(nodes))
+            logger.debug("watch_index_helper: preserved marked style for old index %s hash=%r", old, getattr(node_old, "_hash", None))
+
+            # Deactivate old
+            if node_old is not None:
+                try:
+                    node_old.remove_class("active")
+                except Exception as e:
+                    self.printException(e, "watch_index_helper: remove_class failed")
+                try:
+                    if getattr(node_old, "_checked", False):
+                        node_old.styles.background = "red"
+                        node_old.styles.color = "white"
+                        node_old.styles.text_style = "bold"
+                    else:
+                        node_old.styles.background = None
+                        node_old.styles.color = None
+                        node_old.styles.text_style = None
+                        logger.debug("watch_index_helper: cleared styles for old index %s", old)
+                except Exception as e:
+                    self.printException(e, "watch_index_helper: clearing old styles failed")
+
+            node_new = None
             if new is not None and 0 <= new < len(nodes):
                 try:
                     node_new = nodes[new]
                     try:
                         node_new.add_class("active")
                     except Exception as e:
-                        self.printException(e, "watch_index: add_class failed")
+                        self.printException(e, "watch_index_helper: add_class failed")
                     try:
                         node_new.styles.background = highlight_bg
                         node_new.styles.color = text_color
                         node_new.styles.text_style = "bold"
-                        logger.debug(
-                            "watch_index: applied highlight to new index %s text=%s", new, self.text_of(node_new)
-                        )
+                        logger.debug("watch_index_helper: applied highlight to new index %s text=%s", new, self.text_of(node_new))
                     except Exception as e:
-                        self.printException(e, "watch_index: applying new highlight failed")
-                    # Ensure the newly-highlighted node is scrolled into view.
+                        self.printException(e, "watch_index_helper: applying new highlight failed")
                     try:
-                        # Use a lambda so `call_after_refresh` calls a single-arg
-                        # callable and we don't accidentally pass extra positional
-                        # args that cause TypeError in scroll_to_widget.
                         animate = False
                         try:
                             animate = bool(self._page_scroll)
-                        except Exception as e:
-                            printException(e)
+                        except Exception:
                             animate = False
-                        logger.debug("watch_index: scroll animate=%s for index %s", animate, new)
+                        logger.debug("watch_index_helper: scroll animate=%s for index %s", animate, new)
                         if hasattr(self, "scroll_to_widget"):
                             try:
                                 self.call_after_refresh(lambda: self._safe_scroll_to_widget(node_new, animate=animate))
                             except Exception as e:
-                                self.printException(e, "watch_index: scroll_to_widget(animate=) failed")
+                                self.printException(e, "watch_index_helper: scroll_to_widget(animate=) failed")
                                 try:
                                     self.call_after_refresh(lambda: self._safe_scroll_to_widget(node_new))
                                 except Exception as e2:
-                                    self.printException(e2, "watch_index: scroll_to_widget(node_new) fallback failed")
+                                    self.printException(e2, "watch_index_helper: scroll_to_widget(node_new) fallback failed")
                         else:
                             try:
-                                # Some nodes expose scroll_visible; attempt to call
-                                # it (non-animated) as a fallback.
-                                logger.debug("watch_index: scheduling node_new.scroll_visible for index %s", new)
-                                self.call_after_refresh(
-                                    lambda: self._safe_node_scroll_visible(node_new, True)
-                                )
+                                logger.debug("watch_index_helper: scheduling node_new.scroll_visible for index %s", new)
+                                self.call_after_refresh(lambda: self._safe_node_scroll_visible(node_new, True))
                             except Exception as e:
-                                self.printException(e, "watch_index: node_new.scroll_visible failed")
-                        # Reset the page_scroll flag after scheduling
+                                self.printException(e, "watch_index_helper: node_new.scroll_visible failed")
                         self._page_scroll = False
                     except Exception as e:
-                        printException(e, "watch_index: scrolling new node failed")
+                        self.printException(e, "watch_index_helper: scrolling new node failed")
                 except Exception as e:
-                    self.printException(e, "watch_index: finding new node failed")
-                # After highlighting, synchronize app-level state conservatively:
-                # - If this widget is a history list, only update app hashes.
-                # - If this widget is a file list, update app.path from the
-                #   selected node's `_raw_text` (which is a filesystem path).
-                try:
-                    if isinstance(self, HistoryListBase):
-                        try:
-                            self._compute_selected_pair()
-                        except Exception as e:
-                            self.printException(e)
-                        logger.debug(
-                            "watch_index: history widget updated app.current_hash=%r app.previous_hash=%r",
-                            self.app.current_hash,
-                            self.app.previous_hash,
-                        )
+                    self.printException(e, "watch_index_helper: finding new node failed")
 
-                    elif isinstance(self, FileListBase):
-                        try:
-                            raw = getattr(node_new, "_raw_text", None)
-                            if raw:
-                                try:
-                                    # Preserve the raw value on `app.path` for
-                                    # components that expect repo-relative names,
-                                    # but also set the canonical full filesystem
-                                    # path on `app.current_path` so other logic
-                                    # can rely on a realpath.
-                                    self.app.path = raw
-                                except Exception as _ex:
-                                    printException(_ex)
-                                try:
-                                    if os.path.isabs(raw):
-                                        full = raw
-                                    else:
-                                        full = os.path.join(self.app.repo_root, raw)
-                                    # Setter canonicalizes via realpath
-                                    try:
-                                        self.app.current_path = full
-                                    except Exception as _ex:
-                                        printException(_ex)
-                                        # Best-effort fallback: store raw full
-                                        try:
-                                            self.app._current_path = os.path.realpath(full)
-                                        except Exception as e:
-                                            self.printException(e)
-                                except Exception as e:
-                                    self.printException(e)
-                            logger.debug(
-                                "watch_index: file widget set app.path=%r app.current_path=%r",
-                                self.app.path,
-                                self.app.current_path,
-                            )
-                        except Exception as e:
-                            self.printException(e)
-                    else:
-                        logger.debug("watch_index: widget type %s - not updating app.path", type(self).__name__)
-                except Exception as e:
-                    self.printException(e, "watch_index: post-highlight app state sync failed")
+            return node_new
         except Exception as e:
-            self.printException(e, "watch_index failed")
+            self.printException(e, "watch_index_helper failed")
+            return None
 
     def _highlight_match(self, match: Optional[str]) -> None:
         """Highlight the first node whose raw text or _hash matches `match`.
@@ -1376,6 +1329,31 @@ class FileListBase(AppBase):
             logger.debug("FileListBase index changed %r -> %r", old, new)
         except Exception as e:
             self.printException(e, "FileListBase.watch_index failed")
+
+    def watch_filelist_index(self, old: int | None, new: int | None, node_new) -> None:
+        """File-list specific post-highlight hook.
+
+        Keeps `app.path` and `app.current_path` in sync with the newly-highlighted
+        row's `_raw_text` value where appropriate.
+        """
+        try:
+            raw = getattr(node_new, "_raw_text", None)
+            if raw:
+                try:
+                    self.app.path = raw
+                except Exception as _ex:
+                    self.printException(_ex, "watch_filelist_index: setting app.path failed")
+                try:
+                    full = raw if os.path.isabs(raw) else os.path.join(self.app.repo_root or "", raw)
+                    self.app.current_path = full
+                except Exception as _ex:
+                    self.printException(_ex, "watch_filelist_index: setting app.current_path failed")
+            try:
+                logger.debug("watch_filelist_index: set app.path=%r app.current_path=%r", getattr(self.app, "path", None), getattr(self.app, "current_path", None))
+            except Exception:
+                pass
+        except Exception as e:
+            self.printException(e, "watch_filelist_index failed")
 
     def on_list_view_highlighted(self, event) -> None:
         """Hook invoked by Textual when the list view highlight changes.
@@ -2791,6 +2769,25 @@ class HistoryListBase(AppBase):
     def on_list_view_highlighted(self, event) -> None:
         """Hook invoked when the history list highlight changes; logs the event."""
         logger.debug("history highlighted: %s", event)
+
+    def watch_history_index(self, old: int | None, new: int | None, node_new) -> None:
+        """History-list specific post-highlight hook.
+
+        Compute the selected commit pair and publish `app.current_hash` and
+        `app.previous_hash` so other components (file preparers, diffs)
+        can rely on them immediately.
+        """
+        try:
+            try:
+                self._compute_selected_pair()
+            except Exception as e:
+                self.printException(e, "watch_history_index: computing selected pair failed")
+            try:
+                logger.debug("watch_history_index: updated app.current_hash=%r app.previous_hash=%r", getattr(self.app, "current_hash", None), getattr(self.app, "previous_hash", None))
+            except Exception:
+                pass
+        except Exception as e:
+            self.printException(e, "watch_history_index failed")
 
     def _compute_selected_pair(self) -> tuple[str | None, str | None]:
         """Return (prev_hash, curr_hash) where prev is older and curr is newer.
