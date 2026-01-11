@@ -2101,10 +2101,15 @@ class FileModeFileList(FileListBase):
                 self.printException(e, "_activate_or_open: repo_status check failed")
 
             try:
-                # Default behavior: switch to file-history mode for the file
-                self.prepFileModeHistoryList(raw)
+                # Default behavior: prepare the right-hand file-history widget
+                # (the app composes a FileModeHistoryList on the right) and
+                # invoke its preparer so the UI shows the file's history.
+                try:
+                    self.app.file_mode_history_list.prepFileModeHistoryList(raw)
+                except Exception as e:
+                    self.printException(e, "_activate_or_open: app.file_mode_history_list.prepFileModeHistoryList failed")
             except Exception as e:
-                self.printException(e, "_activate_or_open: prepFileModeHistoryList failed")
+                self.printException(e, "_activate_or_open outer prep failed")
 
             try:
                 # Switch UI to file-history layout and focus
