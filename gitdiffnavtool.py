@@ -250,6 +250,11 @@ class AppBase(ListView):
         self.highlight_bg_style = HIGHLIGHT_DEFAULT_BG
 
     def printException(self, e: Exception, msg: Optional[str] = None) -> None:
+        """Log an exception with the calling class and function name.
+
+        This mirrors the module-level `printException` but includes the
+        originating class/function context when `self` is available.
+        """
         try:
             className = type(self).__name__
             funcName = sys._getframe(1).f_code.co_name
@@ -978,6 +983,7 @@ class AppBase(ListView):
     # them individually and keep key logic co-located with widget state.
 
     def key_up(self, event: events.Key | None = None) -> None:
+        """Move the selection up by one item, honoring `event.stop()` if provided."""
         logger.debug("AppBase.key_up called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
@@ -998,6 +1004,7 @@ class AppBase(ListView):
             self.printException(e, "key_up outer failure")
 
     def key_down(self, event: events.Key | None = None) -> None:
+        """Move the selection down by one item, honoring `event.stop()` if provided."""
         logger.debug("AppBase.key_down called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
@@ -1015,6 +1022,11 @@ class AppBase(ListView):
             self.printException(e, "key_down outer failure")
 
     def key_page_down(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Scroll forward by approximately one page and activate the new index.
+
+        When `recursive` is true this is an alias invocation and logging is
+        suppressed to avoid duplicate messages.
+        """
         if not recursive:
             logger.debug("AppBase.key_pagedown called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
@@ -1050,14 +1062,21 @@ class AppBase(ListView):
     # page up / page down (e.g. 'pageup', 'pagedown', 'prior', 'next'). Provide
     # aliases that delegate to the canonical handlers so keys are handled.
     def key_pageup(self, event: events.Key | None = None) -> None:
+        """Alias for `key_page_up`; preserves event semantics and logging."""
         logger.debug("AppBase.key_pageup called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_page_up(event, recursive=True)
 
     def key_pagedown(self, event: events.Key | None = None) -> None:
+        """Alias for `key_page_down`; preserves event semantics and logging."""
         logger.debug("AppBase.key_pagedown called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_page_down(event, recursive=True)
 
     def key_page_up(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Scroll backward by approximately one page and activate the new index.
+
+        When `recursive` is true this is an alias invocation and logging is
+        suppressed to avoid duplicate messages.
+        """
         if not recursive:
             logger.debug("AppBase.key_pageup called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
@@ -1092,16 +1111,17 @@ class AppBase(ListView):
             self.printException(e, "key_page_up failed")
 
     def key_prior(self, event: events.Key | None = None) -> None:
-        # 'prior' is sometimes used for PageUp
+        """Alias mapping for terminals that report PageUp as 'prior'."""
         logger.debug("AppBase.key_prior called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_page_up(event, recursive=True)
 
     def key_next(self, event: events.Key | None = None) -> None:
-        # 'next' is sometimes used for PageDown
+        """Alias mapping for terminals that report PageDown as 'next'."""
         logger.debug("AppBase.key_next called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_page_down(event, recursive=True)
 
     def key_home(self, event: events.Key | None = None) -> None:
+        """Move selection to the first selectable index."""
         logger.debug("AppBase.key_home called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
@@ -1115,6 +1135,7 @@ class AppBase(ListView):
             self.printException(e, "key_home failed")
 
     def key_end(self, event: events.Key | None = None) -> None:
+        """Move selection to the last selectable index."""
         logger.debug("AppBase.key_end called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
@@ -1132,6 +1153,7 @@ class AppBase(ListView):
 
     # Default stubs for left/right/enter — subclasses should override as needed
     def key_left(self, event: events.Key | None = None) -> None:
+        """Default left-key handler; subclasses may override to provide actions."""
         logger.debug("AppBase.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
@@ -1144,6 +1166,7 @@ class AppBase(ListView):
         return None
 
     def key_right(self, event: events.Key | None = None) -> None:
+        """Default right-key handler; subclasses may override to provide actions."""
         logger.debug("AppBase.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
@@ -1156,6 +1179,7 @@ class AppBase(ListView):
         return None
 
     def key_enter(self, event: events.Key | None = None) -> None:
+        """Default Enter-key handler; subclasses may override to provide actions."""
         logger.debug("AppBase.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
@@ -1176,7 +1200,7 @@ class FileListBase(AppBase):
     """
 
     def on_focus(self) -> None:
-        # When focused, ensure index is valid.
+        """Ensure the widget has a valid `index` when it receives focus."""
         try:
             if self.index is None:
                 self.index = self._min_index or 0
@@ -1328,7 +1352,11 @@ class FileListBase(AppBase):
             self.printException(e, "FileListBase._finalize_filelist_prep failed")
 
     def watch_index(self, old, new) -> None:
-        # Placeholder watch — concrete subclasses may override
+        """Default index-change handler for file-list widgets.
+
+        Delegates styling updates to `AppBase.watch_index` and logs the
+        index transition. Subclasses may override for custom behavior.
+        """
         try:
             # keep existing logging but delegate to base handler for styling
             try:
@@ -1340,7 +1368,10 @@ class FileListBase(AppBase):
             self.printException(e, "FileListBase.watch_index failed")
 
     def on_list_view_highlighted(self, event) -> None:
-        # Textual-specific hook placeholder for when highlighting changes.
+        """Hook invoked by Textual when the list view highlight changes.
+
+        Default implementation logs the event; subclasses may override.
+        """
         logger.debug("list view highlighted: %s", event)
 
     def _child_filename(self, node) -> str:
@@ -2096,19 +2127,20 @@ class FileModeFileList(FileListBase):
             self.printException(e, "FileModeFileList._activate_or_open failed")
 
     def key_left(self, event: events.Key | None = None) -> None:
-        # Navigate up only when the selected directory is the parent entry ('..')
-        # Use shared helper so event.stop() is honored and behavior is unified.
-        # Do not open files when pressing left; only allow entering parent dir
+        """Handle Left key in a file list: enter parent directory when selected.
+
+        This delegates to `_activate_or_open` and prevents opening files.
+        """
         logger.debug("FileModeFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         self._activate_or_open(event, enter_dir_test_fn=lambda name: name == "..", allow_file_open=False)
 
     def key_right(self, event: events.Key | None = None) -> None:
-        # Use shared helper to handle directory enter or file open.
+        """Handle Right key in a file list: enter directories or open files."""
         logger.debug("FileModeFileList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         self._activate_or_open(event, enter_dir_test_fn=lambda name: (name is not None) and name != "..")
 
     def key_enter(self, event: events.Key | None = None) -> None:
-        # Enter key: enter directories or open file history for tracked files.
+        """Enter key: enter directories or open file history for tracked files."""
         logger.debug("FileModeFileList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         self._activate_or_open(event, enter_dir_test_fn=lambda name: True)
 
@@ -2291,7 +2323,11 @@ class RepoModeFileList(FileListBase):
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
 
     def key_left(self, event: events.Key | None = None) -> None:
-        # Move to previous view or update state in main app (stub)
+        """Handle Left key in repo-mode file list: switch to history fullscreen.
+
+        Typically moves focus back to the left history column or toggles
+        the paired layout; defensive with event.stop() handling.
+        """
         logger.debug("RepoModeFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
             try:
@@ -2305,7 +2341,12 @@ class RepoModeFileList(FileListBase):
             self.printException(e, "RepoModeFileList.key_left change_state failed")
 
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
-        # Open diff view for selected file: delegate to DiffList and switch layout.
+        """Open diff view for the selected file and switch to the file view.
+
+        Delegates to `DiffList` to prepare the diff and records the
+        app-level `path` for downstream helpers. Honors `recursive` when
+        invoked as an alias.
+        """
         if not recursive:
             logger.debug("RepoModeFileList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
@@ -2586,6 +2627,7 @@ class HistoryListBase(AppBase):
         self.is_history_list = 1
 
     def _add_row(self, text: str, commit_hash: str | None) -> None:
+        """Append a commit-row with `text` and attach `commit_hash` metadata."""
         try:
             # Visible rows are prefixed with two spaces for alignment; keep
             # `_raw_text` as the original value for metadata and matching.
@@ -2622,6 +2664,10 @@ class HistoryListBase(AppBase):
             return f"{h or ''} {msg}".strip()
 
     def toggle_check_current(self, idx: int | None = None) -> None:
+        """Toggle a single-mark (checked) state on the selected history row.
+
+        Enforces single-mark semantics: marking one row unmarks others.
+        """
         try:
             if idx is None:
                 idx = self.index or 0
@@ -2680,10 +2726,16 @@ class HistoryListBase(AppBase):
             self.printException(e, "HistoryListBase.key_m failed")
 
     def key_M(self, event: events.Key | None = None) -> None:
+        """Alias for `key_m` used to support Shift-M bindings."""
         logger.debug("HistoryListBase.key_M called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_m(event, recursive=True)
 
     def compute_commit_pair_hashes(self, idx: int | None = None) -> tuple[str | None, str | None]:
+        """Compute (prev_hash, curr_hash) pair from the history list selection.
+
+        Returns (prev, curr) where `prev` is the older commit and `curr` is the
+        currently-selected commit when available.
+        """
         try:
             if idx is None:
                 idx = self.index or 0
@@ -2699,6 +2751,7 @@ class HistoryListBase(AppBase):
             return (None, None)
 
     def on_focus(self) -> None:
+        """Ensure the history widget has a valid `index` when focused."""
         try:
             if self.index is None:
                 # Respect widget-specific minimum index when focusing
@@ -2707,6 +2760,7 @@ class HistoryListBase(AppBase):
             self.printException(e, "HistoryListBase.on_focus")
 
     def on_list_view_highlighted(self, event) -> None:
+        """Hook invoked when the history list highlight changes; logs the event."""
         logger.debug("history highlighted: %s", event)
 
     def _compute_selected_pair(self) -> tuple[str | None, str | None]:
@@ -3213,7 +3267,7 @@ class FileModeHistoryList(HistoryListBase):
             self.printException(e, "FileModeHistoryList.key_right prep failed")
 
     def key_enter(self, event: events.Key | None = None) -> None:
-        # Same behavior as Right: open the file commit-pair diff
+        """Enter-key handler — same behavior as Right: open the file commit-pair diff."""
         logger.debug("FileModeHistoryList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_right(event, recursive=True)
 
@@ -3663,7 +3717,7 @@ class RepoModeHistoryList(HistoryListBase):
             self.printException(e, "RepoModeHistoryList.key_right failed")
 
     def key_enter(self, event: events.Key | None = None) -> None:
-        # Same behavior as Right: open the commit-pair file list
+        """Enter-key handler — same behavior as Right: open the commit-pair file list."""
         logger.debug("RepoModeHistoryList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_right(event, recursive=True)
 
@@ -3693,6 +3747,13 @@ class DiffList(AppBase):
         self._saved_layout: str | None = None
 
     def prepDiffList(self, filename: str, prev: str, curr: str, variant_index: int, go_back: tuple) -> None:
+        """Prepare and display a diff for `filename` between `prev` and `curr`.
+
+        This builds a diff command via `app.build_diff_cmd`, falls back to
+        a metadata summary when no textual diff is present, and renders the
+        output into the diff list. `variant_index` selects a diff variant
+        from `app.diff_variants` and `go_back` records the return location.
+        """
         try:
             logger.debug(
                 "DiffList.prepDiffList: filename=%s prev=%s curr=%s variant=%s go_back=%s",
@@ -3809,6 +3870,7 @@ class DiffList(AppBase):
             self.printException(e, "prepDiffList failed")
 
     def key_c(self, event: events.Key | None = None) -> None:
+        """Toggle colorization of the diff output and re-render."""
         logger.debug(
             "DiffList.key_c called: key=%r index=%r", getattr(event, "key", None), self.index
         )
@@ -3854,6 +3916,7 @@ class DiffList(AppBase):
             self.printException(e, "DiffList.key_right failed")
 
     def key_C(self, event: events.Key | None = None) -> None:
+        """Alias for `key_c` (Shift-C)."""
         logger.debug("DiffList.key_C called: key=%r", getattr(event, "key", None))
         return self.key_c(event, recursive=True)
 
@@ -3892,6 +3955,7 @@ class DiffList(AppBase):
             self.printException(e, "_render_output failed")
 
     def key_d(self, event: events.Key | None = None) -> None:
+        """Cycle to the next diff variant and re-run `prepDiffList`."""
         logger.debug(
             "DiffList.key_d called: key=%r variant=%r index=%r",
             getattr(event, "key", None),
@@ -3928,6 +3992,7 @@ class DiffList(AppBase):
             self.printException(e, "DiffList.key_d failed")
 
     def key_D(self, event: events.Key | None = None) -> None:
+        """Alias for `key_d` (Shift-D)."""
         logger.debug(
             "DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), self.index
         )
@@ -4089,6 +4154,11 @@ class HelpList(AppBase):
         self.highlight_bg_style = HIGHLIGHT_HELP_BG
 
     def prepHelp(self) -> None:
+        """Populate the help list with rendered Markdown blocks.
+
+        Splits the help text into paragraph blocks and appends each as a
+        separate `ListItem` so the ListView can provide natural scrolling.
+        """
         try:
             logger.debug("prepHelp: invoked")
             self.clear()
@@ -4122,6 +4192,7 @@ class HelpList(AppBase):
             self.printException(e, "prepHelp failed")
 
     def key_enter(self, event: events.Key | None = None) -> None:
+        """Return from the help view to the previously-saved app state."""
         logger.debug(
             "HelpList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index
         )
@@ -4222,6 +4293,11 @@ class GitHistoryNavTool(App):
 
     @current_path.setter
     def current_path(self, value: str) -> None:
+        """Setter for `current_path` which canonicalizes and stores a realpath.
+
+        Treats falsy values as `.` and logs failures while preserving the
+        original value on error.
+        """
         try:
             # Treat empty/false as '.' and always store realpath
             p = value if value else "."
@@ -4248,6 +4324,11 @@ class GitHistoryNavTool(App):
             printException(e_fallback, "GitHistoryNavTool.printException fallback")
 
     def compose(self):
+        """Yield the canonical six-column layout widgets for the app.
+
+        The method composes header, six content columns (files/history/diff/help),
+        and the footer label used by `change_footer`.
+        """
         # Compose the canonical six-column layout using Vertical columns
         yield Header()
         with Horizontal(id="main"):
@@ -4276,6 +4357,11 @@ class GitHistoryNavTool(App):
         yield Label(Text(""), id="footer")
 
     async def on_mount(self) -> None:
+        """Resolve widget references and perform initial preparatory actions.
+
+        This should not perform repository discovery; `main()` handles that
+        and passes `repo_root` into the app constructor.
+        """
         try:
             # Repo discovery is handled by `main()` and passed into the app;
             # do not perform any repo scans here.
@@ -4422,11 +4508,12 @@ class GitHistoryNavTool(App):
             self.printException(e, "key_h outer failure")
 
     def key_H(self, event: events.Key | None = None) -> None:
+        """Alias for `key_h` (uppercase H)."""
         logger.debug("GitHistoryNavTool.key_H called: key=%r", getattr(event, "key", None))
         return self.key_h(event, recursive=True)
 
     def key_question(self, event: events.Key | None = None) -> None:
-        # Some terminals map '?' to 'question'
+        """Handle terminal mappings where '?' is reported as 'question' by delegating to help."""
         logger.debug("GitHistoryNavTool.key_question called: key=%r", getattr(event, "key", None))
         return self.key_h(event, recursive=True)
 
@@ -5068,19 +5155,25 @@ class GitHistoryNavTool(App):
             self.printException(e, "toggle outer failure")
 
     def key_s(self, event: events.Key | None = None) -> None:
+        """Toggle the paired layout for the current layout (invoked by 's')."""
         logger.debug("GitHistoryNavTool.key_s called: key=%r", getattr(event, "key", None))
         return self.toggle(self._current_layout, event)
 
     def key_S(self, event: events.Key | None = None) -> None:
+        """Alias for `key_s` (Shift-S)."""
         logger.debug("GitHistoryNavTool.key_S called: key=%r", getattr(event, "key", None))
         return self.key_s(event, recursive=True)
 
     # Per-layout toggle implementations. These prepare lists and switch
     # layouts in pairs so the `s` key toggles between related views.
     def toggle_file_fullscreen(self) -> None:
-        # When toggling from file_fullscreen, populate the repo history
-        # so the paired history_fullscreen view is ready.
+        """Toggle between file fullscreen and the paired history fullscreen view.
+
+        Prepares the paired view content so the transition feels immediate.
+        """
         try:
+            # When toggling from file_fullscreen, populate the repo history
+            # so the paired history_fullscreen view is ready.
             self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".")
         except Exception as e:
             self.printException(e, "toggle_file_fullscreen prepRepoModeHistoryList failed")
@@ -5090,8 +5183,10 @@ class GitHistoryNavTool(App):
             self.printException(e, "toggle_file_fullscreen change_state failed")
 
     def toggle_history_fullscreen(self) -> None:
-        # When toggling from history_fullscreen, prepare the left file list
-        # and highlight the current filename when available.
+        """Toggle between history fullscreen and the paired file fullscreen view.
+
+        Prepares the file list and sets focus/footers appropriately.
+        """
         try:
             hl = os.path.basename(self.path) if self.path else None
             self.file_mode_file_list.prepFileModeFileList(self.path or ".", hl)
@@ -5103,6 +5198,11 @@ class GitHistoryNavTool(App):
             self.printException(e, "toggle_history_fullscreen change_state failed")
 
     def toggle_file_history(self) -> None:
+        """Switch to a history view for the current file and prepare paired file list.
+
+        Reads authoritative commit hashes after preparing the repo history and
+        then prepares the repo file list highlighting the canonical filename.
+        """
         # Save transient values
         saved_path = self.current_path
         try:
@@ -5152,6 +5252,11 @@ class GitHistoryNavTool(App):
             self.printException(e, "toggle_file_history change_state failed")
 
     def toggle_history_file(self) -> None:
+        """Switch to file-history layout for the current file and prepare lists.
+
+        Prepares the right file list and the file's history preparer, then
+        switches the UI to the paired layout.
+        """
         # Save transient values
         saved_path = self.current_path
         saved_curr = self.current_hash
@@ -5185,6 +5290,10 @@ class GitHistoryNavTool(App):
             self.printException(e, "toggle_history_file change_state failed")
 
     def toggle_file_history_diff(self) -> None:
+        """Toggle to a file-history diff in the right diff column.
+
+        Prepares file-history state then shows the diff and updates `diff_list.go_back`.
+        """
         try:
             self.toggle_file_history()
         except Exception as e:
@@ -5200,6 +5309,7 @@ class GitHistoryNavTool(App):
             self.printException(e, "toggle_file_history_diff change_state failed")
 
     def toggle_history_file_diff(self) -> None:
+        """Toggle to a history-file diff view and set appropriate go-back state."""
         try:
             self.toggle_history_file()
         except Exception as e:
@@ -5214,7 +5324,7 @@ class GitHistoryNavTool(App):
             self.printException(e, "toggle_history_file_diff change_state failed")
 
     def toggle_diff_fullscreen(self) -> None:
-        # If the diff has a saved layout, toggle back to it via recursive dispatch
+        """If a saved diff layout exists, toggle back to it via recursive dispatch."""
         try:
             saved = self.diff_list._saved_layout
             if saved:
@@ -5281,6 +5391,12 @@ def discover_repo_worktree(start_path: str | None) -> str:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    """Command-line entry point for gitdiffnavtool.
+
+    Parses CLI arguments, locates the repository worktree, configures
+    logging, and launches the `GitHistoryNavTool` Textual application.
+    Returns process exit code (0 on success).
+    """
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
     parser.add_argument("path", nargs="?", default=".", help="directory or file to open")
     parser.add_argument(
