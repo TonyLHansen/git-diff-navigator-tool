@@ -233,8 +233,6 @@ class AppBase(ListView):
         # Safe defaults so other code can access these attributes early
         self._min_index = 0
         self._populated = False
-        self.current_prev_sha = None
-        self.current_commit_sha = None
         self.current_diff_file = None
         # When True the next watch_index-triggered scroll should animate
         # (used by page up / page down handlers to make the jump more
@@ -680,7 +678,8 @@ class AppBase(ListView):
             text_color = "white"
 
             logger.debug("watch_index: old=%r new=%r nodes=%d", old, new, len(nodes))
-            # remove style/class from old if it exists
+            # remove style/class from old if it exists. Preserve a "marked"
+            # appearance for rows that are single-marked (node._checked).
             if old is not None and 0 <= old < len(nodes):
                 try:
                     node_old = nodes[old]
@@ -689,10 +688,21 @@ class AppBase(ListView):
                     except Exception as e:
                         self.printException(e, "watch_index: remove_class failed")
                     try:
-                        node_old.styles.background = None
-                        node_old.styles.color = None
-                        node_old.styles.text_style = None
-                        logger.debug("watch_index: cleared styles for old index %s", old)
+                        # If the old node is marked (single-mark semantics),
+                        # keep a marked-style background/color instead of
+                        # clearing everything; otherwise clear inline styles.
+                        if getattr(node_old, "_checked", False):
+                            try:
+                                node_old.styles.background = "red"
+                                node_old.styles.color = "white"
+                                node_old.styles.text_style = "bold"
+                            except Exception as e:
+                                self.printException(e, "watch_index: applying marked styles to old failed")
+                        else:
+                            node_old.styles.background = None
+                            node_old.styles.color = None
+                            node_old.styles.text_style = None
+                            logger.debug("watch_index: cleared styles for old index %s", old)
                     except Exception as e:
                         self.printException(e, "watch_index: clearing old styles failed")
                 except Exception as e:
@@ -2672,6 +2682,7 @@ class HistoryListBase(AppBase):
             if idx is None:
                 idx = self.index or 0
             nodes = self.nodes()
+            logger.debug("toggle_check_current: called idx=%r node_count=%d", idx, len(nodes) if nodes is not None else 0)
             if not (0 <= idx < len(nodes)):
                 return
             # Enforce single-mark semantics: mark the selected item (M ) and
@@ -2679,6 +2690,7 @@ class HistoryListBase(AppBase):
             try:
                 selected_node = nodes[idx]
                 was_marked = getattr(selected_node, "_checked", False)
+                logger.debug("toggle_check_current: selected_idx=%d selected_hash=%r was_marked=%r", idx, getattr(selected_node, "_hash", None), was_marked)
                 # If it was marked, unmark everything; otherwise mark selected and unmark others
                 for i, node in enumerate(nodes):
                     try:
@@ -2696,9 +2708,26 @@ class HistoryListBase(AppBase):
                                 # Marked: prefix with 'M ' and apply contrasting style
                                 marked_txt = Text(f"M {raw}", style="bold white on red")
                                 lbl.update(marked_txt)
+                                try:
+                                    # Also apply a persistent per-node background so
+                                    # the marking remains visible even when
+                                    # the widget highlight logic runs.
+                                    node.styles.background = "red"
+                                    node.styles.color = "white"
+                                    node.styles.text_style = "bold"
+                                    logger.debug("toggle_check_current: applied styles idx=%d hash=%r", i, getattr(node, "_hash", None))
+                                except Exception as e:
+                                    self.printException(e, "toggle_check_current: applying node styles failed")
                             else:
                                 # Unmarked: two-space prefix (already applied during add), plain style
                                 lbl.update(Text(f"  {raw}"))
+                                try:
+                                    node.styles.background = None
+                                    node.styles.color = None
+                                    node.styles.text_style = None
+                                    logger.debug("toggle_check_current: cleared styles idx=%d hash=%r", i, getattr(node, "_hash", None))
+                                except Exception as e:
+                                    self.printException(e, "toggle_check_current: clearing node styles failed")
                         except Exception as e:
                             self.printException(e, "updating label renderable failed")
                     except Exception as e:
@@ -2834,6 +2863,7 @@ class HistoryListBase(AppBase):
                                 try:
                                     if getattr(node, "_hash", None) == prev_hash:
                                         try:
+                                            logger.debug("prepRepoModeHistoryList: invoking toggle_check_current at index=%d for prev_hash=%r", i, prev_hash)
                                             self.toggle_check_current(i)
                                         except Exception as e:
                                             self.printException(e, "HistoryListBase._finalize_historylist_prep: toggle_check_current failed")
@@ -3383,15 +3413,31 @@ class RepoModeHistoryList(HistoryListBase):
 
             self._populated = True
             # Highlight requested commits when provided. Prefer highlighting
-            # the `curr_hash` then marking `prev_hash` as the checked row.
+            # the `curr_hash`. If a `prev_hash` is also provided, mark it
+            # (single-check semantics) so callers may use a checked row as
+            # one side of the commit pair.
             try:
                 if curr_hash:
                     self._highlight_match(curr_hash)
+                    # If prev_hash also provided, mark that row as checked
+                    if prev_hash:
+                        try:
+                            for i, node in enumerate(self.nodes()):
+                                if getattr(node, "_hash", None) == prev_hash:
+                                    try:
+                                        logger.debug("prepRepoModeHistoryList: invoking toggle_check_current at index=%d for prev_hash=%r", i, prev_hash)
+                                        self.toggle_check_current(i)
+                                    except Exception as e:
+                                        self.printException(e, "prepRepoModeHistoryList toggle_check_current failed")
+                                    break
+                        except Exception as e:
+                            self.printException(e, "prepRepoModeHistoryList marking prev_hash failed")
                 elif prev_hash:
                     # find and mark the previous commit row
                     for i, node in enumerate(self.nodes()):
                         if getattr(node, "_hash", None) == prev_hash:
                             try:
+                                logger.debug("prepRepoModeHistoryList: invoking toggle_check_current at index=%d for prev_hash=%r", i, prev_hash)
                                 self.toggle_check_current(i)
                             except Exception as e:
                                 self.printException(e, "prepRepoModeHistoryList toggle_check_current failed")
@@ -4386,7 +4432,7 @@ class GitHistoryNavTool(App):
                             self.printException(e, "on_mount: change_state for file_fullscreen failed")
                     except Exception as e:
                         self.printException(e, "on_mount: prepFileModeFileList failed")
-else:
+                else:
                     # If starting in repo-first mode, pre-populate the left
                     # repository-history widget so the UI shows commits immediately.
                     try:
@@ -4395,42 +4441,35 @@ else:
                         prev = None
                         curr = None
                         if rh:
-                            if len(rh) == 1:
-                                curr = rh[0]
-                            else:
-                                curr = rh[0]
+                            curr = rh[0]
+                            if len(rh) > 1:
                                 prev = rh[1]
 
                         # Call preparer once with any provided hashes so it may
                         # highlight/mark the requested commits during prep.
                         try:
-                            if curr is not None or prev is not None:
-                                self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".", prev_hash=prev, curr_hash=curr)
-                            else:
-                                self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".")
+                            self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".", prev_hash=prev, curr_hash=curr)
                         except Exception as e:
                             self.printException(e, "on_mount: prepRepoModeHistoryList failed")
 
-                        # Record the requested values for later use.
-                        try:
-                            self.current_prev_sha = prev
-                            self.current_commit_sha = curr
-                        except Exception as e:
-                            self.printException(e, "setting current_prev_sha and current_commit_sha failed")
-
                         # If starting in repo-first mode and hashes were given,
                         # populate the repo file list so the right column shows files.
-                        try:
-                            if self.repo_first and (curr is not None or prev is not None):
-                                self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
-                        except Exception as e:
-                            self.printException(e, "preparing repo mode file list failed")
-
-                        # Centralize layout/focus/footer handling via change_state.
-                        try:
-                            self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
-                        except Exception as e:
-                            self.printException(e, "on_mount: change_state for history_fullscreen failed")
+                        if curr is not None or prev is not None:
+                            try:
+                                    self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
+                            except Exception as e:
+                                self.printException(e, "preparing repo mode file list failed")
+                            # Centralize layout/focus/footer handling via change_state.
+                            try:
+                                self.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
+                            except Exception as e:
+                                self.printException(e, "on_mount: change_state for history_fullscreen failed")
+                        else:
+                            # Centralize layout/focus/footer handling via change_state.
+                            try:
+                                self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
+                            except Exception as e:
+                                self.printException(e, "on_mount: change_state for history_fullscreen failed")
                     except Exception as e:
                         self.printException(e, "on_mount: repo-first initialization failed")
 
