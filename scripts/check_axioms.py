@@ -87,7 +87,7 @@ def list_py_files(root: Path) -> List[Path]:
     # they don't end with .py. Use os.walk with directory pruning to avoid
     # descending into large virtualenv/site-packages/__pycache__ trees.
     shebang_re = re.compile(r"^#!.*python")
-    exclude_names = {"__pycache__", ".git", "build", "dist"}
+    exclude_names = {"__pycache__", ".git", "build", "dist", "tmp"}
 
     for dirpath, dirnames, filenames in os.walk(root):
         try:
@@ -547,42 +547,39 @@ def check_logger_in_try_blocks(path: Path, text: str, tree: ast.AST) -> List[Tup
     """
     errs: List[Tuple[str, int, str]] = []
 
-    class Visitor(ast.NodeVisitor):
-        def visit_Try(self, node: ast.Try) -> None:
-            try:
-                # Only consider Try nodes that have at least one except handler
-                if not getattr(node, "handlers", None):
-                    return
-                body = getattr(node, "body", []) or []
-                if len(body) != 1:
-                    return
-                stmt = body[0]
-                # match a single logger.<method>(...) expression or assignment
-                func = None
-                call_node = None
-                if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-                    call_node = stmt.value
-                elif isinstance(stmt, ast.Assign) and isinstance(getattr(stmt, "value", None), ast.Call):
-                    call_node = stmt.value
-                elif isinstance(stmt, ast.AnnAssign) and isinstance(getattr(stmt, "value", None), ast.Call):
-                    call_node = stmt.value
+    # Simpler, robust implementation: walk Try nodes and apply the predicate
+    try:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try):
+                continue
+            # must have except handlers
+            if not getattr(node, "handlers", None):
+                continue
+            body = getattr(node, "body", []) or []
+            if len(body) != 1:
+                continue
+            stmt = body[0]
+            call_node = None
+            if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+                call_node = stmt.value
+            elif isinstance(stmt, ast.Assign) and isinstance(getattr(stmt, "value", None), ast.Call):
+                call_node = stmt.value
+            elif isinstance(stmt, ast.AnnAssign) and isinstance(getattr(stmt, "value", None), ast.Call):
+                call_node = stmt.value
+            if call_node is None:
+                continue
+            func = call_node.func
+            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "logger":
+                lineno = getattr(node, "lineno", None)
+                method = getattr(func, "attr", "<method>")
+                logger.debug("logger-in-try match at %s method=%s", lineno, method)
+                if lineno is not None:
+                    errs.append(
+                        (str(path), lineno, f"try/except wraps single logger.{method}(...); remove the try/except around the logger call")
+                    )
+    except Exception as e:
+        printException(e, f"walking Try in {path} for logger-in-try")
 
-                if call_node is None:
-                    return
-
-                func = call_node.func
-                if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "logger":
-                    lineno = getattr(node, "lineno", None)
-                    method = getattr(func, "attr", "<method>")
-                    if lineno is not None:
-                        errs.append(
-                            (str(path), lineno, f"try/except wraps single logger.{method}(...); remove the try/except around the logger call")
-                        )
-            except Exception as e:
-                printException(e, f"walking Try in {path} for logger-in-try")
-            self.generic_visit(node)
-
-    Visitor().visit(tree)
     return errs
 
 
@@ -1132,6 +1129,13 @@ def main(argv: List[str] | None = None) -> int:
                     print(f"{p}: could not be parsed as Python source; skipping AST-based checks")
                     continue
 
+                logger.debug(
+                    "AST-check decision: check_bare_excepts=%s check_except_as_print=%s check_pass=%s check_logger_in_try=%s",
+                    args.check_bare_excepts,
+                    args.check_except_as_print,
+                    args.check_pass,
+                    args.check_logger_in_try,
+                )
                 if (
                     args.check_bare_excepts
                     or args.check_except_as_print

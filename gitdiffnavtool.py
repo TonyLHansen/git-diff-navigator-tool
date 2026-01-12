@@ -1359,14 +1359,11 @@ class FileListBase(AppBase):
                     self.app.current_path = full
                 except Exception as _ex:
                     self.printException(_ex, "watch_filelist_index: setting app.current_path failed")
-            try:
-                logger.debug(
-                    "watch_filelist_index: set app.path=%r app.current_path=%r",
-                    self.app.path,
-                    self.app.current_path,
-                )
-            except Exception as e:
-                self.printException(e, "watch_filelist_index: debug readback failed")
+            logger.debug(
+                "watch_filelist_index: set app.path=%r app.current_path=%r",
+                self.app.path,
+                self.app.current_path,
+            )
         except Exception as e:
             self.printException(e, "watch_filelist_index failed")
 
@@ -2799,14 +2796,11 @@ class HistoryListBase(AppBase):
                 self._compute_selected_pair()
             except Exception as e:
                 self.printException(e, "watch_history_index: computing selected pair failed")
-            try:
-                logger.debug(
-                    "watch_history_index: updated app.current_hash=%r app.previous_hash=%r",
-                    self.app.current_hash,
-                    self.app.previous_hash,
-                )
-            except Exception as e:
-                self.printException(e, "watch_history_index: debug readback failed")
+            logger.debug(
+                "watch_history_index: updated app.current_hash=%r app.previous_hash=%r",
+                self.app.current_hash,
+                self.app.previous_hash,
+            )
         except Exception as e:
             self.printException(e, "watch_history_index failed")
 
@@ -4928,58 +4922,46 @@ class GitHistoryNavTool(App):
                                     except Exception as _ex:
                                         printException(_ex)
                                         before = "<unavailable>"
-                                    try:
-                                        logger.debug(
-                                            "change_focus:%d: forcing gray border for %s (before=%r)",
-                                            inspect.currentframe().f_lineno,
-                                            cname,
-                                            before,
-                                        )
-                                    except Exception as _ex:
-                                        printException(_ex)
+                                    logger.debug(
+                                        "change_focus:%d: forcing gray border for %s (before=%r)",
+                                        inspect.currentframe().f_lineno,
+                                        cname,
+                                        before,
+                                    )
                                     w.styles.border = ("solid", "gray")
                                     try:
                                         readback = getattr(w.styles, "border", None)
                                     except Exception as _ex:
                                         printException(_ex)
                                         readback = "<unavailable>"
-                                    try:
-                                        logger.debug(
-                                            "change_focus:%d: forced gray border readback=%r for %s",
-                                            inspect.currentframe().f_lineno,
-                                            readback,
-                                            cname,
-                                        )
-                                    except Exception as _ex:
-                                        printException(_ex)
+                                    logger.debug(
+                                        "change_focus:%d: forced gray border readback=%r for %s",
+                                        inspect.currentframe().f_lineno,
+                                        readback,
+                                        cname,
+                                    )
                                 except Exception as _ex:
                                     printException(_ex)
                         except Exception as _ex:
                             printException(_ex)
 
                         try:
-                            try:
-                                logger.debug(
-                                    "change_focus:%d: calling set_focus on widget=%r key=%r",
-                                    inspect.currentframe().f_lineno,
-                                    type(widget).__name__ if widget is not None else None,
-                                    key,
-                                )
-                            except Exception as _ex:
-                                printException(_ex)
+                            logger.debug(
+                                "change_focus:%d: calling set_focus on widget=%r key=%r",
+                                inspect.currentframe().f_lineno,
+                                type(widget).__name__ if widget is not None else None,
+                                key,
+                            )
                             self.set_focus(widget)
                         except Exception as e:
                             self.printException(e, f"could not set focus to widget for {target}")
                             # Fallback: resolve widget by id and call set_focus
                             try:
-                                try:
-                                    logger.debug(
-                                        "change_focus:%d: attempting widget.focus() fallback for key=%r",
-                                        inspect.currentframe().f_lineno,
-                                        key,
-                                    )
-                                except Exception as _ex:
-                                    printException(_ex)
+                                logger.debug(
+                                    "change_focus:%d: attempting widget.focus() fallback for key=%r",
+                                    inspect.currentframe().f_lineno,
+                                    key,
+                                )
                                 widget.focus()
                             except Exception as e:
                                 self.printException(e, f"could not fallback focus to widget for {target}")
@@ -4992,39 +4974,30 @@ class GitHistoryNavTool(App):
                             except Exception as _ex:
                                 printException(_ex)
                                 cur_border = "<unavailable>"
-                            try:
-                                logger.debug(
-                                    "change_focus:%d: focused widget before set border=%r key=%r",
-                                    inspect.currentframe().f_lineno,
-                                    cur_border,
-                                    key,
-                                )
-                            except Exception as _ex:
-                                printException(_ex)
-                            try:
-                                logger.debug(
-                                    "change_focus:%d: setting focused widget.styles.border -> %r for key=%r",
-                                    inspect.currentframe().f_lineno,
-                                    ("solid", "white"),
-                                    key,
-                                )
-                            except Exception as _ex:
-                                printException(_ex)
+                            logger.debug(
+                                "change_focus:%d: focused widget before set border=%r key=%r",
+                                inspect.currentframe().f_lineno,
+                                cur_border,
+                                key,
+                            )
+                            logger.debug(
+                                "change_focus:%d: setting focused widget.styles.border -> %r for key=%r",
+                                inspect.currentframe().f_lineno,
+                                ("solid", "white"),
+                                key,
+                            )
                             widget.styles.border = ("solid", "white")
                             try:
                                 readback = getattr(widget.styles, "border", None)
                             except Exception as _ex:
                                 printException(_ex)
                                 readback = "<unavailable>"
-                            try:
-                                logger.debug(
-                                    "change_focus:%d: focused widget.styles.border readback=%r key=%r",
-                                    inspect.currentframe().f_lineno,
-                                    readback,
-                                    key,
-                                )
-                            except Exception as _ex:
-                                printException(_ex)
+                            logger.debug(
+                                "change_focus:%d: focused widget.styles.border readback=%r key=%r",
+                                inspect.currentframe().f_lineno,
+                                readback,
+                                key,
+                            )
                         except Exception as _ex:
                             printException(_ex)
                             # Attempt to resolve by id and set border
@@ -5036,15 +5009,12 @@ class GitHistoryNavTool(App):
                                     printException(_ex)
                                     w = None
                                 if w is not None:
-                                    try:
-                                        logger.debug(
-                                            "change_focus:%d: setting fallback widget.styles.border -> %r for resolved id=%r",
-                                            inspect.currentframe().f_lineno,
-                                            ("solid", "white"),
-                                            key,
-                                        )
-                                    except Exception as _ex:
-                                        printException(_ex)
+                                    logger.debug(
+                                        "change_focus:%d: setting fallback widget.styles.border -> %r for resolved id=%r",
+                                        inspect.currentframe().f_lineno,
+                                        ("solid", "white"),
+                                        key,
+                                    )
                                     w.styles.border = ("solid", "white")
                             except Exception as _ex:
                                 printException(_ex)

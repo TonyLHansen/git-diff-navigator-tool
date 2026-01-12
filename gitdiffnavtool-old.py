@@ -701,10 +701,7 @@ class FileListBase(AppBase):
                             lbl.update(Text(raw_text, style=FILELIST_HIGHLIGHT_STYLE))
                     except Exception as e:
                         self.printException(e)
-                    try:
-                        logger.debug("FileListBase.on_list_view_highlighted: applied renderable update for item=%r label_renderable=%r", getattr(item, '_filename', None), getattr(lbl, 'renderable', None))
-                    except Exception as e:
-                        self.printException(e)
+                    logger.debug("FileListBase.on_list_view_highlighted: applied renderable update for item=%r label_renderable=%r", getattr(item, '_filename', None), getattr(lbl, 'renderable', None))
             except Exception as e:
                 self.printException(e)
 
@@ -1866,10 +1863,7 @@ class HistoryListBase(AppBase):
                                 lbl.update(Text(raw_text, style=FILELIST_HIGHLIGHT_STYLE))
                         except Exception as e:
                             self.printException(e)
-                        try:
-                            logger.debug("HistoryListBase.on_list_view_highlighted: applied renderable update for item=%r label_renderable=%r", getattr(item, '_hash', None), getattr(lbl, 'renderable', None))
-                        except Exception as e:
-                            self.printException(e)
+                        logger.debug("HistoryListBase.on_list_view_highlighted: applied renderable update for item=%r label_renderable=%r", getattr(item, '_hash', None), getattr(lbl, 'renderable', None))
                     except Exception as e:
                         self.printException(e)
                 except Exception as e:
@@ -2507,12 +2501,9 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e, "unexpected error in key_right")
                 return True
 
-            try:
-                logger.debug(
-                    "RepoModeHistoryList.key_right EXIT id=%s widget_id=%s", id(self), getattr(self, "id", None)
-                )
-            except Exception as e:
-                self.printException(e)
+            logger.debug(
+                "RepoModeHistoryList.key_right EXIT id=%s widget_id=%s", id(self), getattr(self, "id", None)
+            )
             return True
 
         except Exception as exc:
@@ -3871,11 +3862,7 @@ class GitHistoryTool(App):
 
             # GitHistoryTool footer (placed outside  so it always sits below columns)
         yield Label(self.footer_file, id="footer")
-        try:
-            logger.debug("compose: finished composing UI")
-        except Exception as e:
-            self.printException(e)
-            pass
+        logger.debug("compose: finished composing UI")
 
     async def on_mount(self) -> None:  # GitHistoryTool
         """
@@ -3924,11 +3911,7 @@ class GitHistoryTool(App):
             # Fail fast: composition did not produce the expected widgets.
             raise RuntimeError(f"Critical widget allocation/resolution failure: {e}") from e
         # Eager queries for right1/right2/right3 removed — query these widgets on demand.
-        try:
-            logger.debug("on_mount: finished initial widget resolution")
-        except Exception as e:
-            self.printException(e)
-            pass
+        logger.debug("on_mount: finished initial widget resolution")
         # Ensure the main horizontal fills remaining space so the title remains visible
         try:
             # ensure root flexes so footer remains visible (do not force 100% height)
