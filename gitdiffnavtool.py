@@ -206,6 +206,31 @@ def printException(e: Exception, msg: Optional[str] = None) -> None:
         sys.stderr.write(f"secondary exception: {e2}\n")
 
 
+class AppException:
+    """Mixin providing instance-level exception logging for apps and widgets.
+
+    This centralizes `printException` so multiple base classes can inherit
+    it and avoid duplicate implementations.
+    """
+
+    def printException(self, e: Exception, msg: Optional[str] = None) -> None:
+        """Log an exception with the calling class and function name.
+
+        Mirrors the module-level `printException` but includes the
+        originating class/function context when `self` is available.
+        """
+        try:
+            className = type(self).__name__
+            funcName = sys._getframe(1).f_code.co_name
+            short = msg or ""
+            logger.warning(f"{className}.{funcName}: {short} - {e}")
+            logger.warning(traceback.format_exc())
+        except Exception as e_fallback:
+            # Fall back to module-level printer
+            printException(e, msg)
+            printException(e_fallback, "AppException.printException fallback")
+
+
 def run_cmd_log(cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
     """Module-level wrapper for subprocess.run mirroring `AppBase._run_cmd_log`.
 
@@ -221,7 +246,7 @@ def run_cmd_log(cmd: list[str], label: str | None = None, text: bool = True, cap
     return proc
 
 
-class AppBase(ListView):
+class AppBase(AppException, ListView):
     """Base widget class for list-like components providing shared helpers.
 
     This is a minimal, safe implementation intended for Step 2 of the regen
@@ -248,22 +273,7 @@ class AppBase(ListView):
         # Per-widget highlight background; subclasses override with specific backgrounds
         self.highlight_bg_style = HIGHLIGHT_DEFAULT_BG
 
-    def printException(self, e: Exception, msg: Optional[str] = None) -> None:
-        """Log an exception with the calling class and function name.
-
-        This mirrors the module-level `printException` but includes the
-        originating class/function context when `self` is available.
-        """
-        try:
-            className = type(self).__name__
-            funcName = sys._getframe(1).f_code.co_name
-            short = msg or ""
-            logger.warning(f"{className}.{funcName}: {short} - {e}")
-            logger.warning(traceback.format_exc())
-        except Exception as e_fallback:
-            # Fall back to module-level printer
-            printException(e, msg)
-            printException(e_fallback, "AppBase.printException fallback")
+    # `printException` provided by AppException mixin
 
     def _run_cmd_log(self, cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
         """Run subprocess command, log stderr as warning and stdout at TRACE.
@@ -1220,7 +1230,7 @@ class AppBase(ListView):
             self.printException(e, "key_s_helper failed")
 
 
-class SaveSnapshotModal(ModalScreen):
+class SaveSnapshotModal(AppException, ModalScreen):
     """Modal that prompts the user to save older/newer versions of a file.
 
     The modal handles the key press and writes the requested snapshots
@@ -1242,13 +1252,13 @@ class SaveSnapshotModal(ModalScreen):
             yield Label(Text(self.message, style="bold"))
         except Exception as e:
             # Best-effort: avoid modal failure — ensure we log the original
-            printException(e, "SaveSnapshotModal.compose failed")
+            self.printException(e, "SaveSnapshotModal.compose failed")
 
             try:
                 yield Label(Text(self.message or "", style="bold"))
             except Exception as e2:
                 # If even yielding fails, log and give up
-                printException(e2, "SaveSnapshotModal.compose fallback failed")
+                self.printException(e2, "SaveSnapshotModal.compose fallback failed")
 
     def on_key(self, event: events.Key) -> None:
         """Handle a single key press: o/O -> older, n/N -> newer, b/B -> both."""
@@ -1257,7 +1267,7 @@ class SaveSnapshotModal(ModalScreen):
             try:
                 event.stop()
             except Exception as e:
-                printException(e, "SaveSnapshotModal.on_key: event.stop failed")
+                self.printException(e, "SaveSnapshotModal.on_key: event.stop failed")
 
             # Map keys to actions
             try:
@@ -1273,13 +1283,13 @@ class SaveSnapshotModal(ModalScreen):
                     if self.curr_hash:
                         self._save(self.curr_hash)
             except Exception as e:
-                printException(e, "SaveSnapshotModal.on_key: _save failed")
+                self.printException(e, "SaveSnapshotModal.on_key: _save failed")
 
         finally:
             try:
                 self.app.pop_screen()
             except Exception as e:
-                printException(e, "SaveSnapshotModal.on_key: pop_screen failed")
+                self.printException(e, "SaveSnapshotModal.on_key: pop_screen failed")
 
     def _save(self, hashval: str | None) -> None:
         """Save the file content for the given hash into a target snapshot file."""
@@ -1289,14 +1299,14 @@ class SaveSnapshotModal(ModalScreen):
         try:
             repo_root = self.repo_root or self.app.repo_root
         except Exception as e:
-            printException(e, "SaveSnapshotModal._save: accessing app.repo_root failed")
-            repo_root = self.repo_root or getattr(self.app, "repo_root", None) or "."
+            self.printException(e, "SaveSnapshotModal._save: accessing app.repo_root failed")
+            repo_root = self.repo_root or "."
 
         # Compute repo-relative path for git plumbing commands
         try:
             relpath = os.path.relpath(self.filepath, repo_root)
         except Exception as e:
-            printException(e, "SaveSnapshotModal._save: computing relpath failed")
+            self.printException(e, "SaveSnapshotModal._save: computing relpath failed")
             relpath = os.path.basename(self.filepath)
 
         target_path = f"{self.filepath}.{hashval}"
@@ -1309,12 +1319,12 @@ class SaveSnapshotModal(ModalScreen):
                     try:
                         os.makedirs(ddir, exist_ok=True)
                     except Exception as e:
-                        printException(e, "SaveSnapshotModal._save: makedirs failed")
+                        self.printException(e, "SaveSnapshotModal._save: makedirs failed")
 
                 with open(target_path, "wb") as out:
                     out.write(bdata)
             except Exception as e:
-                printException(e, f"SaveSnapshotModal._write failed for {target_path}")
+                self.printException(e, f"SaveSnapshotModal._write failed for {target_path}")
 
         # Different strategies based on hash semantics
         if hashval == "MODS":
@@ -1325,7 +1335,7 @@ class SaveSnapshotModal(ModalScreen):
                 _write_bytes(data)
                 return
             except Exception as e:
-                printException(e, "SaveSnapshotModal._save read working-tree failed")
+                self.printException(e, "SaveSnapshotModal._save read working-tree failed")
                 return
 
         if hashval == "STAGED":
@@ -1339,7 +1349,7 @@ class SaveSnapshotModal(ModalScreen):
                 _write_bytes(proc.stdout)
                 return
             except Exception as e:
-                printException(e, "SaveSnapshotModal._save STAGED failed")
+                self.printException(e, "SaveSnapshotModal._save STAGED failed")
                 return
 
         # Otherwise treat as commit-ish hash: git show <hash>:<relpath>
@@ -1351,7 +1361,7 @@ class SaveSnapshotModal(ModalScreen):
                 raise Exception(f"git show failed: {err}")
             _write_bytes(proc.stdout)
         except Exception as e:
-            printException(e, "SaveSnapshotModal._save commit show failed")
+            self.printException(e, "SaveSnapshotModal._save commit show failed")
 
 class FileListBase(AppBase):
     """Base for file list widgets.
@@ -4483,7 +4493,7 @@ class HelpList(AppBase):
             self.printException(e, "HelpList.key_enter failed")
 
 
-class GitHistoryNavTool(App):
+class GitHistoryNavTool(AppException, App):
     """Main Textual application wiring the lists together.
 
     It composes the previously defined widgets, mounts a header/footer,
@@ -4579,21 +4589,6 @@ class GitHistoryNavTool(App):
             self.printException(e, "setting current_path failed")
             self._current_path = value
 
-    def printException(self, e: Exception, msg: Optional[str] = None) -> None:
-        """Instance-level exception logger for the App to mirror widget helper.
-
-        Keeps behavior consistent with `AppBase.printException`.
-        """
-        try:
-            className = type(self).__name__
-            funcName = sys._getframe(1).f_code.co_name
-            short = msg or ""
-            logger.warning(f"{className}.{funcName}: {short} - {e}")
-            logger.warning(traceback.format_exc())
-        except Exception as e_fallback:
-            # Fall back to module-level printer
-            printException(e, msg)
-            printException(e_fallback, "GitHistoryNavTool.printException fallback")
 
     def compose(self):
         """Yield the canonical six-column layout widgets for the app.
@@ -4788,6 +4783,84 @@ class GitHistoryNavTool(App):
         """Handle terminal mappings where '?' is reported as 'question' by delegating to help."""
         logger.debug("GitHistoryNavTool.key_question called: key=%r", getattr(event, "key", None))
         return self.key_h(event, recursive=True)
+
+    def key_r(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Global revert: re-run preparers for visible HistoryList and FileList widgets.
+
+        This re-executes the prep methods for visible file/history widgets using
+        the current app state (hashes and path) to restore highlights. It does
+        not change which columns are visible or which widget has focus.
+        """
+        logger.debug("GitHistoryNavTool.key_r called: key=%r", getattr(event, "key", None))
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "key_r: event.stop failed")
+
+            # Local references to avoid repeated attribute lookups
+            app = self
+            prev = getattr(app, "previous_hash", None)
+            curr = getattr(app, "current_hash", None)
+            path = getattr(app, "path", None) or getattr(app, "current_path", None) or "."
+
+            # Helper to decide visibility (styles.display == "none" means hidden)
+            def _is_visible(widget) -> bool:
+                try:
+                    disp = getattr(getattr(widget, "styles", None), "display", None)
+                    return not (disp == "none")
+                except Exception as e:
+                    self.printException(e, "key_r: _is_visible failed")
+                    return True
+
+            # Re-run file-mode file list preparer if visible
+            try:
+                if hasattr(app, "file_mode_file_list") and _is_visible(app.file_mode_file_list):
+                    try:
+                        app.file_mode_file_list.prepFileModeFileList(path=path)
+                    except Exception as e:
+                        self.printException(e, "key_r: prepFileModeFileList failed")
+            except Exception as e:
+                self.printException(e, "key_r: checking file_mode_file_list failed")
+
+            # Re-run repo-mode file list preparer if visible
+            try:
+                if hasattr(app, "repo_mode_file_list") and _is_visible(app.repo_mode_file_list):
+                    try:
+                        app.repo_mode_file_list.prepRepoModeFileList(prev, curr)
+                    except Exception as e:
+                        self.printException(e, "key_r: prepRepoModeFileList failed")
+            except Exception as e:
+                self.printException(e, "key_r: checking repo_mode_file_list failed")
+
+            # Re-run left repo history if visible
+            try:
+                if hasattr(app, "repo_mode_history_list") and _is_visible(app.repo_mode_history_list):
+                    try:
+                        app.repo_mode_history_list.prepRepoModeHistoryList(repo_path=path, prev_hash=prev, curr_hash=curr)
+                    except Exception as e:
+                        self.printException(e, "key_r: prepRepoModeHistoryList failed")
+            except Exception as e:
+                self.printException(e, "key_r: checking repo_mode_history_list failed")
+
+            # Re-run right file history (file-mode history) if visible
+            try:
+                if hasattr(app, "file_mode_history_list") and _is_visible(app.file_mode_history_list):
+                    try:
+                        app.file_mode_history_list.prepFileModeHistoryList(path=path, prev_hash=prev, curr_hash=curr)
+                    except Exception as e:
+                        self.printException(e, "key_r: prepFileModeHistoryList failed")
+            except Exception as e:
+                self.printException(e, "key_r: checking file_mode_history_list failed")
+
+        except Exception as e:
+            self.printException(e, "key_r failed")
+
+    def key_R(self, event: events.Key | None = None) -> None:
+        """Alias for `key_r` (Shift-R)."""
+        logger.debug("GitHistoryNavTool.key_R called: key=%r", getattr(event, "key", None))
+        return self.key_r(event, recursive=True)
 
     def _apply_column_layout(
         self,
