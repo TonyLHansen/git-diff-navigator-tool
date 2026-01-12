@@ -557,16 +557,27 @@ def check_logger_in_try_blocks(path: Path, text: str, tree: ast.AST) -> List[Tup
                 if len(body) != 1:
                     return
                 stmt = body[0]
-                # match a single logger.<method>(...) expression statement
+                # match a single logger.<method>(...) expression or assignment
+                func = None
+                call_node = None
                 if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-                    func = stmt.value.func
-                    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "logger":
-                        lineno = getattr(node, "lineno", None)
-                        method = getattr(func, "attr", "<method>")
-                        if lineno is not None:
-                            errs.append(
-                                (str(path), lineno, f"try/except wraps single logger.{method}(...); remove the try/except around the logger call")
-                            )
+                    call_node = stmt.value
+                elif isinstance(stmt, ast.Assign) and isinstance(getattr(stmt, "value", None), ast.Call):
+                    call_node = stmt.value
+                elif isinstance(stmt, ast.AnnAssign) and isinstance(getattr(stmt, "value", None), ast.Call):
+                    call_node = stmt.value
+
+                if call_node is None:
+                    return
+
+                func = call_node.func
+                if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "logger":
+                    lineno = getattr(node, "lineno", None)
+                    method = getattr(func, "attr", "<method>")
+                    if lineno is not None:
+                        errs.append(
+                            (str(path), lineno, f"try/except wraps single logger.{method}(...); remove the try/except around the logger call")
+                        )
             except Exception as e:
                 printException(e, f"walking Try in {path} for logger-in-try")
             self.generic_visit(node)
@@ -954,7 +965,7 @@ def main(argv: List[str] | None = None) -> int:
         "--no-logger-in-try",
         dest="check_logger_in_try",
         action="store_false",
-        help="Skip checking for except handlers that only contain a logger.<method>(...) call (default: check)",
+        help="Skip checking for try/except where the try body contains only a logger.<method>(...) call (default: check)",
     )
     gl.add_argument("-l",
         "--logger-in-try",
@@ -1121,7 +1132,12 @@ def main(argv: List[str] | None = None) -> int:
                     print(f"{p}: could not be parsed as Python source; skipping AST-based checks")
                     continue
 
-                if args.check_bare_excepts or args.check_except_as_print or args.check_pass:
+                if (
+                    args.check_bare_excepts
+                    or args.check_except_as_print
+                    or args.check_pass
+                    or args.check_logger_in_try
+                ):
                     errs += check_file(
                         p,
                         text,

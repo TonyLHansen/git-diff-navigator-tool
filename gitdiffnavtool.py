@@ -664,18 +664,22 @@ class AppBase(ListView):
             self.printException(e, "_activate_index failed")
 
     def watch_index(self, old: int | None, new: int | None) -> None:
+        """Handle an index change: perform common highlight/scroll and
+        dispatch to widget-specific hooks (`watch_filelist_index` or
+        `watch_history_index`).
+        """
         # Delegate to a helper that performs common highlight/scroll behavior
         try:
             node_new = self.watch_index_helper(old, new)
             # Dispatch to widget-specific hooks so subclass behavior is
             # implemented in `watch_filelist_index` / `watch_history_index`
             try:
-                if getattr(self, "is_history_list", False):
+                if self.is_history_list:
                     try:
                         self.watch_history_index(old, new, node_new)
                     except Exception as e:
                         self.printException(e, "watch_index: watch_history_index hook failed")
-                elif getattr(self, "is_file_list", False):
+                elif self.is_file_list:
                     try:
                         self.watch_filelist_index(old, new, node_new)
                     except Exception as e:
@@ -702,7 +706,8 @@ class AppBase(ListView):
             if old is not None and 0 <= old < len(nodes):
                 try:
                     node_old = nodes[old]
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "watch_index_helper: getting old node failed")
                     node_old = None
 
             logger.debug("watch_index_helper: old=%r new=%r nodes=%d", old, new, len(nodes))
@@ -739,14 +744,20 @@ class AppBase(ListView):
                         node_new.styles.background = highlight_bg
                         node_new.styles.color = text_color
                         node_new.styles.text_style = "bold"
-                        logger.debug("watch_index_helper: applied highlight to new index %s text=%s", new, self.text_of(node_new))
+                        logger.debug(
+                            "watch_index_helper: applied highlight to new index %s text=%s",
+                            new,
+                            self.text_of(node_new),
+                        )
                     except Exception as e:
                         self.printException(e, "watch_index_helper: applying new highlight failed")
+
                     try:
                         animate = False
                         try:
                             animate = bool(self._page_scroll)
-                        except Exception:
+                        except Exception as e:
+                            self.printException(e, "watch_index_helper: reading _page_scroll failed")
                             animate = False
                         logger.debug("watch_index_helper: scroll animate=%s for index %s", animate, new)
                         if hasattr(self, "scroll_to_widget"):
@@ -1349,9 +1360,13 @@ class FileListBase(AppBase):
                 except Exception as _ex:
                     self.printException(_ex, "watch_filelist_index: setting app.current_path failed")
             try:
-                logger.debug("watch_filelist_index: set app.path=%r app.current_path=%r", getattr(self.app, "path", None), getattr(self.app, "current_path", None))
-            except Exception:
-                pass
+                logger.debug(
+                    "watch_filelist_index: set app.path=%r app.current_path=%r",
+                    self.app.path,
+                    self.app.current_path,
+                )
+            except Exception as e:
+                self.printException(e, "watch_filelist_index: debug readback failed")
         except Exception as e:
             self.printException(e, "watch_filelist_index failed")
 
@@ -2104,12 +2119,9 @@ class FileModeFileList(FileListBase):
                 # Default behavior: prepare the right-hand file-history widget
                 # (the app composes a FileModeHistoryList on the right) and
                 # invoke its preparer so the UI shows the file's history.
-                try:
-                    self.app.file_mode_history_list.prepFileModeHistoryList(raw)
-                except Exception as e:
-                    self.printException(e, "_activate_or_open: app.file_mode_history_list.prepFileModeHistoryList failed")
+                self.app.file_mode_history_list.prepFileModeHistoryList(raw)
             except Exception as e:
-                self.printException(e, "_activate_or_open outer prep failed")
+                self.printException(e, "_activate_or_open: prepFileModeHistoryList failed")
 
             try:
                 # Switch UI to file-history layout and focus
@@ -2788,9 +2800,13 @@ class HistoryListBase(AppBase):
             except Exception as e:
                 self.printException(e, "watch_history_index: computing selected pair failed")
             try:
-                logger.debug("watch_history_index: updated app.current_hash=%r app.previous_hash=%r", getattr(self.app, "current_hash", None), getattr(self.app, "previous_hash", None))
-            except Exception:
-                pass
+                logger.debug(
+                    "watch_history_index: updated app.current_hash=%r app.previous_hash=%r",
+                    self.app.current_hash,
+                    self.app.previous_hash,
+                )
+            except Exception as e:
+                self.printException(e, "watch_history_index: debug readback failed")
         except Exception as e:
             self.printException(e, "watch_history_index failed")
 
@@ -4439,7 +4455,7 @@ class GitHistoryNavTool(App):
                     # repository-history widget so the UI shows commits immediately.
                     try:
                         # Normalize CLI-provided repo hashes (first -> curr, second -> prev)
-                        rh = getattr(self, "repo_hashes", []) or []
+                        rh = self.repo_hashes or []
                         prev = None
                         curr = None
                         if rh:
@@ -4725,9 +4741,9 @@ class GitHistoryNavTool(App):
             elif newlayout == "history_fullscreen":
                 self._apply_column_layout(0, 100, 0, 0, 0, 0)
             elif newlayout == "file_history":
-                self._apply_column_layout(25, 0, 75, 0, 0, 0)
+                self._apply_column_layout(15, 0, 85, 0, 0, 0)
             elif newlayout == "history_file":
-                self._apply_column_layout(0, 25, 0, 75, 0, 0)
+                self._apply_column_layout(0, 15, 0, 85, 0, 0)
             elif newlayout == "file_history_diff":
                 self._apply_column_layout(5, 0, 20, 0, 75, 0)
             elif newlayout == "history_file_diff":
