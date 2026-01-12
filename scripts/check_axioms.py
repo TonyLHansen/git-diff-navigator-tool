@@ -460,7 +460,7 @@ def check_file(
                                 parts.append(cur.id)
                                 typ = ".".join(reversed(parts))
                         typ = typ or "<type>"
-                        msg = f"'except {typ} as {name}:' not followed by printException({name}, ...) or self.printException({name}, ...) in handler body"
+                        msg = f"'except {typ} as {name}:' not followed by printException({name}, ...) or self.printException({name}, ...) in handler body. That printException does NOT in turn require its own try/except."
                         # If the except body is a single `pass`, give a more
                         # actionable message suggesting replacement.
                         try:

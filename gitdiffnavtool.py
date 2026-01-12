@@ -34,6 +34,7 @@ from textual import events
 from textual.app import App
 from textual.containers import Horizontal, Vertical
 from textual.widgets import ListView, Label, ListItem, Footer, Header
+from textual.screen import ModalScreen
 
 # --- Constants -------------------------------------------------------------
 # Highlight constants (defaults)
@@ -1165,6 +1166,192 @@ class AppBase(ListView):
             self.printException(e, "AppBase.key_enter failed")
         return None
 
+    def key_s_helper(self, event: events.Key | None = None) -> None:
+        """Common helper to prompt and save snapshot files for a visible widget.
+
+        Pops a modal asking whether to save the older (previous_hash), newer
+        (current_hash), or both versions of the current `app.path`/`app.current_path`.
+        The modal performs the actual file extraction and writing.
+        """
+        try:
+            try:
+                app = self.app
+            except Exception as e:
+                self.printException(e, "key_s_helper: accessing self.app failed")
+                app = None
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "key_s_helper: event.stop failed")
+
+            if app is None:
+                logger.debug("key_s_helper: no app available")
+                return
+
+            # Prefer canonical current_path then fallback to app.path
+            filepath = getattr(app, "current_path", None) or getattr(app, "path", None)
+            prev_hash = getattr(app, "previous_hash", None)
+            curr_hash = getattr(app, "current_hash", None)
+
+            # If filepath appears to be a directory, try to use app.path instead
+            if filepath and os.path.isdir(filepath):
+                filepath = getattr(app, "path", None) or filepath
+
+            if not filepath:
+                try:
+                    # Inform user with a tiny modal
+                    app.push_screen(SaveSnapshotModal("Unknown filename for save"))
+                except Exception as e:
+                    self.printException(e, "key_s_helper: push modal failed")
+                return
+
+            try:
+                try:
+                    repo_root_val = app.repo_root
+                except Exception as e:
+                    self.printException(e, "key_s_helper: reading app.repo_root failed")
+                    repo_root_val = None
+                msg = f"Create {os.path.basename(filepath)}.HASH. Do you wish to save the (o)lder file, the (n)ewer file, or (b)oth? (Any other key to cancel.)"
+                app.push_screen(SaveSnapshotModal(msg, filepath=filepath, prev_hash=prev_hash, curr_hash=curr_hash, repo_root=repo_root_val))
+            except Exception as e:
+                self.printException(e, "key_s_helper: push SaveSnapshotModal failed")
+        except Exception as e:
+            self.printException(e, "key_s_helper failed")
+
+
+class SaveSnapshotModal(ModalScreen):
+    """Modal that prompts the user to save older/newer versions of a file.
+
+    The modal handles the key press and writes the requested snapshots
+    to files named '<filepath>.<hash>'. Supported keys: o/O (older),
+    n/N (newer), b/B (both). Any other key cancels.
+    """
+
+    def __init__(self, message: str | None = None, filepath: str | None = None, prev_hash: str | None = None, curr_hash: str | None = None, repo_root: str | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.message = message or ""
+        self.filepath = filepath
+        self.prev_hash = prev_hash
+        self.curr_hash = curr_hash
+        self.repo_root = repo_root
+
+    def compose(self):
+        """Compose the modal contents (a single Label with the message)."""
+        try:
+            yield Label(Text(self.message, style="bold"))
+        except Exception as e:
+            # Best-effort: avoid modal failure — ensure we log the original
+            printException(e, "SaveSnapshotModal.compose failed")
+
+            try:
+                yield Label(Text(self.message or "", style="bold"))
+            except Exception as e2:
+                # If even yielding fails, log and give up
+                printException(e2, "SaveSnapshotModal.compose fallback failed")
+
+    def on_key(self, event: events.Key) -> None:
+        """Handle a single key press: o/O -> older, n/N -> newer, b/B -> both."""
+        try:
+            key = getattr(event, "key", "")
+            try:
+                event.stop()
+            except Exception as e:
+                printException(e, "SaveSnapshotModal.on_key: event.stop failed")
+
+            # Map keys to actions
+            try:
+                if key in ("o", "O"):
+                    if self.prev_hash:
+                        self._save(self.prev_hash)
+                elif key in ("n", "N"):
+                    if self.curr_hash:
+                        self._save(self.curr_hash)
+                elif key in ("b", "B"):
+                    if self.prev_hash:
+                        self._save(self.prev_hash)
+                    if self.curr_hash:
+                        self._save(self.curr_hash)
+            except Exception as e:
+                printException(e, "SaveSnapshotModal.on_key: _save failed")
+
+        finally:
+            try:
+                self.app.pop_screen()
+            except Exception as e:
+                printException(e, "SaveSnapshotModal.on_key: pop_screen failed")
+
+    def _save(self, hashval: str | None) -> None:
+        """Save the file content for the given hash into a target snapshot file."""
+        if not hashval or not self.filepath:
+            return
+
+        try:
+            repo_root = self.repo_root or self.app.repo_root
+        except Exception as e:
+            printException(e, "SaveSnapshotModal._save: accessing app.repo_root failed")
+            repo_root = self.repo_root or getattr(self.app, "repo_root", None) or "."
+
+        # Compute repo-relative path for git plumbing commands
+        try:
+            relpath = os.path.relpath(self.filepath, repo_root)
+        except Exception as e:
+            printException(e, "SaveSnapshotModal._save: computing relpath failed")
+            relpath = os.path.basename(self.filepath)
+
+        target_path = f"{self.filepath}.{hashval}"
+
+        # Helper to write bytes to target
+        def _write_bytes(bdata: bytes) -> None:
+            try:
+                ddir = os.path.dirname(target_path)
+                if ddir and not os.path.exists(ddir):
+                    try:
+                        os.makedirs(ddir, exist_ok=True)
+                    except Exception as e:
+                        printException(e, "SaveSnapshotModal._save: makedirs failed")
+
+                with open(target_path, "wb") as out:
+                    out.write(bdata)
+            except Exception as e:
+                printException(e, f"SaveSnapshotModal._write failed for {target_path}")
+
+        # Different strategies based on hash semantics
+        if hashval == "MODS":
+            # Working tree (unstaged) version
+            try:
+                with open(self.filepath, "rb") as f:
+                    data = f.read()
+                _write_bytes(data)
+                return
+            except Exception as e:
+                printException(e, "SaveSnapshotModal._save read working-tree failed")
+                return
+
+        if hashval == "STAGED":
+            # Read from index via git show :<relpath>
+            try:
+                cmd = ["git", "-C", repo_root, "show", f":{relpath}"]
+                proc = subprocess.run(cmd, capture_output=True)
+                if proc.returncode != 0:
+                    err = proc.stderr.decode(errors="replace") if proc.stderr else ""
+                    raise Exception(f"git show failed: {err}")
+                _write_bytes(proc.stdout)
+                return
+            except Exception as e:
+                printException(e, "SaveSnapshotModal._save STAGED failed")
+                return
+
+        # Otherwise treat as commit-ish hash: git show <hash>:<relpath>
+        try:
+            cmd = ["git", "-C", repo_root, "show", f"{hashval}:{relpath}"]
+            proc = subprocess.run(cmd, capture_output=True)
+            if proc.returncode != 0:
+                err = proc.stderr.decode(errors="replace") if proc.stderr else ""
+                raise Exception(f"git show failed: {err}")
+            _write_bytes(proc.stdout)
+        except Exception as e:
+            printException(e, "SaveSnapshotModal._save commit show failed")
 
 class FileListBase(AppBase):
     """Base for file list widgets.
@@ -2393,6 +2580,19 @@ class RepoModeFileList(FileListBase):
         logger.debug("RepoModeFileList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_right(event, recursive=True)
 
+    def key_s(self, event: events.Key | None = None) -> None:
+        """Prompt to save snapshot files for the selected file (older/newer/both)."""
+        logger.debug("RepoModeFileList.key_s called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "RepoModeFileList.key_s: event.stop failed")
+        try:
+            self.key_s_helper(event)
+        except Exception as e:
+            self.printException(e, "RepoModeFileList.key_s: helper failed")
+
     def _prepRepoModeFileList_from_git(self, prev_hash: str | None, curr_hash: str | None) -> list[dict]:
         """Return a list of dicts for the repo-mode file list using git CLI.
 
@@ -3012,6 +3212,19 @@ class FileModeHistoryList(HistoryListBase):
                 self.printException(e, "prepFileModeHistoryList: finalize failed")
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
+
+    def key_s(self, event: events.Key | None = None) -> None:
+        """Prompt to save snapshot files for the current file history selection."""
+        logger.debug("FileModeHistoryList.key_s called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "FileModeHistoryList.key_s: event.stop failed")
+        try:
+            self.key_s_helper(event)
+        except Exception as e:
+            self.printException(e, "FileModeHistoryList.key_s: helper failed")
 
     def _prepFileModeHistoryList_commits_from_git(self, repo_root: str, rel_path: str) -> list[tuple[str, str, str]]:
         """Return a list of (hash, date, subject) using the git CLI."""
@@ -4049,6 +4262,19 @@ class DiffList(AppBase):
         except Exception as e:
             self.printException(e, "DiffList.key_d failed")
 
+    def key_s(self, event: events.Key | None = None) -> None:
+        """Prompt to save snapshot files for the diff's current file."""
+        logger.debug("DiffList.key_s called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "DiffList.key_s: event.stop failed")
+        try:
+            self.key_s_helper(event)
+        except Exception as e:
+            self.printException(e, "DiffList.key_s: helper failed")
+
     def key_D(self, event: events.Key | None = None) -> None:
         """Alias for `key_d` (Shift-D)."""
         logger.debug(
@@ -4116,8 +4342,8 @@ Overview:
 Invocation:
 - Run `gitdiffnavtool [path]` to open the app for `path` (directory or
     file).
-- Run `gitdiffnavtool --repo-hash hash1 [--repo-hash hash2] [path]` to open
-    the app in repository mode, comparing `hash1` and `hash2`.
+- Run `gitdiffnavtool [-r/--repo-first [--repo-hash hash1] [--repo-hash hash2]] [path]` to open
+    the app in repository mode, optionally comparing `hash1` and `hash2`.
 - Use `--no-color` to disable colored diffs.
 
 Basic navigation:
@@ -4129,8 +4355,6 @@ Basic navigation:
 - `q` (or Ctrl-Q): quit the application.
 
 Global actions:
-- `c`: toggle colorized diffs on/off.
-- `d`: save the current diff to a file (when a diff is visible).
 - `h` or `?`: show this help screen.
 
 Column-specific information and commands:
@@ -4169,15 +4393,8 @@ Diff Column:
     line is a one-line header describing the file and the two refs being
     compared and is not selectable.
 - Commands when focused:
-    - `toggle-color` / `c`: toggle colorized diff output.
-    - `cycle-diff-variant` / `d`: cycle to the next diff variant (e.g. ignore-space-change, patience).
+    - `c`: toggle colorized diffs on/off.
 
-Command palette (^P):
-- Press Ctrl-P (Textual command palette) to run commands directly. Useful
-    commands to wire up include:
-    - `open-file`, `diff <file> [prev] <curr>`, `file-history <path>`,
-        `goto-commit <hash>`, `toggle-color`, `next-hunk`, `prev-hunk`,
-        `stage <path>`, `unstage <path>`, `refresh`, `use-pygit2 on|off`.
 
 Tips and behavior notes:
 - Short commit hashes are shown using the app's `HASH_LENGTH` constant.
@@ -4188,6 +4405,15 @@ Tips and behavior notes:
 - If available, the app uses `pygit2` for its work. If `pygit2` is not installed or
     cannot open the repository, the app falls back to using the `git` CLI.
 """
+
+#    - `toggle-color` / `c`: toggle colorized diff output.
+#    - `cycle-diff-variant` / `d`: cycle to the next diff variant (e.g. ignore-space-change, patience).
+#Command palette (^P):
+#- Press Ctrl-P (Textual command palette) to run commands directly. Useful
+#    commands to wire up include:
+#    - `open-file`, `diff <file> [prev] <curr>`, `file-history <path>`,
+#        `goto-commit <hash>`, `toggle-color`, `next-hunk`, `prev-hunk`,
+#        `stage <path>`, `unstage <path>`, `refresh`, `use-pygit2 on|off`.
 
 
 class HelpList(AppBase):
@@ -5176,15 +5402,15 @@ class GitHistoryNavTool(App):
         except Exception as e:
             self.printException(e, "toggle outer failure")
 
-    def key_s(self, event: events.Key | None = None) -> None:
-        """Toggle the paired layout for the current layout (invoked by 's')."""
-        logger.debug("GitHistoryNavTool.key_s called: key=%r", getattr(event, "key", None))
+    def key_w(self, event: events.Key | None = None) -> None:
+        """Toggle the paired layout for the current layout (invoked by 'w')."""
+        logger.debug("GitHistoryNavTool.key_w called: key=%r", getattr(event, "key", None))
         return self.toggle(self._current_layout, event)
 
-    def key_S(self, event: events.Key | None = None) -> None:
-        """Alias for `key_s` (Shift-S)."""
-        logger.debug("GitHistoryNavTool.key_S called: key=%r", getattr(event, "key", None))
-        return self.key_s(event, recursive=True)
+    def key_W(self, event: events.Key | None = None) -> None:
+        """Alias for `key_w` (Shift-W)."""
+        logger.debug("GitHistoryNavTool.key_W called: key=%r", getattr(event, "key", None))
+        return self.key_w(event, recursive=True)
 
     # Per-layout toggle implementations. These prepare lists and switch
     # layouts in pairs so the `s` key toggles between related views.
