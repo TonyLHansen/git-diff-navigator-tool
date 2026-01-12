@@ -4366,6 +4366,8 @@ Basic navigation:
 
 Global actions:
 - `h` or `?`: show this help screen.
+- `r`: refresh the current view.
+- `s`: prompt to save snapshot files for the current file/hash combination.
 
 Column-specific information and commands:
 
