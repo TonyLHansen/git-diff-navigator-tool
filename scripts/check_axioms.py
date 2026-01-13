@@ -360,6 +360,7 @@ def check_file(
     check_except_as_print: bool,
     check_pass: bool,
     check_logger_in_try: bool,
+    check_printexception_in_try: bool,
 ) -> List[Tuple[str, int, str]]:
     """Run the core AST-based checks for bare excepts, except-as-print, and related checks.
 
@@ -496,6 +497,63 @@ def check_file(
             printException(e, f"check_logger_in_try_blocks not available yet for {path}")
         except Exception as e:
             printException(e, f"checking logger-in-try in {path}")
+
+    if check_printexception_in_try:
+        try:
+            errs += check_printexception_in_try_blocks(path, text=text, tree=tree)
+        except NameError as e:
+            printException(e, f"check_printexception_in_try_blocks not available yet for {path}")
+        except Exception as e:
+            printException(e, f"checking printexception-in-try in {path}")
+
+    return errs
+
+
+def check_printexception_in_try_blocks(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
+    """Detect try/except blocks where the try body contains only a single
+    `printException(...)` call. In that case the surrounding try/except is
+    likely unnecessary and can be removed.
+
+    Returns list of error messages with line numbers pointing to the `try`.
+    """
+    errs: List[Tuple[str, int, str]] = []
+
+    try:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try):
+                continue
+            # must have except handlers
+            if not getattr(node, "handlers", None):
+                continue
+            body = getattr(node, "body", []) or []
+            if len(body) != 1:
+                continue
+            stmt = body[0]
+            call_node = None
+            if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+                call_node = stmt.value
+            elif isinstance(stmt, ast.Assign) and isinstance(getattr(stmt, "value", None), ast.Call):
+                call_node = stmt.value
+            elif isinstance(stmt, ast.AnnAssign) and isinstance(getattr(stmt, "value", None), ast.Call):
+                call_node = stmt.value
+            if call_node is None:
+                continue
+            func = call_node.func
+            is_print = False
+            if isinstance(func, ast.Name) and func.id == "printException":
+                is_print = True
+            elif isinstance(func, ast.Attribute) and func.attr == "printException":
+                is_print = True
+            if not is_print:
+                continue
+            lineno = getattr(node, "lineno", None)
+            logger.debug("printexception-in-try match at %s", lineno)
+            if lineno is not None:
+                errs.append(
+                    (str(path), lineno, "try/except wraps single printException(...); remove the try/except around the printException call")
+                )
+    except Exception as e:
+        printException(e, f"walking Try in {path} for printexception-in-try")
 
     return errs
 
@@ -971,6 +1029,20 @@ def main(argv: List[str] | None = None) -> int:
         help="Enable logger-in-try check (opposite of -L).",
     )
 
+    gm = parser.add_mutually_exclusive_group()
+    gm.add_argument("-M",
+        "--no-printexception-in-try",
+        dest="check_printexception_in_try",
+        action="store_false",
+        help="Skip checking for try/except where the try body contains only a printException(...) call (default: check)",
+    )
+    gm.add_argument("-m",
+        "--printexception-in-try",
+        dest="enable_printexception_in_try",
+        action="store_true",
+        help="Enable printexception-in-try check (opposite of -M).",
+    )
+
     gn = parser.add_mutually_exclusive_group()
     gn.add_argument("-N",
         "--no-nested-try-except",
@@ -1058,6 +1130,7 @@ def main(argv: List[str] | None = None) -> int:
         args.check_pass = False
         args.check_getattr_not_initialized = False
         args.check_logger_in_try = False
+        args.check_printexception_in_try = False
         args.check_imports = False
         args.check_docstrings = False
 
@@ -1078,6 +1151,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_getattr_not_initialized = True
     if args.enable_logger_in_try:
         args.check_logger_in_try = True
+    if args.enable_printexception_in_try:
+        args.check_printexception_in_try = True
     if args.enable_check_imports:
         args.check_imports = True
     if args.enable_nested_try:
@@ -1130,11 +1205,12 @@ def main(argv: List[str] | None = None) -> int:
                     continue
 
                 logger.debug(
-                    "AST-check decision: check_bare_excepts=%s check_except_as_print=%s check_pass=%s check_logger_in_try=%s",
+                    "AST-check decision: check_bare_excepts=%s check_except_as_print=%s check_pass=%s check_logger_in_try=%s check_printexception_in_try=%s",
                     args.check_bare_excepts,
                     args.check_except_as_print,
                     args.check_pass,
                     args.check_logger_in_try,
+                    args.check_printexception_in_try,
                 )
                 if (
                     args.check_bare_excepts
@@ -1150,7 +1226,8 @@ def main(argv: List[str] | None = None) -> int:
                         bool(args.check_bare_excepts),
                         bool(args.check_except_as_print),
                         bool(args.check_pass),
-                        bool(args.check_logger_in_try),
+                            bool(args.check_logger_in_try),
+                            bool(args.check_printexception_in_try),
                     )
                 # Enforce 'prefer direct attribute access' axiom
                 if args.check_prefer_direct_attrs:
