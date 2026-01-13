@@ -3114,6 +3114,35 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "HistoryListBase._finalize_historylist_prep failed")
 
+    def _append_new_footer(self) -> None:
+        """Append a non-selectable 'NEW' footer row to the history list.
+
+        This provides a clear sentinel for items representing the state
+        before a file was added (displayed as "NEW").
+        """
+        try:
+            item = ListItem(Label(Text("NEW", style=STYLE_FILELIST_KEY)))
+            try:
+                item._new_footer = True
+            except Exception as _:
+                try:
+                    self.printException(_, "HistoryListBase._append_new_footer: setting _new_footer failed")
+                except Exception as __:
+                    self.printException(__, "HistoryListBase._append_new_footer: setting _new_footer fallback failed")
+            try:
+                item._selectable = False
+            except Exception as _:
+                try:
+                    self.printException(_, "HistoryListBase._append_new_footer: setting _selectable failed")
+                except Exception as __:
+                    self.printException(__, "HistoryListBase._append_new_footer: setting _selectable fallback failed")
+            try:
+                self.append(item)
+            except Exception as e:
+                self.printException(e, "HistoryListBase._append_new_footer append failed")
+        except Exception as e:
+            self.printException(e, "HistoryListBase._append_new_footer failed")
+
 
 class FileModeHistoryList(HistoryListBase):
     """History list for a single file's history. Stubbed prep method."""
@@ -3212,6 +3241,11 @@ class FileModeHistoryList(HistoryListBase):
                             self.printException(e, "prepFileModeHistoryList parse failed")
                 except Exception as e:
                     self.printException(e, "prepFileModeHistoryList rendering commits failed")
+                # Append a non-selectable NEW footer row to indicate "no previous" state
+                try:
+                    self._append_new_footer()
+                except Exception as e:
+                    self.printException(e, "prepFileModeHistoryList: appending NEW footer failed")
             except Exception as e:
                 self.printException(e, "prepFileModeHistoryList collection/render failed")
 
@@ -3643,6 +3677,12 @@ class RepoModeHistoryList(HistoryListBase):
                             self.printException(e, "prepRepoModeHistoryList parse failed")
                 except Exception as e:
                     self.printException(e, "prepRepoModeHistoryList commit rendering failed")
+
+                # Append a non-selectable NEW footer row to indicate "no previous" state
+                try:
+                    self._append_new_footer()
+                except Exception as e:
+                    self.printException(e, "prepRepoModeHistoryList: appending NEW footer failed")
             except Exception as e:
                 self.printException(e, "prepRepoModeHistoryList backend collection failed")
 
@@ -4100,7 +4140,7 @@ class DiffList(AppBase):
             # Save output lines on the object and render via helper
             # Prepend a human-readable header describing the diff context
             try:
-                p_short = prev[:HASH_LENGTH] if prev else "None"
+                p_short = prev[:HASH_LENGTH] if prev else "NEW"
                 c_short = curr[:HASH_LENGTH] if curr else "None"
 
                 try:
