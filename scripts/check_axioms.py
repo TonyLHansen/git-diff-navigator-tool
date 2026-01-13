@@ -1226,8 +1226,8 @@ def main(argv: List[str] | None = None) -> int:
                         bool(args.check_bare_excepts),
                         bool(args.check_except_as_print),
                         bool(args.check_pass),
-                            bool(args.check_logger_in_try),
-                            bool(args.check_printexception_in_try),
+                        bool(args.check_logger_in_try),
+                        bool(args.check_printexception_in_try),
                     )
                 # Enforce 'prefer direct attribute access' axiom
                 if args.check_prefer_direct_attrs:

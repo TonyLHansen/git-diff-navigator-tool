@@ -1641,7 +1641,7 @@ class FileListBase(AppBase):
         try:
             def _short(h: str | None) -> str:
                 if not h:
-                    return "None"
+                    return "NEW"
                 return h[:HASH_LENGTH] if len(h) > HASH_LENGTH else h
 
             hash_text = f"Hashes: prev={_short(prev_hash)}  curr={_short(curr_hash)}"
@@ -2649,6 +2649,7 @@ class RepoModeFileList(FileListBase):
         status letters. Falls back to an empty list on error.
         """
         entries: list[dict] = []
+        logger.debug("_prepRepoModeFileList_from_pygit2: entry prev_hash=%r curr_hash=%r", prev_hash, curr_hash)
         try:
             if not pygit2:
                 return entries
@@ -2659,25 +2660,86 @@ class RepoModeFileList(FileListBase):
                 return entries
             
             diff = None
+
+            def _resolve_tree(obj):
+                """Resolve pygit2 objects to a Tree or return None.
+
+                Handles Commit-like objects, Tag objects (follow target), and
+                direct Tree objects. Returns None when unable to obtain a
+                tree, which will cause diffs to compare against the empty
+                tree as appropriate.
+                """
+                try:
+                    if obj is None:
+                        return None
+                    # Commit-like objects expose `.tree`
+                    if hasattr(obj, "tree"):
+                        return obj.tree
+                    # Tag objects may wrap a target (commit/tree)
+                    target = getattr(obj, "target", None)
+                    if target is not None:
+                        return _resolve_tree(target)
+                    # If object has an oid, attempt to load and inspect it
+                    oid = getattr(obj, "oid", None)
+                    if oid is not None:
+                        try:
+                            resolved = repo.get(oid)
+                            if hasattr(resolved, "tree"):
+                                return resolved.tree
+                            if resolved.__class__.__name__ == "Tree":
+                                return resolved
+                        except Exception:
+                            return None
+                except Exception as _ex:
+                    logger.debug("_prepRepoModeFileList_from_pygit2: _resolve_tree error: %s", _ex)
+                return None
+
             try:
                 if prev_hash and curr_hash:
-                    a = repo.revparse_single(prev_hash)
-                    b = repo.revparse_single(curr_hash)
-                    a_tree = a.tree if hasattr(a, "tree") else a
-                    b_tree = b.tree if hasattr(b, "tree") else b
-                    diff = repo.diff(a_tree, b_tree)
+                    try:
+                        a = repo.revparse_single(prev_hash)
+                    except Exception as e:
+                        self.printException(e, f"_prepRepoModeFileList_from_pygit2: revparse prev_hash {prev_hash} failed")
+                        a = None
+                    try:
+                        b = repo.revparse_single(curr_hash)
+                    except Exception as e:
+                        self.printException(e, f"_prepRepoModeFileList_from_pygit2: revparse curr_hash {curr_hash} failed")
+                        b = None
+                    a_tree = _resolve_tree(a)
+                    b_tree = _resolve_tree(b)
+                    try:
+                        diff = repo.diff(a_tree, b_tree)
+                    except Exception as e:
+                        self.printException(e, "_prepRepoModeFileList_from_pygit2: building diff from resolved trees failed")
+                        return entries
                 elif curr_hash:
-                    c = repo.revparse_single(curr_hash)
-                    parents = list(c.parents)
-                    if parents:
-                        diff = repo.diff(parents[0].tree, c.tree)
-                    else:
-                        diff = repo.diff(None, c.tree)
+                    try:
+                        c = repo.revparse_single(curr_hash)
+                    except Exception as e:
+                        self.printException(e, f"_prepRepoModeFileList_from_pygit2: revparse curr_hash {curr_hash} failed")
+                        return entries
+                    parents = list(getattr(c, "parents", []))
+                    try:
+                        if parents:
+                            parent_tree = _resolve_tree(parents[0])
+                            curr_tree = _resolve_tree(c) or (c.tree if hasattr(c, "tree") else None)
+                            diff = repo.diff(parent_tree, curr_tree)
+                        else:
+                            curr_tree = _resolve_tree(c) or (c.tree if hasattr(c, "tree") else None)
+                            diff = repo.diff(None, curr_tree)
+                    except Exception as e:
+                        self.printException(e, "_prepRepoModeFileList_from_pygit2: building diff for single commit failed")
+                        return entries
                 else:
-                    diff = repo.diff()
+                    try:
+                        diff = repo.diff()
+                    except Exception as e:
+                        self.printException(e, "_prepRepoModeFileList_from_pygit2: repo.diff() failed")
+                        return entries
             except Exception as e:
-                self.printException(e, "_prepRepoModeFileList_from_pygit2: building diff failed")
-                diff = None
+                self.printException(e, "_prepRepoModeFileList_from_pygit2: unexpected failure preparing diff")
+                return entries
 
             if diff is None:
                 return entries
@@ -3121,21 +3183,24 @@ class HistoryListBase(AppBase):
         before a file was added (displayed as "NEW").
         """
         try:
-            item = ListItem(Label(Text("NEW", style=STYLE_FILELIST_KEY)))
+            raw = "NEW"
+            # Show unmarked items with two-space indent so label alignment
+            # matches other history rows; toggle_check_current will update
+            # label to 'M {raw}' when marked.
+            item = ListItem(Label(Text(f"  {raw}", style=STYLE_FILELIST_KEY)))
             try:
                 item._new_footer = True
             except Exception as _:
-                try:
-                    self.printException(_, "HistoryListBase._append_new_footer: setting _new_footer failed")
-                except Exception as __:
-                    self.printException(__, "HistoryListBase._append_new_footer: setting _new_footer fallback failed")
+                self.printException(_, "HistoryListBase._append_new_footer: setting _new_footer failed")
             try:
-                item._selectable = False
+                item._raw_text = raw
             except Exception as _:
-                try:
-                    self.printException(_, "HistoryListBase._append_new_footer: setting _selectable failed")
-                except Exception as __:
-                    self.printException(__, "HistoryListBase._append_new_footer: setting _selectable fallback failed")
+                self.printException(_, "HistoryListBase._append_new_footer: setting _raw_text failed")
+            try:
+                # Allow marking (checked state) but treat specially in navigation.
+                item._selectable = True
+            except Exception as _:
+                self.printException(_, "HistoryListBase._append_new_footer: setting _selectable failed")
             try:
                 self.append(item)
             except Exception as e:
@@ -3541,6 +3606,17 @@ class FileModeHistoryList(HistoryListBase):
                 self.printException(e, "FileModeHistoryList.key_right: event.stop failed")
 
         prev_hash, curr_hash = self._compute_selected_pair()
+        # If the selected row is the 'NEW' footer, do not open/visit it with Right.
+        try:
+            nodes = self.nodes()
+            sel = None
+            if nodes is not None and 0 <= (self.index or 0) < len(nodes):
+                sel = nodes[self.index or 0]
+            if sel is not None and getattr(sel, "_new_footer", False):
+                logger.debug("FileModeHistoryList.key_right: selected NEW footer; skipping visit")
+                return
+        except Exception as e:
+            self.printException(e, "FileModeHistoryList.key_right: checking _new_footer failed")
         try:
             filename = self.app.path
             # Ask the diff list to prepare the diff for this file and pair
@@ -4009,6 +4085,19 @@ class RepoModeHistoryList(HistoryListBase):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "RepoModeHistoryList.key_right: event.stop failed")
+
+            # If the selected row is the 'NEW' footer, do not open/visit it with Right.
+            try:
+                nodes = self.nodes()
+                sel = None
+                if nodes is not None and 0 <= (self.index or 0) < len(nodes):
+                    sel = nodes[self.index or 0]
+                if sel is not None and getattr(sel, "_new_footer", False):
+                    logger.debug("RepoModeHistoryList.key_right: selected NEW footer; skipping visit")
+                    return
+            except Exception as e:
+                self.printException(e, "RepoModeHistoryList.key_right: checking _new_footer failed")
+
             prev_hash, curr_hash = self._compute_selected_pair()
             try:
                 # Delegate to the repo-mode file list preparer. The preparer
