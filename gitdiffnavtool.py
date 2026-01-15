@@ -2703,23 +2703,43 @@ class RepoModeFileList(FileListBase):
                     return entries
 
                 elif prev_hash is None:
-                    # Initial-commit case: produce diff between empty tree and
-                    # the commit's tree. Prefer tree-level diff API when
-                    # available to avoid non-treeish repo.diff errors.
+                    # Initial-commit case: produce diff between an empty tree
+                    # (representing the pre-history) and the commit's tree.
+                    # Create a true empty tree via a TreeBuilder so pygit2
+                    # diff APIs receive valid Tree objects rather than None.
                     c = repo.revparse_single(curr_hash)
                     cur_tree = _resolve_tree(c)
                     if cur_tree is None:
                         self.printException(ValueError(f"could not resolve tree for {curr_hash}"), "_prepRepoModeFileList_from_pygit2: resolve failed")
                         return entries
-                    diff_to_tree = getattr(cur_tree, "diff_to_tree", None)
+                    # Build an actual empty tree object
+                    empty_tree = None
+                    try:
+                        tb = repo.TreeBuilder()
+                        empty_oid = tb.write()
+                        try:
+                            empty_tree = repo.get(empty_oid)
+                        except Exception:
+                            # repo.get may not be available in some bindings; try index access
+                            empty_tree = repo[empty_oid]
+                    except Exception as _ex:
+                        self.printException(_ex, "_prepRepoModeFileList_from_pygit2: creating empty tree failed")
+
+                    if empty_tree is None:
+                        self.printException(ValueError("could not construct empty tree"), "_prepRepoModeFileList_from_pygit2: empty tree construction failed")
+                        return entries
+
+                    # Prefer tree-level diff API on the older (empty) tree so
+                    # ordering matches `git diff <old> <new>` semantics.
+                    diff_to_tree = getattr(empty_tree, "diff_to_tree", None)
                     if callable(diff_to_tree):
                         try:
-                            diff = diff_to_tree(None)
+                            diff = diff_to_tree(cur_tree)
                         except Exception as _ex:
-                            self.printException(_ex, "_prepRepoModeFileList_from_pygit2: cur_tree.diff_to_tree(None) failed — falling back to repo.diff(None, cur_tree)")
-                            diff = repo.diff(None, cur_tree)
+                            self.printException(_ex, "_prepRepoModeFileList_from_pygit2: empty_tree.diff_to_tree failed — falling back to repo.diff(empty_tree, cur_tree)")
+                            diff = repo.diff(empty_tree, cur_tree)
                     else:
-                        diff = repo.diff(None, cur_tree)
+                        diff = repo.diff(empty_tree, cur_tree)
                 else:
                     # Both hashes present: resolve both to trees and diff them.
                     a = repo.revparse_single(prev_hash)
