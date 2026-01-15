@@ -2628,8 +2628,10 @@ class RepoModeFileList(FileListBase):
                     path = parts[1] if len(parts) > 1 else parts[0]
                     display = f"{status} {path}"
                     try:
+                        # Prefer pygit2's workdir when available (non-bare repo).
+                        base_workdir = getattr(self.app.pygit2_repo, "workdir", None) or self.app.repo_root
                         if not os.path.isabs(path):
-                            full = os.path.realpath(os.path.join(self.app.repo_root, path))
+                            full = os.path.realpath(os.path.join(base_workdir, path))
                         else:
                             full = os.path.realpath(path)
                     except Exception as e:
@@ -2649,6 +2651,7 @@ class RepoModeFileList(FileListBase):
         status letters. Falls back to an empty list on error.
         """
         entries: list[dict] = []
+        logger.debug("_prepRepoModeFileList_from_pygit2: entry prev_hash=%r curr_hash=%r", prev_hash, curr_hash)
         try:
             if not pygit2:
                 return entries
@@ -2658,26 +2661,88 @@ class RepoModeFileList(FileListBase):
                 logger.warning("_prepRepoModeFileList_from_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed")
                 return entries
             
+            # Simplified flow: exactly two meaningful cases exist for callers
+            # of this helper: (1) `curr_hash` present and `prev_hash` is None
+            # (initial commit case) or (2) both `prev_hash` and `curr_hash`
+            # present. If `curr_hash` is missing treat it as an error and
+            # return empty results.
+            def _resolve_tree(obj):
+                try:
+                    if obj is None:
+                        return None
+                    if hasattr(pygit2, "Tag") and isinstance(obj, pygit2.Tag):
+                        try:
+                            obj = obj.get_object()
+                        except Exception as _ex:
+                            self.printException(_ex, "_prepRepoModeFileList_from_pygit2: tag.get_object() failed — using target fallback")
+                            obj = getattr(obj, "target", obj)
+                    if hasattr(pygit2, "Commit") and isinstance(obj, pygit2.Commit):
+                        return obj.tree
+                    if hasattr(pygit2, "Tree") and isinstance(obj, pygit2.Tree):
+                        return obj
+                    if hasattr(obj, "tree"):
+                        try:
+                            return obj.tree
+                        except Exception as _ex:
+                            self.printException(_ex, "_prepRepoModeFileList_from_pygit2: obj.tree access failed")
+                            return None
+                    return None
+                except Exception as _ex:
+                    self.printException(_ex, "_prepRepoModeFileList_from_pygit2: _resolve_tree failed")
+                    return None
+
             diff = None
             try:
-                if prev_hash and curr_hash:
+                if not curr_hash and not prev_hash:
+                    # No hashes provided: treat as working-tree diff (repo.diff()).
+                    diff = repo.diff()
+                elif not curr_hash:
+                    # Curr hash missing but prev present — invalid for our
+                    # simplified assumptions: log and return empty.
+                    self.printException(ValueError("missing curr_hash"), "_prepRepoModeFileList_from_pygit2: curr_hash is required")
+                    return entries
+
+                elif prev_hash is None:
+                    # Initial-commit case: produce diff between empty tree and
+                    # the commit's tree. Prefer tree-level diff API when
+                    # available to avoid non-treeish repo.diff errors.
+                    c = repo.revparse_single(curr_hash)
+                    cur_tree = _resolve_tree(c)
+                    if cur_tree is None:
+                        self.printException(ValueError(f"could not resolve tree for {curr_hash}"), "_prepRepoModeFileList_from_pygit2: resolve failed")
+                        return entries
+                    diff_to_tree = getattr(cur_tree, "diff_to_tree", None)
+                    if callable(diff_to_tree):
+                        try:
+                            diff = diff_to_tree(None)
+                        except Exception as _ex:
+                            self.printException(_ex, "_prepRepoModeFileList_from_pygit2: cur_tree.diff_to_tree(None) failed — falling back to repo.diff(None, cur_tree)")
+                            diff = repo.diff(None, cur_tree)
+                    else:
+                        diff = repo.diff(None, cur_tree)
+                else:
+                    # Both hashes present: resolve both to trees and diff them.
                     a = repo.revparse_single(prev_hash)
                     b = repo.revparse_single(curr_hash)
-                    a_tree = a.tree if hasattr(a, "tree") else a
-                    b_tree = b.tree if hasattr(b, "tree") else b
-                    diff = repo.diff(a_tree, b_tree)
-                elif curr_hash:
-                    c = repo.revparse_single(curr_hash)
-                    parents = list(c.parents)
-                    if parents:
-                        diff = repo.diff(parents[0].tree, c.tree)
+                    a_tree = _resolve_tree(a)
+                    b_tree = _resolve_tree(b)
+                    if a_tree is None or b_tree is None:
+                        self.printException(ValueError(f"could not resolve trees for {prev_hash}..{curr_hash}"), "_prepRepoModeFileList_from_pygit2: resolve failed")
+                        return entries
+                    # Prefer tree-level diff API on the older tree so the
+                    # ordering matches `git diff <old> <new>` semantics.
+                    diff_to_tree = getattr(a_tree, "diff_to_tree", None)
+                    if callable(diff_to_tree):
+                        try:
+                            diff = diff_to_tree(b_tree)
+                        except Exception as _ex:
+                            self.printException(_ex, "_prepRepoModeFileList_from_pygit2: a_tree.diff_to_tree failed — falling back to repo.diff(a_tree, b_tree)")
+                            diff = repo.diff(a_tree, b_tree)
                     else:
-                        diff = repo.diff(None, c.tree)
-                else:
-                    diff = repo.diff()
+                        diff = repo.diff(a_tree, b_tree)
             except Exception as e:
                 self.printException(e, "_prepRepoModeFileList_from_pygit2: building diff failed")
-                diff = None
+                return entries
 
             if diff is None:
                 return entries
@@ -3141,16 +3206,16 @@ class FileModeHistoryList(HistoryListBase):
                 pseudo_entries: list[tuple[str, str]] = []
                 entries: list[tuple[str, str, str]] = []
                 if repo_root:
-                            # When testing, run both backends and compare outputs.
-                            if self.app.test_pygit2:
-                                pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
-                                pseudo_entries_git, entries_git = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
-                                self.compare_pygit2_to_git_output(pseudo_entries, pseudo_entries_git, "prepFileModeHistoryList pseudo_entries")
-                                self.compare_pygit2_to_git_output(entries, entries_git, "prepFileModeHistoryList entries")
-                            elif pygit2:
-                                pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
-                            else:
-                                pseudo_entries, entries = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
+                    # When testing, run both backends and compare outputs.
+                    if self.app.test_pygit2:
+                        pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
+                        pseudo_entries_git, entries_git = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
+                        self.compare_pygit2_to_git_output(pseudo_entries, pseudo_entries_git, "prepFileModeHistoryList pseudo_entries")
+                        self.compare_pygit2_to_git_output(entries, entries_git, "prepFileModeHistoryList entries")
+                    elif pygit2:
+                        pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
+                    else:
+                        pseudo_entries, entries = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
 
                 # render pseudo entries first
                 try:

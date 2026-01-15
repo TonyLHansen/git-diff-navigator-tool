@@ -332,6 +332,58 @@ def run_repo_history_tests(root: str, prev_hash: str | None = None, curr_hash: s
     return pseudo_diffs, commit_diffs
 
 
+def run_repo_file_tests(root: str, prev_hash: str | None = None, curr_hash: str | None = None) -> int:
+    """Run repository-wide file-list preparers and compare git vs pygit2 outputs.
+
+    Returns count of diffs found (0 or 1).
+    """
+    root = os.path.abspath(root)
+    if not os.path.isdir(root):
+        print(f"Not a directory: {root}")
+        return 0
+
+    pyg_repo = pygit2.Repository(root)
+    dummy = make_dummy(root, pyg_repo)
+
+    git_fn = gitdiffnavtool.RepoModeFileList._prepRepoModeFileList_from_git
+    pyg_fn = gitdiffnavtool.RepoModeFileList._prepRepoModeFileList_from_pygit2
+
+    diffs_found = 0
+    git_worked = pyg_worked = False
+    try:
+        try:
+            git_out = git_fn(dummy, prev_hash, curr_hash)
+        except Exception as e:
+            dummy.printException(e, "_prepRepoModeFileList_from_git failed")
+            git_out = []
+        else:
+            git_worked = True
+
+        try:
+            pyg_out = pyg_fn(dummy, prev_hash, curr_hash)
+        except Exception as e:
+            dummy.printException(e, "_prepRepoModeFileList_from_pygit2 failed")
+            pyg_out = []
+        else:
+            pyg_worked = True
+
+        if not (git_worked and pyg_worked):
+            dummy.printException(Exception("Skipping repo-file diff: one or both methods failed"))
+            return 0
+
+        diffs = compare_lists(git_out, pyg_out, "repo_file_list")
+        if diffs:
+            diffs_found = 1
+            logger.error("REPO FILE-LIST DIFF FOUND:")
+            logger.info("\n%s", "\n".join(diffs))
+        else:
+            logger.info("repo file-list outputs identical")
+    except Exception as e:
+        dummy.printException(e, "run_repo_file_tests failed")
+
+    return diffs_found
+
+
 def main(argv=None):
     """Command-line entry point for `test_prep_backends`.
 
@@ -372,6 +424,10 @@ def main(argv=None):
     if args.repo_history:
         pe, cc = run_repo_history_tests(args.path, prev_hash=args.prev, curr_hash=args.curr)
         diffs_found += pe + cc
+        # Also run repository-wide file-list preparer comparison to cover
+        # RepoModeFileList (_prepRepoModeFileList_from_git/_from_pygit2).
+        rf = run_repo_file_tests(args.path, prev_hash=args.prev, curr_hash=args.curr)
+        diffs_found += rf
     print(f"Checked {dirs_seen} directories; diffs in {diffs_found}; log: {args.output}")
     return 1 if diffs_found else 0
 
