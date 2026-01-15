@@ -1363,6 +1363,39 @@ class SaveSnapshotModal(AppException, ModalScreen):
         except Exception as e:
             self.printException(e, "SaveSnapshotModal._save commit show failed")
 
+
+# Top-level modal so callers can push it via `self.app.push_screen(_TBDModal(...))`
+class MessageModal(ModalScreen):
+    """Simple modal that shows a message (default "") and closes on any key.
+
+    Mirrors the helper from `gitdiffnavtool-old.py`.
+    """
+
+    def __init__(self, message: str | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.message = message or ""
+
+    def compose(self):
+        """Compose the modal contents (a single Label with bold text)."""
+        try:
+            yield Label(Text(self.message, style="bold"), id="msg-modal")
+        except Exception as e:
+            printException(e, "MessageModal.compose failed")
+
+    def on_key(self, event: events.Key) -> None:
+        """Close the modal on any key press."""
+        try:
+            try:
+                event.stop()
+            except Exception as _use_pass:
+                pass
+            try:
+                self.app.pop_screen()
+            except Exception as e:
+                printException(e, "MessageModal.on_key: pop_screen failed")
+        except Exception as e:
+            printException(e, "MessageModal.on_key failed")
+
 class FileListBase(AppBase):
     """Base for file list widgets.
 
