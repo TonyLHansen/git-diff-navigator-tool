@@ -441,26 +441,32 @@ class TestRepo(AppException):
                     obj = repo.get(h)
                     t = getattr(obj, "time", None) or getattr(obj, "commit_time", None) or 0
                     ts = int(t)
+                    msg = getattr(obj, "message", None) or ""
+                    subject = msg.splitlines()[0] if msg else ""
                 except Exception as e:
-                    self.printException(e, "getHashListEntireRepo: commit time extraction failed")
+                    self.printException(e, "getHashListEntireRepo: commit time/message extraction failed")
                     ts = 0
-                commit_info.append((ts, h))
+                    subject = ""
+                commit_info.append((ts, h, subject))
 
             commit_info.sort(key=lambda x: (x[0], x[1]), reverse=True)
             formatted = []
-            for ts, h in commit_info:
+            for ts, h, subject in commit_info:
                 try:
                     dt = datetime.fromtimestamp(ts, timezone.utc)
                     iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
                 except Exception as e:
                     self.printException(e, "getHashListEntireRepo: timestamp formatting failed")
                     iso = "1970-01-01T00:00:00"
-                formatted.append(f"{iso} {h}")
+                if subject:
+                    formatted.append(f"{iso} {h} {subject}")
+                else:
+                    formatted.append(f"{iso} {h}")
             return formatted
         else:
             try:
-                # Use git log to get commit epoch time and hash for all refs
-                output = check_output(["git", "log", "--all", "--pretty=format:%ct %H"], cwd=self.repoRoot, text=True)
+                # Use git log to get commit epoch time, hash and subject for all refs
+                output = check_output(["git", "log", "--all", "--pretty=format:%ct %H %s"], cwd=self.repoRoot, text=True)
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
@@ -468,8 +474,8 @@ class TestRepo(AppException):
             for line in output.splitlines():
                 if not line:
                     continue
-                parts = line.split(None, 1)
-                if len(parts) != 2:
+                parts = line.split(None, 2)
+                if len(parts) < 2:
                     continue
                 try:
                     ts = int(parts[0])
@@ -477,18 +483,22 @@ class TestRepo(AppException):
                     self.printException(e, "getHashListEntireRepo: parsing git log timestamp failed")
                     ts = 0
                 h = parts[1].strip()
-                pairs.append((ts, h))
+                subject = parts[2].strip() if len(parts) >= 3 else ""
+                pairs.append((ts, h, subject))
 
             pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
             formatted = []
-            for ts, h in pairs:
+            for ts, h, subject in pairs:
                 try:
                     dt = datetime.fromtimestamp(ts, timezone.utc)
                     iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
                 except Exception as e:
                     self.printException(e, "getHashListEntireRepo: formatting timestamp failed")
                     iso = "1970-01-01T00:00:00"
-                formatted.append(f"{iso} {h}")
+                if subject:
+                    formatted.append(f"{iso} {h} {subject}")
+                else:
+                    formatted.append(f"{iso} {h}")
             return formatted
 
 
@@ -596,7 +606,26 @@ class TestRepo(AppException):
                                     if cid is not None:
                                         ch = getattr(cid, "hex", None) or str(cid)
                                 if ch:
-                                    matches.append(ch)
+                                    # attach timestamp and subject (top line of commit message)
+                                    try:
+                                        t = getattr(c, "time", None) or getattr(c, "commit_time", None) or 0
+                                        ts = int(t)
+                                    except Exception:
+                                        ts = 0
+                                    try:
+                                        msg = getattr(c, "message", None) or ""
+                                        subject = msg.splitlines()[0] if msg else ""
+                                    except Exception:
+                                        subject = ""
+                                    try:
+                                        dt = datetime.fromtimestamp(ts, timezone.utc)
+                                        iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
+                                    except Exception:
+                                        iso = "1970-01-01T00:00:00"
+                                    if subject:
+                                        matches.append(f"{iso} {ch} {subject}")
+                                    else:
+                                        matches.append(f"{iso} {ch}")
                                 found = True
                                 break
                         if found:
@@ -610,11 +639,33 @@ class TestRepo(AppException):
             return matches
         else:
             try:
-                output = check_output(["git", "log", "--pretty=format:%H", "--", file_name], cwd=self.repoRoot, text=True)
+                output = check_output(["git", "log", "--pretty=format:%ct %H %s", "--", file_name], cwd=self.repoRoot, text=True)
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
-            return [ln for ln in output.splitlines() if ln]
+            entries = []
+            for line in output.splitlines():
+                if not line:
+                    continue
+                parts = line.split(None, 2)
+                if len(parts) < 2:
+                    continue
+                try:
+                    ts = int(parts[0])
+                except Exception:
+                    ts = 0
+                h = parts[1].strip()
+                subject = parts[2].strip() if len(parts) >= 3 else ""
+                try:
+                    dt = datetime.fromtimestamp(ts, timezone.utc)
+                    iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
+                except Exception:
+                    iso = "1970-01-01T00:00:00"
+                if subject:
+                    entries.append(f"{iso} {h} {subject}")
+                else:
+                    entries.append(f"{iso} {h}")
+            return entries
     
     
 

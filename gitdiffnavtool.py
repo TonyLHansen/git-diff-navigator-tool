@@ -273,6 +273,10 @@ class AppBase(AppException, ListView):
         # Per-widget highlight background; subclasses override with specific backgrounds
         self.highlight_bg_style = HIGHLIGHT_DEFAULT_BG
 
+    # One-time warning flag (class-scoped) used by `compare_pygit2_to_git_output`
+    # so the first backend mismatch shows a UI modal once per process/class.
+    comparePygit2ToGitOutputWarn: bool = False
+
     # `printException` provided by AppException mixin
 
     def _run_cmd_log(self, cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
@@ -485,6 +489,24 @@ class AppBase(AppException, ListView):
                 msg.append("(difference detected but diff is empty)")
             else:
                 msg.extend(diff)
+            # Show a one-time modal notification (if possible) so the user
+            # notices the first backend mismatch without flooding the UI.
+            try:
+                if not self.comparePygit2ToGitOutputWarn:
+                    try:
+                        self.app.push_screen(MessageModal("compare_pygit2_to_git_output: outputs differ"))
+                    except Exception as _e_modal:
+                        # Don't let modal failures block logging
+                        self.printException(_e_modal, "compare_pygit2_to_git_output: showing modal failed")
+                    try:
+                        self.comparePygit2ToGitOutputWarn = True
+                    except Exception as e:
+                        # Best-effort: log inability to set flag
+                        self.printException(e, "compare_pygit2_to_git_output: setting compare flag failed")
+            except Exception as _e:
+                # Best-effort: if anything fails above, continue to print/log
+                self.printException(_e, "compare_pygit2_to_git_output modal handling failed")
+
             # Print to stdout for immediate visibility and also log warn.
             for ln in msg:
                 print(ln)
@@ -1296,15 +1318,9 @@ class SaveSnapshotModal(AppException, ModalScreen):
         if not hashval or not self.filepath:
             return
 
+        
         try:
-            repo_root = self.repo_root or self.app.repo_root
-        except Exception as e:
-            self.printException(e, "SaveSnapshotModal._save: accessing app.repo_root failed")
-            repo_root = self.repo_root or "."
-
-        # Compute repo-relative path for git plumbing commands
-        try:
-            relpath = os.path.relpath(self.filepath, repo_root)
+            relpath = os.path.relpath(self.filepath, self.repo_root)
         except Exception as e:
             self.printException(e, "SaveSnapshotModal._save: computing relpath failed")
             relpath = os.path.basename(self.filepath)
@@ -1341,7 +1357,7 @@ class SaveSnapshotModal(AppException, ModalScreen):
         if hashval == "STAGED":
             # Read from index via git show :<relpath>
             try:
-                cmd = ["git", "-C", repo_root, "show", f":{relpath}"]
+                cmd = ["git", "-C", self.repo_root, "show", f":{relpath}"]
                 proc = subprocess.run(cmd, capture_output=True)
                 if proc.returncode != 0:
                     err = proc.stderr.decode(errors="replace") if proc.stderr else ""
@@ -1354,7 +1370,7 @@ class SaveSnapshotModal(AppException, ModalScreen):
 
         # Otherwise treat as commit-ish hash: git show <hash>:<relpath>
         try:
-            cmd = ["git", "-C", repo_root, "show", f"{hashval}:{relpath}"]
+            cmd = ["git", "-C", self.repo_root, "show", f"{hashval}:{relpath}"]
             proc = subprocess.run(cmd, capture_output=True)
             if proc.returncode != 0:
                 err = proc.stderr.decode(errors="replace") if proc.stderr else ""
@@ -2702,29 +2718,53 @@ class RepoModeFileList(FileListBase):
             def _resolve_tree(obj):
                 try:
                     if obj is None:
+                        logger.debug("_resolve_tree: received None")
                         return None
+
+                    logger.debug("_resolve_tree: incoming obj type=%s repr=%r", type(obj), obj)
+
                     if hasattr(pygit2, "Tag") and isinstance(obj, pygit2.Tag):
                         try:
                             obj = obj.get_object()
+                            logger.debug("_resolve_tree: tag.get_object() -> type=%s repr=%r", type(obj), obj)
                         except Exception as _ex:
                             self.printException(_ex, "_prepRepoModeFileList_from_pygit2: tag.get_object() failed — using target fallback")
                             obj = getattr(obj, "target", obj)
+                            logger.debug("_resolve_tree: tag fallback target -> type=%s repr=%r", type(obj), obj)
+
                     if hasattr(pygit2, "Commit") and isinstance(obj, pygit2.Commit):
-                        return obj.tree
+                        try:
+                            t = obj.tree
+                            logger.debug("_resolve_tree: commit.tree -> type=%s repr=%r", type(t), t)
+                            return t
+                        except Exception as _ex:
+                            self.printException(_ex, "_prepRepoModeFileList_from_pygit2: commit.tree access failed")
+                            return None
+
                     if hasattr(pygit2, "Tree") and isinstance(obj, pygit2.Tree):
+                        logger.debug("_resolve_tree: obj is Tree")
                         return obj
+
                     if hasattr(obj, "tree"):
                         try:
-                            return obj.tree
+                            t = obj.tree
+                            logger.debug("_resolve_tree: obj.tree -> type=%s repr=%r", type(t), t)
+                            return t
                         except Exception as _ex:
                             self.printException(_ex, "_prepRepoModeFileList_from_pygit2: obj.tree access failed")
                             return None
+
+                    logger.debug("_resolve_tree: could not resolve tree for obj type=%s", type(obj))
                     return None
                 except Exception as _ex:
                     self.printException(_ex, "_prepRepoModeFileList_from_pygit2: _resolve_tree failed")
                     return None
 
-            diff = None
+            # Build the diff consistently as `git diff <old> <new>` (old->new).
+            # Cases:
+            # - no refs: working-tree diff (repo.diff())
+            # - prev is None, curr present: initial commit -> diff(None, cur_tree)
+            # - prev and curr present: diff(prev_tree, curr_tree)
             try:
                 if not curr_hash and not prev_hash:
                     # No hashes provided: treat as working-tree diff (repo.diff()).
@@ -2734,65 +2774,59 @@ class RepoModeFileList(FileListBase):
                     # simplified assumptions: log and return empty.
                     self.printException(ValueError("missing curr_hash"), "_prepRepoModeFileList_from_pygit2: curr_hash is required")
                     return entries
-
                 elif prev_hash is None:
-                    # Initial-commit case: produce diff between an empty tree
-                    # (representing the pre-history) and the commit's tree.
-                    # Create a true empty tree via a TreeBuilder so pygit2
-                    # diff APIs receive valid Tree objects rather than None.
-                    c = repo.revparse_single(curr_hash)
+                    try:
+                        # Initial commit case: diff from empty tree to curr_hash
+                        c = repo.revparse_single(curr_hash)
+                    except Exception as _ex:
+                        self.printException(_ex, f"_prepRepoModeFileList_from_pygit2: revparse_single failed for {curr_hash}")
+                        return entries
                     cur_tree = _resolve_tree(c)
                     if cur_tree is None:
                         self.printException(ValueError(f"could not resolve tree for {curr_hash}"), "_prepRepoModeFileList_from_pygit2: resolve failed")
                         return entries
-                    # Build an actual empty tree object
-                    empty_tree = None
                     try:
-                        tb = repo.TreeBuilder()
-                        empty_oid = tb.write()
-                        try:
-                            empty_tree = repo.get(empty_oid)
-                        except Exception:
-                            # repo.get may not be available in some bindings; try index access
-                            empty_tree = repo[empty_oid]
+                        diff = repo.diff(None, cur_tree)
                     except Exception as _ex:
-                        self.printException(_ex, "_prepRepoModeFileList_from_pygit2: creating empty tree failed")
-
-                    if empty_tree is None:
-                        self.printException(ValueError("could not construct empty tree"), "_prepRepoModeFileList_from_pygit2: empty tree construction failed")
-                        return entries
-
-                    # Prefer tree-level diff API on the older (empty) tree so
-                    # ordering matches `git diff <old> <new>` semantics.
-                    diff_to_tree = getattr(empty_tree, "diff_to_tree", None)
-                    if callable(diff_to_tree):
+                        # Some pygit2 versions/configurations raise when one side
+                        # of the diff is "None" even if the other side is a
+                        # valid tree (initial commit case). As a robust
+                        # fallback, construct an explicit empty tree and diff
+                        # against that.
+                        self.printException(_ex, "_prepRepoModeFileList_from_pygit2: repo.diff(None, cur_tree) failed — trying empty-tree fallback")
                         try:
-                            diff = diff_to_tree(cur_tree)
-                        except Exception as _ex:
-                            self.printException(_ex, "_prepRepoModeFileList_from_pygit2: empty_tree.diff_to_tree failed — falling back to repo.diff(empty_tree, cur_tree)")
+                            tb = repo.TreeBuilder()
+                            empty_oid = tb.write()
+                            empty_tree = repo.get(empty_oid)
+                            logger.debug("_prepRepoModeFileList_from_pygit2: constructed empty tree %r", empty_tree)
                             diff = repo.diff(empty_tree, cur_tree)
-                    else:
-                        diff = repo.diff(empty_tree, cur_tree)
+                        except Exception as _ex2:
+                            # If repo.TreeBuilder isn't available or write/get
+                            # fail, as a last resort try the reversed arg
+                            # order which some pygit2 variants accept.
+                            self.printException(_ex2, "_prepRepoModeFileList_from_pygit2: empty-tree fallback failed — trying reversed args")
+                            try:
+                                diff = repo.diff(cur_tree, None)
+                            except Exception as _ex3:
+                                self.printException(_ex3, "_prepRepoModeFileList_from_pygit2: initial-commit diff fallbacks failed")
+                                return entries
                 else:
-                    # Both hashes present: resolve both to trees and diff them.
-                    a = repo.revparse_single(prev_hash)
-                    b = repo.revparse_single(curr_hash)
+                    try:
+                        a = repo.revparse_single(prev_hash)
+                        b = repo.revparse_single(curr_hash)
+                    except Exception as _ex:
+                        self.printException(_ex, f"_prepRepoModeFileList_from_pygit2: revparse_single failed for {prev_hash} or {curr_hash}")
+                        return entries
                     a_tree = _resolve_tree(a)
                     b_tree = _resolve_tree(b)
                     if a_tree is None or b_tree is None:
                         self.printException(ValueError(f"could not resolve trees for {prev_hash}..{curr_hash}"), "_prepRepoModeFileList_from_pygit2: resolve failed")
                         return entries
-                    # Prefer tree-level diff API on the older tree so the
-                    # ordering matches `git diff <old> <new>` semantics.
-                    diff_to_tree = getattr(a_tree, "diff_to_tree", None)
-                    if callable(diff_to_tree):
-                        try:
-                            diff = diff_to_tree(b_tree)
-                        except Exception as _ex:
-                            self.printException(_ex, "_prepRepoModeFileList_from_pygit2: a_tree.diff_to_tree failed — falling back to repo.diff(a_tree, b_tree)")
-                            diff = repo.diff(a_tree, b_tree)
-                    else:
+                    try:
                         diff = repo.diff(a_tree, b_tree)
+                    except Exception as _ex:
+                        self.printException(_ex, "_prepRepoModeFileList_from_pygit2: repo.diff(a_tree, b_tree) failed")
+                        return entries
             except Exception as e:
                 self.printException(e, "_prepRepoModeFileList_from_pygit2: building diff failed")
                 return entries
