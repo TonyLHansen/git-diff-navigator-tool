@@ -6,6 +6,7 @@ import argparse
 import difflib
 import sys
 import traceback
+import os
 
 import pygit2
 from datetime import datetime, timezone
@@ -36,7 +37,7 @@ class AppException:
 
 class TestRepo(AppException):
     """Test pygit2 and git CLI repository file listing methods."""
-
+    
     def __init__(self, repoRoot: str):
         self.repoRoot = repoRoot
         self.pygit2_repo = pygit2.Repository(self.repoRoot)
@@ -66,7 +67,7 @@ class TestRepo(AppException):
             return None
         return None
 
-    def _format_commit_entry(self, repo, commit_or_hash) -> str:
+    def _format_commit_entry(self, repo, commit_or_hash) -> tuple[str, str, str]:
         """Format a commit-like entry as "ISO HASH [subject]" when possible.
 
         If `commit_or_hash` can be resolved to a pygit2.Commit, include
@@ -79,12 +80,12 @@ class TestRepo(AppException):
             if isinstance(commit_or_hash, pygit2.Commit):
                 c = commit_or_hash
             else:
-                # Try to resolve via repo.get(); if that fails return the raw value
+                # Try to resolve via repo.get(); if that fails return raw tuple
                 try:
                     c = repo.get(commit_or_hash)
                 except Exception as e:
                     self.printException(e, "_format_commit_entry: repo.get failed")
-                    return str(commit_or_hash)
+                    return ("", str(commit_or_hash), "")
 
             if isinstance(c, pygit2.Commit):
                 try:
@@ -107,21 +108,71 @@ class TestRepo(AppException):
                 if not ch:
                     cid = getattr(c, "id", None)
                     ch = getattr(cid, "hex", None) or str(cid) if cid is not None else ""
-                if subject:
-                    return f"{iso} {ch} {subject}"
-                else:
-                    return f"{iso} {ch}"
+                return (iso, ch, subject)
 
-            # Not a commit object (blob/tree/etc) — return hash-like string
+            # Not a commit object (blob/tree/etc) — return hash-like tuple
             ch = getattr(c, "hex", None)
             if not ch:
                 cid = getattr(c, "id", None)
                 ch = getattr(cid, "hex", None) or str(cid) if cid is not None else str(commit_or_hash)
-            return ch
+            return ("", ch, "")
         except Exception as e:
-            # Fallback to raw string representation on error
+            # Fallback to raw tuple representation on error
             self.printException(e, "_format_commit_entry failed")
-            return str(commit_or_hash)
+            return ("", str(commit_or_hash), "")
+
+    def index_mtime_iso(self) -> str:
+        """
+        Return an ISO timestamp (UTC) based on the repository index mtime.
+
+        Prefer `.git/index`, falling back to `index` at repo root, and
+        finally to the current time if not available.
+        """
+        idx_candidates = [
+                os.path.join(self.repoRoot, ".git", "index"),
+                os.path.join(self.repoRoot, "index"),
+            ]
+        idx_mtime = None
+        for p in idx_candidates:
+            try:
+                if os.path.exists(p):
+                    idx_mtime = os.path.getmtime(p)
+                    break
+            except Exception:
+                continue
+        if idx_mtime is None:
+            idx_mtime = datetime.now(timezone.utc).timestamp()
+        return self._epoch_to_iso(idx_mtime)
+
+    def _epoch_to_iso(self, epoch: float) -> str:
+        """
+        Convert an epoch (seconds) to an ISO UTC timestamp string.
+
+        Centralized helper to avoid repeating the same try/except timestamp
+        formatting logic throughout the codebase.
+        """
+        try:
+            return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            return "1970-01-01T00:00:00"
+
+    def _paths_mtime_iso(self, paths: list[str]) -> str:
+        """
+        Given a list of repository-relative paths, return an ISO timestamp
+        (UTC) representing the most-recent modification time among those
+        files. If no mtimes can be determined, fall back to the index mtime.
+        """
+        mtimes: list[float] = []
+        for p in paths:
+            fp = os.path.join(self.repoRoot, p)
+            try:
+                if os.path.exists(fp):
+                    mtimes.append(os.path.getmtime(fp))
+            except Exception:
+                continue
+        if mtimes:
+            return self._epoch_to_iso(max(mtimes))
+        return self.index_mtime_iso()
 
     def getFileListNewToTopHash(self, usePyGit2: bool) -> list[str]:
         """Return a list of all files added from the beginning to the current repository state."""
@@ -190,26 +241,9 @@ class TestRepo(AppException):
 
             formatted = []
             for ts, h in commit_info:
-                try:
-                    dt = datetime.fromtimestamp(ts, timezone.utc)
-                    iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
-                except Exception as e:
-                    self.printException(e, "getFileListBetweenHashes: timestamp formatting failed")
-                    iso = "1970-01-01T00:00:00"
+                iso = self._epoch_to_iso(ts)
                 formatted.append(f"{iso} {h}")
             return formatted
-            a_tree = self._resolve_tree(a)
-            b_tree = self._resolve_tree(b)
-            if a_tree is None or b_tree is None:
-                self.printException(ValueError("could not resolve trees"), "_resolve_tree failed")
-                return []
-            try:
-                diff = self.pygit2_repo.diff(a_tree, b_tree)
-            except Exception as e:
-                self.printException(e, "pygit2 diff failed")
-                return []
-            files = [getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None) for delta in diff.deltas]
-            return sorted([p for p in files if p])
 
         else:
             # Use git CLI to get the list of files
@@ -389,7 +423,7 @@ class TestRepo(AppException):
             return sorted(files)
 
 
-    def getHashListEntireRepo(self, usePyGit2: bool) -> list[str]:
+    def getHashListEntireRepo(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of all commit hashes in the repository."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
         # Else use git CLI to get the list of hashes
@@ -504,10 +538,11 @@ class TestRepo(AppException):
                 commit_info.append((ts, h))
 
             commit_info.sort(key=lambda x: (x[0], x[1]), reverse=True)
-            formatted = []
+            formatted: list[tuple[str, str, str]] = []
             for ts, h in commit_info:
                 formatted.append(self._format_commit_entry(repo, h))
             return formatted
+        
         else:
             try:
                 # Use git log to get commit epoch time, hash and subject for all refs
@@ -532,180 +567,100 @@ class TestRepo(AppException):
                 pairs.append((ts, h, subject))
 
             pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
-            formatted = []
+            formatted: list[tuple[str, str, str]] = []
             for ts, h, subject in pairs:
-                try:
-                    dt = datetime.fromtimestamp(ts, timezone.utc)
-                    iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
-                except Exception as e:
-                    self.printException(e, "getHashListEntireRepo: formatting timestamp failed")
-                    iso = "1970-01-01T00:00:00"
-                if subject:
-                    formatted.append(f"{iso} {h} {subject}")
-                else:
-                    formatted.append(f"{iso} {h}")
+                iso = self._epoch_to_iso(ts)
+                formatted.append((iso, h, subject))
             return formatted
 
 
-    def getHashListStagedChanges(self, usePyGit2: bool) -> list[str]:
+    def getHashListStagedChanges(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of commit hashes for staged changes."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
         # Else use git CLI to get the list of hashes
-        # Interpret "hashes for staged changes" as the blob OIDs present in the index
+        # Return "STAGED" pseudo-hash if there are staged changes
         if usePyGit2:
             if not pygit2:
                 raise RuntimeError("pygit2 is not available")
-            try:
-                repo = self.pygit2_repo
-                idx = repo.index
-                # Build a mapping of index path -> blob oid (hex)
-                index_entries = [(getattr(e, "path", None), str(getattr(e, "id", ""))) for e in idx]
-                # Prepare lookup structures
-                paths_to_find = {p: oid for p, oid in index_entries if p}
-                found_map: dict[str, pygit2.Commit] = {}
+            repo = self.pygit2_repo
+            # Read the index to ensure it is up-to-date with the on-disk index file
+            repo.index.read()
 
-                # Walk commits once (if HEAD exists) and try to match tree entries for the paths
-                try:
-                    head = repo.revparse_single("HEAD")
-                except Exception as e:
-                    self.printException(e, "getHashListStagedChanges: revparse HEAD failed; falling back to raw oids")
-                    head = None
+            # Compare the index to the HEAD commit's tree
+            # This diff represents the staged changes
+            # repo.head.target is the OID of the current HEAD commit
+            # repo[repo.head.target] gets the commit object
+            # .tree gets the tree object for that commit
+            head_tree = repo[repo.head.target].tree
+            staged_changes = repo.index.diff_to_tree(head_tree)
 
-                if head is not None and paths_to_find:
-                    try:
-                        walker = repo.walk(head.id, pygit2.GIT_SORT_TIME)
-                        for c in walker:
-                            # Check each remaining path by attempting to resolve the path at this commit
-                            for p, oid in list(paths_to_find.items()):
-                                try:
-                                    try:
-                                        # Use rev-parse style to resolve <commit>:<path> to an object
-                                        obj = repo.revparse_single(f"{str(c.id)}:{p}")
-                                    except Exception as e:
-                                        self.printException(e, "getHashListStagedChanges: revparse_single failed")
-                                        obj = None
-                                    if obj is None:
-                                        continue
-                                    # Compare resolved object's oid to index oid
-                                    obj_oid = getattr(obj, "id", None) or getattr(obj, "oid", None) or obj
-                                    obj_hex = str(getattr(obj_oid, "hex", None) or obj_oid)
-                                    if obj_hex == oid:
-                                        found_map[p] = c
-                                        del paths_to_find[p]
-                                except Exception as e:
-                                    self.printException(e, "getHashListStagedChanges: error resolving path at commit")
-                                    continue
-                            if not paths_to_find:
-                                break
-                    except Exception as e:
-                        self.printException(e, "getHashListStagedChanges: commit walk failed")
-
-                # Build formatted output: prefer commit info when found, otherwise raw oid
-                formatted = []
-                for p, oid in sorted(((p, oid) for p, oid in index_entries if p), key=lambda x: x[0]):
-                    if p in found_map:
-                        formatted.append(self._format_commit_entry(repo, found_map[p]))
-                    else:
-                        # Blob present in index but not found in history => represent as staged pseudo-hash
-                        formatted.append("STAGED")
-                return formatted
-            except Exception as e:
-                self.printException(e, "pygit2 index inspection failed")
+            # If no staged changes, return quickly without computing index mtime
+            # `staged_changes` may be an iterator-like; treat false as no changes
+            if not staged_changes:
                 return []
+
+            iso = self.index_mtime_iso()
+            return [(iso, "STAGED", "")] if staged_changes else []
+
         else:
+            # Enumerate staged-only files via git diff --cached --name-only
             try:
-                output = check_output(["git", "ls-files", "-s"], cwd=self.repoRoot, text=True)
+                names_out = check_output(["git", "diff", "--cached", "--name-only"], cwd=self.repoRoot, text=True)
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
+            if names_out and any(ln.strip() for ln in names_out.splitlines()):
+                iso = self.index_mtime_iso()
+                return [(iso, "STAGED", "")]
+            return []
 
-            index_entries: list[tuple[str, str]] = []
-            for line in output.splitlines():
-                # Expected format: <mode> <object> <stage>\t<file>
-                try:
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        # parts[1] is object id, path follows a tab after the stage
-                        # fall back to splitting on tab to get exact path
-                        try:
-                            _, obj_part, _, path_part = line.split(None, 3)
-                        except Exception as e:
-                            self.printException(e, "getHashListStagedChanges: parsing ls-files line failed")
-                            # last-resort: take parts[1] and hope for the best
-                            obj_part = parts[1]
-                            path_part = line.split('\t', 1)[-1] if '\t' in line else ''
-                        oid = obj_part
-                        path = path_part.strip()
-                        if path:
-                            index_entries.append((path, oid))
-                except Exception as e:
-                    self.printException(e, "git ls-files parsing failed")
-
-            formatted: list[str] = []
-            # For each index path, try to find the most recent commit where the path's blob matches the index oid
-            for path, oid in sorted(index_entries, key=lambda x: x[0]):
-                try:
-                    # Get commits that touched this path (most recent first)
-                    try:
-                        rev_output = check_output(["git", "log", "--pretty=format:%H", "--", path], cwd=self.repoRoot, text=True)
-                    except CalledProcessError as e:
-                        self.printException(e, f"git log failed for path {path}")
-                        rev_output = ""
-
-                    found = False
-                    for commit_hash in (line.strip() for line in rev_output.splitlines() if line.strip()):
-                        try:
-                            try:
-                                ls = check_output(["git", "ls-tree", commit_hash, "--", path], cwd=self.repoRoot, text=True)
-                            except CalledProcessError as e:
-                                self.printException(e, f"git ls-tree failed for {commit_hash} {path}")
-                                ls = ""
-                            if not ls:
-                                continue
-                            # ls-tree output: <mode> <type> <object>\t<path>
-                            ls_parts = ls.split()
-                            if len(ls_parts) >= 3:
-                                tree_oid = ls_parts[2]
-                                if tree_oid == oid:
-                                    # Found matching commit
-                                    try:
-                                        info = check_output(["git", "show", "-s", "--format=%ct %H %s", commit_hash], cwd=self.repoRoot, text=True)
-                                    except CalledProcessError as e:
-                                        self.printException(e, f"git show failed for commit {commit_hash}")
-                                        info = "0 " + commit_hash + ""
-                                    parts = info.split(None, 2)
-                                    try:
-                                        ts = int(parts[0])
-                                    except Exception as e:
-                                        self.printException(e, "getHashListStagedChanges: parsing commit timestamp failed")
-                                        ts = 0
-                                    ch = parts[1] if len(parts) >= 2 else commit_hash
-                                    subject = parts[2].strip() if len(parts) >= 3 else ""
-                                    try:
-                                        iso = datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-                                    except Exception as e:
-                                        self.printException(e, "getHashListStagedChanges: formatting timestamp failed")
-                                        iso = "1970-01-01T00:00:00"
-                                    if subject:
-                                        formatted.append(f"{iso} {ch} {subject}")
-                                    else:
-                                        formatted.append(f"{iso} {ch}")
-                                    found = True
-                                    break
-                        except Exception as e:
-                            self.printException(e, "error while inspecting commits for path")
-                            continue
-                    if not found:
-                        # fallback to staged pseudo-hash when no matching commit is found
-                        formatted.append("STAGED")
-                except Exception as e:
-                    self.printException(e, "getHashListStagedChanges git-side failed for path")
-                    formatted.append(oid)
-
-            return formatted
     
-    
-    def getHashListFromFileName(self, file_name: str, usePyGit2: bool) -> list[str]:
+    def getHashListNewChanges(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
+        """Return a list of commit hashes for new changes."""
+        # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
+        # Else use git CLI to get the list of hashes
+        # Return "NEW" pseudo-hash if there are changes made to any files in the repo
+        # since the latest change to staging.
+        paths: list[str] = []
+        if usePyGit2:
+            if not pygit2:
+                raise RuntimeError("pygit2 is not available")
+            repo = self.pygit2_repo
+            # Read the index to ensure it is up-to-date with the on-disk index file
+            repo.index.read()
+            # Compare the working tree (None) to the index
+            new_changes = repo.index.diff_to_workdir()
+            if not new_changes:
+                return []
+            # Collect changed paths from the diff deltas
+            try:
+                for delta in getattr(new_changes, "deltas", []):
+                    p = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
+                    if p:
+                        paths.append(p)
+            except Exception as e:
+                self.printException(e, "getHashListNewChanges: collecting paths from deltas failed")
+            
+        else:
+            # Enumerate working-tree-vs-index files via git diff --name-only
+            try:
+                names_out = check_output(["git", "diff", "--name-only"], cwd=self.repoRoot, text=True)
+            except CalledProcessError as e:
+                self.printException(e, "git command failed")
+
+            if not names_out:
+                return []
+            
+            lns = [ln.strip() for ln in names_out.splitlines() if ln.strip()]
+            if any(lns):
+                paths = lns
+
+        # Compute ISO based on working-tree paths' mtimes (centralized)
+        iso = self._paths_mtime_iso(paths)
+        return [(iso, "MODS", "Unstaged modifications")] if paths else []
+
+
+    def getHashListFromFileName(self, file_name: str, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of commit hashes that modified the given file."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
         # Else use git CLI to get the list of hashes
@@ -798,7 +753,7 @@ class TestRepo(AppException):
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
-            entries = []
+            entries: list[tuple[str, str, str]] = []
             for line in output.splitlines():
                 if not line:
                     continue
@@ -812,16 +767,11 @@ class TestRepo(AppException):
                     ts = 0
                 h = parts[1].strip()
                 subject = parts[2].strip() if len(parts) >= 3 else ""
-                try:
-                    dt = datetime.fromtimestamp(ts, timezone.utc)
-                    iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
-                except Exception as e:
-                    self.printException(e, "getHashListFromFileName: formatting timestamp failed")
-                    iso = "1970-01-01T00:00:00"
+                iso = self._epoch_to_iso(ts)
                 if subject:
-                    entries.append(f"{iso} {h} {subject}")
+                    entries.append((iso, h, subject))
                 else:
-                    entries.append(f"{iso} {h}")
+                    entries.append((iso, h, ""))
             # Detect working-tree/index state for this file and prepend pseudo-entries
             try:
                 status_out = check_output(["git", "status", "--porcelain", "--", file_name], cwd=self.repoRoot, text=True)
@@ -839,33 +789,58 @@ class TestRepo(AppException):
                     wt_flag = ' '
                 # If index has a change, represent staged version
                 if idx_flag != ' ':
-                    entries.insert(0, "STAGED")
+                    entries.insert(0, ("", "STAGED", ""))
                 # If working tree has modifications (unstaged), represent as MODS
                 if wt_flag != ' ':
                     # Insert after STAGED if present, otherwise at top
-                    if entries and entries[0] == "STAGED":
-                        entries.insert(1, "MODS")
+                    if entries and entries[0] == ("", "STAGED", ""):
+                        entries.insert(1, ("", "MODS", ""))
                     else:
-                        entries.insert(0, "MODS")
+                        entries.insert(0, ("", "MODS", ""))
             return entries
     
     
 
-def show_diffs(test_name: str, list1: list[str], list2: list[str], top: int = 0) -> None:
+def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool = False) -> bool:
     """Show differences between two file lists. If equal and `top` > 0,
     print the first `top` lines from `list1`.
     """
-    diff = list(difflib.unified_diff(list1, list2, fromfile="pygit2", tofile="git", lineterm=""))
+    def fmt(e) -> str:
+        if raw:
+            return repr(e)
+        if isinstance(e, tuple) and len(e) >= 2:
+            t, h, *rest = e
+            subj = rest[0] if rest else ""
+            parts = []
+            if t:
+                parts.append(t)
+            if h:
+                parts.append(h)
+            s = " ".join(parts)
+            if subj:
+                return f"{s} {subj}" if s else subj
+            return s
+        return str(e)
+
+    disp1 = [fmt(e) for e in list1]
+    disp2 = [fmt(e) for e in list2]
+    diff = list(difflib.unified_diff(disp1, disp2, fromfile="pygit2", tofile="git", lineterm=""))
     if diff:
         print(f"[{test_name}] Differences found:")
         for line in diff:
             print(line)
+        return False
     else:
-        print(f"[{test_name}] No differences found.")
+        lines = len(disp1)
+        print(f"[{test_name}] No differences found in {lines} lines of output")
         if top and top > 0:
             print(f"[{test_name}] Top {top} lines from pygit2 result:")
             for ln in list1[:top]:
-                print(ln)
+                if raw:
+                    print(repr(ln))
+                else:
+                    print(fmt(ln))
+        return True
 
 
 def main():
@@ -883,40 +858,93 @@ def main():
         default=0,
         help="When two lists are equal, print the top N lines from the pygit2 result.",
     )
+    parser.add_argument(
+        "-R",
+        "--raw",
+        action="store_true",
+        help="Display raw tuple values returned by the getHash* functions instead of formatted strings",
+    )
+
+    # Add independent flags to run one or more test functions (-1..-7 allowed together)
+    parser.add_argument("-1", "--getFileListNewToTopHash", action="store_true", help="Run getFileListNewToTopHash")
+    parser.add_argument("-2", "--getFileListBetweenTopHashAndCurrentTime", action="store_true", help="Run getFileListBetweenTopHashAndCurrentTime")
+    parser.add_argument("-3", "--getFileListBetweenTopHashAndStaged", action="store_true", help="Run getFileListBetweenTopHashAndStaged")
+    parser.add_argument("-4", "--getFileListBetweenStagedAndWorkingTree", action="store_true", help="Run getFileListBetweenStagedAndWorkingTree")
+    parser.add_argument("-5", "--getHashListEntireRepo", action="store_true", help="Run getHashListEntireRepo")
+    parser.add_argument("-6", "--getHashListStagedChanges", action="store_true", help="Run getHashListStagedChanges")
+    parser.add_argument("-7", "--getHashListFromFileName", action="store_true", help="Run getHashListFromFileName")
+    parser.add_argument("-8", "--getHashListNewChanges", action="store_true", help="Run getHashListNewChanges")
+    parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
+    parser.add_argument("-F", "--file", default="README.md", help="Filename for getHashListFromFileName when used")
 
     args = parser.parse_args()
     test_repo = TestRepo(args.path)
 
-    # Run tests for both pygit2 and git CLI methods
-    show_diffs("getFileListNewToTopHash: File List New to Top Hash", 
-               test_repo.getFileListNewToTopHash(usePyGit2=True), 
-               test_repo.getFileListNewToTopHash(usePyGit2=False),
-               args.top)
-    show_diffs("getFileListBetweenTopHashAndCurrentTime: File List Between TopHash and Current Time", 
-               test_repo.getFileListBetweenTopHashAndCurrentTime(usePyGit2=True), 
-               test_repo.getFileListBetweenTopHashAndCurrentTime(usePyGit2=False),
-               args.top)
-    show_diffs("getFileListBetweenTopHashAndStaged:File List Between TopHash and Staged",
-               test_repo.getFileListBetweenTopHashAndStaged(usePyGit2=True), 
-               test_repo.getFileListBetweenTopHashAndStaged(usePyGit2=False),
-               args.top)
-    show_diffs("getFileListBetweenStagedAndWorkingTree: File List Between Staged and Working Tree",
-               test_repo.getFileListBetweenStagedAndWorkingTree(usePyGit2=True), 
-               test_repo.getFileListBetweenStagedAndWorkingTree(usePyGit2=False),
-               args.top)
-    show_diffs("getHashListEntireRepo: Hash List Entire Repo",
-               test_repo.getHashListEntireRepo(usePyGit2=True),
-               test_repo.getHashListEntireRepo(usePyGit2=False),
-               args.top)
-    show_diffs("getHashListStagedChanges: Hash List Staged Changes",
-               test_repo.getHashListStagedChanges(usePyGit2=True),
-               test_repo.getHashListStagedChanges(usePyGit2=False),
-               args.top)
-    # Compare commit lists that touched README.md (adjust filename as needed)
-    show_diffs("getHashListFromFileName: Hash List From File README.md",
-               test_repo.getHashListFromFileName("README.md", usePyGit2=True),
-               test_repo.getHashListFromFileName("README.md", usePyGit2=False),
-               args.top)
+    # Helper to run a single comparison and return True on success
+    def run_one(name: str, func_name: str, fname: str | None) -> bool:
+        if fname is not None:
+            l1 = getattr(test_repo, func_name)(fname, usePyGit2=True)
+            l2 = getattr(test_repo, func_name)(fname, usePyGit2=False)
+        else:
+            l1 = getattr(test_repo, func_name)(usePyGit2=True)
+            l2 = getattr(test_repo, func_name)(usePyGit2=False)
+        return show_diffs(name, l1, l2, args.top, args.raw)
+
+    allfuncs = [
+            ("getFileListNewToTopHash: File List New to Top Hash", "getFileListNewToTopHash", None),
+            ("getFileListBetweenTopHashAndCurrentTime: File List Between TopHash and Current Time", "getFileListBetweenTopHashAndCurrentTime", None),
+            ("getFileListBetweenTopHashAndStaged: File List Between TopHash and Staged", "getFileListBetweenTopHashAndStaged", None),
+            ("getFileListBetweenStagedAndWorkingTree: File List Between Staged and Working Tree", "getFileListBetweenStagedAndWorkingTree", None),
+            ("getHashListEntireRepo: Hash List Entire Repo", "getHashListEntireRepo", None),
+            ("getHashListStagedChanges: Hash List Staged Changes", "getHashListStagedChanges", None),
+            (f"getHashListFromFileName: Hash List From File {args.file}", "getHashListFromFileName", args.file),
+            ("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None),
+        ]
+
+    # Determine which tests to run. If -A/--all is set, run all tests.
+    to_run: list[tuple[str, str, str | None]] = []
+    if args.all:
+        to_run = allfuncs
+    else:
+        if args.getFileListNewToTopHash:
+            to_run.append(("getFileListNewToTopHash: File List New to Top Hash", "getFileListNewToTopHash", None))
+        if args.getFileListBetweenTopHashAndCurrentTime:
+            to_run.append(("getFileListBetweenTopHashAndCurrentTime: File List Between TopHash and Current Time", "getFileListBetweenTopHashAndCurrentTime", None))
+        if args.getFileListBetweenTopHashAndStaged:
+            to_run.append(("getFileListBetweenTopHashAndStaged: File List Between TopHash and Staged", "getFileListBetweenTopHashAndStaged", None))
+        if args.getFileListBetweenStagedAndWorkingTree:
+            to_run.append(("getFileListBetweenStagedAndWorkingTree: File List Between Staged and Working Tree", "getFileListBetweenStagedAndWorkingTree", None))
+        if args.getHashListEntireRepo:
+            to_run.append(("getHashListEntireRepo: Hash List Entire Repo", "getHashListEntireRepo", None))
+        if args.getHashListStagedChanges:
+            to_run.append(("getHashListStagedChanges: Hash List Staged Changes", "getHashListStagedChanges", None))
+        if args.getHashListNewChanges:
+            to_run.append(("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None))
+        if args.getHashListFromFileName:
+            to_run.append((f"getHashListFromFileName: Hash List From File {args.file}", "getHashListFromFileName", args.file))
+
+    # If no specific flags provided, default to running all tests
+    if not to_run:
+        args.all = True
+        to_run = allfuncs
+
+    total = 0
+    passed = 0
+    failed = 0
+    for name, func, fname in to_run:
+        total += 1
+        try:
+            ok = run_one(name, func, fname)
+        except Exception as e:
+            test_repo.printException(e, f"running {name} failed")
+            ok = False
+        if ok:
+            passed += 1
+        else:
+            failed += 1
+
+    # Final summary
+    print(f"\nTest summary: total={total} passed={passed} failed={failed}")
     
 if __name__ == "__main__":
     main()
