@@ -37,6 +37,9 @@ class AppException:
 
 class TestRepo(AppException):
     """Test pygit2 and git CLI repository file listing methods."""
+
+    STAGED_MESSAGE = "Staged changes"
+    MODS_MESSAGE = "Unstaged modifications"
     
     def __init__(self, repoRoot: str):
         self.repoRoot = repoRoot
@@ -174,8 +177,72 @@ class TestRepo(AppException):
             return self._epoch_to_iso(max(mtimes))
         return self.index_mtime_iso()
 
+    def _delta_status_to_str(self, status_code) -> str:
+        """Map pygit2 delta status codes to human-friendly status strings."""
+        try:
+            if status_code == pygit2.GIT_DELTA_ADDED:
+                return "added"
+            if status_code == pygit2.GIT_DELTA_MODIFIED:
+                return "modified"
+            if status_code == pygit2.GIT_DELTA_DELETED:
+                return "deleted"
+            if status_code == pygit2.GIT_DELTA_RENAMED:
+                return "renamed"
+            if status_code == pygit2.GIT_DELTA_COPIED:
+                return "copied"
+        except Exception:
+            pass
+        return "modified"
+
+    def _git_name_status_to_str(self, code: str) -> str:
+        """Map `git --name-status` status codes to human-friendly strings.
+
+        Handles codes like 'A','M','D','C' and rename codes that start with 'R'.
+        """
+        try:
+            if not code:
+                return "modified"
+            if code.startswith('R'):
+                return 'renamed'
+            return {'A': 'added', 'M': 'modified', 'D': 'deleted', 'C': 'copied'}.get(code, 'modified')
+        except Exception:
+            return 'modified'
+
+    def _parse_git_name_status_line(self, line: str) -> tuple[str, str]:
+        """Parse a single `git --name-status` line and return (path, status).
+
+        Handles rename lines like `R087\told\tnew` by selecting the new
+        path (last column). Uses `_git_name_status_to_str` to determine the
+        canonical status string.
+        """
+        parts = line.split('\t')
+        code = parts[0].strip() if parts else ''
+        if code.startswith('R'):
+            path = parts[-1].strip() if len(parts) > 1 else ''
+        else:
+            path = parts[1].strip() if len(parts) > 1 else ''
+        status = self._git_name_status_to_str(code)
+        return (path, status)
+
+    def _empty_tree_for_repo(self, repo) -> 'pygit2.Tree | None':
+        """Construct and return an empty tree object for `repo`, or None on failure.
+
+        Centralizes `TreeBuilder` usage to avoid repeated try/except blocks.
+        """
+        try:
+            tb = repo.TreeBuilder()
+            oid = tb.write()
+            return repo.get(oid)
+        except Exception as e:
+            self.printException(e, "_empty_tree_for_repo: TreeBuilder failed")
+            return None
+
     def getFileListNewToTopHash(self, usePyGit2: bool) -> list[str]:
-        """Return a list of all files added from the beginning to the current repository state."""
+        """Return a list of `(path, status)` for files present in HEAD.
+
+        Status will be `committed` to indicate file is present in the
+        given commit (HEAD).
+        """
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
         # Else use git CLI to get the list of files
         if usePyGit2:
@@ -184,7 +251,7 @@ class TestRepo(AppException):
             # Use pygit2 to get the list of files
             commit = self.pygit2_repo.revparse_single("HEAD")
             tree = commit.tree
-            files: list[str] = []
+            files: list[tuple[str, str]] = []
 
             def _walk(t, prefix: str = ""):
                 for entry in t:
@@ -192,7 +259,7 @@ class TestRepo(AppException):
                     if entry.type == pygit2.GIT_OBJECT_TREE:
                         _walk(self.pygit2_repo[entry.id], path + "/")
                     else:
-                        files.append(path)
+                        files.append((path, "committed"))
 
             _walk(tree)
             return sorted(files)
@@ -210,10 +277,13 @@ class TestRepo(AppException):
                 return []
 
             files = [line for line in output.splitlines() if line]
-            return sorted(files)
+            return sorted([(p, "committed") for p in files])
 
-    def getFileListBetweenHashes(self, prev_hash: str, curr_hash: str, usePyGit2: bool) -> list[str]:
-        """Return a list of files changed between `prev_hash` and `curr_hash`."""
+    def getFileListBetweenHashes(self, prev_hash: str, curr_hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
+        """Return a list of `(path, status)` for files changed between `prev_hash` and `curr_hash`.
+
+        Status values: `added`, `modified`, `deleted`, `renamed`, `copied`.
+        """
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
         # Else use git CLI to get the list of files
         if usePyGit2:
@@ -224,32 +294,34 @@ class TestRepo(AppException):
                 b = self.pygit2_repo.revparse_single(curr_hash)
             except Exception as ex:
                 self.printException(ex, "pygit2 combined walker failed")
-            # Attach timestamps to each commit and sort by (timestamp, hex)
-            commit_info = []
-            for h in commits:
-                try:
-                    obj = repo.get(h)
-                    t = getattr(obj, "time", None) or getattr(obj, "commit_time", None) or 0
-                    ts = int(t)
-                except Exception as e:
-                    self.printException(e, "getFileListBetweenHashes: commit time extraction failed")
-                    ts = 0
-                commit_info.append((ts, h))
-
-            # Sort by timestamp descending, then by hash to stabilize ordering
-            commit_info.sort(key=lambda x: (x[0], x[1]), reverse=True)
-
-            formatted = []
-            for ts, h in commit_info:
-                iso = self._epoch_to_iso(ts)
-                formatted.append(f"{iso} {h}")
-            return formatted
+            # For pygit2 branch we should diff the two trees and report
+            # per-delta path/status pairs.
+            try:
+                a = self._resolve_tree(a)
+                b = self._resolve_tree(b)
+                if a is None:
+                    a = self._empty_tree_for_repo(self.pygit2_repo)
+                if b is None:
+                    b = self._empty_tree_for_repo(self.pygit2_repo)
+                diff = self.pygit2_repo.diff(a, b)
+            except Exception as e:
+                self.printException(e, "getFileListBetweenHashes: pygit2 diff failed")
+                return []
+            results: list[tuple[str, str]] = []
+            for delta in diff.deltas:
+                path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
+                status = self._delta_status_to_str(getattr(delta, "status", None))
+                if path:
+                    results.append((path, status))
+            # stable sort by path
+            results.sort(key=lambda x: x[0])
+            return results
 
         else:
-            # Use git CLI to get the list of files
+            # Use git CLI to get the list of files with status
             try:
                 output = check_output(
-                    ["git", "diff", "--name-only", prev_hash, curr_hash],
+                    ["git", "diff", "--name-status", prev_hash, curr_hash],
                     cwd=self.repoRoot,
                     text=True,
                 )
@@ -257,11 +329,22 @@ class TestRepo(AppException):
                 self.printException(e, "git command failed")
                 return []
 
-            files = [line for line in output.splitlines() if line]
-            return sorted(files)
+            results: list[tuple[str, str]] = []
+            for line in output.splitlines():
+                if not line:
+                    continue
+                # Parse git --name-status line (handles rename/new-path selection)
+                path, status = self._parse_git_name_status_line(line)
+                if path:
+                    results.append((path, status))
+            results.sort(key=lambda x: x[0])
+            return results
 
     def getFileListBetweenNewAndHash(self, curr_hash: str, usePyGit2: bool) -> list[str]:
-        """Return a list of files changed between the beginning and `curr_hash`."""
+        """Return a list of `(path, status)` for files changed between the beginning and `curr_hash`.
+
+        Status values are the same as other diffs (added/modified/etc.).
+        """
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
         # Else use git CLI to get the list of files
         if usePyGit2:
@@ -283,34 +366,50 @@ class TestRepo(AppException):
                 self.printException(e, "pygit2 diff(None, cur_tree) not supported; using TreeBuilder fallback")
                 # Fallback: construct index/tree from empty index
                 try:
-                    tb = self.pygit2_repo.TreeBuilder()
-                    empty_oid = tb.write()
-                    empty_tree = self.pygit2_repo.get(empty_oid)
+                    empty_tree = self._empty_tree_for_repo(self.pygit2_repo)
+                    if empty_tree is None:
+                        raise RuntimeError("failed to construct empty tree")
                     diff = self.pygit2_repo.diff(empty_tree, cur_tree)
                 except Exception as e:
                     self.printException(e, "pygit2 TreeBuilder fallback failed")
                     self.printException(e, "pygit2 initial-commit diff failed")
                     return []
-            files = [getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None) for delta in diff.deltas]
-            return sorted([p for p in files if p])
+            results: list[tuple[str, str]] = []
+            for delta in diff.deltas:
+                path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
+                status = self._delta_status_to_str(getattr(delta, "status", None))
+                if path:
+                    results.append((path, status))
+            results.sort(key=lambda x: x[0])
+            return results
 
         else:
             # Use git CLI to get the list of files
             try:
                 output = check_output(
-                    ["git", "diff", "--name-only", curr_hash],
+                    ["git", "diff", "--name-status", curr_hash],
                     cwd=self.repoRoot,
                     text=True,
                 )
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
-
-            files = [line for line in output.splitlines() if line]
-            return sorted(files)
+            results: list[tuple[str, str]] = []
+            for line in output.splitlines():
+                if not line:
+                    continue
+                # Parse git --name-status line (handles rename/new-path selection)
+                path, status = self._parse_git_name_status_line(line)
+                if path:
+                    results.append((path, status))
+            results.sort(key=lambda x: x[0])
+            return results
 
     def getFileListBetweenTopHashAndCurrentTime(self, usePyGit2: bool) -> list[str]:
-        """Return a list of files changed between the latest commit and the current time."""
+        """Return a list of `(path, status)` for files changed between HEAD and working tree.
+
+        Status will reflect the working-tree change type (modified/added/deleted).
+        """
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
         # Else use git CLI to get the list of files
         if usePyGit2:
@@ -330,26 +429,39 @@ class TestRepo(AppException):
             except Exception as e:
                 self.printException(e, "pygit2 working-tree diff failed")
                 return []
-            files = [getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None) for delta in diff.deltas]
-            return sorted([p for p in files if p])
+            results: list[tuple[str, str]] = []
+            for delta in diff.deltas:
+                path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
+                status = self._delta_status_to_str(getattr(delta, "status", None))
+                if path:
+                    results.append((path, status))
+            results.sort(key=lambda x: x[0])
+            return results
 
         else:
             # Use git CLI to get the list of files
             try:
                 output = check_output(
-                    ["git", "diff", "--name-only", "HEAD"],
+                    ["git", "diff", "--name-status", "HEAD"],
                     cwd=self.repoRoot,
                     text=True,
                 )
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
-
-            files = [line for line in output.splitlines() if line]
-            return sorted(files)
+            results: list[tuple[str, str]] = []
+            for line in output.splitlines():
+                if not line:
+                    continue
+                # Parse git --name-status line (handles rename/new-path selection)
+                path, status = self._parse_git_name_status_line(line)
+                if path:
+                    results.append((path, status))
+            results.sort(key=lambda x: x[0])
+            return results
 
     def getFileListBetweenTopHashAndStaged(self, usePyGit2: bool) -> list[str]:
-        """Return a list of files changed between the latest commit and the staged changes."""
+        """Return a list of `(path, status)` for files changed between HEAD and staged index."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
         # Else use git CLI to get the list of files
         if usePyGit2:
@@ -372,25 +484,38 @@ class TestRepo(AppException):
             except Exception as e:
                 self.printException(e, "pygit2 staged-vs-HEAD diff failed")
                 return []
-            files = [getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None) for delta in diff.deltas]
-            return sorted([p for p in files if p])
+            results: list[tuple[str, str]] = []
+            for delta in diff.deltas:
+                path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
+                status = self._delta_status_to_str(getattr(delta, "status", None))
+                if path:
+                    results.append((path, status))
+            results.sort(key=lambda x: x[0])
+            return results
         else:
             # Use git CLI for staged-vs-HEAD list
             try:
                 output = check_output(
-                    ["git", "diff", "--name-only", "--cached", "HEAD"],
+                    ["git", "diff", "--name-status", "--cached", "HEAD"],
                     cwd=self.repoRoot,
                     text=True,
                 )
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
-
-            files = [line for line in output.splitlines() if line]
-            return sorted(files)
+            results: list[tuple[str, str]] = []
+            for line in output.splitlines():
+                if not line:
+                    continue
+                # Parse git --name-status line (handles rename/new-path selection)
+                path, status = self._parse_git_name_status_line(line)
+                if path:
+                    results.append((path, status))
+            results.sort(key=lambda x: x[0])
+            return results
 
     def getFileListBetweenStagedAndWorkingTree(self, usePyGit2: bool) -> list[str]:
-        """Return a list of files changed between the staged changes and the working tree."""
+        """Return a list of `(path, status)` for files changed between staged index and working tree."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
         # Else use git CLI to get the list of files
         if usePyGit2:
@@ -404,23 +529,36 @@ class TestRepo(AppException):
             except Exception as e:
                 self.printException(e, "pygit2 staged->working diff failed")
                 return []
-            files = [getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None) for delta in diff.deltas]
-            return sorted([p for p in files if p])
+            results: list[tuple[str, str]] = []
+            for delta in diff.deltas:
+                path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
+                status = self._delta_status_to_str(getattr(delta, "status", None))
+                if path:
+                    results.append((path, status))
+            results.sort(key=lambda x: x[0])
+            return results
 
         else:
             # Use git CLI to get the list of files
             try:
                 output = check_output(
-                    ["git", "diff", "--name-only"],
+                    ["git", "diff", "--name-status"],
                     cwd=self.repoRoot,
                     text=True,
                 )
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
-
-            files = [line for line in output.splitlines() if line]
-            return sorted(files)
+            results: list[tuple[str, str]] = []
+            for line in output.splitlines():
+                if not line:
+                    continue
+                # Parse git --name-status line (handles rename/new-path selection)
+                path, status = self._parse_git_name_status_line(line)
+                if path:
+                    results.append((path, status))
+            results.sort(key=lambda x: x[0])
+            return results
 
 
     def getHashListEntireRepo(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
@@ -600,7 +738,7 @@ class TestRepo(AppException):
                 return []
 
             iso = self.index_mtime_iso()
-            return [(iso, "STAGED", "")] if staged_changes else []
+            return [(iso, "STAGED", self.STAGED_MESSAGE)] if staged_changes else []
 
         else:
             # Enumerate staged-only files via git diff --cached --name-only
@@ -609,9 +747,12 @@ class TestRepo(AppException):
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
-            if names_out and any(ln.strip() for ln in names_out.splitlines()):
+            if not names_out:
+                return []
+            
+            if any(ln.strip() for ln in names_out.splitlines()):
                 iso = self.index_mtime_iso()
-                return [(iso, "STAGED", "")]
+                return [(iso, "STAGED", self.STAGED_MESSAGE)]
             return []
 
     
@@ -657,7 +798,7 @@ class TestRepo(AppException):
 
         # Compute ISO based on working-tree paths' mtimes (centralized)
         iso = self._paths_mtime_iso(paths)
-        return [(iso, "MODS", "Unstaged modifications")] if paths else []
+        return [(iso, "MODS", self.MODS_MESSAGE)] if paths else []
 
 
     def getHashListFromFileName(self, file_name: str, usePyGit2: bool) -> list[tuple[str, str, str]]:
@@ -690,17 +831,17 @@ class TestRepo(AppException):
                                 # Ensure we have tree-ish objects: build an empty tree when needed
                                 if a_tree is None:
                                     try:
-                                        tb = repo.TreeBuilder()
-                                        empty_oid = tb.write()
-                                        a_tree = repo.get(empty_oid)
+                                        a_tree = self._empty_tree_for_repo(repo)
+                                        if a_tree is None:
+                                            raise RuntimeError("empty tree construction returned None")
                                     except Exception as e:
                                         self.printException(e, "getHashListFromFileName: failed to construct empty a_tree")
                                         continue
                                 if b_tree is None:
                                     try:
-                                        tb = repo.TreeBuilder()
-                                        empty_oid = tb.write()
-                                        b_tree = repo.get(empty_oid)
+                                        b_tree = self._empty_tree_for_repo(repo)
+                                        if b_tree is None:
+                                            raise RuntimeError("empty tree construction returned None")
                                     except Exception as e:
                                         self.printException(e, "getHashListFromFileName: failed to construct empty b_tree")
                                         continue
@@ -787,16 +928,19 @@ class TestRepo(AppException):
                 else:
                     idx_flag = s[0] if s else ' '
                     wt_flag = ' '
-                # If index has a change, represent staged version
+                # Prepare timestamps for pseudo-entries
+                iso_index = self.index_mtime_iso()
+                iso_mods = self._paths_mtime_iso([file_name])
+                # If index has a change, represent staged version with index timestamp
                 if idx_flag != ' ':
-                    entries.insert(0, ("", "STAGED", ""))
+                    entries.insert(0, (iso_index, "STAGED", self.STAGED_MESSAGE))
                 # If working tree has modifications (unstaged), represent as MODS
                 if wt_flag != ' ':
                     # Insert after STAGED if present, otherwise at top
-                    if entries and entries[0] == ("", "STAGED", ""):
-                        entries.insert(1, ("", "MODS", ""))
+                    if entries and entries[0][1] == "STAGED":
+                        entries.insert(1, (iso_mods, "MODS", self.MODS_MESSAGE))
                     else:
-                        entries.insert(0, ("", "MODS", ""))
+                        entries.insert(0, (iso_mods, "MODS", self.MODS_MESSAGE))
             return entries
     
     
@@ -804,22 +948,27 @@ class TestRepo(AppException):
 def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool = False) -> bool:
     """Show differences between two file lists. If equal and `top` > 0,
     print the first `top` lines from `list1`.
+    Returns True when lists are equal, False when differences are found.
     """
     def fmt(e) -> str:
         if raw:
             return repr(e)
-        if isinstance(e, tuple) and len(e) >= 2:
-            t, h, *rest = e
-            subj = rest[0] if rest else ""
-            parts = []
-            if t:
-                parts.append(t)
-            if h:
-                parts.append(h)
-            s = " ".join(parts)
-            if subj:
-                return f"{s} {subj}" if s else subj
-            return s
+        if isinstance(e, tuple):
+            if len(e) == 2:
+                # file list entry: (path, status)
+                return f"{e[0]} {e[1]}"
+            if len(e) >= 3:
+                t, h, *rest = e
+                subj = rest[0] if rest else ""
+                parts = []
+                if t:
+                    parts.append(t)
+                if h:
+                    parts.append(h)
+                s = " ".join(parts)
+                if subj:
+                    return f"{s} {subj}" if s else subj
+                return s
         return str(e)
 
     disp1 = [fmt(e) for e in list1]
