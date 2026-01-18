@@ -2003,12 +2003,12 @@ def main():
             to_run.append(("getFileListUntrackedAndIgnored: Untracked and Ignored files", "getFileListUntrackedAndIgnored", None))
         # Sampled comparisons are run separately to allow independent reporting
         # and avoid mixing their output with the main test loop.
-        sampled_flag = args.getFileListSampledComparisons
 
     # If no specific flags provided, default to running all tests
-    if not to_run:
+    if not to_run and not args.getFileListSampledComparisons:
         args.all = True
         to_run = allfuncs
+        args.getFileListSampledComparisons = True
 
     total = 0
     passed = 0
@@ -2029,7 +2029,7 @@ def main():
     print(f"\nTest summary: total={total} passed={passed} failed={failed}")
 
     # If requested, run sampled comparisons separately (outside the to_run loop)
-    if sampled_flag:
+    if args.getFileListSampledComparisons:
         print("\nRunning sampled pairwise comparisons (separate)...")
         try:
             # runFileListSampledComparisons now accepts (top, raw, verbose)
