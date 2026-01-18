@@ -12,6 +12,16 @@ import pygit2
 import codecs
 from datetime import datetime, timezone
 from subprocess import check_output, CalledProcessError
+import traceback
+import sys
+
+
+def printException(e: Exception, msg: str) -> None:
+    """Module-level exception logger used before TestRepo instances are available."""
+    funcName = sys._getframe(1).f_code.co_name
+    short = msg or ""
+    print(f"{funcName}: {short} - {e}")
+    print(traceback.format_exc())
 
 
 class AppException:
@@ -204,9 +214,11 @@ class TestRepo(AppException):
                 b = tmp.encode("latin-1", "surrogatepass")
                 try:
                     return b.decode("utf-8")
-                except UnicodeDecodeError:
+                except UnicodeDecodeError as e:
+                    self.printException(e, "_decode_git_quoted_path: unicode decode failed")
                     return b.decode("latin-1")
-            except Exception:
+            except Exception as e:
+                self.printException(e, "_decode_git_quoted_path: decode failed")
                 return raw
         return rel
 
@@ -1194,18 +1206,19 @@ class TestRepo(AppException):
                                 mtime = os.lstat(fp).st_mtime
                             else:
                                 mtime = os.path.getmtime(fp)
-                        except FileNotFoundError:
+                        except FileNotFoundError as _no_logging:
                             # file disappeared between listing and stat; skip it
                             continue
                         except Exception as e:
-                            # fallback: try lstat in case getmtime failed for other reasons
+                            # Log initial failure, then fallback: try lstat in case getmtime failed for other reasons
+                            self.printException(e, "getFileListUntrackedAndIgnored: initial mtime attempt failed")
                             try:
                                 mtime = os.lstat(fp).st_mtime
-                            except FileNotFoundError:
+                            except FileNotFoundError as _no_logging:
                                 # target not present; skip
                                 continue
-                            except Exception:
-                                self.printException(e, "getFileListUntrackedAndIgnored: getting mtime failed")
+                            except Exception as e2:
+                                self.printException(e2, "getFileListUntrackedAndIgnored: getting mtime failed")
                                 mtime = 0
                         iso = self._epoch_to_iso(mtime)
                         results.append((rel, iso, status))
@@ -1247,16 +1260,20 @@ class TestRepo(AppException):
                             mtime = os.lstat(fp).st_mtime
                         else:
                             mtime = os.path.getmtime(fp)
-                    except FileNotFoundError:
+                    except FileNotFoundError as _no_logging:
                         # file vanished; skip adding
                         continue
                     except Exception as e:
+                        # Log initial failure, then fallback to lstat
+                        self.printException(
+                            e, "getFileListUntrackedAndIgnored: initial mtime attempt failed (untracked)"
+                        )
                         try:
                             mtime = os.lstat(fp).st_mtime
-                        except FileNotFoundError:
+                        except FileNotFoundError as _no_logging:
                             continue
-                        except Exception:
-                            self.printException(e, "getFileListUntrackedAndIgnored: mtime failed for untracked")
+                        except Exception as e2:
+                            self.printException(e2, "getFileListUntrackedAndIgnored: mtime failed for untracked")
                             mtime = 0
                     iso = self._epoch_to_iso(mtime)
                     results.append((rel, iso, "untracked"))
@@ -1274,16 +1291,18 @@ class TestRepo(AppException):
                             mtime = os.lstat(fp).st_mtime
                         else:
                             mtime = os.path.getmtime(fp)
-                    except FileNotFoundError:
+                    except FileNotFoundError as _no_logging:
                         # file vanished; skip adding
                         continue
                     except Exception as e:
+                        # Log initial failure, then fallback to lstat
+                        self.printException(e, "getFileListUntrackedAndIgnored: initial mtime attempt failed (ignored)")
                         try:
                             mtime = os.lstat(fp).st_mtime
-                        except FileNotFoundError:
+                        except FileNotFoundError as _no_logging:
                             continue
-                        except Exception:
-                            self.printException(e, "getFileListUntrackedAndIgnored: mtime failed for ignored")
+                        except Exception as e2:
+                            self.printException(e2, "getFileListUntrackedAndIgnored: mtime failed for ignored")
                             mtime = 0
                     iso = self._epoch_to_iso(mtime)
                     results.append((rel, iso, "ignored"))
@@ -1947,8 +1966,8 @@ def main():
             # Interpret up-through as a base-36 digit/string so 'a'..'z' map to 10..35
             n = int(str(args.up_through), 36)
         except Exception as e:
-            # No `TestRepo` instance available yet; print minimal error info
-            print(f"up-through parse failed (expected base36): {e}", file=sys.stderr)
+            # No `TestRepo` instance available yet; log via module helper
+            printException(e, "up-through parse failed (expected base36)")
             n = 0
         if n >= 1:
             args.getFileListBetweenNewAndTopHash = True
@@ -2121,7 +2140,7 @@ def main():
             print("\nRunning sampled pairwise comparisons (separate)...")
             try:
                 # runFileListSampledComparisons returns (total, passed, failed)
-                (t,p,f) = getattr(test_repo, "runFileListSampledComparisons")(args.top, args.raw)
+                (t, p, f) = getattr(test_repo, "runFileListSampledComparisons")(args.top, args.raw)
                 # (t, p, f) = test_repo.runFileListSampledComparisons(args.top, args.raw)
                 total += t
                 passed += p
