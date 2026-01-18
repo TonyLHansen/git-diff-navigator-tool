@@ -1689,9 +1689,9 @@ def main():
     parser.add_argument(
         "-u",
         "--up-through",
-        type=int,
+        type=str,
         default=None,
-        help="Run all numeric tests up through this number (e.g. -u 2 runs -1 and -2)",
+        help="Run tests up through this base-36 digit (0-9, a-z). Example: -u 2 runs -1 and -2; -u a runs up through -a",
     )
 
     # Add independent flags to run one or more test functions (-1..-7 allowed together)
@@ -1737,9 +1737,10 @@ def main():
     # boolean flags so downstream selection logic runs the requested tests.
     if args.up_through is not None:
         try:
-            n = int(args.up_through)
+            # Interpret up-through as a base-36 digit/string so 'a'..'z' map to 10..35
+            n = int(str(args.up_through), 36)
         except Exception as e:
-            test_repo.printException(e, "up-through parse failed")
+            test_repo.printException(e, "up-through parse failed (expected hex)")
             n = 0
         if n >= 1:
             args.getFileListBetweenNewAndTopHash = True
@@ -1759,6 +1760,12 @@ def main():
             args.getHashListStagedChanges = True
         if n >= 9:
             args.getHashListFromFileName = True
+        if n >= 10:
+            args.getHashListNewChanges = True
+        if n >= 11:
+            args.getHashListComplete = True
+        if n >= 12:
+            args.getHashListSample = True
 
     # Helper to run a single comparison and return True on success
     def run_one(name: str, func_name: str, fname: str | None) -> bool:
