@@ -145,7 +145,8 @@ class TestRepo(AppException):
                 if os.path.exists(p):
                     idx_mtime = os.path.getmtime(p)
                     break
-            except Exception:
+            except Exception as e:
+                self.printException(e, "index_mtime_iso: checking index candidate failed")
                 continue
         if idx_mtime is None:
             idx_mtime = datetime.now(timezone.utc).timestamp()
@@ -160,7 +161,8 @@ class TestRepo(AppException):
         """
         try:
             return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        except Exception:
+        except Exception as e:
+            self.printException(e, "_epoch_to_iso: formatting timestamp failed")
             return "1970-01-01T00:00:00"
 
     def _paths_mtime_iso(self, paths: list[str]) -> str:
@@ -175,7 +177,8 @@ class TestRepo(AppException):
             try:
                 if os.path.exists(fp):
                     mtimes.append(os.path.getmtime(fp))
-            except Exception:
+            except Exception as e:
+                self.printException(e, "_paths_mtime_iso: checking path mtime failed")
                 continue
         if mtimes:
             return self._epoch_to_iso(max(mtimes))
@@ -194,8 +197,8 @@ class TestRepo(AppException):
                 return "renamed"
             if status_code == pygit2.GIT_DELTA_COPIED:
                 return "copied"
-        except Exception:
-            pass
+        except Exception as e:
+            self.printException(e, "_delta_status_to_str: mapping failed")
         return "modified"
 
     def _git_name_status_to_str(self, code: str) -> str:
@@ -209,7 +212,8 @@ class TestRepo(AppException):
             if code.startswith("R"):
                 return "renamed"
             return {"A": "added", "M": "modified", "D": "deleted", "C": "copied"}.get(code, "modified")
-        except Exception:
+        except Exception as e:
+            self.printException(e, "_git_name_status_to_str: mapping failed")
             return "modified"
 
     def _parse_git_name_status_line(self, line: str) -> tuple[str, str]:
@@ -626,14 +630,16 @@ class TestRepo(AppException):
                         fp = os.path.join(root, fname)
                         try:
                             rel = os.path.relpath(fp, self.repoRoot)
-                        except Exception:
+                        except Exception as e:
+                            self.printException(e, "getFileListBetweenNewRepoAndMods: relpath failed")
                             continue
                         if rel.startswith(".git"):
                             continue
                         try:
                             with open(fp, "rb") as fh:
                                 work_files[rel] = fh.read()
-                        except Exception:
+                        except Exception as e:
+                            self.printException(e, "getFileListBetweenNewRepoAndMods: reading file failed")
                             continue
 
                 results: list[tuple[str, str]] = []
@@ -644,8 +650,8 @@ class TestRepo(AppException):
                         st = repo.status_file(path)
                         if st & pygit2.GIT_STATUS_WT_NEW:
                             continue
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenNewRepoAndMods: status_file failed")
                     results.append((path, "added"))
                 return results
             except Exception as e:
@@ -720,8 +726,9 @@ class TestRepo(AppException):
                                 if len(commit_files) < 50:
                                     print(f"DEBUG:added commit_file {p} -> {entry.oid}")
                             except Exception as ex:
-                                print(f"DEBUG:failed to add commit_file {p} - {ex}")
-                    except Exception:
+                                self.printException(ex, f"getFileListBetweenHashAndCurrentTime: failed to add commit_file {p}")
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenHashAndCurrentTime: tree entry handling failed")
                         continue
 
             try:
@@ -740,12 +747,12 @@ class TestRepo(AppException):
                 try:
                     print(f"DEBUG:cur_tree_type={type(cur_tree)}")
                     print(f"DEBUG:cur_tree_len={len(cur_tree)}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.printException(e, "getFileListBetweenHashAndCurrentTime: debug printing failed")
                 if len(commit_files) < 10:
                     print(f"DEBUG:commit sample={list(commit_files.keys())[:20]}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e, "getFileListBetweenHashAndCurrentTime: debug summary failed")
 
             # Build a mapping of working-tree files -> content bytes
             work_files: dict[str, bytes] = {}
@@ -758,14 +765,16 @@ class TestRepo(AppException):
                     # Skip files outside repository worktree
                     try:
                         rel = os.path.relpath(fp, self.repoRoot)
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenHashAndCurrentTime: relpath failed")
                         continue
                     if rel.startswith(".git"):
                         continue
                     try:
                         with open(fp, "rb") as fh:
                             work_files[rel] = fh.read()
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenHashAndCurrentTime: reading work file failed")
                         continue
 
             results: list[tuple[str, str]] = []
@@ -784,15 +793,16 @@ class TestRepo(AppException):
                         if st & pygit2.GIT_STATUS_WT_NEW:
                             # skip untracked
                             continue
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenHashAndCurrentTime: status_file failed")
                     results.append((path, "added"))
                 else:
                     # Present in both: compare blob content
                     try:
                         blob = repo.get(commit_files[path])
                         commit_data = blob.data if hasattr(blob, "data") else blob.read_raw()
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenHashAndCurrentTime: repo.get blob failed")
                         commit_data = None
                     work_data = work_files.get(path)
                     if commit_data is None:
@@ -1513,15 +1523,6 @@ def main():
 
     # Helper to run a single comparison and return True on success
     def run_one(name: str, func_name: str, fname: str | None) -> bool:
-        # Special-case the sampled-comparisons runner which has a different signature
-        if func_name == "runFileListSampledComparisons":
-            try:
-                getattr(test_repo, func_name)(args.top, args.raw)
-                return True
-            except Exception as e:
-                test_repo.printException(e, f"running {func_name} failed")
-                return False
-
         if fname is not None:
             l1 = getattr(test_repo, func_name)(fname, usePyGit2=True)
             l2 = getattr(test_repo, func_name)(fname, usePyGit2=False)
