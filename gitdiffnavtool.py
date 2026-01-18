@@ -950,7 +950,10 @@ class AppBase(AppException, ListView):
         `scroll_to_widget` API is not available.
         """
         try:
-            getattr(node, "scroll_visible", lambda *a, **k: None)(visible)
+            fn = getattr(node, "scroll_visible", None)
+            if fn is None:
+                return
+            fn(visible)
         except Exception as e:
             self.printException(e, "_safe_node_scroll_visible failed")
 

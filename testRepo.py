@@ -1255,7 +1255,7 @@ class TestRepo(AppException):
                         continue
                     seen.add(rel)
                     fp = os.path.join(self.repoRoot, rel)
-                    try:
+                    try:                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
                         if os.path.islink(fp):
                             mtime = os.lstat(fp).st_mtime
                         else:
@@ -2140,8 +2140,7 @@ def main():
             print("\nRunning sampled pairwise comparisons (separate)...")
             try:
                 # runFileListSampledComparisons returns (total, passed, failed)
-                (t, p, f) = getattr(test_repo, "runFileListSampledComparisons")(args.top, args.raw)
-                # (t, p, f) = test_repo.runFileListSampledComparisons(args.top, args.raw)
+                (t, p, f) = test_repo.runFileListSampledComparisons(args.top, args.raw)
                 total += t
                 passed += p
                 failed += f

@@ -910,6 +910,175 @@ def check_docstrings(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, in
     return errs
 
 
+def check_getattr_method_calls(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
+    """Detect immediate calls of getattr(...)(...) or assignments from such calls.
+
+    Flags occurrences like `getattr(obj, 'name')(...)` or `(a,b) = getattr(...)(...)`.
+    Recommend assigning the attribute to a local variable first: `fn = getattr(...); fn(...)`.
+    """
+    errs: List[Tuple[str, int, str]] = []
+
+    # Track reported messages and the underlying getattr-call nodes so the
+    # same `getattr(...)(...)` instance isn't reported twice (e.g. once as
+    # an assignment and once as a direct call). We record `id(inner_call)`
+    # where `inner_call` is the ast.Call node for the `getattr(...)` call.
+    reported: set = set()
+    reported_nodes: set = set()
+
+    # Build a mapping of class_name -> set(method_names) for classes
+    # defined in this module. This allows heuristics to recognize calls
+    # like `getattr(test_repo, 'runFileListSampledComparisons')` when the
+    # `TestRepo` class in the same file defines that method — such cases
+    # are likely safe and should not be flagged.
+    class_methods: dict = {}
+    try:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                mset = set()
+                for item in node.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        mset.add(getattr(item, "name", None))
+                class_methods[node.name] = mset
+    except Exception as e:
+        printException(e, f"building class_methods in {path}")
+        # Be conservative: if class extraction fails, leave class_methods empty
+        class_methods = {}
+
+    class Finder(ast.NodeVisitor):
+        def _get_str_value(self, node) -> Optional[str]:
+            """Return the literal string value for ast.Str/ast.Constant nodes.
+
+            Returns the contained string when `node` represents a string
+            literal (supports `ast.Str` for older Pythons and `ast.Constant`
+            for newer ones). Returns `None` for non-string nodes.
+            """
+            # Handle ast.Constant or ast.Str depending on Python version
+            if node is None:
+                return None
+            if hasattr(ast, "Str") and isinstance(node, ast.Str):
+                return node.s
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return node.value
+            return None
+
+        def visit_Call(self, node: ast.Call) -> None:
+            try:
+                inner = getattr(node, "func", None)
+                # pattern: Call(func=Call(func=Name(id='getattr'), ...), args=...)
+                if isinstance(inner, ast.Call):
+                    inner_func = getattr(inner, "func", None)
+                    if isinstance(inner_func, ast.Name) and inner_func.id == "getattr":
+                        # Only flag when the attribute arg (second arg) is a literal string
+                        arg2 = inner.args[1] if len(inner.args) >= 2 else None
+                        attr_name = self._get_str_value(arg2)
+                        if attr_name is None:
+                            # dynamic attribute name; skip
+                            pass
+                        else:
+                            # Heuristic: only report when we can prove the
+                            # attribute refers to a method defined on a class in
+                            # this same file. If we can't determine that, skip
+                            # reporting because calling getattr(...) may be
+                            # legitimate for dynamic / adapter-like cases.
+                            first = inner.args[0] if len(inner.args) >= 1 else None
+                            provably_method = False
+                            try:
+                                if isinstance(first, ast.Name):
+                                    varnorm = first.id.replace("_", "").lower()
+                                    for cname, methods in class_methods.items():
+                                        if cname and cname.lower() in varnorm and attr_name in methods:
+                                            provably_method = True
+                                            break
+                            except Exception as e:
+                                printException(e, f"determining provably_method in visit_Call for {path}")
+                                provably_method = False
+                            if not provably_method:
+                                # Unknown target; avoid flagging.
+                                return
+                            # Avoid duplicate reports for the same underlying
+                            # getattr(...) call node.
+                            inner_id = id(inner)
+                            if inner_id in reported_nodes:
+                                # already reported (likely via Assign visitor)
+                                pass
+                            else:
+                                lineno = getattr(node, "lineno", None)
+                                if lineno is not None:
+                                    tpl = (
+                                        str(path),
+                                        lineno,
+                                        f"direct call of getattr(..., '{attr_name}', ...)(...); avoid calling getattr(...); call the method directly (e.g., x.{attr_name}(...))",
+                                    )
+                                    if tpl not in reported:
+                                        errs.append(tpl)
+                                        reported.add(tpl)
+                                        reported_nodes.add(inner_id)
+            except Exception as e:
+                printException(e, f"error scanning for getattr method calls in {path}")
+            self.generic_visit(node)
+
+        def visit_Assign(self, node: ast.Assign) -> None:
+            try:
+                val = getattr(node, "value", None)
+                if isinstance(val, ast.Call):
+                    inner = getattr(val, "func", None)
+                    if isinstance(inner, ast.Call):
+                        inner_func = getattr(inner, "func", None)
+                        if isinstance(inner_func, ast.Name) and inner_func.id == "getattr":
+                            # Only flag when getattr second arg is a literal string
+                            arg2 = inner.args[1] if len(inner.args) >= 2 else None
+                            attr_name = self._get_str_value(arg2)
+                            if attr_name is None:
+                                pass
+                            else:
+                                # Heuristic: only report when we can prove the
+                                # attribute refers to a method defined on a class
+                                # in this same file. Otherwise skip.
+                                first = inner.args[0] if len(inner.args) >= 1 else None
+                                provably_method = False
+                                try:
+                                    if isinstance(first, ast.Name):
+                                        varnorm = first.id.replace("_", "").lower()
+                                        for cname, methods in class_methods.items():
+                                            if cname and cname.lower() in varnorm and attr_name in methods:
+                                                provably_method = True
+                                                break
+                                except Exception as e:
+                                    printException(e, f"determining provably_method in visit_Assign for {path}")
+                                    provably_method = False
+                                if not provably_method:
+                                    return
+
+                                # Avoid duplicate reports for the same underlying
+                                # getattr(...) call node.
+                                inner_id = id(inner)
+                                if inner_id in reported_nodes:
+                                    # already reported
+                                    pass
+                                else:
+                                    lineno = getattr(node, "lineno", None)
+                                    if lineno is not None:
+                                        tpl = (
+                                            str(path),
+                                            lineno,
+                                            f"assignment from getattr(..., '{attr_name}', ...)(...); avoid calling getattr(...); call the method directly (e.g., (t, p, f) = x.{attr_name}(...))",
+                                        )
+                                        if tpl not in reported:
+                                            errs.append(tpl)
+                                            reported.add(tpl)
+                                            reported_nodes.add(inner_id)
+            except Exception as e:
+                printException(e, f"error scanning Assign for getattr method calls in {path}")
+            self.generic_visit(node)
+
+    try:
+        Finder().visit(tree)
+    except Exception as e:
+        printException(e, f"visiting AST for getattr method calls in {path}")
+
+    return errs
+
+
 def run_py_compile(py_files: List[Path]) -> List[Tuple[Path, str]]:
     """Run `py_compile` on each path in `py_files` and return failures.
 
@@ -1098,6 +1267,20 @@ def main(argv: List[str] | None = None) -> int:
         action="store_true",
         help="Enable getattr-not-initialized check (opposite of -T).",
     )
+
+    gu = parser.add_mutually_exclusive_group()
+    gu.add_argument(
+        "--no-check_getattr_methods",
+        dest="check_getattr_methods",
+        action="store_false",
+        help="Skip checking for getattr(...) immediate-call usages (default: check)",
+    )
+    gu.add_argument(
+        "--check_getattr_methods",
+        dest="enable_check_getattr_methods",
+        action="store_true",
+        help="Enable check for immediate calls of getattr(...)(...) (opposite of --no-check_getattr_methods)",
+    )
     
     # `--NONE` convenience flag: keep near the end of the options list
     parser.add_argument("--NONE",
@@ -1129,6 +1312,7 @@ def main(argv: List[str] | None = None) -> int:
         args.check_py_compile = False
         args.check_pass = False
         args.check_getattr_not_initialized = False
+        args.check_getattr_methods = False
         args.check_logger_in_try = False
         args.check_printexception_in_try = False
         args.check_imports = False
@@ -1149,6 +1333,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_pass = True
     if args.enable_getattr_not_initialized:
         args.check_getattr_not_initialized = True
+    if args.enable_check_getattr_methods:
+        args.check_getattr_methods = True
     if args.enable_logger_in_try:
         args.check_logger_in_try = True
     if args.enable_printexception_in_try:
@@ -1247,6 +1433,12 @@ def main(argv: List[str] | None = None) -> int:
                         errs += check_docstrings(p, text=text, tree=tree)
                     except Exception as e:
                         printException(e, f"check_docstrings failed for {p}")
+                # Check for getattr(...)() immediate calls when requested
+                if args.check_getattr_methods:
+                    try:
+                        errs += check_getattr_method_calls(p, text=text, tree=tree)
+                    except Exception as e:
+                        printException(e, f"check_getattr_method_calls failed for {p}")
                 # Enforce 'imports at module level' axiom
                 if args.check_imports:
                     try:
