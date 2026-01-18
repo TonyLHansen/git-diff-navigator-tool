@@ -48,9 +48,10 @@ class TestRepo(AppException):
     MODS = "MODS"
 
     # BEGIN: __init__ v1
-    def __init__(self, repoRoot: str):
+    def __init__(self, repoRoot: str, verbose: int = 0):
         self.repoRoot = repoRoot
         self.pygit2_repo = pygit2.Repository(self.repoRoot)
+        self.verbose = verbose
     # END: __init__ v1
 
     # BEGIN: _resolve_tree v1
@@ -778,7 +779,8 @@ class TestRepo(AppException):
                     try:
                         # Debug small sample of entries
                         if count < 20:
-                            print(f"DEBUG:tree entry name={entry.name} type={entry.type}")
+                            if self.verbose:
+                                print(f"DEBUG:tree entry name={entry.name} type={entry.type}")
                         count += 1
                         # Resolve oid/id attribute in a version-tolerant way
                         oid = getattr(entry, "oid", None) or getattr(entry, "id", None)
@@ -791,7 +793,8 @@ class TestRepo(AppException):
                             try:
                                 commit_files[p] = str(oid)
                                 if len(commit_files) < 50:
-                                    print(f"DEBUG:added commit_file {p} -> {oid}")
+                                    if self.verbose:
+                                        print(f"DEBUG:added commit_file {p} -> {oid}")
                             except Exception as ex:
                                 self.printException(
                                     ex, f"getFileListBetweenHashAndCurrentTime: failed to add commit_file {p}"
@@ -802,9 +805,10 @@ class TestRepo(AppException):
 
             try:
                 # Debug constants
-                print(
-                    f"DEBUG:pygit2.GIT_OBJ_TREE={getattr(pygit2,'GIT_OBJ_TREE',None)} GIT_OBJ_BLOB={getattr(pygit2,'GIT_OBJ_BLOB',None)}"
-                )
+                if self.verbose:
+                    print(
+                        f"DEBUG:pygit2.GIT_OBJ_TREE={getattr(pygit2,'GIT_OBJ_TREE',None)} GIT_OBJ_BLOB={getattr(pygit2,'GIT_OBJ_BLOB',None)}"
+                    )
                 walk_tree(cur_tree)
             except Exception as e:
                 self.printException(e, "getFileListBetweenHashAndCurrentTime: walking tree failed")
@@ -812,14 +816,15 @@ class TestRepo(AppException):
 
             # Debugging: small summary of discovered commit/work file counts
             try:
-                print(f"DEBUG:getFileListBetweenHashAndCurrentTime commit_files={len(commit_files)}")
-                try:
-                    print(f"DEBUG:cur_tree_type={type(cur_tree)}")
-                    print(f"DEBUG:cur_tree_len={len(cur_tree)}")
-                except Exception as e:
-                    self.printException(e, "getFileListBetweenHashAndCurrentTime: debug printing failed")
-                if len(commit_files) < 10:
-                    print(f"DEBUG:commit sample={list(commit_files.keys())[:20]}")
+                if self.verbose:
+                    print(f"DEBUG:getFileListBetweenHashAndCurrentTime commit_files={len(commit_files)}")
+                    try:
+                        print(f"DEBUG:cur_tree_type={type(cur_tree)}")
+                        print(f"DEBUG:cur_tree_len={len(cur_tree)}")
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenHashAndCurrentTime: debug printing failed")
+                    if len(commit_files) < 10:
+                        print(f"DEBUG:commit sample={list(commit_files.keys())[:20]}")
             except Exception as e:
                 self.printException(e, "getFileListBetweenHashAndCurrentTime: debug summary failed")
 
@@ -1095,7 +1100,7 @@ class TestRepo(AppException):
                     g = []
 
                 try:
-                    show_diffs(f"get {a}->{b}", p, g, top, raw)
+                    show_diffs(f"get {a}->{b}", p, g, top, raw, self.verbose)
                 except Exception as e:
                     self.printException(e, f"runFileListSampledComparisons: show_diffs failed for {a}->{b}")
     # END: runFileListSampledComparisons v1
@@ -1505,7 +1510,7 @@ class TestRepo(AppException):
     # END: getHashListFromFileName v1
 
 # BEGIN: show_diffs v1
-def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool = False) -> bool:
+def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool = False, verbose: int = 0) -> bool:
     """Show differences between two file lists. If equal and `top` > 0,
     print the first `top` lines from `list1`.
     Returns True when lists are equal, False when differences are found.
@@ -1536,13 +1541,19 @@ def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool
     disp2 = [fmt(e) for e in list2]
     diff = list(difflib.unified_diff(disp1, disp2, fromfile="pygit2", tofile="git", lineterm=""))
     if diff:
-        print(f"[{test_name}] Differences found:")
+        if verbose > 0:
+            print(f"[{test_name}] Differences found (verbose={verbose}):")
+        else:
+            print(f"[{test_name}] Differences found:")
         for line in diff:
             print(line)
         return False
     else:
         lines = len(disp1)
-        print(f"[{test_name}] No differences found in {lines} lines of output")
+        if verbose > 0:
+            print(f"[{test_name}] No differences found in {lines} lines of output (verbose={verbose})")
+        else:
+            print(f"[{test_name}] No differences found in {lines} lines of output")
         if top and top > 0:
             print(f"[{test_name}] Top {top} lines from pygit2 result:")
             for ln in list1[:top]:
@@ -1573,6 +1584,14 @@ def main():
         "--raw",
         action="store_true",
         help="Display raw tuple values returned by the getHash* functions instead of formatted strings",
+    )
+
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Increase verbosity (can be specified multiple times)",
     )
 
     # Add independent flags to run one or more test functions (-1..-7 allowed together)
@@ -1611,19 +1630,20 @@ def main():
     parser.add_argument("-F", "--file", default="README.md", help="Filename for getHashListFromFileName when used")
 
     args = parser.parse_args()
-    test_repo = TestRepo(args.path)
+    test_repo = TestRepo(args.path, args.verbose)
 
     # Helper to run a single comparison and return True on success
     def run_one(name: str, func_name: str, fname: str | None) -> bool:
         # Debug: report which test function is being invoked
-        print(f"DEBUG: run_one invoking {func_name} (display name: {name})")
+        if test_repo.verbose:
+            print(f"DEBUG: run_one invoking {func_name} (display name: {name})")
         if fname is not None:
             l1 = getattr(test_repo, func_name)(fname, usePyGit2=True)
             l2 = getattr(test_repo, func_name)(fname, usePyGit2=False)
         else:
             l1 = getattr(test_repo, func_name)(usePyGit2=True)
             l2 = getattr(test_repo, func_name)(usePyGit2=False)
-        return show_diffs(name, l1, l2, args.top, args.raw)
+        return show_diffs(name, l1, l2, args.top, args.raw, args.verbose)
 
     allfuncs = [
         ("getFileListBetweenNewRepoAndTopHash: File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None),
@@ -1742,8 +1762,8 @@ def main():
     if sampled_flag:
         print("\nRunning sampled pairwise comparisons (separate)...")
         try:
-            # runFileListSampledComparisons now accepts (top, raw)
-            getattr(test_repo, "runFileListSampledComparisons")(args.top, args.raw)
+            # runFileListSampledComparisons now accepts (top, raw, verbose)
+            test_repo.runFileListSampledComparisons(args.top, args.raw)
         except Exception as e:
             test_repo.printException(e, "running runFileListSampledComparisons failed")
 
