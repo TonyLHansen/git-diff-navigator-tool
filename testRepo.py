@@ -721,16 +721,47 @@ class TestRepo(AppException):
                             continue
 
                 results: list[tuple[str, str]] = []
-                # For NEWREPO the commit side is empty; any worktree file is an 'added'
+                # For initial->mods we want to mirror `git diff` (worktree vs index):
+                # include only files that show a working-tree change (not untracked).
+                wt_mask = 0
+                try:
+                    wt_mask = (
+                        getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0)
+                        | getattr(pygit2, "GIT_STATUS_WT_DELETED", 0)
+                        | getattr(pygit2, "GIT_STATUS_WT_TYPECHANGE", 0)
+                        | getattr(pygit2, "GIT_STATUS_WT_RENAMED", 0)
+                    )
+                except Exception:
+                    wt_mask = 0
+
                 for path in sorted(work_files.keys()):
-                    # Exclude untracked files (WT_NEW) to match git CLI behavior
                     try:
                         st = repo.status_file(path)
-                        if st & pygit2.GIT_STATUS_WT_NEW:
-                            continue
                     except Exception as e:
                         self.printException(e, "getFileListBetweenNewRepoAndMods: status_file failed")
-                    results.append((path, "added"))
+                        continue
+
+                    # Skip untracked files (WT_NEW) to match git CLI behavior
+                    if st & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
+                        continue
+
+                    # Include only working-tree changes
+                    if wt_mask and not (st & wt_mask):
+                        continue
+
+                    # Map working-tree status to human-friendly string
+                    if st & getattr(pygit2, "GIT_STATUS_WT_DELETED", 0):
+                        s = "deleted"
+                    elif st & getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0):
+                        s = "modified"
+                    elif st & getattr(pygit2, "GIT_STATUS_WT_RENAMED", 0):
+                        s = "renamed"
+                    elif st & getattr(pygit2, "GIT_STATUS_WT_TYPECHANGE", 0):
+                        s = "modified"
+                    else:
+                        s = "modified"
+
+                    results.append((path, s))
                 return results
             except Exception as e:
                 self.printException(e, "getFileListBetweenNewRepoAndMods: pygit2 empty->worktree failed")
@@ -1741,8 +1772,6 @@ def main():
 
     allfuncs = [
         ("getFileListBetweenNewRepoAndTopHash: File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None),
-        ("getFileListBetweenNewRepoAndStaged: File List New to Staged", "getFileListBetweenNewRepoAndStaged", None),
-        ("getFileListBetweenNewRepoAndMods: File List New to Mods", "getFileListBetweenNewRepoAndMods", None),
         (
             "getFileListBetweenTopHashAndCurrentTime: File List Between TopHash and Current Time",
             "getFileListBetweenTopHashAndCurrentTime",
@@ -1754,6 +1783,8 @@ def main():
             None,
         ),
         ("getFileListBetweenStagedAndMods: File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None),
+        ("getFileListBetweenNewRepoAndStaged: File List New to Staged", "getFileListBetweenNewRepoAndStaged", None),
+        ("getFileListBetweenNewRepoAndMods: File List New to Mods", "getFileListBetweenNewRepoAndMods", None),
         ("getHashListEntireRepo: Hash List Entire Repo", "getHashListEntireRepo", None),
         ("getHashListStagedChanges: Hash List Staged Changes", "getHashListStagedChanges", None),
         (f"getHashListFromFileName: Hash List From File {args.file}", "getHashListFromFileName", args.file),
@@ -1767,6 +1798,8 @@ def main():
     if args.all:
         to_run = allfuncs
     else:
+        # Append tests in the numeric/option order to match `allfuncs`:
+        # 1,-2,-3,-4,-5,-6 then -7,-8,-9 then -a,-b,-c
         if args.getFileListBetweenNewAndTopHash:
             to_run.append(
                 (
@@ -1774,18 +1807,6 @@ def main():
                     "getFileListBetweenNewRepoAndTopHash",
                     None,
                 )
-            )
-        if args.getFileListBetweenNewAndStaged:
-            to_run.append(
-                (
-                    "getFileListBetweenNewRepoAndStaged: File List New to Staged",
-                    "getFileListBetweenNewRepoAndStaged",
-                    None,
-                )
-            )
-        if args.getFileListBetweenNewAndMods:
-            to_run.append(
-                ("getFileListBetweenNewRepoAndMods: File List New to Mods", "getFileListBetweenNewRepoAndMods", None)
             )
         if args.getFileListBetweenTopHashAndCurrentTime:
             to_run.append(
@@ -1811,16 +1832,28 @@ def main():
                     None,
                 )
             )
+        if args.getFileListBetweenNewAndStaged:
+            to_run.append(
+                (
+                    "getFileListBetweenNewRepoAndStaged: File List New to Staged",
+                    "getFileListBetweenNewRepoAndStaged",
+                    None,
+                )
+            )
+        if args.getFileListBetweenNewAndMods:
+            to_run.append(
+                ("getFileListBetweenNewRepoAndMods: File List New to Mods", "getFileListBetweenNewRepoAndMods", None)
+            )
         if args.getHashListEntireRepo:
             to_run.append(("getHashListEntireRepo: Hash List Entire Repo", "getHashListEntireRepo", None))
         if args.getHashListStagedChanges:
             to_run.append(("getHashListStagedChanges: Hash List Staged Changes", "getHashListStagedChanges", None))
-        if args.getHashListNewChanges:
-            to_run.append(("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None))
         if args.getHashListFromFileName:
             to_run.append(
                 (f"getHashListFromFileName: Hash List From File {args.file}", "getHashListFromFileName", args.file)
             )
+        if args.getHashListNewChanges:
+            to_run.append(("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None))
         if args.getHashListComplete:
             to_run.append(("getHashListComplete: Hash List Complete", "getHashListComplete", None))
         if args.getHashListSample:
