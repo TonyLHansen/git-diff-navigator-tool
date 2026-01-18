@@ -314,6 +314,7 @@ class TestRepo(AppException):
         # explicit two-commit handler rather than the fully generic resolver.
         return self.getFileListBetweenTwoCommits(prev_hash, curr_hash, usePyGit2)
 
+    # BEGIN: getFileListBetweenTwoCommits v1
     def getFileListBetweenTwoCommits(self, prev_hash: str, curr_hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
         """Direct commit->commit diff (both args expected to be commit-ish).
 
@@ -370,6 +371,7 @@ class TestRepo(AppException):
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
             return results
+    # END: getFileListBetweenTwoCommits v1
 
     # def getFileListBetweenAnyTwoHashes(self, prev_hash: str, curr_hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
     #     """Return a list of `(path, status)` for files changed between `prev_hash` and `curr_hash`.
@@ -512,6 +514,7 @@ class TestRepo(AppException):
     #         results.sort(key=lambda x: x[0])
     #         return results
 
+    # BEGIN: getFileListBetweenNewRepoAndHash v1
     def getFileListBetweenNewRepoAndHash(self, curr_hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return a list of `(path, status)` for files changed between the beginning and `curr_hash`.
 
@@ -569,7 +572,9 @@ class TestRepo(AppException):
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
             return results
+    # END: getFileListBetweenNewRepoAndHash v1
 
+    # BEGIN: getFileListBetweenNewRepoAndStaged v1
     def getFileListBetweenNewRepoAndStaged(self, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return file list for the initial (empty) tree -> staged index comparison.
 
@@ -612,7 +617,9 @@ class TestRepo(AppException):
                 res.append((path, status))
         res.sort(key=lambda x: x[0])
         return res
+    # END: getFileListBetweenNewRepoAndStaged v1
 
+    # BEGIN: getFileListBetweenNewRepoAndMods v1
     def getFileListBetweenNewRepoAndMods(self, usePyGit2: bool) -> list[tuple[str, str]]:
         """Specialized handler for initial (empty) -> working tree (mods) comparison.
 
@@ -684,7 +691,9 @@ class TestRepo(AppException):
                 res.append((path, status))
         res.sort(key=lambda x: x[0])
         return res
+    # END: getFileListBetweenNewRepoAndMods v1
 
+    # BEGIN: getFileListBetweenTopHashAndCurrentTime v1
     def getFileListBetweenTopHashAndCurrentTime(self, usePyGit2: bool) -> list[str]:
         """Return a list of `(path, status)` for files changed between HEAD and working tree.
 
@@ -692,7 +701,9 @@ class TestRepo(AppException):
         """
         # Delegate to the general handler to avoid duplicating logic
         return self.getFileListBetweenHashAndCurrentTime("HEAD", usePyGit2)
+    # END: getFileListBetweenTopHashAndCurrentTime v1
 
+    # BEGIN: getFileListBetweenHashAndCurrentTime v1
     def getFileListBetweenHashAndCurrentTime(self, hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return `(path,status)` for files changed between `hash` and working tree.
 
@@ -848,12 +859,16 @@ class TestRepo(AppException):
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
             return results
+    # END: getFileListBetweenHashAndCurrentTime v1
 
+    # BEGIN: getFileListBetweenTopHashAndStaged v1
     def getFileListBetweenTopHashAndStaged(self, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return a list of `(path, status)` for files changed between HEAD and staged index."""
         # Delegate to the generalized staged-vs-hash implementation to avoid duplication
         return self.getFileListBetweenHashAndStaged("HEAD", usePyGit2)
+    # END: getFileListBetweenTopHashAndStaged v1
 
+    # BEGIN: getFileListBetweenHashAndStaged v1
     def getFileListBetweenHashAndStaged(self, hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return `(path,status)` for files changed between `hash` and the staged index.
 
@@ -908,7 +923,9 @@ class TestRepo(AppException):
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
             return results
+    # END: getFileListBetweenHashAndStaged v1
 
+    # BEGIN: getFileListBetweenStagedAndMods v1
     def getFileListBetweenStagedAndMods(self, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return a list of `(path, status)` for files changed between staged index and working tree (mods)."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
@@ -961,7 +978,9 @@ class TestRepo(AppException):
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
             return results
+    # END: getFileListBetweenStagedAndMods v1
 
+    # BEGIN: getHashListComplete v1
     def getHashListComplete(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a combined list of commit hashes for staged, new, and entire repo."""
         new = self.getHashListNewChanges(usePyGit2)
@@ -969,7 +988,9 @@ class TestRepo(AppException):
         entire = self.getHashListEntireRepo(usePyGit2)
         combined = new + staged + entire
         return combined
+    # END: getHashListComplete v1
 
+    # BEGIN: getHashListSample v1
     def getHashListSample(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a sampled list of commit hashes for staged, new, and entire repo."""
         entire = self.getHashListEntireRepo(usePyGit2)
@@ -986,7 +1007,9 @@ class TestRepo(AppException):
         if len(entire) >= 1:
             sampleHashes.append(entire[-1])  # always add TOP
         return sampleHashes
+    # END: getHashListSample v1
 
+    # BEGIN: getHashListSamplePlusEnds v1
     def getHashListSamplePlusEnds(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a sampled list of commit hashes for staged, new, and entire repo."""
         sampleHashes = [("", self.NEWREPO, "Newly created repository")]
@@ -997,7 +1020,9 @@ class TestRepo(AppException):
         new = self.getHashListNewChanges(usePyGit2)
         sampleHashes += new
         return sampleHashes
+    # END: getHashListSamplePlusEnds v1
 
+    # BEGIN: runFileListSampledComparisons v1
     def runFileListSampledComparisons(self, top: bool, raw: bool) -> None:
         """Run sampled comparisons and display diffs using `show_diffs`.
 
@@ -1028,7 +1053,9 @@ class TestRepo(AppException):
                     show_diffs(f"get {a}->{b}", p, g, top, raw)
                 except Exception as e:
                     self.printException(e, f"runFileListSampledComparisons: show_diffs failed for {a}->{b}")
+    # END: runFileListSampledComparisons v1
 
+    # BEGIN: getHashListEntireRepo v1
     def getHashListEntireRepo(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of all commit hashes in the repository."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
@@ -1182,7 +1209,9 @@ class TestRepo(AppException):
                 iso = self._epoch_to_iso(ts)
                 formatted.append((iso, h, subject))
             return formatted
+    # END: getHashListEntireRepo v1
 
+    # BEGIN: getHashListStagedChanges v1
     def getHashListStagedChanges(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of commit hashes for staged changes."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
@@ -1225,7 +1254,9 @@ class TestRepo(AppException):
                 iso = self.index_mtime_iso()
                 return [(iso, "STAGED", self.STAGED_MESSAGE)]
             return []
+    # END: getHashListStagedChanges v1
 
+    # BEGIN: getHashListNewChanges v1
     def getHashListNewChanges(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of commit hashes for new changes."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
@@ -1269,7 +1300,9 @@ class TestRepo(AppException):
         # Compute ISO based on working-tree paths' mtimes (centralized)
         iso = self._paths_mtime_iso(paths)
         return [(iso, "MODS", self.MODS_MESSAGE)] if paths else []
+    # END: getHashListNewChanges v1
 
+    # BEGIN: getHashListFromFileName v1
     def getHashListFromFileName(self, file_name: str, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of commit hashes that modified the given file."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
