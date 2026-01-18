@@ -637,7 +637,8 @@ class TestRepo(AppException):
                 try:
                     head_obj = repo.revparse_single("HEAD")
                     head_tree = self._resolve_tree(head_obj)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "getFileListBetweenNewRepoAndStaged: HEAD revparse/resolve failed")
                     head_tree = None
 
                 # If HEAD resolved to a tree, diff HEAD vs index; otherwise
@@ -731,7 +732,8 @@ class TestRepo(AppException):
                         | getattr(pygit2, "GIT_STATUS_WT_TYPECHANGE", 0)
                         | getattr(pygit2, "GIT_STATUS_WT_RENAMED", 0)
                     )
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "getFileListBetweenNewRepoAndMods: building wt_mask failed")
                     wt_mask = 0
 
                 for path in sorted(work_files.keys()):
@@ -1061,7 +1063,8 @@ class TestRepo(AppException):
                 # Prefer diff against the working directory (None) when possible.
                 try:
                     diff = self.pygit2_repo.diff(idx_tree, None)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "getFileListBetweenStagedAndMods: repo.diff(idx_tree, None) failed, falling back to empty tree")
                     # Fall back to explicit empty-tree if libgit2 build rejects None
                     empty_tree = self._empty_tree_for_repo(self.pygit2_repo)
                     if empty_tree is None:
