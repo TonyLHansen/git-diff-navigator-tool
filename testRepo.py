@@ -7,6 +7,7 @@ import difflib
 import sys
 import traceback
 import os
+import hashlib
 
 import pygit2
 import codecs
@@ -739,8 +740,9 @@ class TestRepo(AppException):
                     )
                     return []
 
-                # Build a mapping of working-tree files -> content bytes
-                work_files: dict[str, bytes] = {}
+                # Build a mapping of working-tree files -> SHA1 hash (or mtime fallback)
+                work_files: dict[str, dict] = {}
+                status_map: dict[str, int] = {}
                 for root, dirs, files in os.walk(self.repoRoot):
                     # Skip .git directory
                     if ".git" in root.split(os.sep):
@@ -752,14 +754,46 @@ class TestRepo(AppException):
                         except Exception as e:
                             self.printException(e, "getFileListBetweenNewRepoAndMods: relpath failed")
                             continue
-                        if rel.startswith(".git"):
+                        # Only skip the actual .git directory (not names like .github)
+                        # Use os.sep to ensure we only match top-level .git or its children.
+                        if rel == ".git" or rel.startswith(".git" + os.sep):
                             continue
+                        # Query repo status early to avoid reading untracked files
+                        st = None
                         try:
-                            with open(fp, "rb") as fh:
-                                work_files[rel] = fh.read()
+                            st = repo.status_file(rel)
                         except Exception as e:
-                            self.printException(e, "getFileListBetweenNewRepoAndMods: reading file failed")
+                            # If status check fails, log and continue to attempt reading
+                            self.printException(e, "getFileListBetweenNewRepoAndMods: status_file failed")
+                        if st is not None:
+                            status_map[rel] = st
+                            # Skip untracked files to match git CLI behavior
+                            try:
+                                if st & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
+                                    continue
+                            except Exception:
+                                pass
+
+                        # Compute a SHA-1 hash of the file contents; if reading
+                        # fails, fall back to storing the file mtime so callers
+                        # can decide conservatively later.
+                        try:
+                            hasher = hashlib.sha1()
+                            with open(fp, "rb") as fh:
+                                for chunk in iter(lambda: fh.read(8192), b""):
+                                    hasher.update(chunk)
+                            work_files[rel] = {"hash": hasher.hexdigest()}
+                        except FileNotFoundError:
+                            # File disappeared between os.walk and open; skip it
                             continue
+                        except Exception as e:
+                            self.printException(e, "getFileListBetweenNewRepoAndMods: reading file failed; falling back to mtime")
+                            try:
+                                mtime = os.path.getmtime(fp)
+                                work_files[rel] = {"mtime": int(mtime)}
+                            except Exception as e2:
+                                self.printException(e2, "getFileListBetweenNewRepoAndMods: getting mtime failed")
+                                continue
 
                 results: list[tuple[str, str]] = []
                 # For initial->mods we want to mirror `git diff` (worktree vs index):
@@ -777,11 +811,15 @@ class TestRepo(AppException):
                     wt_mask = 0
 
                 for path in sorted(work_files.keys()):
-                    try:
-                        st = repo.status_file(path)
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenNewRepoAndMods: status_file failed")
-                        continue
+                    # Prefer the previously-cached status when available to
+                    # avoid redundant repo.status_file calls.
+                    st = status_map.get(path)
+                    if st is None:
+                        try:
+                            st = repo.status_file(path)
+                        except Exception as e:
+                            self.printException(e, "getFileListBetweenNewRepoAndMods: status_file failed")
+                            continue
 
                     # Skip untracked files (WT_NEW) to match git CLI behavior
                     if st & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
@@ -1878,12 +1916,6 @@ def main():
     """Main function to run the tests."""
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py", description=__doc__)
     parser.add_argument(
-        "path",
-        type=str,
-        action="append",
-        help="Path to the git repository to test (can be specified multiple times).",
-    )
-    parser.add_argument(
         "-t",
         "--top",
         type=int,
@@ -1956,6 +1988,11 @@ def main():
     )
     parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
     parser.add_argument("-F", "--file", default="README.md", help="Filename for getHashListFromFileName when used")
+    parser.add_argument(
+        "path",
+        nargs="+",
+        help="One or more paths to the git repository to test.",
+    )
 
     args = parser.parse_args()
 

@@ -950,10 +950,7 @@ class AppBase(AppException, ListView):
         `scroll_to_widget` API is not available.
         """
         try:
-            fn = getattr(node, "scroll_visible", None)
-            if fn is None:
-                return
-            fn(visible)
+            getattr(node, "scroll_visible", lambda *a, **k: None)(visible)
         except Exception as e:
             self.printException(e, "_safe_node_scroll_visible failed")
 
@@ -6029,7 +6026,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     Returns process exit code (0 on success).
     """
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
-    parser.add_argument("path", nargs="?", default=".", help="directory or file to open")
+    parser.add_argument("path", nargs="+", help="one or more directories or files to open")
     parser.add_argument(
         "-C", "--no-color", dest="no_color", action="store_true", help="start with diff colorization off"
     )
