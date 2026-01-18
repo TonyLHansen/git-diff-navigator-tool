@@ -894,8 +894,8 @@ class TestRepo(AppException):
 
     def getHashListSample(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a sampled list of commit hashes for staged, new, and entire repo."""
-        sampleHashes = [("", None, "")]
         entire = self.getHashListEntireRepo(usePyGit2)
+        sampleHashes: list[tuple[str, str, str]] = []
         if len(entire) >= 4:
             sampleHashes.append(entire[0]) 
             sampleHashes.append(entire[len(entire)//3]) 
@@ -907,13 +907,21 @@ class TestRepo(AppException):
             sampleHashes.append(entire[0]) 
         if len(entire) >= 1:
             sampleHashes.append(entire[-1])  # always add TOP
+        return sampleHashes
+
+
+    def getHashListSamplePlusEnds(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
+        """Return a sampled list of commit hashes for staged, new, and entire repo."""
+        sampleHashes = [("", None, "")]
+        normalHashes = self.getHashListSample(usePyGit2)
+        sampleHashes += normalHashes
         staged = self.getHashListStagedChanges(usePyGit2)
         sampleHashes += staged
         new = self.getHashListNewChanges(usePyGit2)
         sampleHashes += new
         return sampleHashes
 
-    def getFileListSampledComparisons(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
+    def runFileListSampledComparisons(self, _usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Run pairwise diffs across sampled hashes and return aggregated results.
 
         Returns a list of tuples `(pair_label, path, status)` where `pair_label`
@@ -921,24 +929,59 @@ class TestRepo(AppException):
         entry. Empty diffs yield a single entry with empty path/status.
         """
         results: list[tuple[str, str, str]] = []
-        sample = self.getHashListSample(usePyGit2)
+        # Use the git-CLI sampling as the canonical token set for comparisons
+        sample = self.getHashListSamplePlusEnds(False)
         tokens: list = [x[1] for x in sample]
 
+        # For each sampled token pair, run both backends (pygit2 and git CLI)
+        # and compare their outputs. Append labeled entries for matches and
+        # mismatches so callers can detect parity issues.
         for i in range(len(tokens)):
             for j in range(i + 1, len(tokens)):
                 a = tokens[i]
                 b = tokens[j]
                 pair_label = f"{a}->{b}"
+
+                # Run pygit2 backend
                 try:
-                    fl = self.getFileListBetweenNormalHashes(a, b, usePyGit2)
+                    py_res = self.getFileListBetweenNormalHashes(a, b, True)
                 except Exception as e:
-                    self.printException(e, f"getFileListSampledComparisons: diff failed for {pair_label}")
-                    fl = []
-                if fl:
-                    for path, status in fl:
-                        results.append((pair_label, path, status))
-                else:
+                    self.printException(e, f"getFileListSampledComparisons: pygit2 diff failed for {pair_label}")
+                    py_res = []
+
+                # Run git CLI backend
+                try:
+                    cli_res = self.getFileListBetweenNormalHashes(a, b, False)
+                except Exception as e:
+                    self.printException(e, f"getFileListSampledComparisons: git CLI diff failed for {pair_label}")
+                    cli_res = []
+
+                # Normalize to path->status maps for comparison
+                py_map = {p: s for (p, s) in py_res}
+                cli_map = {p: s for (p, s) in cli_res}
+                all_paths = sorted(set(py_map.keys()) | set(cli_map.keys()))
+
+                if not all_paths:
+                    # Neither backend reported changes
                     results.append((pair_label, "", ""))
+                    continue
+
+                for path in all_paths:
+                    in_py = path in py_map
+                    in_cli = path in cli_map
+                    if in_py and in_cli:
+                        if py_map[path] == cli_map[path]:
+                            # Agrees
+                            results.append((pair_label, path, py_map[path]))
+                        else:
+                            # Same path, differing statuses
+                            results.append((pair_label + " [py]", path, py_map[path]))
+                            results.append((pair_label + " [cli]", path, cli_map[path]))
+                    elif in_py and not in_cli:
+                        results.append((pair_label + " [py-only]", path, py_map[path]))
+                    elif in_cli and not in_py:
+                        results.append((pair_label + " [cli-only]", path, cli_map[path]))
+
         return results
     
     def getHashListEntireRepo(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
@@ -1407,7 +1450,8 @@ def main():
     parser.add_argument("-a", "--getHashListNewChanges", action="store_true", help="Run getHashListNewChanges")
     parser.add_argument("-b", "--getHashListComplete", action="store_true", help="Run getHashListComplete")
     parser.add_argument("-c", "--getHashListSample", action="store_true", help="Run getHashListSample")
-    parser.add_argument("-d", "--getFileListSampledComparisons", action="store_true", help="Run getFileListSampledComparisons")
+    parser.add_argument("-d", "--getHashListSamplePlusEnds", action="store_true", help="Run getHashListSamplePlusEnds")
+    parser.add_argument("-e", "--getFileListSampledComparisons", action="store_true", help="Run getFileListSampledComparisons")
     parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
     parser.add_argument("-F", "--file", default="README.md", help="Filename for getHashListFromFileName when used")
 
@@ -1437,7 +1481,7 @@ def main():
             ("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None),
             ("getHashListComplete: Hash List Complete", "getHashListComplete", None),
             ("getHashListSample: Hash List Sample", "getHashListSample", None),
-            ("getFileListSampledComparisons: Sampled pairwise file diffs", "getFileListSampledComparisons", None),
+            ("runFileListSampledComparisons: Sampled pairwise file diffs", "runFileListSampledComparisons", None),
         ]
 
     # Determine which tests to run. If -A/--all is set, run all tests.
@@ -1465,8 +1509,9 @@ def main():
             to_run.append(("getHashListComplete: Hash List Complete", "getHashListComplete", None))
         if args.getHashListSample:
             to_run.append(("getHashListSample: Hash List Sample", "getHashListSample", None))
-        if args.getFileListSampledComparisons:
-            to_run.append(("getFileListSampledComparisons: Sampled pairwise file diffs", "getFileListSampledComparisons", None))
+        # Sampled comparisons are run separately to allow independent reporting
+        # and avoid mixing their output with the main test loop.
+        sampled_flag = args.getFileListSampledComparisons
 
     # If no specific flags provided, default to running all tests
     if not to_run:
@@ -1490,6 +1535,16 @@ def main():
 
     # Final summary
     print(f"\nTest summary: total={total} passed={passed} failed={failed}")
+
+    # If requested, run sampled comparisons separately (outside the to_run loop)
+    if sampled_flag:
+        print("\nRunning sampled pairwise comparisons (separate)...")
+        try:
+            sampled_results = getattr(test_repo, "runFileListSampledComparisons")(False)
+            for pair_label, path, status in sampled_results:
+                print(f"{pair_label}\t{status}\t{path}")
+        except Exception as e:
+            test_repo.printException(e, "running runFileListSampledComparisons failed")
     
 if __name__ == "__main__":
     main()
