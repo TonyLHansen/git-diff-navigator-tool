@@ -316,7 +316,7 @@ class AppBase(AppException, ListView):
         """
         try:
             if os.path.isabs(path):
-                    return os.path.realpath(path)
+                return os.path.realpath(path)
             return os.path.realpath(os.path.join(repo_root, path))
         except Exception as e:
             self.printException(e, "_canonical_relpath failed")
@@ -415,7 +415,11 @@ class AppBase(AppException, ListView):
                 item._raw_text = full_path or display
 
             try:
-                item._filename = os.path.basename(canonical) if canonical else (os.path.basename(full_path) if full_path else display)
+                item._filename = (
+                    os.path.basename(canonical)
+                    if canonical
+                    else (os.path.basename(full_path) if full_path else display)
+                )
             except Exception as _ex:
                 self.printException(_ex, "_append_file_row: setting _filename failed")
                 item._filename = display
@@ -592,7 +596,7 @@ class AppBase(AppException, ListView):
                     # Prefer full ISO datetime parsing when available
                     dt_obj = datetime.fromisoformat(ds)
                 except Exception as e:
-                    self.printException(e, f"parsing ISO datetime '{ds}' failed, trying date-only") 
+                    self.printException(e, f"parsing ISO datetime '{ds}' failed, trying date-only")
                     try:
                         dt_obj = datetime.strptime(ds, "%Y-%m-%d")
                     except Exception as e2:
@@ -744,7 +748,11 @@ class AppBase(AppException, ListView):
                     node_old = None
 
             logger.debug("watch_index_helper: old=%r new=%r nodes=%d", old, new, len(nodes))
-            logger.debug("watch_index_helper: preserved marked style for old index %s hash=%r", old, getattr(node_old, "_hash", None))
+            logger.debug(
+                "watch_index_helper: preserved marked style for old index %s hash=%r",
+                old,
+                getattr(node_old, "_hash", None),
+            )
 
             # Deactivate old
             if node_old is not None:
@@ -801,7 +809,9 @@ class AppBase(AppException, ListView):
                                 try:
                                     self.call_after_refresh(lambda: self._safe_scroll_to_widget(node_new))
                                 except Exception as e2:
-                                    self.printException(e2, "watch_index_helper: scroll_to_widget(node_new) fallback failed")
+                                    self.printException(
+                                        e2, "watch_index_helper: scroll_to_widget(node_new) fallback failed"
+                                    )
                         else:
                             try:
                                 logger.debug("watch_index_helper: scheduling node_new.scroll_visible for index %s", new)
@@ -953,7 +963,10 @@ class AppBase(AppException, ListView):
             self._highlight_match(match)
         except Exception as e:
             self.printException(e, "_safe_highlight_match failed")
-    def _finalize_prep_common(self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None) -> None:
+
+    def _finalize_prep_common(
+        self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None
+    ) -> None:
         """Shared app-level sync used by all preparers.
 
         This function performs the conservative updates to the application
@@ -1245,7 +1258,11 @@ class AppBase(AppException, ListView):
                     self.printException(e, "key_s_helper: reading app.repo_root failed")
                     repo_root_val = None
                 msg = f"Create {os.path.basename(filepath)}.HASH. Do you wish to save the (o)lder file, the (n)ewer file, or (b)oth? (Any other key to cancel.)"
-                app.push_screen(SaveSnapshotModal(msg, filepath=filepath, prev_hash=prev_hash, curr_hash=curr_hash, repo_root=repo_root_val))
+                app.push_screen(
+                    SaveSnapshotModal(
+                        msg, filepath=filepath, prev_hash=prev_hash, curr_hash=curr_hash, repo_root=repo_root_val
+                    )
+                )
             except Exception as e:
                 self.printException(e, "key_s_helper: push SaveSnapshotModal failed")
         except Exception as e:
@@ -1260,7 +1277,15 @@ class SaveSnapshotModal(AppException, ModalScreen):
     n/N (newer), b/B (both). Any other key cancels.
     """
 
-    def __init__(self, message: str | None = None, filepath: str | None = None, prev_hash: str | None = None, curr_hash: str | None = None, repo_root: str | None = None, **kwargs) -> None:
+    def __init__(
+        self,
+        message: str | None = None,
+        filepath: str | None = None,
+        prev_hash: str | None = None,
+        curr_hash: str | None = None,
+        repo_root: str | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.message = message or ""
         self.filepath = filepath
@@ -1318,7 +1343,6 @@ class SaveSnapshotModal(AppException, ModalScreen):
         if not hashval or not self.filepath:
             return
 
-        
         try:
             relpath = os.path.relpath(self.filepath, self.repo_root)
         except Exception as e:
@@ -1411,6 +1435,7 @@ class MessageModal(ModalScreen):
                 printException(e, "MessageModal.on_key: pop_screen failed")
         except Exception as e:
             printException(e, "MessageModal.on_key failed")
+
 
 class FileListBase(AppBase):
     """Base for file list widgets.
@@ -1540,8 +1565,10 @@ class FileListBase(AppBase):
                     self.printException(e, "_highlight_filename: checking node failed")
         except Exception as e:
             self.printException(e, "_highlight_filename failed")
-            
-    def _finalize_filelist_prep(self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None) -> None:
+
+    def _finalize_filelist_prep(
+        self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None
+    ) -> None:
         """Finalize for file-list widgets: highlight by filename/path then sync common state."""
         try:
             try:
@@ -1669,7 +1696,9 @@ class FileListBase(AppBase):
                         parent_item._filename = ".."
                         parent_item._is_dir = True
                         parent_item._raw_text = parent
-                        logger.debug("_render_parent_entry_if_needed: adding parent dir item for %s", parent_item._raw_text)
+                        logger.debug(
+                            "_render_parent_entry_if_needed: adding parent dir item for %s", parent_item._raw_text
+                        )
                     except Exception as e:
                         self.printException(e, "_render_parent_entry_if_needed: setting parent item attributes failed")
                     try:
@@ -1688,6 +1717,7 @@ class FileListBase(AppBase):
         `_selectable=False` so navigation logic can skip it.
         """
         try:
+
             def _short(h: str | None) -> str:
                 if not h:
                     return "None"
@@ -1746,7 +1776,9 @@ class FileListBase(AppBase):
                 try:
                     self.call_after_refresh(self._ensure_index_visible)
                 except Exception as e:
-                    self.printException(e, "_schedule_highlight_and_visibility: scheduling _ensure_index_visible failed")
+                    self.printException(
+                        e, "_schedule_highlight_and_visibility: scheduling _ensure_index_visible failed"
+                    )
             else:
                 try:
                     self.call_after_refresh(self._highlight_top)
@@ -1755,7 +1787,9 @@ class FileListBase(AppBase):
                     try:
                         self._highlight_top()
                     except Exception as e2:
-                        self.printException(e2, "_schedule_highlight_and_visibility: immediate _highlight_top fallback failed")
+                        self.printException(
+                            e2, "_schedule_highlight_and_visibility: immediate _highlight_top fallback failed"
+                        )
         except Exception as e:
             self.printException(e, "_schedule_highlight_and_visibility failed")
 
@@ -2054,7 +2088,6 @@ class FileModeFileList(FileListBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
-
 
     def _prepFileModeFileList_from_git(self, path: str, relpath: str, status_map: dict | None) -> list[dict]:
         """Return a list of file info dicts for `path` using filesystem/git status.
@@ -2507,7 +2540,9 @@ class RepoModeFileList(FileListBase):
                                     full = display
                                     is_dir = False
                                 name = os.path.basename(full) if full else display
-                                file_infos.append({"name": name, "full": full, "is_dir": is_dir, "raw": full, "repo_status": None})
+                                file_infos.append(
+                                    {"name": name, "full": full, "is_dir": is_dir, "raw": full, "repo_status": None}
+                                )
                             except Exception as _ex:
                                 self.printException(_ex, "prepRepoModeFileList: normalizing entry failed")
                                 continue
@@ -2560,7 +2595,9 @@ class RepoModeFileList(FileListBase):
 
             # Run centralized finalization so UI/app state is kept consistent
             try:
-                self._finalize_filelist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=highlight_filename if highlight_filename else None)
+                self._finalize_filelist_prep(
+                    curr_hash=curr_hash, prev_hash=prev_hash, path=highlight_filename if highlight_filename else None
+                )
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: finalize failed")
         except Exception as e:
@@ -2705,11 +2742,18 @@ class RepoModeFileList(FileListBase):
             if not pygit2:
                 return entries
             repo = self.app.pygit2_repo
-            logger.debug("_prepRepoModeFileList_from_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r", self.app.repo_root, bool(pygit2), repr(repo))
+            logger.debug(
+                "_prepRepoModeFileList_from_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r",
+                self.app.repo_root,
+                bool(pygit2),
+                repr(repo),
+            )
             if repo is None:
-                logger.warning("_prepRepoModeFileList_from_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed")
+                logger.warning(
+                    "_prepRepoModeFileList_from_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed"
+                )
                 return entries
-            
+
             # Simplified flow: exactly two meaningful cases exist for callers
             # of this helper: (1) `curr_hash` present and `prev_hash` is None
             # (initial commit case) or (2) both `prev_hash` and `curr_hash`
@@ -2728,7 +2772,10 @@ class RepoModeFileList(FileListBase):
                             obj = obj.get_object()
                             logger.debug("_resolve_tree: tag.get_object() -> type=%s repr=%r", type(obj), obj)
                         except Exception as _ex:
-                            self.printException(_ex, "_prepRepoModeFileList_from_pygit2: tag.get_object() failed — using target fallback")
+                            self.printException(
+                                _ex,
+                                "_prepRepoModeFileList_from_pygit2: tag.get_object() failed — using target fallback",
+                            )
                             obj = getattr(obj, "target", obj)
                             logger.debug("_resolve_tree: tag fallback target -> type=%s repr=%r", type(obj), obj)
 
@@ -2772,18 +2819,25 @@ class RepoModeFileList(FileListBase):
                 elif not curr_hash:
                     # Curr hash missing but prev present — invalid for our
                     # simplified assumptions: log and return empty.
-                    self.printException(ValueError("missing curr_hash"), "_prepRepoModeFileList_from_pygit2: curr_hash is required")
+                    self.printException(
+                        ValueError("missing curr_hash"), "_prepRepoModeFileList_from_pygit2: curr_hash is required"
+                    )
                     return entries
                 elif prev_hash is None:
                     try:
                         # Initial commit case: diff from empty tree to curr_hash
                         c = repo.revparse_single(curr_hash)
                     except Exception as _ex:
-                        self.printException(_ex, f"_prepRepoModeFileList_from_pygit2: revparse_single failed for {curr_hash}")
+                        self.printException(
+                            _ex, f"_prepRepoModeFileList_from_pygit2: revparse_single failed for {curr_hash}"
+                        )
                         return entries
                     cur_tree = _resolve_tree(c)
                     if cur_tree is None:
-                        self.printException(ValueError(f"could not resolve tree for {curr_hash}"), "_prepRepoModeFileList_from_pygit2: resolve failed")
+                        self.printException(
+                            ValueError(f"could not resolve tree for {curr_hash}"),
+                            "_prepRepoModeFileList_from_pygit2: resolve failed",
+                        )
                         return entries
                     try:
                         diff = repo.diff(None, cur_tree)
@@ -2793,7 +2847,10 @@ class RepoModeFileList(FileListBase):
                         # valid tree (initial commit case). As a robust
                         # fallback, construct an explicit empty tree and diff
                         # against that.
-                        self.printException(_ex, "_prepRepoModeFileList_from_pygit2: repo.diff(None, cur_tree) failed — trying empty-tree fallback")
+                        self.printException(
+                            _ex,
+                            "_prepRepoModeFileList_from_pygit2: repo.diff(None, cur_tree) failed — trying empty-tree fallback",
+                        )
                         try:
                             tb = repo.TreeBuilder()
                             empty_oid = tb.write()
@@ -2804,23 +2861,34 @@ class RepoModeFileList(FileListBase):
                             # If repo.TreeBuilder isn't available or write/get
                             # fail, as a last resort try the reversed arg
                             # order which some pygit2 variants accept.
-                            self.printException(_ex2, "_prepRepoModeFileList_from_pygit2: empty-tree fallback failed — trying reversed args")
+                            self.printException(
+                                _ex2,
+                                "_prepRepoModeFileList_from_pygit2: empty-tree fallback failed — trying reversed args",
+                            )
                             try:
                                 diff = repo.diff(cur_tree, None)
                             except Exception as _ex3:
-                                self.printException(_ex3, "_prepRepoModeFileList_from_pygit2: initial-commit diff fallbacks failed")
+                                self.printException(
+                                    _ex3, "_prepRepoModeFileList_from_pygit2: initial-commit diff fallbacks failed"
+                                )
                                 return entries
                 else:
                     try:
                         a = repo.revparse_single(prev_hash)
                         b = repo.revparse_single(curr_hash)
                     except Exception as _ex:
-                        self.printException(_ex, f"_prepRepoModeFileList_from_pygit2: revparse_single failed for {prev_hash} or {curr_hash}")
+                        self.printException(
+                            _ex,
+                            f"_prepRepoModeFileList_from_pygit2: revparse_single failed for {prev_hash} or {curr_hash}",
+                        )
                         return entries
                     a_tree = _resolve_tree(a)
                     b_tree = _resolve_tree(b)
                     if a_tree is None or b_tree is None:
-                        self.printException(ValueError(f"could not resolve trees for {prev_hash}..{curr_hash}"), "_prepRepoModeFileList_from_pygit2: resolve failed")
+                        self.printException(
+                            ValueError(f"could not resolve trees for {prev_hash}..{curr_hash}"),
+                            "_prepRepoModeFileList_from_pygit2: resolve failed",
+                        )
                         return entries
                     try:
                         diff = repo.diff(a_tree, b_tree)
@@ -2912,11 +2980,18 @@ class RepoModeFileList(FileListBase):
         items: list[tuple[str, str]] = []
         try:
             repo = self.app.pygit2_repo
-            logger.debug("_prepRepoModePseudo_from_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r", self.app.repo_root, bool(pygit2), repr(repo))
+            logger.debug(
+                "_prepRepoModePseudo_from_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r",
+                self.app.repo_root,
+                bool(pygit2),
+                repr(repo),
+            )
             if repo is None:
-                logger.warning("_prepRepoModePseudo_from_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed")
+                logger.warning(
+                    "_prepRepoModePseudo_from_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed"
+                )
                 return items
-            
+
             try:
                 status_map = repo.status()
             except Exception as e:
@@ -3036,7 +3111,9 @@ class HistoryListBase(AppBase):
             if idx is None:
                 idx = self.index or 0
             nodes = self.nodes()
-            logger.debug("toggle_check_current: called idx=%r node_count=%d", idx, len(nodes) if nodes is not None else 0)
+            logger.debug(
+                "toggle_check_current: called idx=%r node_count=%d", idx, len(nodes) if nodes is not None else 0
+            )
             if not (0 <= idx < len(nodes)):
                 return
             # Enforce single-mark semantics: mark the selected item (M ) and
@@ -3044,7 +3121,12 @@ class HistoryListBase(AppBase):
             try:
                 selected_node = nodes[idx]
                 was_marked = getattr(selected_node, "_checked", False)
-                logger.debug("toggle_check_current: selected_idx=%d selected_hash=%r was_marked=%r", idx, getattr(selected_node, "_hash", None), was_marked)
+                logger.debug(
+                    "toggle_check_current: selected_idx=%d selected_hash=%r was_marked=%r",
+                    idx,
+                    getattr(selected_node, "_hash", None),
+                    was_marked,
+                )
                 # If it was marked, unmark everything; otherwise mark selected and unmark others
                 for i, node in enumerate(nodes):
                     try:
@@ -3069,7 +3151,11 @@ class HistoryListBase(AppBase):
                                     node.styles.background = "red"
                                     node.styles.color = "white"
                                     node.styles.text_style = "bold"
-                                    logger.debug("toggle_check_current: applied styles idx=%d hash=%r", i, getattr(node, "_hash", None))
+                                    logger.debug(
+                                        "toggle_check_current: applied styles idx=%d hash=%r",
+                                        i,
+                                        getattr(node, "_hash", None),
+                                    )
                                 except Exception as e:
                                     self.printException(e, "toggle_check_current: applying node styles failed")
                             else:
@@ -3079,7 +3165,11 @@ class HistoryListBase(AppBase):
                                     node.styles.background = None
                                     node.styles.color = None
                                     node.styles.text_style = None
-                                    logger.debug("toggle_check_current: cleared styles idx=%d hash=%r", i, getattr(node, "_hash", None))
+                                    logger.debug(
+                                        "toggle_check_current: cleared styles idx=%d hash=%r",
+                                        i,
+                                        getattr(node, "_hash", None),
+                                    )
                                 except Exception as e:
                                     self.printException(e, "toggle_check_current: clearing node styles failed")
                         except Exception as e:
@@ -3216,7 +3306,9 @@ class HistoryListBase(AppBase):
             self.printException(e, "_compute_selected_pair failed")
             return (None, None)
 
-    def _finalize_historylist_prep(self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None) -> None:
+    def _finalize_historylist_prep(
+        self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None
+    ) -> None:
         """History-specific finalization then call shared common sync.
 
         This implements history-only behavior (e.g. marking a previously
@@ -3237,18 +3329,29 @@ class HistoryListBase(AppBase):
                                 try:
                                     if getattr(node, "_hash", None) == prev_hash:
                                         try:
-                                            logger.debug("prepRepoModeHistoryList: invoking toggle_check_current at index=%d for prev_hash=%r", i, prev_hash)
+                                            logger.debug(
+                                                "prepRepoModeHistoryList: invoking toggle_check_current at index=%d for prev_hash=%r",
+                                                i,
+                                                prev_hash,
+                                            )
                                             self.toggle_check_current(i)
                                         except Exception as e:
-                                            self.printException(e, "HistoryListBase._finalize_historylist_prep: toggle_check_current failed")
+                                            self.printException(
+                                                e,
+                                                "HistoryListBase._finalize_historylist_prep: toggle_check_current failed",
+                                            )
                                         break
                                 except Exception as e:
-                                    self.printException(e, "HistoryListBase._finalize_historylist_prep: checking node failed")
+                                    self.printException(
+                                        e, "HistoryListBase._finalize_historylist_prep: checking node failed"
+                                    )
                         else:
                             try:
                                 self._highlight_top()
                             except Exception as e:
-                                self.printException(e, "HistoryListBase._finalize_historylist_prep: _highlight_top failed")
+                                self.printException(
+                                    e, "HistoryListBase._finalize_historylist_prep: _highlight_top failed"
+                                )
                     except Exception as e:
                         self.printException(e, "HistoryListBase._finalize_historylist_prep: locating prev_hash failed")
                 else:
@@ -3297,7 +3400,9 @@ class FileModeHistoryList(HistoryListBase):
                     if self.app.test_pygit2:
                         pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
                         pseudo_entries_git, entries_git = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
-                        self.compare_pygit2_to_git_output(pseudo_entries, pseudo_entries_git, "prepFileModeHistoryList pseudo_entries")
+                        self.compare_pygit2_to_git_output(
+                            pseudo_entries, pseudo_entries_git, "prepFileModeHistoryList pseudo_entries"
+                        )
                         self.compare_pygit2_to_git_output(entries, entries_git, "prepFileModeHistoryList entries")
                     elif pygit2:
                         pseudo_entries, entries = self._prepFileModeHistoryList_for_pygit2(repo_root, rel_path)
@@ -3310,7 +3415,9 @@ class FileModeHistoryList(HistoryListBase):
                     try:
                         if repo_root and pseudo_entries:
                             full_path = path if os.path.isabs(path) else os.path.realpath(os.path.join(repo_root, path))
-                            mods_ts, staged_ts = self._compute_pseudo_timestamps(repo_root, mods=[], single_path=full_path)
+                            mods_ts, staged_ts = self._compute_pseudo_timestamps(
+                                repo_root, mods=[], single_path=full_path
+                            )
 
                             # rewrite pseudo_entries in-place with date prefixes when appropriate
                             new_pseudo: list[tuple[str, str]] = []
@@ -3322,7 +3429,7 @@ class FileModeHistoryList(HistoryListBase):
                                         raw = desc or "(modified, unstaged)"
                                         # Avoid duplicating the status word if desc already contains it
                                         if raw.upper().startswith(status):
-                                            msg = raw[len(status):].strip()
+                                            msg = raw[len(status) :].strip()
                                         else:
                                             msg = raw
                                         display = f"{date_part} {status_short[:HASH_LENGTH]} {msg}".strip()
@@ -3332,7 +3439,7 @@ class FileModeHistoryList(HistoryListBase):
                                         status_short = "STAGED"
                                         raw = desc or "(staged, uncommitted)"
                                         if raw.upper().startswith(status):
-                                            msg = raw[len(status):].strip()
+                                            msg = raw[len(status) :].strip()
                                         else:
                                             msg = raw
                                         display = f"{date_part} {status_short[:HASH_LENGTH]} {msg}".strip()
@@ -3424,11 +3531,18 @@ class FileModeHistoryList(HistoryListBase):
         entries: list[tuple[str, str, str]] = []
         try:
             repo = self.app.pygit2_repo
-            logger.debug("_prepFileModeHistoryList_commits_from_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r", repo_root, bool(pygit2), repr(repo))
+            logger.debug(
+                "_prepFileModeHistoryList_commits_from_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r",
+                repo_root,
+                bool(pygit2),
+                repr(repo),
+            )
             if repo is None:
-                logger.warning("_prepFileModeHistoryList_commits_from_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed")
+                logger.warning(
+                    "_prepFileModeHistoryList_commits_from_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed"
+                )
                 return entries
-            
+
             try:
                 head = repo.head.target
             except Exception as _ex:
@@ -3507,14 +3621,19 @@ class FileModeHistoryList(HistoryListBase):
                                     dt = datetime.fromtimestamp(ts)
                                 date_stamp = dt.strftime("%Y-%m-%dT%H:%M:%S")
                             except Exception as _ex:
-                                self.printException(_ex, "_prepFileModeHistoryList_commits_from_pygit2 failed parsing commit timestamp")
+                                self.printException(
+                                    _ex, "_prepFileModeHistoryList_commits_from_pygit2 failed parsing commit timestamp"
+                                )
                                 date_stamp = ""
                             msg = (commit.message or "").splitlines()[0].strip()
                             # store datetime object first for natural sorting
                             try:
                                 dt
                             except NameError as _ex:
-                                self.printException(_ex, "_prepFileModeHistoryList_commits_from_pygit2: dt undefined, using datetime.min")
+                                self.printException(
+                                    _ex,
+                                    "_prepFileModeHistoryList_commits_from_pygit2: dt undefined, using datetime.min",
+                                )
                                 dt = datetime.min
                             entries.append((dt, h, msg))
                         except Exception as e:
@@ -3531,8 +3650,9 @@ class FileModeHistoryList(HistoryListBase):
             self.printException(_ex, "_prepFileModeHistoryList_commits_from_pygit2 sorting failed")
         return entries
 
-    
-    def _prepFileModeHistoryList_for_git(self, repo_root: str, rel_path: str) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
+    def _prepFileModeHistoryList_for_git(
+        self, repo_root: str, rel_path: str
+    ) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
         """Collect pseudo entries and commits for a single file using git CLI.
 
         Returns (pseudo_entries, commits) where pseudo_entries is a list of
@@ -3583,7 +3703,9 @@ class FileModeHistoryList(HistoryListBase):
             self.printException(e, "_prepFileModeHistoryList_for_git failed")
         return (pseudo_entries, commits)
 
-    def _prepFileModeHistoryList_for_pygit2(self, repo_root: str, rel_path: str) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
+    def _prepFileModeHistoryList_for_pygit2(
+        self, repo_root: str, rel_path: str
+    ) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
         """Collect pseudo entries and commits for a single file using pygit2.
 
         Returns (pseudo_entries, commits) similar to the git helper.
@@ -3592,9 +3714,16 @@ class FileModeHistoryList(HistoryListBase):
         commits: list[tuple[str, str, str]] = []
         try:
             repo = self.app.pygit2_repo
-            logger.debug("_prepFileModeHistoryList_for_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r", repo_root, bool(pygit2), repr(repo))
-            if repo is None:    
-                logger.warning("_prepFileModeHistoryList_for_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed")
+            logger.debug(
+                "_prepFileModeHistoryList_for_pygit2: entry repo_root=%r pygit2_module_present=%r app.pygit2_repo=%r",
+                repo_root,
+                bool(pygit2),
+                repr(repo),
+            )
+            if repo is None:
+                logger.warning(
+                    "_prepFileModeHistoryList_for_pygit2: self.app.pygit2_repo is None — pygit2 disabled or initialization failed"
+                )
                 return (pseudo_entries, commits)
 
             try:
@@ -3638,7 +3767,6 @@ class FileModeHistoryList(HistoryListBase):
         except Exception as e:
             self.printException(e, "_prepFileModeHistoryList_for_pygit2 failed")
         return (pseudo_entries, commits)
-
 
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Open the diff for the selected file commit-pair.
@@ -3724,8 +3852,12 @@ class RepoModeHistoryList(HistoryListBase):
                 # When testing, run both backends and compare outputs.
                 if self.app.test_pygit2:
                     pseudo_entries, commits = self._prepRepoModeHistoryList_for_pygit2(repo_path, prev_hash, curr_hash)
-                    pseudo_entries_git, commits_git = self._prepRepoModeHistoryList_for_git(repo_path, prev_hash, curr_hash)
-                    self.compare_pygit2_to_git_output(pseudo_entries, pseudo_entries_git, "prepRepoModeHistoryList pseudo_entries")
+                    pseudo_entries_git, commits_git = self._prepRepoModeHistoryList_for_git(
+                        repo_path, prev_hash, curr_hash
+                    )
+                    self.compare_pygit2_to_git_output(
+                        pseudo_entries, pseudo_entries_git, "prepRepoModeHistoryList pseudo_entries"
+                    )
                     self.compare_pygit2_to_git_output(commits, commits_git, "prepRepoModeHistoryList commits")
                 elif pygit2:
                     pseudo_entries, commits = self._prepRepoModeHistoryList_for_pygit2(repo_path, prev_hash, curr_hash)
@@ -3812,7 +3944,11 @@ class RepoModeHistoryList(HistoryListBase):
                             for i, node in enumerate(self.nodes()):
                                 if getattr(node, "_hash", None) == prev_hash:
                                     try:
-                                        logger.debug("prepRepoModeHistoryList: invoking toggle_check_current at index=%d for prev_hash=%r", i, prev_hash)
+                                        logger.debug(
+                                            "prepRepoModeHistoryList: invoking toggle_check_current at index=%d for prev_hash=%r",
+                                            i,
+                                            prev_hash,
+                                        )
                                         self.toggle_check_current(i)
                                     except Exception as e:
                                         self.printException(e, "prepRepoModeHistoryList toggle_check_current failed")
@@ -3824,7 +3960,11 @@ class RepoModeHistoryList(HistoryListBase):
                     for i, node in enumerate(self.nodes()):
                         if getattr(node, "_hash", None) == prev_hash:
                             try:
-                                logger.debug("prepRepoModeHistoryList: invoking toggle_check_current at index=%d for prev_hash=%r", i, prev_hash)
+                                logger.debug(
+                                    "prepRepoModeHistoryList: invoking toggle_check_current at index=%d for prev_hash=%r",
+                                    i,
+                                    prev_hash,
+                                )
                                 self.toggle_check_current(i)
                             except Exception as e:
                                 self.printException(e, "prepRepoModeHistoryList toggle_check_current failed")
@@ -3919,7 +4059,6 @@ class RepoModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e, "_prepRepoModeHistoryList_for_git adding pseudo summaries failed")
 
-
             # collect commits
             try:
                 if self.app.repo_root:
@@ -3944,11 +4083,15 @@ class RepoModeHistoryList(HistoryListBase):
                             try:
                                 dt = datetime.fromisoformat(date_s) if date_s else datetime.min
                             except Exception as _ex:
-                                self.printException(_ex, f"_prepRepoModeHistoryList_for_git failed parsing ISO datetime '{date_s}'")
+                                self.printException(
+                                    _ex, f"_prepRepoModeHistoryList_for_git failed parsing ISO datetime '{date_s}'"
+                                )
                                 try:
                                     dt = datetime.strptime(date_s, "%Y-%m-%d") if date_s else datetime.min
                                 except Exception as _ex:
-                                    self.printException(_ex, f"_prepRepoModeHistoryList_for_git failed parsing date-only '{date_s}'")
+                                    self.printException(
+                                        _ex, f"_prepRepoModeHistoryList_for_git failed parsing date-only '{date_s}'"
+                                    )
                                     dt = datetime.min
                             commits.append((dt, commit_hash, msg))
                         except Exception as e:
@@ -3989,19 +4132,29 @@ class RepoModeHistoryList(HistoryListBase):
             # (which doesn't list untracked files). Treat WT_NEW separately
             # if callers need untracked information.
             wt_new = getattr(pygit2, "GIT_STATUS_WT_NEW", 0)
-            mods = [p for p, f in status_map.items() if f & (
-                pygit2.GIT_STATUS_WT_MODIFIED
-                | pygit2.GIT_STATUS_WT_RENAMED
-                | pygit2.GIT_STATUS_WT_TYPECHANGE
-                | pygit2.GIT_STATUS_WT_DELETED
-            )]
-            staged = [p for p, f in status_map.items() if f & (
-                pygit2.GIT_STATUS_INDEX_NEW
-                | pygit2.GIT_STATUS_INDEX_MODIFIED
-                | pygit2.GIT_STATUS_INDEX_RENAMED
-                | pygit2.GIT_STATUS_INDEX_TYPECHANGE
-                | pygit2.GIT_STATUS_INDEX_DELETED
-            )]
+            mods = [
+                p
+                for p, f in status_map.items()
+                if f
+                & (
+                    pygit2.GIT_STATUS_WT_MODIFIED
+                    | pygit2.GIT_STATUS_WT_RENAMED
+                    | pygit2.GIT_STATUS_WT_TYPECHANGE
+                    | pygit2.GIT_STATUS_WT_DELETED
+                )
+            ]
+            staged = [
+                p
+                for p, f in status_map.items()
+                if f
+                & (
+                    pygit2.GIT_STATUS_INDEX_NEW
+                    | pygit2.GIT_STATUS_INDEX_MODIFIED
+                    | pygit2.GIT_STATUS_INDEX_RENAMED
+                    | pygit2.GIT_STATUS_INDEX_TYPECHANGE
+                    | pygit2.GIT_STATUS_INDEX_DELETED
+                )
+            ]
 
             try:
                 # Compute timestamp for most recently modified working-tree file
@@ -4016,7 +4169,9 @@ class RepoModeHistoryList(HistoryListBase):
                                 if latest_m is None or m > latest_m:
                                     latest_m = m
                         except Exception as e:
-                            self.printException(e, "_prepRepoModeHistoryList_for_pygit2 skipping file mtime due to error")
+                            self.printException(
+                                e, "_prepRepoModeHistoryList_for_pygit2 skipping file mtime due to error"
+                            )
                             continue
                     if latest_m is not None:
                         mods_ts = " " + datetime.fromtimestamp(latest_m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
@@ -4050,7 +4205,6 @@ class RepoModeHistoryList(HistoryListBase):
             except Exception as e:
                 self.printException(e, "_prepRepoModeHistoryList_for_pygit2 adding pseudo summaries failed")
 
-
             # Walk commits
             try:
                 head = None
@@ -4077,7 +4231,9 @@ class RepoModeHistoryList(HistoryListBase):
                                         dt = datetime.fromtimestamp(t)
                                     date_stamp = dt.strftime("%Y-%m-%dT%H:%M:%S")
                                 except Exception as _ex:
-                                    self.printException(_ex, "_prepRepoModeHistoryList_for_pygit2 failed parsing commit timestamp")
+                                    self.printException(
+                                        _ex, "_prepRepoModeHistoryList_for_pygit2 failed parsing commit timestamp"
+                                    )
                                     date_stamp = ""
                             else:
                                 date_stamp = ""
@@ -4086,7 +4242,9 @@ class RepoModeHistoryList(HistoryListBase):
                             try:
                                 dt
                             except NameError as _ex:
-                                self.printException(_ex, "_prepRepoModeHistoryList_for_pygit2: dt undefined, using datetime.min")
+                                self.printException(
+                                    _ex, "_prepRepoModeHistoryList_for_pygit2: dt undefined, using datetime.min"
+                                )
                                 dt = datetime.min
                             commits.append((dt, commit_hash, msg))
                             count += 1
@@ -4153,7 +4311,6 @@ class RepoModeHistoryList(HistoryListBase):
         """Enter-key handler — same behavior as Right: open the commit-pair file list."""
         logger.debug("RepoModeHistoryList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_right(event, recursive=True)
-
 
 
 class DiffList(AppBase):
@@ -4304,9 +4461,7 @@ class DiffList(AppBase):
 
     def key_c(self, event: events.Key | None = None) -> None:
         """Toggle colorization of the diff output and re-render."""
-        logger.debug(
-            "DiffList.key_c called: key=%r index=%r", getattr(event, "key", None), self.index
-        )
+        logger.debug("DiffList.key_c called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -4328,9 +4483,7 @@ class DiffList(AppBase):
         If the current app layout is one of the file-history diff layouts,
         save it and switch to the `diff_fullscreen` layout. Otherwise noop.
         """
-        logger.debug(
-            "DiffList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index
-        )
+        logger.debug("DiffList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -4439,9 +4592,7 @@ class DiffList(AppBase):
 
     def key_D(self, event: events.Key | None = None) -> None:
         """Alias for `key_d` (Shift-D)."""
-        logger.debug(
-            "DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), self.index
-        )
+        logger.debug("DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_d(event, recursive=True)
 
     def key_left(self, event: events.Key | None = None) -> None:
@@ -4572,8 +4723,8 @@ Tips and behavior notes:
 
 #    - `toggle-color` / `c`: toggle colorized diff output.
 #    - `cycle-diff-variant` / `d`: cycle to the next diff variant (e.g. ignore-space-change, patience).
-#Command palette (^P):
-#- Press Ctrl-P (Textual command palette) to run commands directly. Useful
+# Command palette (^P):
+# - Press Ctrl-P (Textual command palette) to run commands directly. Useful
 #    commands to wire up include:
 #    - `open-file`, `diff <file> [prev] <curr>`, `file-history <path>`,
 #        `goto-commit <hash>`, `toggle-color`, `next-hunk`, `prev-hunk`,
@@ -4629,9 +4780,7 @@ class HelpList(AppBase):
 
     def key_enter(self, event: events.Key | None = None) -> None:
         """Return from the help view to the previously-saved app state."""
-        logger.debug(
-            "HelpList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index
-        )
+        logger.debug("HelpList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -4712,7 +4861,9 @@ class GitHistoryNavTool(AppException, App):
             # implementations and compare their outputs for discrepancies.
             self.test_pygit2 = bool(test_pygit2)
             if self.test_pygit2 and not pygit2:
-                logger.warning("GitHistoryNavTool.__init__: test_pygit2=True but pygit2 module not available; disabling test mode")
+                logger.warning(
+                    "GitHistoryNavTool.__init__: test_pygit2=True but pygit2 module not available; disabling test mode"
+                )
                 self.test_pygit2 = False
         except Exception as e:
             self.printException(e, "GitHistoryNavTool.__init__ failed")
@@ -4742,7 +4893,6 @@ class GitHistoryNavTool(AppException, App):
             # Fall back to storing raw value and log
             self.printException(e, "setting current_path failed")
             self._current_path = value
-
 
     def compose(self):
         """Yield the canonical six-column layout widgets for the app.
@@ -4835,7 +4985,9 @@ class GitHistoryNavTool(AppException, App):
                         # Call preparer once with any provided hashes so it may
                         # highlight/mark the requested commits during prep.
                         try:
-                            self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=self.path or ".", prev_hash=prev, curr_hash=curr)
+                            self.repo_mode_history_list.prepRepoModeHistoryList(
+                                repo_path=self.path or ".", prev_hash=prev, curr_hash=curr
+                            )
                         except Exception as e:
                             self.printException(e, "on_mount: prepRepoModeHistoryList failed")
 
@@ -4843,7 +4995,7 @@ class GitHistoryNavTool(AppException, App):
                         # populate the repo file list so the right column shows files.
                         if curr is not None or prev is not None:
                             try:
-                                    self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
+                                self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
                             except Exception as e:
                                 self.printException(e, "preparing repo mode file list failed")
                             # Centralize layout/focus/footer handling via change_state.
@@ -4859,7 +5011,6 @@ class GitHistoryNavTool(AppException, App):
                                 self.printException(e, "on_mount: change_state for history_fullscreen failed")
                     except Exception as e:
                         self.printException(e, "on_mount: repo-first initialization failed")
-
 
                     # Ensure help content is prepared so help is immediately available
                     try:
@@ -4992,7 +5143,9 @@ class GitHistoryNavTool(AppException, App):
             try:
                 if hasattr(app, "repo_mode_history_list") and _is_visible(app.repo_mode_history_list):
                     try:
-                        app.repo_mode_history_list.prepRepoModeHistoryList(repo_path=path, prev_hash=prev, curr_hash=curr)
+                        app.repo_mode_history_list.prepRepoModeHistoryList(
+                            repo_path=path, prev_hash=prev, curr_hash=curr
+                        )
                     except Exception as e:
                         self.printException(e, "key_r: prepRepoModeHistoryList failed")
             except Exception as e:
@@ -5682,11 +5835,11 @@ class GitHistoryNavTool(AppException, App):
         saved_path = self.current_path
         try:
             logger.debug(
-                    "toggle_file_history: before prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r saved_path=%r",
-                    self.previous_hash,
-                    self.current_hash,
-                    saved_path,
-                )
+                "toggle_file_history: before prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r saved_path=%r",
+                self.previous_hash,
+                self.current_hash,
+                saved_path,
+            )
             # Prepare repo history and request that preparer highlight and
             # mark the provided commit hashes when present.
             # Use the current app-level hashes as the initial request; the

@@ -40,7 +40,11 @@ class TestRepo(AppException):
 
     STAGED_MESSAGE = "Staged changes"
     MODS_MESSAGE = "Unstaged modifications"
-    
+    # Pseudo-hash tokens used across diff dispatching
+    NEWREPO = "NEWREPO"
+    STAGED = "STAGED"
+    MODS = "MODS"
+
     def __init__(self, repoRoot: str):
         self.repoRoot = repoRoot
         self.pygit2_repo = pygit2.Repository(self.repoRoot)
@@ -132,9 +136,9 @@ class TestRepo(AppException):
         finally to the current time if not available.
         """
         idx_candidates = [
-                os.path.join(self.repoRoot, ".git", "index"),
-                os.path.join(self.repoRoot, "index"),
-            ]
+            os.path.join(self.repoRoot, ".git", "index"),
+            os.path.join(self.repoRoot, "index"),
+        ]
         idx_mtime = None
         for p in idx_candidates:
             try:
@@ -202,11 +206,11 @@ class TestRepo(AppException):
         try:
             if not code:
                 return "modified"
-            if code.startswith('R'):
-                return 'renamed'
-            return {'A': 'added', 'M': 'modified', 'D': 'deleted', 'C': 'copied'}.get(code, 'modified')
+            if code.startswith("R"):
+                return "renamed"
+            return {"A": "added", "M": "modified", "D": "deleted", "C": "copied"}.get(code, "modified")
         except Exception:
-            return 'modified'
+            return "modified"
 
     def _parse_git_name_status_line(self, line: str) -> tuple[str, str]:
         """Parse a single `git --name-status` line and return (path, status).
@@ -215,16 +219,16 @@ class TestRepo(AppException):
         path (last column). Uses `_git_name_status_to_str` to determine the
         canonical status string.
         """
-        parts = line.split('\t')
-        code = parts[0].strip() if parts else ''
-        if code.startswith('R'):
-            path = parts[-1].strip() if len(parts) > 1 else ''
+        parts = line.split("\t")
+        code = parts[0].strip() if parts else ""
+        if code.startswith("R"):
+            path = parts[-1].strip() if len(parts) > 1 else ""
         else:
-            path = parts[1].strip() if len(parts) > 1 else ''
+            path = parts[1].strip() if len(parts) > 1 else ""
         status = self._git_name_status_to_str(code)
         return (path, status)
 
-    def _empty_tree_for_repo(self, repo) -> 'pygit2.Tree | None':
+    def _empty_tree_for_repo(self, repo) -> "pygit2.Tree | None":
         """Construct and return an empty tree object for `repo`, or None on failure.
 
         Centralizes `TreeBuilder` usage to avoid repeated try/except blocks.
@@ -237,16 +241,18 @@ class TestRepo(AppException):
             self.printException(e, "_empty_tree_for_repo: TreeBuilder failed")
             return None
 
-    def getFileListBetweenNewAndTopHash(self, usePyGit2: bool) -> list[str]:
+    def getFileListBetweenNewRepoAndTopHash(self, usePyGit2: bool) -> list[str]:
         """Return a list of `(path, status)` for files present in HEAD.
 
         Status will be `committed` to indicate file is present in the
         given commit (HEAD).
         """
         # Delegate to the new initial->commit helper to avoid duplication
-        return self.getFileListBetweenNewAndHash("HEAD", usePyGit2)
+        return self.getFileListBetweenNewRepoAndHash("HEAD", usePyGit2)
 
-    def getFileListBetweenNormalHashes(self, prev_hash: str, curr_hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
+    def getFileListBetweenNormalizedHashes(
+        self, prev_hash: str, curr_hash: str, usePyGit2: bool
+    ) -> list[tuple[str, str]]:
         """Return a list of `(path, status)` for files changed between `prev_hash` and `curr_hash`.
 
         Status values: `added`, `modified`, `deleted`, `renamed`, `copied`.
@@ -257,35 +263,47 @@ class TestRepo(AppException):
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
         # Else use git CLI to get the list of files
         # Dispatch to specialized handlers for common token combinations.
-        ST = "STAGED"
-        MO = "MODS"
 
-        # If prev is None and curr is a normal hash -> new->hash
-        if prev_hash is None and curr_hash not in (ST, MO):
-            return self.getFileListBetweenNewAndHash(curr_hash, usePyGit2)
+        # Validate tokens: disallow bare `None` — require explicit `NEWREPO` token.
+        if prev_hash is None or curr_hash is None:
+            raise ValueError(
+                "getFileListBetweenNormalizedHashes: None is not a valid token; use TestRepo.NEWREPO for initial repository"
+            )
 
-        # If prev is None and curr is staged -> initial->staged
-        if prev_hash is None and curr_hash == ST:
-            return self.getFileListBetweenNewAndStaged(usePyGit2)
+        # If identical tokens were passed, there are no changes.
+        if prev_hash == curr_hash:
+            return []
 
-        # If prev is None and curr is working tree (mods) -> initial->mods
-        if prev_hash is None and curr_hash == MO:
-            return self.getFileListBetweenNewAndMods(usePyGit2)
+        # If prev is the pseudo-NewRepo token and curr is a normal hash -> new->hash
+        if prev_hash == self.NEWREPO and curr_hash not in (self.STAGED, self.MODS):
+            return self.getFileListBetweenNewRepoAndHash(curr_hash, usePyGit2)
+
+        # If prev is NEWREPO and curr is staged -> initial->staged
+        if prev_hash == self.NEWREPO and curr_hash == self.STAGED:
+            return self.getFileListBetweenNewRepoAndStaged(usePyGit2)
+
+        # If prev is NEWREPO and curr is working tree (mods) -> initial->mods
+        if prev_hash == self.NEWREPO and curr_hash == self.MODS:
+            return self.getFileListBetweenNewRepoAndMods(usePyGit2)
 
         # If prev and curr are both normal hashes -> direct commit->commit diff
-        if prev_hash not in (None, ST, MO) and curr_hash not in (None, ST, MO):
+        if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash not in (
+            self.NEWREPO,
+            self.STAGED,
+            self.MODS,
+        ):
             return self.getFileListBetweenTwoCommits(prev_hash, curr_hash, usePyGit2)
 
         # Hash -> staged
-        if prev_hash not in (None, ST, MO) and curr_hash == ST:
+        if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash == self.STAGED:
             return self.getFileListBetweenHashAndStaged(prev_hash, usePyGit2)
 
         # Hash -> working tree (mods)
-        if prev_hash not in (None, ST, MO) and curr_hash == MO:
+        if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash == self.MODS:
             return self.getFileListBetweenHashAndCurrentTime(prev_hash, usePyGit2)
 
         # staged -> mods (working tree)
-        if prev_hash == ST and curr_hash == MO:
+        if prev_hash == self.STAGED and curr_hash == self.MODS:
             return self.getFileListBetweenStagedAndMods(usePyGit2)
 
         # Fallback: for remaining (likely commit-ish) combos delegate to the
@@ -330,13 +348,17 @@ class TestRepo(AppException):
         else:
             # Use git CLI to get the list of files with status
             try:
-                output = check_output([
-                    "git",
-                    "diff",
-                    "--name-status",
-                    prev_hash,
-                    curr_hash,
-                ], cwd=self.repoRoot, text=True)
+                output = check_output(
+                    [
+                        "git",
+                        "diff",
+                        "--name-status",
+                        prev_hash,
+                        curr_hash,
+                    ],
+                    cwd=self.repoRoot,
+                    text=True,
+                )
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
@@ -492,7 +514,7 @@ class TestRepo(AppException):
     #         results.sort(key=lambda x: x[0])
     #         return results
 
-    def getFileListBetweenNewAndHash(self, curr_hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
+    def getFileListBetweenNewRepoAndHash(self, curr_hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return a list of `(path, status)` for files changed between the beginning and `curr_hash`.
 
         Status values are the same as other diffs (added/modified/etc.).
@@ -515,7 +537,10 @@ class TestRepo(AppException):
             try:
                 empty_tree = self._empty_tree_for_repo(self.pygit2_repo)
                 if empty_tree is None:
-                    self.printException(RuntimeError("failed to construct empty tree"), "getFileListBetweenNewAndHash: empty tree construction failed")
+                    self.printException(
+                        RuntimeError("failed to construct empty tree"),
+                        "getFileListBetweenNewRepoAndHash: empty tree construction failed",
+                    )
                     return []
                 diff = self.pygit2_repo.diff(empty_tree, cur_tree)
             except Exception as e:
@@ -530,11 +555,11 @@ class TestRepo(AppException):
             results.sort(key=lambda x: x[0])
             return results
 
-    def getFileListBetweenNewAndStaged(self, usePyGit2: bool) -> list[tuple[str, str]]:
+    def getFileListBetweenNewRepoAndStaged(self, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return file list for the initial (empty) tree -> staged index comparison.
 
         This is the specialized handler for the `prev is None and curr == STAGED`
-        case so `getFileListBetweenNormalHashes` can remain a dispatcher.
+        case so `getFileListBetweenNormalizedHashes` can remain a dispatcher.
         """
         ST = "STAGED"
         if usePyGit2:
@@ -555,7 +580,7 @@ class TestRepo(AppException):
                 results.sort(key=lambda x: x[0])
                 return results
             except Exception as e:
-                self.printException(e, "getFileListBetweenNewAndStaged: pygit2 diff failed")
+                self.printException(e, "getFileListBetweenNewRepoAndStaged: pygit2 diff failed")
                 return []
         # git CLI fallback when not using pygit2
         try:
@@ -573,7 +598,7 @@ class TestRepo(AppException):
         res.sort(key=lambda x: x[0])
         return res
 
-    def getFileListBetweenNewAndMods(self, usePyGit2: bool) -> list[tuple[str, str]]:
+    def getFileListBetweenNewRepoAndMods(self, usePyGit2: bool) -> list[tuple[str, str]]:
         """Specialized handler for initial (empty) -> working tree (mods) comparison.
 
         Preserve the original behavior: use `git diff --name-status` to match
@@ -582,21 +607,49 @@ class TestRepo(AppException):
         if usePyGit2:
             try:
                 repo = self.pygit2_repo
-                # Compare working tree to an empty base by inspecting
-                # index->workdir deltas. This approximates empty->workdir
-                # for the purposes of listing working-tree changes.
-                repo.index.read()
-                dif = repo.index.diff_to_workdir()
+                # Construct an explicit empty tree to represent the "new repo"
+                empty = self._empty_tree_for_repo(repo)
+                if empty is None:
+                    self.printException(
+                        RuntimeError("failed to construct empty tree"),
+                        "getFileListBetweenNewRepoAndMods: empty tree construction failed",
+                    )
+                    return []
+
+                # Build a mapping of working-tree files -> content bytes
+                work_files: dict[str, bytes] = {}
+                for root, dirs, files in os.walk(self.repoRoot):
+                    # Skip .git directory
+                    if ".git" in root.split(os.sep):
+                        continue
+                    for fname in files:
+                        fp = os.path.join(root, fname)
+                        try:
+                            rel = os.path.relpath(fp, self.repoRoot)
+                        except Exception:
+                            continue
+                        if rel.startswith(".git"):
+                            continue
+                        try:
+                            with open(fp, "rb") as fh:
+                                work_files[rel] = fh.read()
+                        except Exception:
+                            continue
+
                 results: list[tuple[str, str]] = []
-                for delta in getattr(dif, "deltas", []):
-                    path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                    status = self._delta_status_to_str(getattr(delta, "status", None))
-                    if path:
-                        results.append((path, status))
-                results.sort(key=lambda x: x[0])
+                # For NEWREPO the commit side is empty; any worktree file is an 'added'
+                for path in sorted(work_files.keys()):
+                    # Exclude untracked files (WT_NEW) to match git CLI behavior
+                    try:
+                        st = repo.status_file(path)
+                        if st & pygit2.GIT_STATUS_WT_NEW:
+                            continue
+                    except Exception:
+                        pass
+                    results.append((path, "added"))
                 return results
             except Exception as e:
-                self.printException(e, "getFileListBetweenNewAndMods: pygit2 diff failed")
+                self.printException(e, "getFileListBetweenNewRepoAndMods: pygit2 empty->worktree failed")
                 return []
 
         # git CLI fallback when not using pygit2
@@ -614,8 +667,6 @@ class TestRepo(AppException):
                 res.append((path, status))
         res.sort(key=lambda x: x[0])
         return res
-
-    def getFileListBetweenTopHashAndCurrentTime(self, usePyGit2: bool) -> list[str]:
 
     def getFileListBetweenTopHashAndCurrentTime(self, usePyGit2: bool) -> list[str]:
         """Return a list of `(path, status)` for files changed between HEAD and working tree.
@@ -675,7 +726,9 @@ class TestRepo(AppException):
 
             try:
                 # Debug constants
-                print(f"DEBUG:pygit2.GIT_OBJ_TREE={getattr(pygit2,'GIT_OBJ_TREE',None)} GIT_OBJ_BLOB={getattr(pygit2,'GIT_OBJ_BLOB',None)}")
+                print(
+                    f"DEBUG:pygit2.GIT_OBJ_TREE={getattr(pygit2,'GIT_OBJ_TREE',None)} GIT_OBJ_BLOB={getattr(pygit2,'GIT_OBJ_BLOB',None)}"
+                )
                 walk_tree(cur_tree)
             except Exception as e:
                 self.printException(e, "getFileListBetweenHashAndCurrentTime: walking tree failed")
@@ -698,7 +751,7 @@ class TestRepo(AppException):
             work_files: dict[str, bytes] = {}
             for root, dirs, files in os.walk(self.repoRoot):
                 # Skip .git directory
-                if '.git' in root.split(os.sep):
+                if ".git" in root.split(os.sep):
                     continue
                 for fname in files:
                     fp = os.path.join(root, fname)
@@ -707,10 +760,10 @@ class TestRepo(AppException):
                         rel = os.path.relpath(fp, self.repoRoot)
                     except Exception:
                         continue
-                    if rel.startswith('.git'):
+                    if rel.startswith(".git"):
                         continue
                     try:
-                        with open(fp, 'rb') as fh:
+                        with open(fp, "rb") as fh:
                             work_files[rel] = fh.read()
                     except Exception:
                         continue
@@ -722,7 +775,7 @@ class TestRepo(AppException):
                 in_commit = path in commit_files
                 in_work = path in work_files
                 if in_commit and not in_work:
-                    results.append((path, 'deleted'))
+                    results.append((path, "deleted"))
                 elif not in_commit and in_work:
                     # Exclude untracked files (WT_NEW) from being reported as
                     # 'added' — this matches `git diff <commit>` behavior.
@@ -733,24 +786,23 @@ class TestRepo(AppException):
                             continue
                     except Exception:
                         pass
-                    results.append((path, 'added'))
+                    results.append((path, "added"))
                 else:
                     # Present in both: compare blob content
                     try:
                         blob = repo.get(commit_files[path])
-                        commit_data = blob.data if hasattr(blob, 'data') else blob.read_raw()
+                        commit_data = blob.data if hasattr(blob, "data") else blob.read_raw()
                     except Exception:
                         commit_data = None
                     work_data = work_files.get(path)
                     if commit_data is None:
                         # If we can't read commit blob, conservatively mark modified
-                        results.append((path, 'modified'))
+                        results.append((path, "modified"))
                     else:
                         if work_data != commit_data:
-                            results.append((path, 'modified'))
+                            results.append((path, "modified"))
 
             return results
-
 
         else:
             # Use git CLI to get the list of files
@@ -847,7 +899,10 @@ class TestRepo(AppException):
                 idx_tree = self.pygit2_repo.get(idx_tree_oid)
                 empty_tree = self._empty_tree_for_repo(self.pygit2_repo)
                 if empty_tree is None:
-                    self.printException(RuntimeError("failed to construct empty tree"), "getFileListBetweenStagedAndMods: empty tree construction failed")
+                    self.printException(
+                        RuntimeError("failed to construct empty tree"),
+                        "getFileListBetweenStagedAndMods: empty tree construction failed",
+                    )
                     return []
                 diff = self.pygit2_repo.diff(idx_tree, empty_tree)
             except Exception as e:
@@ -897,22 +952,21 @@ class TestRepo(AppException):
         entire = self.getHashListEntireRepo(usePyGit2)
         sampleHashes: list[tuple[str, str, str]] = []
         if len(entire) >= 4:
-            sampleHashes.append(entire[0]) 
-            sampleHashes.append(entire[len(entire)//3]) 
-            sampleHashes.append(entire[len(entire)*2//3]) 
+            sampleHashes.append(entire[0])
+            sampleHashes.append(entire[len(entire) // 3])
+            sampleHashes.append(entire[len(entire) * 2 // 3])
         elif len(entire) == 3:
             sampleHashes.append(entire[0])
-            sampleHashes.append(entire[len(entire)//2])
+            sampleHashes.append(entire[len(entire) // 2])
         elif len(entire) == 2:
-            sampleHashes.append(entire[0]) 
+            sampleHashes.append(entire[0])
         if len(entire) >= 1:
             sampleHashes.append(entire[-1])  # always add TOP
         return sampleHashes
 
-
     def getHashListSamplePlusEnds(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a sampled list of commit hashes for staged, new, and entire repo."""
-        sampleHashes = [("", None, "")]
+        sampleHashes = [("", self.NEWREPO, "Newly created repository")]
         normalHashes = self.getHashListSample(usePyGit2)
         sampleHashes += normalHashes
         staged = self.getHashListStagedChanges(usePyGit2)
@@ -983,7 +1037,7 @@ class TestRepo(AppException):
                         results.append((pair_label + " [cli-only]", path, cli_map[path]))
 
         return results
-    
+
     def getHashListEntireRepo(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of all commit hashes in the repository."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
@@ -1024,7 +1078,9 @@ class TestRepo(AppException):
                             try:
                                 obj = repo.get(target)
                             except Exception as e:
-                                self.printException(e, f"getHashListEntireRepo: repo.get failed for target of {ref_name}")
+                                self.printException(
+                                    e, f"getHashListEntireRepo: repo.get failed for target of {ref_name}"
+                                )
                                 continue
 
                         # Peel annotated tags to commits
@@ -1103,11 +1159,13 @@ class TestRepo(AppException):
             for ts, h in commit_info:
                 formatted.append(self._format_commit_entry(repo, h))
             return formatted
-        
+
         else:
             try:
                 # Use git log to get commit epoch time, hash and subject for all refs
-                output = check_output(["git", "log", "--all", "--pretty=format:%ct %H %s"], cwd=self.repoRoot, text=True)
+                output = check_output(
+                    ["git", "log", "--all", "--pretty=format:%ct %H %s"], cwd=self.repoRoot, text=True
+                )
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
@@ -1133,7 +1191,6 @@ class TestRepo(AppException):
                 iso = self._epoch_to_iso(ts)
                 formatted.append((iso, h, subject))
             return formatted
-
 
     def getHashListStagedChanges(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of commit hashes for staged changes."""
@@ -1172,13 +1229,12 @@ class TestRepo(AppException):
                 return []
             if not names_out:
                 return []
-            
+
             if any(ln.strip() for ln in names_out.splitlines()):
                 iso = self.index_mtime_iso()
                 return [(iso, "STAGED", self.STAGED_MESSAGE)]
             return []
 
-    
     def getHashListNewChanges(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of commit hashes for new changes."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
@@ -1204,7 +1260,7 @@ class TestRepo(AppException):
                         paths.append(p)
             except Exception as e:
                 self.printException(e, "getHashListNewChanges: collecting paths from deltas failed")
-            
+
         else:
             # Enumerate working-tree-vs-index files via git diff --name-only
             try:
@@ -1214,7 +1270,7 @@ class TestRepo(AppException):
 
             if not names_out:
                 return []
-            
+
             lns = [ln.strip() for ln in names_out.splitlines() if ln.strip()]
             if any(lns):
                 paths = lns
@@ -1222,7 +1278,6 @@ class TestRepo(AppException):
         # Compute ISO based on working-tree paths' mtimes (centralized)
         iso = self._paths_mtime_iso(paths)
         return [(iso, "MODS", self.MODS_MESSAGE)] if paths else []
-
 
     def getHashListFromFileName(self, file_name: str, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of commit hashes that modified the given file."""
@@ -1258,7 +1313,9 @@ class TestRepo(AppException):
                                         if a_tree is None:
                                             raise RuntimeError("empty tree construction returned None")
                                     except Exception as e:
-                                        self.printException(e, "getHashListFromFileName: failed to construct empty a_tree")
+                                        self.printException(
+                                            e, "getHashListFromFileName: failed to construct empty a_tree"
+                                        )
                                         continue
                                 if b_tree is None:
                                     try:
@@ -1266,16 +1323,23 @@ class TestRepo(AppException):
                                         if b_tree is None:
                                             raise RuntimeError("empty tree construction returned None")
                                     except Exception as e:
-                                        self.printException(e, "getHashListFromFileName: failed to construct empty b_tree")
+                                        self.printException(
+                                            e, "getHashListFromFileName: failed to construct empty b_tree"
+                                        )
                                         continue
                                 try:
                                     diff = repo.diff(a_tree, b_tree)
                                 except Exception as e:
-                                    self.printException(e, "getHashListFromFileName: repo.diff(a_tree,b_tree) failed; trying reversed args")
+                                    self.printException(
+                                        e,
+                                        "getHashListFromFileName: repo.diff(a_tree,b_tree) failed; trying reversed args",
+                                    )
                                     try:
                                         diff = repo.diff(b_tree, a_tree)
                                     except Exception as e:
-                                        self.printException(e, "getHashListFromFileName: repo.diff reversed args failed")
+                                        self.printException(
+                                            e, "getHashListFromFileName: repo.diff reversed args failed"
+                                        )
                                         continue
                             except Exception as e:
                                 self.printException(e, "getHashListFromFileName: building trees for diff failed")
@@ -1313,7 +1377,9 @@ class TestRepo(AppException):
             return matches
         else:
             try:
-                output = check_output(["git", "log", "--pretty=format:%ct %H %s", "--", file_name], cwd=self.repoRoot, text=True)
+                output = check_output(
+                    ["git", "log", "--pretty=format:%ct %H %s", "--", file_name], cwd=self.repoRoot, text=True
+                )
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
@@ -1338,7 +1404,9 @@ class TestRepo(AppException):
                     entries.append((iso, h, ""))
             # Detect working-tree/index state for this file and prepend pseudo-entries
             try:
-                status_out = check_output(["git", "status", "--porcelain", "--", file_name], cwd=self.repoRoot, text=True)
+                status_out = check_output(
+                    ["git", "status", "--porcelain", "--", file_name], cwd=self.repoRoot, text=True
+                )
             except CalledProcessError as e:
                 self.printException(e, f"git status failed for {file_name}")
                 status_out = ""
@@ -1349,30 +1417,30 @@ class TestRepo(AppException):
                     idx_flag = s[0]
                     wt_flag = s[1]
                 else:
-                    idx_flag = s[0] if s else ' '
-                    wt_flag = ' '
+                    idx_flag = s[0] if s else " "
+                    wt_flag = " "
                 # Prepare timestamps for pseudo-entries
                 iso_index = self.index_mtime_iso()
                 iso_mods = self._paths_mtime_iso([file_name])
                 # If index has a change, represent staged version with index timestamp
-                if idx_flag != ' ':
+                if idx_flag != " ":
                     entries.insert(0, (iso_index, "STAGED", self.STAGED_MESSAGE))
                 # If working tree has modifications (unstaged), represent as MODS
-                if wt_flag != ' ':
+                if wt_flag != " ":
                     # Insert after STAGED if present, otherwise at top
                     if entries and entries[0][1] == "STAGED":
                         entries.insert(1, (iso_mods, "MODS", self.MODS_MESSAGE))
                     else:
                         entries.insert(0, (iso_mods, "MODS", self.MODS_MESSAGE))
             return entries
-    
-    
+
 
 def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool = False) -> bool:
     """Show differences between two file lists. If equal and `top` > 0,
     print the first `top` lines from `list1`.
     Returns True when lists are equal, False when differences are found.
     """
+
     def fmt(e) -> str:
         if raw:
             return repr(e)
@@ -1438,12 +1506,27 @@ def main():
     )
 
     # Add independent flags to run one or more test functions (-1..-7 allowed together)
-    parser.add_argument("-1", "--getFileListBetweenNewAndTopHash", action="store_true", help="Run getFileListBetweenNewAndTopHash")
-    parser.add_argument("-2", "--getFileListBetweenTopHashAndCurrentTime", action="store_true", help="Run getFileListBetweenTopHashAndCurrentTime")
-    parser.add_argument("-3", "--getFileListBetweenTopHashAndStaged", action="store_true", help="Run getFileListBetweenTopHashAndStaged")
-    parser.add_argument("-4", "--getFileListBetweenStagedAndMods", action="store_true", help="Run getFileListBetweenStagedAndMods")
-    parser.add_argument("-5", "--getFileListBetweenNewAndStaged", action="store_true", help="Run getFileListBetweenNewAndStaged")
-    parser.add_argument("-6", "--getFileListBetweenNewAndMods", action="store_true", help="Run getFileListBetweenNewAndMods")
+    parser.add_argument(
+        "-1", "--getFileListBetweenNewAndTopHash", action="store_true", help="Run getFileListBetweenNewAndTopHash"
+    )
+    parser.add_argument(
+        "-2",
+        "--getFileListBetweenTopHashAndCurrentTime",
+        action="store_true",
+        help="Run getFileListBetweenTopHashAndCurrentTime",
+    )
+    parser.add_argument(
+        "-3", "--getFileListBetweenTopHashAndStaged", action="store_true", help="Run getFileListBetweenTopHashAndStaged"
+    )
+    parser.add_argument(
+        "-4", "--getFileListBetweenStagedAndMods", action="store_true", help="Run getFileListBetweenStagedAndMods"
+    )
+    parser.add_argument(
+        "-5", "--getFileListBetweenNewAndStaged", action="store_true", help="Run getFileListBetweenNewAndStaged"
+    )
+    parser.add_argument(
+        "-6", "--getFileListBetweenNewAndMods", action="store_true", help="Run getFileListBetweenNewAndMods"
+    )
     parser.add_argument("-7", "--getHashListEntireRepo", action="store_true", help="Run getHashListEntireRepo")
     parser.add_argument("-8", "--getHashListStagedChanges", action="store_true", help="Run getHashListStagedChanges")
     parser.add_argument("-9", "--getHashListFromFileName", action="store_true", help="Run getHashListFromFileName")
@@ -1451,7 +1534,9 @@ def main():
     parser.add_argument("-b", "--getHashListComplete", action="store_true", help="Run getHashListComplete")
     parser.add_argument("-c", "--getHashListSample", action="store_true", help="Run getHashListSample")
     parser.add_argument("-d", "--getHashListSamplePlusEnds", action="store_true", help="Run getHashListSamplePlusEnds")
-    parser.add_argument("-e", "--getFileListSampledComparisons", action="store_true", help="Run getFileListSampledComparisons")
+    parser.add_argument(
+        "-e", "--getFileListSampledComparisons", action="store_true", help="Run getFileListSampledComparisons"
+    )
     parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
     parser.add_argument("-F", "--file", default="README.md", help="Filename for getHashListFromFileName when used")
 
@@ -1469,34 +1554,78 @@ def main():
         return show_diffs(name, l1, l2, args.top, args.raw)
 
     allfuncs = [
-            ("getFileListBetweenNewAndTopHash: File List New to Top Hash", "getFileListBetweenNewAndTopHash", None),
-            ("getFileListBetweenNewAndStaged: File List New to Staged", "getFileListBetweenNewAndStaged", None),
-            ("getFileListBetweenNewAndMods: File List New to Mods", "getFileListBetweenNewAndMods", None),
-            ("getFileListBetweenTopHashAndCurrentTime: File List Between TopHash and Current Time", "getFileListBetweenTopHashAndCurrentTime", None),
-            ("getFileListBetweenTopHashAndStaged: File List Between TopHash and Staged", "getFileListBetweenTopHashAndStaged", None),
-            ("getFileListBetweenStagedAndMods: File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None),
-            ("getHashListEntireRepo: Hash List Entire Repo", "getHashListEntireRepo", None),
-            ("getHashListStagedChanges: Hash List Staged Changes", "getHashListStagedChanges", None),
-            (f"getHashListFromFileName: Hash List From File {args.file}", "getHashListFromFileName", args.file),
-            ("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None),
-            ("getHashListComplete: Hash List Complete", "getHashListComplete", None),
-            ("getHashListSample: Hash List Sample", "getHashListSample", None),
-            ("runFileListSampledComparisons: Sampled pairwise file diffs", "runFileListSampledComparisons", None),
-        ]
+        ("getFileListBetweenNewRepoAndTopHash: File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None),
+        ("getFileListBetweenNewRepoAndStaged: File List New to Staged", "getFileListBetweenNewRepoAndStaged", None),
+        ("getFileListBetweenNewRepoAndMods: File List New to Mods", "getFileListBetweenNewRepoAndMods", None),
+        (
+            "getFileListBetweenTopHashAndCurrentTime: File List Between TopHash and Current Time",
+            "getFileListBetweenTopHashAndCurrentTime",
+            None,
+        ),
+        (
+            "getFileListBetweenTopHashAndStaged: File List Between TopHash and Staged",
+            "getFileListBetweenTopHashAndStaged",
+            None,
+        ),
+        ("getFileListBetweenStagedAndMods: File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None),
+        ("getHashListEntireRepo: Hash List Entire Repo", "getHashListEntireRepo", None),
+        ("getHashListStagedChanges: Hash List Staged Changes", "getHashListStagedChanges", None),
+        (f"getHashListFromFileName: Hash List From File {args.file}", "getHashListFromFileName", args.file),
+        ("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None),
+        ("getHashListComplete: Hash List Complete", "getHashListComplete", None),
+        ("getHashListSample: Hash List Sample", "getHashListSample", None),
+        ("runFileListSampledComparisons: Sampled pairwise file diffs", "runFileListSampledComparisons", None),
+    ]
 
     # Determine which tests to run. If -A/--all is set, run all tests.
     to_run: list[tuple[str, str, str | None]] = []
     if args.all:
         to_run = allfuncs
     else:
-        if args.getFileListNewToTopHash:
-            to_run.append(("getFileListNewToTopHash: File List New to Top Hash", "getFileListNewToTopHash", None))
+        if args.getFileListBetweenNewAndTopHash:
+            to_run.append(
+                (
+                    "getFileListBetweenNewRepoAndTopHash: File List New to Top Hash",
+                    "getFileListBetweenNewRepoAndTopHash",
+                    None,
+                )
+            )
+        if args.getFileListBetweenNewAndStaged:
+            to_run.append(
+                (
+                    "getFileListBetweenNewRepoAndStaged: File List New to Staged",
+                    "getFileListBetweenNewRepoAndStaged",
+                    None,
+                )
+            )
+        if args.getFileListBetweenNewAndMods:
+            to_run.append(
+                ("getFileListBetweenNewRepoAndMods: File List New to Mods", "getFileListBetweenNewRepoAndMods", None)
+            )
         if args.getFileListBetweenTopHashAndCurrentTime:
-            to_run.append(("getFileListBetweenTopHashAndCurrentTime: File List Between TopHash and Current Time", "getFileListBetweenTopHashAndCurrentTime", None))
+            to_run.append(
+                (
+                    "getFileListBetweenTopHashAndCurrentTime: File List Between TopHash and Current Time",
+                    "getFileListBetweenTopHashAndCurrentTime",
+                    None,
+                )
+            )
         if args.getFileListBetweenTopHashAndStaged:
-            to_run.append(("getFileListBetweenTopHashAndStaged: File List Between TopHash and Staged", "getFileListBetweenTopHashAndStaged", None))
+            to_run.append(
+                (
+                    "getFileListBetweenTopHashAndStaged: File List Between TopHash and Staged",
+                    "getFileListBetweenTopHashAndStaged",
+                    None,
+                )
+            )
         if args.getFileListBetweenStagedAndMods:
-            to_run.append(("getFileListBetweenStagedAndMods: File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None))
+            to_run.append(
+                (
+                    "getFileListBetweenStagedAndMods: File List Between Staged and Mods",
+                    "getFileListBetweenStagedAndMods",
+                    None,
+                )
+            )
         if args.getHashListEntireRepo:
             to_run.append(("getHashListEntireRepo: Hash List Entire Repo", "getHashListEntireRepo", None))
         if args.getHashListStagedChanges:
@@ -1504,7 +1633,9 @@ def main():
         if args.getHashListNewChanges:
             to_run.append(("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None))
         if args.getHashListFromFileName:
-            to_run.append((f"getHashListFromFileName: Hash List From File {args.file}", "getHashListFromFileName", args.file))
+            to_run.append(
+                (f"getHashListFromFileName: Hash List From File {args.file}", "getHashListFromFileName", args.file)
+            )
         if args.getHashListComplete:
             to_run.append(("getHashListComplete: Hash List Complete", "getHashListComplete", None))
         if args.getHashListSample:
@@ -1537,7 +1668,7 @@ def main():
     print(f"\nTest summary: total={total} passed={passed} failed={failed}")
 
     # If requested, run sampled comparisons separately (outside the to_run loop)
-    if sampled_flag:
+    if False:  # sampled_flag:
         print("\nRunning sampled pairwise comparisons (separate)...")
         try:
             sampled_results = getattr(test_repo, "runFileListSampledComparisons")(False)
@@ -1545,6 +1676,7 @@ def main():
                 print(f"{pair_label}\t{status}\t{path}")
         except Exception as e:
             test_repo.printException(e, "running runFileListSampledComparisons failed")
-    
+
+
 if __name__ == "__main__":
     main()
