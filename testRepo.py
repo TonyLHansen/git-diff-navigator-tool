@@ -786,8 +786,8 @@ class TestRepo(AppException):
                         except FileNotFoundError:
                             # File disappeared between os.walk and open; skip it
                             continue
-                        except Exception as e:
-                            self.printException(e, "getFileListBetweenNewRepoAndMods: reading file failed; falling back to mtime")
+                        except Exception as _no_logging:
+                            # self.printException(e, "getFileListBetweenNewRepoAndMods: reading file failed; falling back to mtime")
                             try:
                                 mtime = os.path.getmtime(fp)
                                 work_files[rel] = {"mtime": int(mtime)}
@@ -1293,7 +1293,7 @@ class TestRepo(AppException):
                         continue
                     seen.add(rel)
                     fp = os.path.join(self.repoRoot, rel)
-                    try:                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+                    try:
                         if os.path.islink(fp):
                             mtime = os.lstat(fp).st_mtime
                         else:
@@ -2033,7 +2033,7 @@ def main():
 
     # Helper to run a single comparison and return True on success. Accept
     # a `TestRepo` instance so the helper can be defined once and reused.
-    def run_one(test_repo, name: str, func_name: str, fname: str | None) -> bool:
+    def run_one(test_repo, i: int, name: str, func_name: str, fname: str | None) -> bool:
         # Debug: report which test function is being invoked
         if test_repo.verbose:
             print(f"DEBUG: run_one invoking {func_name} (display name: {name})")
@@ -2043,31 +2043,33 @@ def main():
         else:
             l1 = getattr(test_repo, func_name)(usePyGit2=True)
             l2 = getattr(test_repo, func_name)(usePyGit2=False)
-        return show_diffs(name, l1, l2, args.top, args.raw, args.verbose)
+        # Prefix the displayed test name with the enumeration and function name
+        disp_name = f"-{i},{func_name}:{name}"
+        return show_diffs(disp_name, l1, l2, args.top, args.raw, args.verbose)
 
     allfuncs = [
-        ("getFileListBetweenNewRepoAndTopHash: File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None),
+        ("File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None),
         (
-            "getFileListBetweenTopHashAndCurrentTime: File List Between TopHash and Current Time",
+            "File List Between TopHash and Current Time",
             "getFileListBetweenTopHashAndCurrentTime",
             None,
         ),
         (
-            "getFileListBetweenTopHashAndStaged: File List Between TopHash and Staged",
+            "File List Between TopHash and Staged",
             "getFileListBetweenTopHashAndStaged",
             None,
         ),
-        ("getFileListBetweenStagedAndMods: File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None),
-        ("getFileListBetweenNewRepoAndStaged: File List New to Staged", "getFileListBetweenNewRepoAndStaged", None),
-        ("getFileListBetweenNewRepoAndMods: File List New to Mods", "getFileListBetweenNewRepoAndMods", None),
-        ("getHashListEntireRepo: Hash List Entire Repo", "getHashListEntireRepo", None),
-        ("getHashListStagedChanges: Hash List Staged Changes", "getHashListStagedChanges", None),
-        (f"getHashListFromFileName: Hash List From File {args.file}", "getHashListFromFileName", args.file),
-        ("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None),
-        ("getHashListComplete: Hash List Complete", "getHashListComplete", None),
-        ("getHashListSample: Hash List Sample", "getHashListSample", None),
-        ("getHashListSamplePlusEnds: Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None),
-        ("getFileListUntrackedAndIgnored: Untracked and Ignored files", "getFileListUntrackedAndIgnored", None),
+        ("File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None),
+        ("File List New to Staged", "getFileListBetweenNewRepoAndStaged", None),
+        ("File List New to Mods", "getFileListBetweenNewRepoAndMods", None),
+        ("Hash List Entire Repo", "getHashListEntireRepo", None),
+        ("Hash List Staged Changes", "getHashListStagedChanges", None),
+        (f"Hash List From File {args.file}", "getHashListFromFileName", args.file),
+        ("Hash List New Changes", "getHashListNewChanges", None),
+        ("Hash List Complete", "getHashListComplete", None),
+        ("Hash List Sample", "getHashListSample", None),
+        ("Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None),
+        ("Untracked and Ignored files", "getFileListUntrackedAndIgnored", None),
     ]
 
     # Determine which tests to run. If -A/--all is set, run all tests.
@@ -2081,7 +2083,7 @@ def main():
         if args.getFileListBetweenNewAndTopHash:
             to_run.append(
                 (
-                    "getFileListBetweenNewRepoAndTopHash: File List New to Top Hash",
+                    "File List New to Top Hash",
                     "getFileListBetweenNewRepoAndTopHash",
                     None,
                 )
@@ -2089,7 +2091,7 @@ def main():
         if args.getFileListBetweenTopHashAndCurrentTime:
             to_run.append(
                 (
-                    "getFileListBetweenTopHashAndCurrentTime: File List Between TopHash and Current Time",
+                    "File List Between TopHash and Current Time",
                     "getFileListBetweenTopHashAndCurrentTime",
                     None,
                 )
@@ -2097,7 +2099,7 @@ def main():
         if args.getFileListBetweenTopHashAndStaged:
             to_run.append(
                 (
-                    "getFileListBetweenTopHashAndStaged: File List Between TopHash and Staged",
+                    "File List Between TopHash and Staged",
                     "getFileListBetweenTopHashAndStaged",
                     None,
                 )
@@ -2105,7 +2107,7 @@ def main():
         if args.getFileListBetweenStagedAndMods:
             to_run.append(
                 (
-                    "getFileListBetweenStagedAndMods: File List Between Staged and Mods",
+                    "File List Between Staged and Mods",
                     "getFileListBetweenStagedAndMods",
                     None,
                 )
@@ -2113,36 +2115,30 @@ def main():
         if args.getFileListBetweenNewAndStaged:
             to_run.append(
                 (
-                    "getFileListBetweenNewRepoAndStaged: File List New to Staged",
+                    "File List New to Staged",
                     "getFileListBetweenNewRepoAndStaged",
                     None,
                 )
             )
         if args.getFileListBetweenNewAndMods:
-            to_run.append(
-                ("getFileListBetweenNewRepoAndMods: File List New to Mods", "getFileListBetweenNewRepoAndMods", None)
-            )
+            to_run.append(("File List New to Mods", "getFileListBetweenNewRepoAndMods", None))
         if args.getHashListEntireRepo:
-            to_run.append(("getHashListEntireRepo: Hash List Entire Repo", "getHashListEntireRepo", None))
+            to_run.append(("Hash List Entire Repo", "getHashListEntireRepo", None))
         if args.getHashListStagedChanges:
-            to_run.append(("getHashListStagedChanges: Hash List Staged Changes", "getHashListStagedChanges", None))
+            to_run.append(("Hash List Staged Changes", "getHashListStagedChanges", None))
         if args.getHashListFromFileName:
-            to_run.append(
-                (f"getHashListFromFileName: Hash List From File {args.file}", "getHashListFromFileName", args.file)
-            )
+            to_run.append((f"Hash List From File {args.file}", "getHashListFromFileName", args.file))
         if args.getHashListNewChanges:
-            to_run.append(("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None))
+            to_run.append(("Hash List New Changes", "getHashListNewChanges", None))
         if args.getHashListComplete:
-            to_run.append(("getHashListComplete: Hash List Complete", "getHashListComplete", None))
+            to_run.append(("Hash List Complete", "getHashListComplete", None))
         if args.getHashListSample:
-            to_run.append(("getHashListSample: Hash List Sample", "getHashListSample", None))
+            to_run.append(("Hash List Sample", "getHashListSample", None))
         # Include sample-plus-ends (-d) then untracked/ignored (-e) in option order
         if args.getHashListSamplePlusEnds:
-            to_run.append(("getHashListSamplePlusEnds: Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None))
+            to_run.append(("Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None))
         if args.getFileListUntrackedAndIgnored:
-            to_run.append(
-                ("getFileListUntrackedAndIgnored: Untracked and Ignored files", "getFileListUntrackedAndIgnored", None)
-            )
+            to_run.append(("Untracked and Ignored files", "getFileListUntrackedAndIgnored", None))
         # Sampled comparisons are run separately to allow independent reporting
         # and avoid mixing their output with the main test loop.
 
@@ -2160,12 +2156,13 @@ def main():
         print(f"\n== Repository: {path} ==")
         test_repo = TestRepo(path, args.verbose)
 
-        for name, func, fname in to_run:
+        for i, (name, func, fname) in enumerate(to_run, 1):
             total += 1
             try:
-                ok = run_one(test_repo, name, func, fname)
+                ok = run_one(test_repo, i, name, func, fname)
             except Exception as e:
-                test_repo.printException(e, f"running {name} failed")
+                # Use the enumerated index in the error context for clarity
+                test_repo.printException(e, f"running -{i},{func}:{name} failed")
                 ok = False
             if ok:
                 passed += 1
