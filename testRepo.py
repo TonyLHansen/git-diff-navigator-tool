@@ -9,6 +9,7 @@ import traceback
 import os
 
 import pygit2
+import codecs
 from datetime import datetime, timezone
 from subprocess import check_output, CalledProcessError
 
@@ -183,6 +184,32 @@ class TestRepo(AppException):
             return "1970-01-01T00:00:00"
 
     # END: _epoch_to_iso v1
+
+    # BEGIN: _decode_git_quoted_path v1
+    def _decode_git_quoted_path(self, rel: str) -> str:
+        """Decode a git-quoted path ("...") emitted by `git ls-files`.
+
+        - If the path is quoted (surrounded by double quotes), unescape
+          backslash sequences (e.g. \xHH, \ooo) and interpret the resulting
+          byte values as UTF-8 when possible. If UTF-8 decoding fails,
+          fall back to latin-1 so the original byte values are preserved.
+        - If the path is not quoted, return it unchanged.
+        """
+        if not rel:
+            return rel
+        if rel.startswith('"') and rel.endswith('"'):
+            raw = rel[1:-1]
+            try:
+                tmp = codecs.decode(raw, 'unicode_escape')
+                b = tmp.encode('latin-1', 'surrogatepass')
+                try:
+                    return b.decode('utf-8')
+                except UnicodeDecodeError:
+                    return b.decode('latin-1')
+            except Exception:
+                return raw
+        return rel
+    # END: _decode_git_quoted_path v1
 
     # BEGIN: _paths_mtime_iso v1
     def _paths_mtime_iso(self, paths: list[str]) -> str:
@@ -1158,11 +1185,25 @@ class TestRepo(AppException):
                             continue
                         seen.add(rel)
                         try:
-                            mtime = os.path.getmtime(fp)
-                            iso = self._epoch_to_iso(mtime)
+                            if os.path.islink(fp):
+                                # explicitly use lstat for symlink's own mtime
+                                mtime = os.lstat(fp).st_mtime
+                            else:
+                                mtime = os.path.getmtime(fp)
+                        except FileNotFoundError:
+                            # file disappeared between listing and stat; skip it
+                            continue
                         except Exception as e:
-                            self.printException(e, "getFileListUntrackedAndIgnored: getting mtime failed")
-                            iso = self._epoch_to_iso(0)
+                            # fallback: try lstat in case getmtime failed for other reasons
+                            try:
+                                mtime = os.lstat(fp).st_mtime
+                            except FileNotFoundError:
+                                # target not present; skip
+                                continue
+                            except Exception:
+                                self.printException(e, "getFileListUntrackedAndIgnored: getting mtime failed")
+                                mtime = 0
+                        iso = self._epoch_to_iso(mtime)
                         results.append((rel, iso, status))
 
                 results.sort(key=lambda x: x[0])
@@ -1189,6 +1230,8 @@ class TestRepo(AppException):
 
                 for line in untracked_out.splitlines():
                     rel = line.strip()
+                    # git may emit quoted/escaped paths for special chars; decode them
+                    rel = self._decode_git_quoted_path(rel)
                     if not rel:
                         continue
                     if rel in seen:
@@ -1196,25 +1239,49 @@ class TestRepo(AppException):
                     seen.add(rel)
                     fp = os.path.join(self.repoRoot, rel)
                     try:
-                        mtime = os.path.getmtime(fp)
-                        iso = self._epoch_to_iso(mtime)
+                        if os.path.islink(fp):
+                            mtime = os.lstat(fp).st_mtime
+                        else:
+                            mtime = os.path.getmtime(fp)
+                    except FileNotFoundError:
+                        # file vanished; skip adding
+                        continue
                     except Exception as e:
-                        self.printException(e, "getFileListUntrackedAndIgnored: mtime failed for untracked")
-                        iso = self._epoch_to_iso(0)
+                        try:
+                            mtime = os.lstat(fp).st_mtime
+                        except FileNotFoundError:
+                            continue
+                        except Exception:
+                            self.printException(e, "getFileListUntrackedAndIgnored: mtime failed for untracked")
+                            mtime = 0
+                    iso = self._epoch_to_iso(mtime)
                     results.append((rel, iso, "untracked"))
 
                 for line in ignored_out.splitlines():
                     rel = line.strip()
+                    # git may emit quoted/escaped paths for special chars; decode them
+                    rel = self._decode_git_quoted_path(rel)
                     if not rel or rel in seen:
                         continue
                     seen.add(rel)
                     fp = os.path.join(self.repoRoot, rel)
                     try:
-                        mtime = os.path.getmtime(fp)
-                        iso = self._epoch_to_iso(mtime)
+                        if os.path.islink(fp):
+                            mtime = os.lstat(fp).st_mtime
+                        else:
+                            mtime = os.path.getmtime(fp)
+                    except FileNotFoundError:
+                        # file vanished; skip adding
+                        continue
                     except Exception as e:
-                        self.printException(e, "getFileListUntrackedAndIgnored: mtime failed for ignored")
-                        iso = self._epoch_to_iso(0)
+                        try:
+                            mtime = os.lstat(fp).st_mtime
+                        except FileNotFoundError:
+                            continue
+                        except Exception:
+                            self.printException(e, "getFileListUntrackedAndIgnored: mtime failed for ignored")
+                            mtime = 0
+                    iso = self._epoch_to_iso(mtime)
                     results.append((rel, iso, "ignored"))
 
                 results.sort(key=lambda x: x[0])
@@ -1840,16 +1907,16 @@ def main():
     parser.add_argument("-c", "--getHashListSample", action="store_true", help="Run getHashListSample")
     parser.add_argument("-d", "--getHashListSamplePlusEnds", action="store_true", help="Run getHashListSamplePlusEnds")
     parser.add_argument(
-        "-f",
-        "--getFileListSampledComparisons",
-        action="store_true",
-        help="Run getFileListSampledComparisons",
-    )
-    parser.add_argument(
         "-e",
         "--getFileListUntrackedAndIgnored",
         action="store_true",
         help="Run getFileListUntrackedAndIgnored",
+    )
+    parser.add_argument(
+        "-f",
+        "--getFileListSampledComparisons",
+        action="store_true",
+        help="Run getFileListSampledComparisons",
     )
     parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
     parser.add_argument("-F", "--file", default="README.md", help="Filename for getHashListFromFileName when used")
