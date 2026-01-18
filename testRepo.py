@@ -754,6 +754,20 @@ class TestRepo(AppException):
 
             repo = self.pygit2_repo
 
+            # Try libgit2/pygit2 diff against working directory directly first.
+            try:
+                diff = repo.diff(cur_tree, None)
+                results: list[tuple[str, str]] = []
+                for delta in diff.deltas:
+                    path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
+                    status = self._delta_status_to_str(getattr(delta, "status", None))
+                    if path:
+                        results.append((path, status))
+                results.sort(key=lambda x: x[0])
+                return results
+            except Exception as e:
+                self.printException(e, "getFileListBetweenHashAndCurrentTime: pygit2 tree->workdir diff failed, falling back to manual compare")
+
             # Build a mapping of paths -> blob OIDs for the commit tree
             commit_files: dict[str, str] = {}
 
@@ -766,14 +780,18 @@ class TestRepo(AppException):
                         if count < 20:
                             print(f"DEBUG:tree entry name={entry.name} type={entry.type}")
                         count += 1
+                        # Resolve oid/id attribute in a version-tolerant way
+                        oid = getattr(entry, "oid", None) or getattr(entry, "id", None)
                         if entry.type == 2:  # tree
-                            t = repo.get(entry.oid)
+                            if oid is None:
+                                raise RuntimeError("tree entry missing oid/id")
+                            t = repo.get(oid)
                             walk_tree(t, p)
                         elif entry.type == 3:  # blob
                             try:
-                                commit_files[p] = str(entry.oid)
+                                commit_files[p] = str(oid)
                                 if len(commit_files) < 50:
-                                    print(f"DEBUG:added commit_file {p} -> {entry.oid}")
+                                    print(f"DEBUG:added commit_file {p} -> {oid}")
                             except Exception as ex:
                                 self.printException(
                                     ex, f"getFileListBetweenHashAndCurrentTime: failed to add commit_file {p}"
