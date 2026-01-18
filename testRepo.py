@@ -2014,6 +2014,10 @@ def main():
             args.getHashListComplete = True
         if n >= 12:
             args.getHashListSample = True
+        if n >= 13:
+            args.getHashListSamplePlusEnds = True
+        if n >= 14:
+            args.getFileListUntrackedAndIgnored = True
 
     # Helper to run a single comparison and return True on success. Accept
     # a `TestRepo` instance so the helper can be defined once and reused.
@@ -2061,10 +2065,11 @@ def main():
         ("-7, Hash List Staged Changes", "getHashListStagedChanges", None),
         (f"-8, Hash List From File {args.file}", "getHashListFromFileName", args.file),
         ("-9, Hash List New Changes", "getHashListNewChanges", None),
-        ("-a, Hash List Complete", "getHashListComplete", None),
-        ("-b, Hash List Sample", "getHashListSample", None),
-        ("-c, Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None),
-        ("-d, Untracked and Ignored files", "getFileListUntrackedAndIgnored", None),
+        ("-a, Hash List New Changes", "getHashListNewChanges", None),
+        ("-b, Hash List Complete", "getHashListComplete", None),
+        ("-c, Hash List Sample", "getHashListSample", None),
+        ("-d, Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None),
+        ("-e, Untracked and Ignored files", "getFileListUntrackedAndIgnored", None),
     ]
 
     # Determine which tests to run. If -A/--all is set, run all tests.
