@@ -190,7 +190,7 @@ class TestRepo(AppException):
         """Decode a git-quoted path ("...") emitted by `git ls-files`.
 
         - If the path is quoted (surrounded by double quotes), unescape
-          backslash sequences (e.g. \xHH, \ooo) and interpret the resulting
+          backslash sequences (e.g. \\xHH, \\ooo) and interpret the resulting
           byte values as UTF-8 when possible. If UTF-8 decoding fails,
           fall back to latin-1 so the original byte values are preserved.
         - If the path is not quoted, return it unchanged.
