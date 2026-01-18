@@ -1740,7 +1740,7 @@ def main():
             # Interpret up-through as a base-36 digit/string so 'a'..'z' map to 10..35
             n = int(str(args.up_through), 36)
         except Exception as e:
-            test_repo.printException(e, "up-through parse failed (expected hex)")
+            test_repo.printException(e, "up-through parse failed (expected base36)")
             n = 0
         if n >= 1:
             args.getFileListBetweenNewAndTopHash = True
@@ -1807,6 +1807,7 @@ def main():
     to_run: list[tuple[str, str, str | None]] = []
     if args.all:
         to_run = allfuncs
+        sampled_flag = True
     else:
         # Append tests in the numeric/option order to match `allfuncs`:
         # 1,-2,-3,-4,-5,-6 then -7,-8,-9 then -a,-b,-c
