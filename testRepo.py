@@ -34,6 +34,7 @@ class AppException:
         # logger.warning(traceback.format_exc())
         print(f"{className}.{funcName}: {short} - {e}")
         print(traceback.format_exc())
+
     # END: printException v1
 
 
@@ -52,6 +53,7 @@ class TestRepo(AppException):
         self.repoRoot = repoRoot
         self.pygit2_repo = pygit2.Repository(self.repoRoot)
         self.verbose = verbose
+
     # END: __init__ v1
 
     # BEGIN: _resolve_tree v1
@@ -79,6 +81,7 @@ class TestRepo(AppException):
             self.printException(e, "_resolve_tree: unexpected error")
             return None
         return None
+
     # END: _resolve_tree v1
 
     # BEGIN: _format_commit_entry v1
@@ -135,6 +138,7 @@ class TestRepo(AppException):
             # Fallback to raw tuple representation on error
             self.printException(e, "_format_commit_entry failed")
             return ("", str(commit_or_hash), "")
+
     # END: _format_commit_entry v1
 
     # BEGIN: index_mtime_iso v1
@@ -161,6 +165,7 @@ class TestRepo(AppException):
         if idx_mtime is None:
             idx_mtime = datetime.now(timezone.utc).timestamp()
         return self._epoch_to_iso(idx_mtime)
+
     # END: index_mtime_iso v1
 
     # BEGIN: _epoch_to_iso v1
@@ -176,6 +181,7 @@ class TestRepo(AppException):
         except Exception as e:
             self.printException(e, "_epoch_to_iso: formatting timestamp failed")
             return "1970-01-01T00:00:00"
+
     # END: _epoch_to_iso v1
 
     # BEGIN: _paths_mtime_iso v1
@@ -197,6 +203,7 @@ class TestRepo(AppException):
         if mtimes:
             return self._epoch_to_iso(max(mtimes))
         return self.index_mtime_iso()
+
     # END: _paths_mtime_iso v1
 
     # BEGIN: _delta_status_to_str v1
@@ -216,6 +223,7 @@ class TestRepo(AppException):
         except Exception as e:
             self.printException(e, "_delta_status_to_str: mapping failed")
         return "modified"
+
     # END: _delta_status_to_str v1
 
     # BEGIN: _git_name_status_to_str v1
@@ -233,6 +241,7 @@ class TestRepo(AppException):
         except Exception as e:
             self.printException(e, "_git_name_status_to_str: mapping failed")
             return "modified"
+
     # END: _git_name_status_to_str v1
 
     # BEGIN: _parse_git_name_status_line v1
@@ -251,6 +260,7 @@ class TestRepo(AppException):
             path = parts[1].strip() if len(parts) > 1 else ""
         status = self._git_name_status_to_str(code)
         return (path, status)
+
     # END: _parse_git_name_status_line v1
 
     # BEGIN: _empty_tree_for_repo v1
@@ -266,6 +276,7 @@ class TestRepo(AppException):
         except Exception as e:
             self.printException(e, "_empty_tree_for_repo: TreeBuilder failed")
             return None
+
     # END: _empty_tree_for_repo v1
 
     # BEGIN: getFileListBetweenNewRepoAndTopHash v1
@@ -277,6 +288,7 @@ class TestRepo(AppException):
         """
         # Delegate to the new initial->commit helper to avoid duplication
         return self.getFileListBetweenNewRepoAndHash("HEAD", usePyGit2)
+
     # END: getFileListBetweenNewRepoAndTopHash v1
 
     # BEGIN: getFileListBetweenNormalizedHashes v1
@@ -339,6 +351,7 @@ class TestRepo(AppException):
         # Fallback: for remaining (likely commit-ish) combos delegate to the
         # explicit two-commit handler rather than the fully generic resolver.
         return self.getFileListBetweenTwoCommits(prev_hash, curr_hash, usePyGit2)
+
     # END: getFileListBetweenNormalizedHashes v1
 
     # BEGIN: getFileListBetweenTwoCommits v1
@@ -398,6 +411,7 @@ class TestRepo(AppException):
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
             return results
+
     # END: getFileListBetweenTwoCommits v1
 
     # def getFileListBetweenAnyTwoHashes(self, prev_hash: str, curr_hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
@@ -600,6 +614,7 @@ class TestRepo(AppException):
                 results.append((ln, "added"))
             results.sort(key=lambda x: x[0])
             return results
+
     # END: getFileListBetweenNewRepoAndHash v1
 
     # BEGIN: getFileListBetweenNewRepoAndStaged v1
@@ -613,12 +628,27 @@ class TestRepo(AppException):
         if usePyGit2:
             try:
                 repo = self.pygit2_repo
+                # Build the index tree
                 idx_tree_oid = repo.index.write_tree()
                 idx_tree = repo.get(idx_tree_oid)
-                empty = self._empty_tree_for_repo(repo)
-                if empty is None:
-                    raise RuntimeError("failed to construct empty tree")
-                diff = repo.diff(empty, idx_tree)
+
+                # Prefer comparing HEAD -> index (git --cached semantics).
+                head_tree = None
+                try:
+                    head_obj = repo.revparse_single("HEAD")
+                    head_tree = self._resolve_tree(head_obj)
+                except Exception:
+                    head_tree = None
+
+                # If HEAD resolved to a tree, diff HEAD vs index; otherwise
+                # fall back to empty->index semantics for repositories without HEAD.
+                if head_tree is not None:
+                    diff = repo.diff(head_tree, idx_tree)
+                else:
+                    empty = self._empty_tree_for_repo(repo)
+                    if empty is None:
+                        raise RuntimeError("failed to construct empty tree")
+                    diff = repo.diff(empty, idx_tree)
                 results = []
                 for delta in diff.deltas:
                     path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
@@ -630,6 +660,7 @@ class TestRepo(AppException):
             except Exception as e:
                 self.printException(e, "getFileListBetweenNewRepoAndStaged: pygit2 diff failed")
                 return []
+
         # git CLI fallback when not using pygit2
         try:
             output = check_output(["git", "diff", "--name-status", "--cached"], cwd=self.repoRoot, text=True)
@@ -645,6 +676,7 @@ class TestRepo(AppException):
                 res.append((path, status))
         res.sort(key=lambda x: x[0])
         return res
+
     # END: getFileListBetweenNewRepoAndStaged v1
 
     # BEGIN: getFileListBetweenNewRepoAndMods v1
@@ -719,6 +751,7 @@ class TestRepo(AppException):
                 res.append((path, status))
         res.sort(key=lambda x: x[0])
         return res
+
     # END: getFileListBetweenNewRepoAndMods v1
 
     # BEGIN: getFileListBetweenTopHashAndCurrentTime v1
@@ -729,6 +762,7 @@ class TestRepo(AppException):
         """
         # Delegate to the general handler to avoid duplicating logic
         return self.getFileListBetweenHashAndCurrentTime("HEAD", usePyGit2)
+
     # END: getFileListBetweenTopHashAndCurrentTime v1
 
     # BEGIN: getFileListBetweenHashAndCurrentTime v1
@@ -767,7 +801,10 @@ class TestRepo(AppException):
                 results.sort(key=lambda x: x[0])
                 return results
             except Exception as e:
-                self.printException(e, "getFileListBetweenHashAndCurrentTime: pygit2 tree->workdir diff failed, falling back to manual compare")
+                self.printException(
+                    e,
+                    "getFileListBetweenHashAndCurrentTime: pygit2 tree->workdir diff failed, falling back to manual compare",
+                )
 
             # Build a mapping of paths -> blob OIDs for the commit tree
             commit_files: dict[str, str] = {}
@@ -909,6 +946,7 @@ class TestRepo(AppException):
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
             return results
+
     # END: getFileListBetweenHashAndCurrentTime v1
 
     # BEGIN: getFileListBetweenTopHashAndStaged v1
@@ -916,6 +954,7 @@ class TestRepo(AppException):
         """Return a list of `(path, status)` for files changed between HEAD and staged index."""
         # Delegate to the generalized staged-vs-hash implementation to avoid duplication
         return self.getFileListBetweenHashAndStaged("HEAD", usePyGit2)
+
     # END: getFileListBetweenTopHashAndStaged v1
 
     # BEGIN: getFileListBetweenHashAndStaged v1
@@ -973,6 +1012,7 @@ class TestRepo(AppException):
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
             return results
+
     # END: getFileListBetweenHashAndStaged v1
 
     # BEGIN: getFileListBetweenStagedAndMods v1
@@ -1033,6 +1073,7 @@ class TestRepo(AppException):
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
             return results
+
     # END: getFileListBetweenStagedAndMods v1
 
     # BEGIN: getHashListComplete v1
@@ -1043,6 +1084,7 @@ class TestRepo(AppException):
         entire = self.getHashListEntireRepo(usePyGit2)
         combined = new + staged + entire
         return combined
+
     # END: getHashListComplete v1
 
     # BEGIN: getHashListSample v1
@@ -1062,6 +1104,7 @@ class TestRepo(AppException):
         if len(entire) >= 1:
             sampleHashes.append(entire[-1])  # always add TOP
         return sampleHashes
+
     # END: getHashListSample v1
 
     # BEGIN: getHashListSamplePlusEnds v1
@@ -1075,6 +1118,7 @@ class TestRepo(AppException):
         new = self.getHashListNewChanges(usePyGit2)
         sampleHashes += new
         return sampleHashes
+
     # END: getHashListSamplePlusEnds v1
 
     # BEGIN: runFileListSampledComparisons v1
@@ -1108,6 +1152,7 @@ class TestRepo(AppException):
                     show_diffs(f"get {a}->{b}", p, g, top, raw, self.verbose)
                 except Exception as e:
                     self.printException(e, f"runFileListSampledComparisons: show_diffs failed for {a}->{b}")
+
     # END: runFileListSampledComparisons v1
 
     # BEGIN: getHashListEntireRepo v1
@@ -1264,6 +1309,7 @@ class TestRepo(AppException):
                 iso = self._epoch_to_iso(ts)
                 formatted.append((iso, h, subject))
             return formatted
+
     # END: getHashListEntireRepo v1
 
     # BEGIN: getHashListStagedChanges v1
@@ -1309,6 +1355,7 @@ class TestRepo(AppException):
                 iso = self.index_mtime_iso()
                 return [(iso, "STAGED", self.STAGED_MESSAGE)]
             return []
+
     # END: getHashListStagedChanges v1
 
     # BEGIN: getHashListNewChanges v1
@@ -1355,6 +1402,7 @@ class TestRepo(AppException):
         # Compute ISO based on working-tree paths' mtimes (centralized)
         iso = self._paths_mtime_iso(paths)
         return [(iso, "MODS", self.MODS_MESSAGE)] if paths else []
+
     # END: getHashListNewChanges v1
 
     # BEGIN: getHashListFromFileName v1
@@ -1512,7 +1560,9 @@ class TestRepo(AppException):
                     else:
                         entries.insert(0, (iso_mods, "MODS", self.MODS_MESSAGE))
             return entries
+
     # END: getHashListFromFileName v1
+
 
 # BEGIN: show_diffs v1
 def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool = False, verbose: int = 0) -> bool:
@@ -1567,7 +1617,10 @@ def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool
                 else:
                     print(fmt(ln))
         return True
+
+
 # END: show_diffs v1
+
 
 def main():
     """Main function to run the tests."""
@@ -1672,8 +1725,6 @@ def main():
             args.getHashListStagedChanges = True
         if n >= 9:
             args.getHashListFromFileName = True
-
-    
 
     # Helper to run a single comparison and return True on success
     def run_one(name: str, func_name: str, fname: str | None) -> bool:
