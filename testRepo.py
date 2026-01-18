@@ -928,7 +928,7 @@ class TestRepo(AppException):
                     try:
                         # Debug small sample of entries
                         if count < 20:
-                            if self.verbose:
+                            if self.verbose > 1:
                                 print(f"DEBUG:tree entry name={entry.name} type={entry.type}")
                         count += 1
                         # Resolve oid/id attribute in a version-tolerant way
@@ -942,7 +942,7 @@ class TestRepo(AppException):
                             try:
                                 commit_files[p] = str(oid)
                                 if len(commit_files) < 50:
-                                    if self.verbose:
+                                    if self.verbose > 1:
                                         print(f"DEBUG:added commit_file {p} -> {oid}")
                             except Exception as ex:
                                 self.printException(
@@ -954,7 +954,7 @@ class TestRepo(AppException):
 
             try:
                 # Debug constants
-                if self.verbose:
+                if self.verbose > 1:
                     print(
                         f"DEBUG:pygit2.GIT_OBJ_TREE={getattr(pygit2,'GIT_OBJ_TREE',None)} GIT_OBJ_BLOB={getattr(pygit2,'GIT_OBJ_BLOB',None)}"
                     )
@@ -965,7 +965,7 @@ class TestRepo(AppException):
 
             # Debugging: small summary of discovered commit/work file counts
             try:
-                if self.verbose:
+                if self.verbose > 1:
                     print(f"DEBUG:getFileListBetweenHashAndCurrentTime commit_files={len(commit_files)}")
                     try:
                         print(f"DEBUG:cur_tree_type={type(cur_tree)}")
@@ -2019,7 +2019,7 @@ def main():
     # a `TestRepo` instance so the helper can be defined once and reused.
     def run_one(test_repo, i: int, name: str, func_name: str, fname: str | None) -> bool:
         # Debug: report which test function is being invoked
-        if test_repo.verbose:
+        if test_repo.verbose > 1:
             print(f"DEBUG: run_one invoking {func_name} (display name: {name})")
         # Time each backend separately so we can report durations
         if fname is not None:
