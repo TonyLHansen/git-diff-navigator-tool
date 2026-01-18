@@ -1110,6 +1110,122 @@ class TestRepo(AppException):
 
     # END: getFileListBetweenStagedAndMods v1
 
+    # BEGIN: getFileListUntrackedAndIgnored v1
+    def getFileListUntrackedAndIgnored(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
+        """Return a sorted list of `(path, iso_mtime, status)` for files that are
+        either untracked or ignored in the working tree.
+
+        - `status` is one of: `untracked`, `ignored`.
+        - `iso_mtime` is produced from the filesystem mtime via `_epoch_to_iso`.
+
+        Prefer `pygit2` when `usePyGit2` is True; otherwise fall back to `git ls-files`.
+        """
+        results: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        try:
+            if usePyGit2:
+                if not pygit2:
+                    raise RuntimeError("pygit2 is not available")
+                repo = self.pygit2_repo
+                for root, dirs, files in os.walk(self.repoRoot):
+                    # Skip .git directory contents
+                    if ".git" in root.split(os.sep):
+                        continue
+                    for fname in files:
+                        fp = os.path.join(root, fname)
+                        try:
+                            rel = os.path.relpath(fp, self.repoRoot)
+                        except Exception as e:
+                            self.printException(e, "getFileListUntrackedAndIgnored: relpath failed")
+                            continue
+                        if rel.startswith(".git"):
+                            continue
+                        try:
+                            st = repo.status_file(rel)
+                        except Exception as e:
+                            self.printException(e, "getFileListUntrackedAndIgnored: status_file failed")
+                            continue
+
+                        # Detect untracked and ignored states
+                        if st & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
+                            status = "untracked"
+                        elif st & getattr(pygit2, "GIT_STATUS_IGNORED", 0):
+                            status = "ignored"
+                        else:
+                            continue
+
+                        if rel in seen:
+                            continue
+                        seen.add(rel)
+                        try:
+                            mtime = os.path.getmtime(fp)
+                            iso = self._epoch_to_iso(mtime)
+                        except Exception as e:
+                            self.printException(e, "getFileListUntrackedAndIgnored: getting mtime failed")
+                            iso = self._epoch_to_iso(0)
+                        results.append((rel, iso, status))
+
+                results.sort(key=lambda x: x[0])
+                return results
+
+            else:
+                # git CLI fallback: use `git ls-files` to list untracked and ignored
+                untracked_out = ""
+                ignored_out = ""
+                try:
+                    untracked_out = check_output(
+                        ["git", "ls-files", "--others", "--exclude-standard"], cwd=self.repoRoot, text=True
+                    )
+                except CalledProcessError as e:
+                    self.printException(e, "git ls-files untracked failed")
+                    untracked_out = ""
+                try:
+                    ignored_out = check_output(
+                        ["git", "ls-files", "--others", "-i", "--exclude-standard"], cwd=self.repoRoot, text=True
+                    )
+                except CalledProcessError as e:
+                    self.printException(e, "git ls-files ignored failed")
+                    ignored_out = ""
+
+                for line in untracked_out.splitlines():
+                    rel = line.strip()
+                    if not rel:
+                        continue
+                    if rel in seen:
+                        continue
+                    seen.add(rel)
+                    fp = os.path.join(self.repoRoot, rel)
+                    try:
+                        mtime = os.path.getmtime(fp)
+                        iso = self._epoch_to_iso(mtime)
+                    except Exception as e:
+                        self.printException(e, "getFileListUntrackedAndIgnored: mtime failed for untracked")
+                        iso = self._epoch_to_iso(0)
+                    results.append((rel, iso, "untracked"))
+
+                for line in ignored_out.splitlines():
+                    rel = line.strip()
+                    if not rel or rel in seen:
+                        continue
+                    seen.add(rel)
+                    fp = os.path.join(self.repoRoot, rel)
+                    try:
+                        mtime = os.path.getmtime(fp)
+                        iso = self._epoch_to_iso(mtime)
+                    except Exception as e:
+                        self.printException(e, "getFileListUntrackedAndIgnored: mtime failed for ignored")
+                        iso = self._epoch_to_iso(0)
+                    results.append((rel, iso, "ignored"))
+
+                results.sort(key=lambda x: x[0])
+                return results
+
+        except Exception as e:
+            self.printException(e, "getFileListUntrackedAndIgnored: unexpected failure")
+            return []
+
+    # END: getFileListUntrackedAndIgnored v1
+
     # BEGIN: getHashListComplete v1
     def getHashListComplete(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a combined list of commit hashes for staged, new, and entire repo."""
@@ -1724,7 +1840,16 @@ def main():
     parser.add_argument("-c", "--getHashListSample", action="store_true", help="Run getHashListSample")
     parser.add_argument("-d", "--getHashListSamplePlusEnds", action="store_true", help="Run getHashListSamplePlusEnds")
     parser.add_argument(
-        "-e", "--getFileListSampledComparisons", action="store_true", help="Run getFileListSampledComparisons"
+        "-f",
+        "--getFileListSampledComparisons",
+        action="store_true",
+        help="Run getFileListSampledComparisons",
+    )
+    parser.add_argument(
+        "-e",
+        "--getFileListUntrackedAndIgnored",
+        action="store_true",
+        help="Run getFileListUntrackedAndIgnored",
     )
     parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
     parser.add_argument("-F", "--file", default="README.md", help="Filename for getHashListFromFileName when used")
@@ -1801,6 +1926,8 @@ def main():
         ("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None),
         ("getHashListComplete: Hash List Complete", "getHashListComplete", None),
         ("getHashListSample: Hash List Sample", "getHashListSample", None),
+        ("getHashListSamplePlusEnds: Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None),
+        ("getFileListUntrackedAndIgnored: Untracked and Ignored files", "getFileListUntrackedAndIgnored", None),
     ]
 
     # Determine which tests to run. If -A/--all is set, run all tests.
@@ -1869,6 +1996,11 @@ def main():
             to_run.append(("getHashListComplete: Hash List Complete", "getHashListComplete", None))
         if args.getHashListSample:
             to_run.append(("getHashListSample: Hash List Sample", "getHashListSample", None))
+        # Include sample-plus-ends (-d) then untracked/ignored (-e) in option order
+        if args.getHashListSamplePlusEnds:
+            to_run.append(("getHashListSamplePlusEnds: Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None))
+        if args.getFileListUntrackedAndIgnored:
+            to_run.append(("getFileListUntrackedAndIgnored: Untracked and Ignored files", "getFileListUntrackedAndIgnored", None))
         # Sampled comparisons are run separately to allow independent reporting
         # and avoid mixing their output with the main test loop.
         sampled_flag = args.getFileListSampledComparisons
