@@ -1594,6 +1594,14 @@ def main():
         help="Increase verbosity (can be specified multiple times)",
     )
 
+    parser.add_argument(
+        "-u",
+        "--up-through",
+        type=int,
+        default=None,
+        help="Run all numeric tests up through this number (e.g. -u 2 runs -1 and -2)",
+    )
+
     # Add independent flags to run one or more test functions (-1..-7 allowed together)
     parser.add_argument(
         "-1", "--getFileListBetweenNewAndTopHash", action="store_true", help="Run getFileListBetweenNewAndTopHash"
@@ -1630,7 +1638,37 @@ def main():
     parser.add_argument("-F", "--file", default="README.md", help="Filename for getHashListFromFileName when used")
 
     args = parser.parse_args()
+
     test_repo = TestRepo(args.path, args.verbose)
+
+    # If user requested an "up through" numeric run, set the matching
+    # boolean flags so downstream selection logic runs the requested tests.
+    if args.up_through is not None:
+        try:
+            n = int(args.up_through)
+        except Exception as e:
+            test_repo.printException(e, "up-through parse failed")
+            n = 0
+        if n >= 1:
+            args.getFileListBetweenNewAndTopHash = True
+        if n >= 2:
+            args.getFileListBetweenTopHashAndCurrentTime = True
+        if n >= 3:
+            args.getFileListBetweenTopHashAndStaged = True
+        if n >= 4:
+            args.getFileListBetweenStagedAndMods = True
+        if n >= 5:
+            args.getFileListBetweenNewAndStaged = True
+        if n >= 6:
+            args.getFileListBetweenNewAndMods = True
+        if n >= 7:
+            args.getHashListEntireRepo = True
+        if n >= 8:
+            args.getHashListStagedChanges = True
+        if n >= 9:
+            args.getHashListFromFileName = True
+
+    
 
     # Helper to run a single comparison and return True on success
     def run_one(name: str, func_name: str, fname: str | None) -> bool:
