@@ -1697,94 +1697,67 @@ class TestRepo(AppException):
 
     # BEGIN: getHashListFromFileName v1
     def getHashListFromFileName(self, file_name: str, usePyGit2: bool) -> list[tuple[str, str, str]]:
-        """Return a list of commit hashes that modified the given file."""
-        # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
-        # Else use git CLI to get the list of hashes
+        """Return a list of commit hashes that modified the given file.
+
+        When `usePyGit2` is True, use `pygit2` only and include a commit
+        only when `file_name` appears in the diff between the commit and
+        ALL of its parents (root commits compared to an empty tree).
+        """
         if usePyGit2:
             if not pygit2:
                 raise RuntimeError("pygit2 is not available")
             repo = self.pygit2_repo
-            matches = []
+            matches: list[tuple[str, str, str]] = []
             try:
                 try:
                     head = repo.revparse_single("HEAD")
                 except Exception as e:
                     self.printException(e, "getHashListFromFileName: revparse HEAD failed")
                     return []
+
                 walker = repo.walk(head.id, pygit2.GIT_SORT_TIME)
+
+                def path_in_diff(a_tree, b_tree) -> bool:
+                    try:
+                        if a_tree is None:
+                            a_tree = self._empty_tree_for_repo(repo)
+                        if b_tree is None:
+                            b_tree = self._empty_tree_for_repo(repo)
+                        if a_tree is None or b_tree is None:
+                            return False
+                        diff = repo.diff(a_tree, b_tree)
+                    except Exception as e:
+                        self.printException(e, "getHashListFromFileName: repo.diff failed")
+                        return False
+                    if not diff:
+                        return False
+                    for delta in getattr(diff, "deltas", []):
+                        path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
+                        if path == file_name:
+                            return True
+                    return False
+
                 for c in walker:
                     try:
-                        parents = list(c.parents) if len(c.parents) > 0 else [None]
-                        found = False
-                        for p in parents:
-                            try:
-                                a_tree = self._resolve_tree(p)
-                                b_tree = self._resolve_tree(c)
-                                # If both sides are None/non-tree, skip
-                                if a_tree is None and b_tree is None:
-                                    continue
-                                # Ensure we have tree-ish objects: build an empty tree when needed
-                                if a_tree is None:
-                                    try:
-                                        a_tree = self._empty_tree_for_repo(repo)
-                                        if a_tree is None:
-                                            raise RuntimeError("empty tree construction returned None")
-                                    except Exception as e:
-                                        self.printException(
-                                            e, "getHashListFromFileName: failed to construct empty a_tree"
-                                        )
-                                        continue
-                                if b_tree is None:
-                                    try:
-                                        b_tree = self._empty_tree_for_repo(repo)
-                                        if b_tree is None:
-                                            raise RuntimeError("empty tree construction returned None")
-                                    except Exception as e:
-                                        self.printException(
-                                            e, "getHashListFromFileName: failed to construct empty b_tree"
-                                        )
-                                        continue
-                                try:
-                                    diff = repo.diff(a_tree, b_tree)
-                                except Exception as e:
-                                    self.printException(
-                                        e,
-                                        "getHashListFromFileName: repo.diff(a_tree,b_tree) failed; trying reversed args",
-                                    )
-                                    try:
-                                        diff = repo.diff(b_tree, a_tree)
-                                    except Exception as e:
-                                        self.printException(
-                                            e, "getHashListFromFileName: repo.diff reversed args failed"
-                                        )
-                                        continue
-                            except Exception as e:
-                                self.printException(e, "getHashListFromFileName: building trees for diff failed")
-                                continue
-
-                            if diff is None:
-                                continue
-
-                            # Iterate deltas and check for matching path
-                            matched = False
-                            for delta in diff.deltas:
-                                path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                                if path == file_name:
-                                    matched = True
-                                    break
-                            if matched:
-                                ch = getattr(c, "hex", None)
-                                if not ch:
-                                    cid = getattr(c, "id", None)
-                                    if cid is not None:
-                                        ch = getattr(cid, "hex", None) or str(cid)
-                                if ch:
-                                    # Use central formatter to produce ISO/hash/subject when available
-                                    matches.append(self._format_commit_entry(repo, c))
-                                found = True
-                                break
-                        if found:
+                        parents = list(c.parents)
+                        # Root commit: compare against empty tree
+                        if not parents:
+                            b_tree = self._resolve_tree(c)
+                            if path_in_diff(None, b_tree):
+                                matches.append(self._format_commit_entry(repo, c))
                             continue
+
+                        # For merges and normal commits: require path to appear
+                        # in the diff versus every parent (differ-from-all).
+                        b_tree = self._resolve_tree(c)
+                        all_match = True
+                        for p in parents:
+                            a_tree = self._resolve_tree(p)
+                            if not path_in_diff(a_tree, b_tree):
+                                all_match = False
+                                break
+                        if all_match:
+                            matches.append(self._format_commit_entry(repo, c))
                     except Exception as e:
                         self.printException(e, "getHashListFromFileName: per-commit handling failed")
                         continue
@@ -1792,6 +1765,7 @@ class TestRepo(AppException):
                 self.printException(e, "pygit2 log walk failed")
                 return []
             return matches
+
         else:
             try:
                 output = check_output(
@@ -1815,10 +1789,7 @@ class TestRepo(AppException):
                 h = parts[1].strip()
                 subject = parts[2].strip() if len(parts) >= 3 else ""
                 iso = self._epoch_to_iso(ts)
-                if subject:
-                    entries.append((iso, h, subject))
-                else:
-                    entries.append((iso, h, ""))
+                entries.append((iso, h, subject if subject else ""))
             # Detect working-tree/index state for this file and prepend pseudo-entries
             try:
                 status_out = check_output(
@@ -1828,7 +1799,6 @@ class TestRepo(AppException):
                 self.printException(e, f"git status failed for {file_name}")
                 status_out = ""
             if status_out:
-                # porcelain: two-char XY at start
                 s = status_out.splitlines()[0]
                 if len(s) >= 2:
                     idx_flag = s[0]
@@ -1836,15 +1806,11 @@ class TestRepo(AppException):
                 else:
                     idx_flag = s[0] if s else " "
                     wt_flag = " "
-                # Prepare timestamps for pseudo-entries
                 iso_index = self.index_mtime_iso()
                 iso_mods = self._paths_mtime_iso([file_name])
-                # If index has a change, represent staged version with index timestamp
                 if idx_flag != " ":
                     entries.insert(0, (iso_index, "STAGED", self.STAGED_MESSAGE))
-                # If working tree has modifications (unstaged), represent as MODS
                 if wt_flag != " ":
-                    # Insert after STAGED if present, otherwise at top
                     if entries and entries[0][1] == "STAGED":
                         entries.insert(1, (iso_mods, "MODS", self.MODS_MESSAGE))
                     else:
