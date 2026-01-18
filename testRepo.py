@@ -8,6 +8,7 @@ import sys
 import traceback
 import os
 import hashlib
+import time
 
 import pygit2
 import codecs
@@ -1421,18 +1422,30 @@ class TestRepo(AppException):
                 b = tokens[j]
                 total += 1
                 try:
+                    t0 = time.perf_counter()
                     p = self.getFileListBetweenNormalizedHashes(a, b, True)
+                    t1 = time.perf_counter()
                 except Exception as e:
                     self.printException(e, f"runFileListSampledComparisons: pygit2 diff failed for {a}->{b}")
                     p = []
                 try:
+                    t2 = time.perf_counter()
                     g = self.getFileListBetweenNormalizedHashes(a, b, False)
+                    t3 = time.perf_counter()
                 except Exception as e:
                     self.printException(e, f"runFileListSampledComparisons: git CLI diff failed for {a}->{b}")
                     g = []
 
                 try:
                     ok = show_diffs(f"get {a}->{b}", p, g, top, raw, self.verbose)
+                    if self.verbose:
+                        # Report timings for the sampled pair
+                        try:
+                            dt_py = (t1 - t0) if 't0' in locals() and 't1' in locals() else None
+                            dt_cli = (t3 - t2) if 't2' in locals() and 't3' in locals() else None
+                            print(f"TIMING: get {a}->{b} pygit2={dt_py:.3f if dt_py is not None else 'N/A'}s git={dt_cli:.3f if dt_cli is not None else 'N/A'}s")
+                        except Exception:
+                            pass
                     if ok:
                         passed += 1
                     else:
@@ -1799,6 +1812,7 @@ class TestRepo(AppException):
                 self.printException(e, f"git status failed for {file_name}")
                 status_out = ""
             if status_out:
+                # porcelain: two-char XY at start
                 s = status_out.splitlines()[0]
                 if len(s) >= 2:
                     idx_flag = s[0]
@@ -1806,11 +1820,15 @@ class TestRepo(AppException):
                 else:
                     idx_flag = s[0] if s else " "
                     wt_flag = " "
+                # Prepare timestamps for pseudo-entries
                 iso_index = self.index_mtime_iso()
                 iso_mods = self._paths_mtime_iso([file_name])
+                # If index has a change, represent staged version with index timestamp
                 if idx_flag != " ":
                     entries.insert(0, (iso_index, "STAGED", self.STAGED_MESSAGE))
+                # If working tree has modifications (unstaged), represent as MODS
                 if wt_flag != " ":
+                    # Insert after STAGED if present, otherwise at top
                     if entries and entries[0][1] == "STAGED":
                         entries.insert(1, (iso_mods, "MODS", self.MODS_MESSAGE))
                     else:
@@ -2003,39 +2021,50 @@ def main():
         # Debug: report which test function is being invoked
         if test_repo.verbose:
             print(f"DEBUG: run_one invoking {func_name} (display name: {name})")
+        # Time each backend separately so we can report durations
         if fname is not None:
+            t0 = time.perf_counter()
             l1 = getattr(test_repo, func_name)(fname, usePyGit2=True)
+            t1 = time.perf_counter()
             l2 = getattr(test_repo, func_name)(fname, usePyGit2=False)
+            t2 = time.perf_counter()
         else:
+            t0 = time.perf_counter()
             l1 = getattr(test_repo, func_name)(usePyGit2=True)
+            t1 = time.perf_counter()
             l2 = getattr(test_repo, func_name)(usePyGit2=False)
+            t2 = time.perf_counter()
+        dur_py = t1 - t0
+        dur_cli = t2 - t1
         # Prefix the displayed test name with the enumeration and function name
-        disp_name = f"-{i},{func_name}:{name}"
+        disp_name = f"{func_name}:{name}"
+        if test_repo.verbose:
+            print(f"TIMING: {disp_name} pygit2={dur_py:.3f}s git={dur_cli:.3f}s")
         return show_diffs(disp_name, l1, l2, args.top, args.raw, args.verbose)
 
     allfuncs = [
-        ("File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None),
+        ("-1, File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None),
         (
             "File List Between TopHash and Current Time",
             "getFileListBetweenTopHashAndCurrentTime",
             None,
         ),
         (
-            "File List Between TopHash and Staged",
+            "-2, File List Between TopHash and Current Time",
             "getFileListBetweenTopHashAndStaged",
             None,
         ),
-        ("File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None),
-        ("File List New to Staged", "getFileListBetweenNewRepoAndStaged", None),
-        ("File List New to Mods", "getFileListBetweenNewRepoAndMods", None),
-        ("Hash List Entire Repo", "getHashListEntireRepo", None),
-        ("Hash List Staged Changes", "getHashListStagedChanges", None),
-        (f"Hash List From File {args.file}", "getHashListFromFileName", args.file),
-        ("Hash List New Changes", "getHashListNewChanges", None),
-        ("Hash List Complete", "getHashListComplete", None),
-        ("Hash List Sample", "getHashListSample", None),
-        ("Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None),
-        ("Untracked and Ignored files", "getFileListUntrackedAndIgnored", None),
+        ("-3, File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None),
+        ("-4, File List New to Staged", "getFileListBetweenNewRepoAndStaged", None),
+        ("-5, File List New to Mods", "getFileListBetweenNewRepoAndMods", None),
+        ("-6, Hash List Entire Repo", "getHashListEntireRepo", None),
+        ("-7, Hash List Staged Changes", "getHashListStagedChanges", None),
+        (f"-8, Hash List From File {args.file}", "getHashListFromFileName", args.file),
+        ("-9, Hash List New Changes", "getHashListNewChanges", None),
+        ("-a, Hash List Complete", "getHashListComplete", None),
+        ("-b, Hash List Sample", "getHashListSample", None),
+        ("-c, Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None),
+        ("-d, Untracked and Ignored files", "getFileListUntrackedAndIgnored", None),
     ]
 
     # Determine which tests to run. If -A/--all is set, run all tests.
@@ -2049,7 +2078,7 @@ def main():
         if args.getFileListBetweenNewAndTopHash:
             to_run.append(
                 (
-                    "File List New to Top Hash",
+                    "-1, File List New to Top Hash",
                     "getFileListBetweenNewRepoAndTopHash",
                     None,
                 )
@@ -2057,7 +2086,7 @@ def main():
         if args.getFileListBetweenTopHashAndCurrentTime:
             to_run.append(
                 (
-                    "File List Between TopHash and Current Time",
+                    "-2, File List Between TopHash and Current Time",
                     "getFileListBetweenTopHashAndCurrentTime",
                     None,
                 )
@@ -2065,7 +2094,7 @@ def main():
         if args.getFileListBetweenTopHashAndStaged:
             to_run.append(
                 (
-                    "File List Between TopHash and Staged",
+                    "-3, File List Between TopHash and Staged",
                     "getFileListBetweenTopHashAndStaged",
                     None,
                 )
@@ -2073,7 +2102,7 @@ def main():
         if args.getFileListBetweenStagedAndMods:
             to_run.append(
                 (
-                    "File List Between Staged and Mods",
+                    "-4, File List Between Staged and Mods",
                     "getFileListBetweenStagedAndMods",
                     None,
                 )
@@ -2081,30 +2110,30 @@ def main():
         if args.getFileListBetweenNewAndStaged:
             to_run.append(
                 (
-                    "File List New to Staged",
+                    "-5, File List New to Staged",
                     "getFileListBetweenNewRepoAndStaged",
                     None,
                 )
             )
         if args.getFileListBetweenNewAndMods:
-            to_run.append(("File List New to Mods", "getFileListBetweenNewRepoAndMods", None))
+            to_run.append(("-6, File List New to Mods", "getFileListBetweenNewRepoAndMods", None))
         if args.getHashListEntireRepo:
-            to_run.append(("Hash List Entire Repo", "getHashListEntireRepo", None))
+            to_run.append(("-7, Hash List Entire Repo", "getHashListEntireRepo", None))
         if args.getHashListStagedChanges:
-            to_run.append(("Hash List Staged Changes", "getHashListStagedChanges", None))
+            to_run.append(("-8, Hash List Staged Changes", "getHashListStagedChanges", None))
         if args.getHashListFromFileName:
-            to_run.append((f"Hash List From File {args.file}", "getHashListFromFileName", args.file))
+            to_run.append((f"-9, Hash List From File {args.file}", "getHashListFromFileName", args.file))
         if args.getHashListNewChanges:
-            to_run.append(("Hash List New Changes", "getHashListNewChanges", None))
+            to_run.append(("-a, Hash List New Changes", "getHashListNewChanges", None))
         if args.getHashListComplete:
-            to_run.append(("Hash List Complete", "getHashListComplete", None))
+            to_run.append(("-b, Hash List Complete", "getHashListComplete", None))
         if args.getHashListSample:
-            to_run.append(("Hash List Sample", "getHashListSample", None))
+            to_run.append(("-c, Hash List Sample", "getHashListSample", None))
         # Include sample-plus-ends (-d) then untracked/ignored (-e) in option order
         if args.getHashListSamplePlusEnds:
-            to_run.append(("Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None))
+            to_run.append(("-d, Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None))
         if args.getFileListUntrackedAndIgnored:
-            to_run.append(("Untracked and Ignored files", "getFileListUntrackedAndIgnored", None))
+            to_run.append(("-e, Untracked and Ignored files", "getFileListUntrackedAndIgnored", None))
         # Sampled comparisons are run separately to allow independent reporting
         # and avoid mixing their output with the main test loop.
 
