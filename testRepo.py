@@ -975,68 +975,36 @@ class TestRepo(AppException):
         sampleHashes += new
         return sampleHashes
 
-    def runFileListSampledComparisons(self, _usePyGit2: bool) -> list[tuple[str, str, str]]:
-        """Run pairwise diffs across sampled hashes and return aggregated results.
+    def runFileListSampledComparisons(self, top: bool, raw: bool) -> None:
+        """Run sampled comparisons and display diffs using `show_diffs`.
 
-        Returns a list of tuples `(pair_label, path, status)` where `pair_label`
-        is "a->b" for the sampled tokens, and `path`/`status` describe each diff
-        entry. Empty diffs yield a single entry with empty path/status.
+        Calls `getFileListBetweenNormalizedHashes` for both backends and
+        forwards results to `show_diffs(label, pygit2_list, gitcli_list, top, raw)`.
         """
-        results: list[tuple[str, str, str]] = []
-        # Use the git-CLI sampling as the canonical token set for comparisons
         sample = self.getHashListSamplePlusEnds(False)
         tokens: list = [x[1] for x in sample]
 
         # For each sampled token pair, run both backends (pygit2 and git CLI)
-        # and compare their outputs. Append labeled entries for matches and
-        # mismatches so callers can detect parity issues.
+        # and compare their outputs.
         for i in range(len(tokens)):
             for j in range(i + 1, len(tokens)):
                 a = tokens[i]
                 b = tokens[j]
-                pair_label = f"{a}->{b}"
-
-                # Run pygit2 backend
                 try:
-                    py_res = self.getFileListBetweenNormalHashes(a, b, True)
+                    p = self.getFileListBetweenNormalizedHashes(a, b, True)
                 except Exception as e:
-                    self.printException(e, f"getFileListSampledComparisons: pygit2 diff failed for {pair_label}")
-                    py_res = []
-
-                # Run git CLI backend
+                    self.printException(e, f"runFileListSampledComparisons: pygit2 diff failed for {a}->{b}")
+                    p = []
                 try:
-                    cli_res = self.getFileListBetweenNormalHashes(a, b, False)
+                    g = self.getFileListBetweenNormalizedHashes(a, b, False)
                 except Exception as e:
-                    self.printException(e, f"getFileListSampledComparisons: git CLI diff failed for {pair_label}")
-                    cli_res = []
+                    self.printException(e, f"runFileListSampledComparisons: git CLI diff failed for {a}->{b}")
+                    g = []
 
-                # Normalize to path->status maps for comparison
-                py_map = {p: s for (p, s) in py_res}
-                cli_map = {p: s for (p, s) in cli_res}
-                all_paths = sorted(set(py_map.keys()) | set(cli_map.keys()))
-
-                if not all_paths:
-                    # Neither backend reported changes
-                    results.append((pair_label, "", ""))
-                    continue
-
-                for path in all_paths:
-                    in_py = path in py_map
-                    in_cli = path in cli_map
-                    if in_py and in_cli:
-                        if py_map[path] == cli_map[path]:
-                            # Agrees
-                            results.append((pair_label, path, py_map[path]))
-                        else:
-                            # Same path, differing statuses
-                            results.append((pair_label + " [py]", path, py_map[path]))
-                            results.append((pair_label + " [cli]", path, cli_map[path]))
-                    elif in_py and not in_cli:
-                        results.append((pair_label + " [py-only]", path, py_map[path]))
-                    elif in_cli and not in_py:
-                        results.append((pair_label + " [cli-only]", path, cli_map[path]))
-
-        return results
+                try:
+                    show_diffs(f"get {a}->{b}", p, g, top, raw)
+                except Exception as e:
+                    self.printException(e, f"runFileListSampledComparisons: show_diffs failed for {a}->{b}")
 
     def getHashListEntireRepo(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of all commit hashes in the repository."""
@@ -1545,6 +1513,15 @@ def main():
 
     # Helper to run a single comparison and return True on success
     def run_one(name: str, func_name: str, fname: str | None) -> bool:
+        # Special-case the sampled-comparisons runner which has a different signature
+        if func_name == "runFileListSampledComparisons":
+            try:
+                getattr(test_repo, func_name)(args.top, args.raw)
+                return True
+            except Exception as e:
+                test_repo.printException(e, f"running {func_name} failed")
+                return False
+
         if fname is not None:
             l1 = getattr(test_repo, func_name)(fname, usePyGit2=True)
             l2 = getattr(test_repo, func_name)(fname, usePyGit2=False)
@@ -1574,7 +1551,6 @@ def main():
         ("getHashListNewChanges: Hash List New Changes", "getHashListNewChanges", None),
         ("getHashListComplete: Hash List Complete", "getHashListComplete", None),
         ("getHashListSample: Hash List Sample", "getHashListSample", None),
-        ("runFileListSampledComparisons: Sampled pairwise file diffs", "runFileListSampledComparisons", None),
     ]
 
     # Determine which tests to run. If -A/--all is set, run all tests.
@@ -1668,12 +1644,11 @@ def main():
     print(f"\nTest summary: total={total} passed={passed} failed={failed}")
 
     # If requested, run sampled comparisons separately (outside the to_run loop)
-    if False:  # sampled_flag:
+    if sampled_flag:
         print("\nRunning sampled pairwise comparisons (separate)...")
         try:
-            sampled_results = getattr(test_repo, "runFileListSampledComparisons")(False)
-            for pair_label, path, status in sampled_results:
-                print(f"{pair_label}\t{status}\t{path}")
+            # runFileListSampledComparisons now accepts (top, raw)
+            getattr(test_repo, "runFileListSampledComparisons")(args.top, args.raw)
         except Exception as e:
             test_repo.printException(e, "running runFileListSampledComparisons failed")
 
