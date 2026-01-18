@@ -20,6 +20,7 @@ class AppException:
     it and avoid duplicate implementations.
     """
 
+    # BEGIN: printException v1
     def printException(self, e: Exception, msg: str) -> None:
         """Log an exception with the calling class and function name.
 
@@ -33,6 +34,7 @@ class AppException:
         # logger.warning(traceback.format_exc())
         print(f"{className}.{funcName}: {short} - {e}")
         print(traceback.format_exc())
+    # END: printException v1
 
 
 class TestRepo(AppException):
@@ -45,10 +47,13 @@ class TestRepo(AppException):
     STAGED = "STAGED"
     MODS = "MODS"
 
+    # BEGIN: __init__ v1
     def __init__(self, repoRoot: str):
         self.repoRoot = repoRoot
         self.pygit2_repo = pygit2.Repository(self.repoRoot)
+    # END: __init__ v1
 
+    # BEGIN: _resolve_tree v1
     def _resolve_tree(self, obj):
         """Resolve a pygit2 object (Commit/Tag/Tree) to a Tree or None."""
         try:
@@ -73,7 +78,9 @@ class TestRepo(AppException):
             self.printException(e, "_resolve_tree: unexpected error")
             return None
         return None
+    # END: _resolve_tree v1
 
+    # BEGIN: _format_commit_entry v1
     def _format_commit_entry(self, repo, commit_or_hash) -> tuple[str, str, str]:
         """Format a commit-like entry as "ISO HASH [subject]" when possible.
 
@@ -127,7 +134,9 @@ class TestRepo(AppException):
             # Fallback to raw tuple representation on error
             self.printException(e, "_format_commit_entry failed")
             return ("", str(commit_or_hash), "")
+    # END: _format_commit_entry v1
 
+    # BEGIN: index_mtime_iso v1
     def index_mtime_iso(self) -> str:
         """
         Return an ISO timestamp (UTC) based on the repository index mtime.
@@ -151,7 +160,9 @@ class TestRepo(AppException):
         if idx_mtime is None:
             idx_mtime = datetime.now(timezone.utc).timestamp()
         return self._epoch_to_iso(idx_mtime)
+    # END: index_mtime_iso v1
 
+    # BEGIN: _epoch_to_iso v1
     def _epoch_to_iso(self, epoch: float) -> str:
         """
         Convert an epoch (seconds) to an ISO UTC timestamp string.
@@ -164,7 +175,9 @@ class TestRepo(AppException):
         except Exception as e:
             self.printException(e, "_epoch_to_iso: formatting timestamp failed")
             return "1970-01-01T00:00:00"
+    # END: _epoch_to_iso v1
 
+    # BEGIN: _paths_mtime_iso v1
     def _paths_mtime_iso(self, paths: list[str]) -> str:
         """
         Given a list of repository-relative paths, return an ISO timestamp
@@ -183,7 +196,9 @@ class TestRepo(AppException):
         if mtimes:
             return self._epoch_to_iso(max(mtimes))
         return self.index_mtime_iso()
+    # END: _paths_mtime_iso v1
 
+    # BEGIN: _delta_status_to_str v1
     def _delta_status_to_str(self, status_code) -> str:
         """Map pygit2 delta status codes to human-friendly status strings."""
         try:
@@ -200,7 +215,9 @@ class TestRepo(AppException):
         except Exception as e:
             self.printException(e, "_delta_status_to_str: mapping failed")
         return "modified"
+    # END: _delta_status_to_str v1
 
+    # BEGIN: _git_name_status_to_str v1
     def _git_name_status_to_str(self, code: str) -> str:
         """Map `git --name-status` status codes to human-friendly strings.
 
@@ -215,7 +232,9 @@ class TestRepo(AppException):
         except Exception as e:
             self.printException(e, "_git_name_status_to_str: mapping failed")
             return "modified"
+    # END: _git_name_status_to_str v1
 
+    # BEGIN: _parse_git_name_status_line v1
     def _parse_git_name_status_line(self, line: str) -> tuple[str, str]:
         """Parse a single `git --name-status` line and return (path, status).
 
@@ -231,7 +250,9 @@ class TestRepo(AppException):
             path = parts[1].strip() if len(parts) > 1 else ""
         status = self._git_name_status_to_str(code)
         return (path, status)
+    # END: _parse_git_name_status_line v1
 
+    # BEGIN: _empty_tree_for_repo v1
     def _empty_tree_for_repo(self, repo) -> "pygit2.Tree | None":
         """Construct and return an empty tree object for `repo`, or None on failure.
 
@@ -244,7 +265,9 @@ class TestRepo(AppException):
         except Exception as e:
             self.printException(e, "_empty_tree_for_repo: TreeBuilder failed")
             return None
+    # END: _empty_tree_for_repo v1
 
+    # BEGIN: getFileListBetweenNewRepoAndTopHash v1
     def getFileListBetweenNewRepoAndTopHash(self, usePyGit2: bool) -> list[str]:
         """Return a list of `(path, status)` for files present in HEAD.
 
@@ -253,7 +276,9 @@ class TestRepo(AppException):
         """
         # Delegate to the new initial->commit helper to avoid duplication
         return self.getFileListBetweenNewRepoAndHash("HEAD", usePyGit2)
+    # END: getFileListBetweenNewRepoAndTopHash v1
 
+    # BEGIN: getFileListBetweenNormalizedHashes v1
     def getFileListBetweenNormalizedHashes(
         self, prev_hash: str, curr_hash: str, usePyGit2: bool
     ) -> list[tuple[str, str]]:
@@ -313,6 +338,7 @@ class TestRepo(AppException):
         # Fallback: for remaining (likely commit-ish) combos delegate to the
         # explicit two-commit handler rather than the fully generic resolver.
         return self.getFileListBetweenTwoCommits(prev_hash, curr_hash, usePyGit2)
+    # END: getFileListBetweenNormalizedHashes v1
 
     # BEGIN: getFileListBetweenTwoCommits v1
     def getFileListBetweenTwoCommits(self, prev_hash: str, curr_hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
@@ -559,17 +585,18 @@ class TestRepo(AppException):
         else:
             # git CLI fallback when not using pygit2 for initial->commit
             try:
-                output = check_output(["git", "diff", "--name-status", curr_hash], cwd=self.repoRoot, text=True)
+                # List all files in the commit (treat as 'added' vs empty repo)
+                output = check_output(["git", "ls-tree", "-r", "--name-only", curr_hash], cwd=self.repoRoot, text=True)
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
                 return []
             results: list[tuple[str, str]] = []
             for line in output.splitlines():
-                if not line:
+                ln = line.strip()
+                if not ln:
                     continue
-                path, status = self._parse_git_name_status_line(line)
-                if path:
-                    results.append((path, status))
+                # All files present in the commit are 'added' relative to empty repo
+                results.append((ln, "added"))
             results.sort(key=lambda x: x[0])
             return results
     # END: getFileListBetweenNewRepoAndHash v1
@@ -1457,8 +1484,9 @@ class TestRepo(AppException):
                     else:
                         entries.insert(0, (iso_mods, "MODS", self.MODS_MESSAGE))
             return entries
+    # END: getHashListFromFileName v1
 
-
+# BEGIN: show_diffs v1
 def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool = False) -> bool:
     """Show differences between two file lists. If equal and `top` > 0,
     print the first `top` lines from `list1`.
@@ -1505,7 +1533,7 @@ def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool
                 else:
                     print(fmt(ln))
         return True
-
+# END: show_diffs v1
 
 def main():
     """Main function to run the tests."""
