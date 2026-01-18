@@ -2121,7 +2121,8 @@ def main():
             print("\nRunning sampled pairwise comparisons (separate)...")
             try:
                 # runFileListSampledComparisons returns (total, passed, failed)
-                (t, p, f) = test_repo.runFileListSampledComparisons(args.top, args.raw)
+                (t,p,f) = getattr(test_repo, "runFileListSampledComparisons")(args.top, args.raw)
+                # (t, p, f) = test_repo.runFileListSampledComparisons(args.top, args.raw)
                 total += t
                 passed += p
                 failed += f
