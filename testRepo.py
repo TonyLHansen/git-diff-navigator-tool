@@ -350,16 +350,10 @@ class TestRepo(AppException):
             return results
 
         else:
-            # Use git CLI to get the list of files with status
+            # git CLI fallback when not using pygit2 (commit -> commit)
             try:
                 output = check_output(
-                    [
-                        "git",
-                        "diff",
-                        "--name-status",
-                        prev_hash,
-                        curr_hash,
-                    ],
+                    ["git", "diff", "--name-status", prev_hash, curr_hash],
                     cwd=self.repoRoot,
                     text=True,
                 )
@@ -559,6 +553,23 @@ class TestRepo(AppException):
             results.sort(key=lambda x: x[0])
             return results
 
+        else:
+            # git CLI fallback when not using pygit2 for initial->commit
+            try:
+                output = check_output(["git", "diff", "--name-status", curr_hash], cwd=self.repoRoot, text=True)
+            except CalledProcessError as e:
+                self.printException(e, "git command failed")
+                return []
+            results: list[tuple[str, str]] = []
+            for line in output.splitlines():
+                if not line:
+                    continue
+                path, status = self._parse_git_name_status_line(line)
+                if path:
+                    results.append((path, status))
+            results.sort(key=lambda x: x[0])
+            return results
+
     def getFileListBetweenNewRepoAndStaged(self, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return file list for the initial (empty) tree -> staged index comparison.
 
@@ -726,7 +737,9 @@ class TestRepo(AppException):
                                 if len(commit_files) < 50:
                                     print(f"DEBUG:added commit_file {p} -> {entry.oid}")
                             except Exception as ex:
-                                self.printException(ex, f"getFileListBetweenHashAndCurrentTime: failed to add commit_file {p}")
+                                self.printException(
+                                    ex, f"getFileListBetweenHashAndCurrentTime: failed to add commit_file {p}"
+                                )
                     except Exception as e:
                         self.printException(e, "getFileListBetweenHashAndCurrentTime: tree entry handling failed")
                         continue
@@ -1523,6 +1536,8 @@ def main():
 
     # Helper to run a single comparison and return True on success
     def run_one(name: str, func_name: str, fname: str | None) -> bool:
+        # Debug: report which test function is being invoked
+        print(f"DEBUG: run_one invoking {func_name} (display name: {name})")
         if fname is not None:
             l1 = getattr(test_repo, func_name)(fname, usePyGit2=True)
             l2 = getattr(test_repo, func_name)(fname, usePyGit2=False)
