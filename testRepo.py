@@ -200,15 +200,16 @@ class TestRepo(AppException):
         if rel.startswith('"') and rel.endswith('"'):
             raw = rel[1:-1]
             try:
-                tmp = codecs.decode(raw, 'unicode_escape')
-                b = tmp.encode('latin-1', 'surrogatepass')
+                tmp = codecs.decode(raw, "unicode_escape")
+                b = tmp.encode("latin-1", "surrogatepass")
                 try:
-                    return b.decode('utf-8')
+                    return b.decode("utf-8")
                 except UnicodeDecodeError:
-                    return b.decode('latin-1')
+                    return b.decode("latin-1")
             except Exception:
                 return raw
         return rel
+
     # END: _decode_git_quoted_path v1
 
     # BEGIN: _paths_mtime_iso v1
@@ -1091,7 +1092,10 @@ class TestRepo(AppException):
                 try:
                     diff = self.pygit2_repo.diff(idx_tree, None)
                 except Exception as e:
-                    self.printException(e, "getFileListBetweenStagedAndMods: repo.diff(idx_tree, None) failed, falling back to empty tree")
+                    self.printException(
+                        e,
+                        "getFileListBetweenStagedAndMods: repo.diff(idx_tree, None) failed, falling back to empty tree",
+                    )
                     # Fall back to explicit empty-tree if libgit2 build rejects None
                     empty_tree = self._empty_tree_for_repo(self.pygit2_repo)
                     if empty_tree is None:
@@ -1339,7 +1343,7 @@ class TestRepo(AppException):
     # END: getHashListSamplePlusEnds v1
 
     # BEGIN: runFileListSampledComparisons v1
-    def runFileListSampledComparisons(self, top: bool, raw: bool) -> None:
+    def runFileListSampledComparisons(self, top: bool, raw: bool) -> tuple[int, int, int]:
         """Run sampled comparisons and display diffs using `show_diffs`.
 
         Calls `getFileListBetweenNormalizedHashes` for both backends and
@@ -1349,11 +1353,16 @@ class TestRepo(AppException):
         tokens: list = [x[1] for x in sample]
 
         # For each sampled token pair, run both backends (pygit2 and git CLI)
-        # and compare their outputs.
+        # and compare their outputs. Track simple statistics so callers can
+        # aggregate totals across repositories.
+        total = 0
+        passed = 0
+        failed = 0
         for i in range(len(tokens)):
             for j in range(i + 1, len(tokens)):
                 a = tokens[i]
                 b = tokens[j]
+                total += 1
                 try:
                     p = self.getFileListBetweenNormalizedHashes(a, b, True)
                 except Exception as e:
@@ -1366,9 +1375,16 @@ class TestRepo(AppException):
                     g = []
 
                 try:
-                    show_diffs(f"get {a}->{b}", p, g, top, raw, self.verbose)
+                    ok = show_diffs(f"get {a}->{b}", p, g, top, raw, self.verbose)
+                    if ok:
+                        passed += 1
+                    else:
+                        failed += 1
                 except Exception as e:
                     self.printException(e, f"runFileListSampledComparisons: show_diffs failed for {a}->{b}")
+                    failed += 1
+
+        return (total, passed, failed)
 
     # END: runFileListSampledComparisons v1
 
@@ -1845,7 +1861,8 @@ def main():
     parser.add_argument(
         "path",
         type=str,
-        help="Path to the git repository to test.",
+        action="append",
+        help="Path to the git repository to test (can be specified multiple times).",
     )
     parser.add_argument(
         "-t",
@@ -1923,8 +1940,6 @@ def main():
 
     args = parser.parse_args()
 
-    test_repo = TestRepo(args.path, args.verbose)
-
     # If user requested an "up through" numeric run, set the matching
     # boolean flags so downstream selection logic runs the requested tests.
     if args.up_through is not None:
@@ -1932,7 +1947,8 @@ def main():
             # Interpret up-through as a base-36 digit/string so 'a'..'z' map to 10..35
             n = int(str(args.up_through), 36)
         except Exception as e:
-            test_repo.printException(e, "up-through parse failed (expected base36)")
+            # No `TestRepo` instance available yet; print minimal error info
+            print(f"up-through parse failed (expected base36): {e}", file=sys.stderr)
             n = 0
         if n >= 1:
             args.getFileListBetweenNewAndTopHash = True
@@ -1959,8 +1975,9 @@ def main():
         if n >= 12:
             args.getHashListSample = True
 
-    # Helper to run a single comparison and return True on success
-    def run_one(name: str, func_name: str, fname: str | None) -> bool:
+    # Helper to run a single comparison and return True on success. Accept
+    # a `TestRepo` instance so the helper can be defined once and reused.
+    def run_one(test_repo, name: str, func_name: str, fname: str | None) -> bool:
         # Debug: report which test function is being invoked
         if test_repo.verbose:
             print(f"DEBUG: run_one invoking {func_name} (display name: {name})")
@@ -2067,7 +2084,9 @@ def main():
         if args.getHashListSamplePlusEnds:
             to_run.append(("getHashListSamplePlusEnds: Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None))
         if args.getFileListUntrackedAndIgnored:
-            to_run.append(("getFileListUntrackedAndIgnored: Untracked and Ignored files", "getFileListUntrackedAndIgnored", None))
+            to_run.append(
+                ("getFileListUntrackedAndIgnored: Untracked and Ignored files", "getFileListUntrackedAndIgnored", None)
+            )
         # Sampled comparisons are run separately to allow independent reporting
         # and avoid mixing their output with the main test loop.
 
@@ -2080,29 +2099,37 @@ def main():
     total = 0
     passed = 0
     failed = 0
-    for name, func, fname in to_run:
-        total += 1
-        try:
-            ok = run_one(name, func, fname)
-        except Exception as e:
-            test_repo.printException(e, f"running {name} failed")
-            ok = False
-        if ok:
-            passed += 1
-        else:
-            failed += 1
 
-    # Final summary
-    print(f"\nTest summary: total={total} passed={passed} failed={failed}")
+    for path in args.path:
+        print(f"\n== Repository: {path} ==")
+        test_repo = TestRepo(path, args.verbose)
 
-    # If requested, run sampled comparisons separately (outside the to_run loop)
-    if args.getFileListSampledComparisons:
-        print("\nRunning sampled pairwise comparisons (separate)...")
-        try:
-            # runFileListSampledComparisons now accepts (top, raw, verbose)
-            test_repo.runFileListSampledComparisons(args.top, args.raw)
-        except Exception as e:
-            test_repo.printException(e, "running runFileListSampledComparisons failed")
+        for name, func, fname in to_run:
+            total += 1
+            try:
+                ok = run_one(test_repo, name, func, fname)
+            except Exception as e:
+                test_repo.printException(e, f"running {name} failed")
+                ok = False
+            if ok:
+                passed += 1
+            else:
+                failed += 1
+
+        # If requested, run sampled comparisons separately (outside the to_run loop)
+        if args.getFileListSampledComparisons:
+            print("\nRunning sampled pairwise comparisons (separate)...")
+            try:
+                # runFileListSampledComparisons returns (total, passed, failed)
+                (t, p, f) = test_repo.runFileListSampledComparisons(args.top, args.raw)
+                total += t
+                passed += p
+                failed += f
+            except Exception as e:
+                test_repo.printException(e, "running runFileListSampledComparisons failed")
+
+        # Final summary
+        print(f"\nTest summary: total={total} passed={passed} failed={failed}")
 
 
 if __name__ == "__main__":
