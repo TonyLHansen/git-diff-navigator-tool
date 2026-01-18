@@ -987,14 +987,19 @@ class TestRepo(AppException):
                 # Write the index to a tree and diff index-tree -> working tree (using empty tree substitution)
                 idx_tree_oid = self.pygit2_repo.index.write_tree()
                 idx_tree = self.pygit2_repo.get(idx_tree_oid)
-                empty_tree = self._empty_tree_for_repo(self.pygit2_repo)
-                if empty_tree is None:
-                    self.printException(
-                        RuntimeError("failed to construct empty tree"),
-                        "getFileListBetweenStagedAndMods: empty tree construction failed",
-                    )
-                    return []
-                diff = self.pygit2_repo.diff(idx_tree, empty_tree)
+                # Prefer diff against the working directory (None) when possible.
+                try:
+                    diff = self.pygit2_repo.diff(idx_tree, None)
+                except Exception:
+                    # Fall back to explicit empty-tree if libgit2 build rejects None
+                    empty_tree = self._empty_tree_for_repo(self.pygit2_repo)
+                    if empty_tree is None:
+                        self.printException(
+                            RuntimeError("failed to construct empty tree"),
+                            "getFileListBetweenStagedAndMods: empty tree construction failed",
+                        )
+                        return []
+                    diff = self.pygit2_repo.diff(idx_tree, empty_tree)
             except Exception as e:
                 self.printException(e, "pygit2 staged->working diff failed")
                 return []
