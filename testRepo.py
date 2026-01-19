@@ -119,26 +119,27 @@ class TestRepo(AppException):
                     return ("", str(commit_or_hash), "")
 
             if isinstance(c, pygit2.Commit):
+                # Build ISO timestamp, commit hex, and top-line subject
                 try:
                     ts = int(getattr(c, "time", None) or getattr(c, "commit_time", None) or 0)
                 except Exception as e:
                     self.printException(e, "_format_commit_entry: parsing timestamp failed")
-                    try:
-                        diff = self.pygit2_repo.diff(idx_tree, None)
-                    except Exception as e:
-                        self.printException(
-                            e,
-                            "getFileListBetweenStagedAndMods: repo.diff(idx_tree, None) failed, falling back to empty tree",
-                        )
-                        # Fall back to explicit empty-tree if libgit2 build rejects None
-                        empty_tree = self._empty_tree_for_repo(self.pygit2_repo)
-                        if empty_tree is None:
-                            self.printException(
-                                RuntimeError("failed to construct empty tree"),
-                                "getFileListBetweenStagedAndMods: empty tree construction failed",
-                            )
-                            return []
-                        diff = self.pygit2_repo.diff(idx_tree, empty_tree)
+                    ts = 0
+
+                iso = self._epoch_to_iso(ts)
+
+                ch = getattr(c, "hex", None)
+                if not ch:
+                    cid = getattr(c, "id", None)
+                    ch = getattr(cid, "hex", None) or (str(cid) if cid is not None else "")
+
+                try:
+                    msg = getattr(c, "message", "") or ""
+                    subject = msg.splitlines()[0].strip() if msg else ""
+                except Exception as e:
+                    self.printException(e, "_format_commit_entry: extracting subject failed")
+                    subject = ""
+
                 return (iso, ch, subject)
 
             # Not a commit object (blob/tree/etc) — return hash-like tuple
@@ -792,9 +793,9 @@ class TestRepo(AppException):
                                 for chunk in iter(lambda: fh.read(8192), b""):
                                     hasher.update(chunk)
                             work_files[rel] = {"hash": hasher.hexdigest()}
-                        except FileNotFoundError as e:
+                        except FileNotFoundError as _no_logging:
                             # File disappeared between os.walk and open; log and skip it
-                            self.printException(e, "getFileListBetweenNewRepoAndMods: file vanished during read")
+                            # self.printException(e, "getFileListBetweenNewRepoAndMods: file vanished during read")
                             continue
                         except Exception as _no_logging:
                             # self.printException(e, "getFileListBetweenNewRepoAndMods: reading file failed; falling back to mtime")
@@ -1442,6 +1443,8 @@ class TestRepo(AppException):
                 a = tokens[i]
                 b = tokens[j]
                 total += 1
+                # Ensure timing variables always exist (avoid locals() checks)
+                t0 = t1 = t2 = t3 = 0
                 try:
                     t0 = time.perf_counter()
                     p = self.getFileListBetweenNormalizedHashes(a, b, True)
@@ -1462,9 +1465,9 @@ class TestRepo(AppException):
                     if self.verbose:
                         # Report timings for the sampled pair
                         try:
-                            dt_py = (t1 - t0) if 't0' in locals() and 't1' in locals() else None
-                            dt_cli = (t3 - t2) if 't2' in locals() and 't3' in locals() else None
-                            print(f"TIMING: get {a}->{b} pygit2={dt_py:.3f if dt_py is not None else 'N/A'}s git={dt_cli:.3f if dt_cli is not None else 'N/A'}s")
+                            dt_py = t1 - t0
+                            dt_cli = t3 - t2
+                            print(f"TIMING: get {a}->{b} pygit2={dt_py:.3f}s git={dt_cli:.3f}s")
                         except Exception as e:
                             self.printException(e, "runFileListSampledComparisons: timing print failed")
                     if ok:
@@ -1956,6 +1959,14 @@ def main():
         help="Run tests up through this base-36 digit (0-9, a-z). Example: -u 2 runs -1 and -2; -u a runs up through -a",
     )
 
+    parser.add_argument(
+        "-H",
+        "--getFileListBetweenNormalizedHashes",
+        nargs="*",
+        default=None,
+        help="Invoke getFileListBetweenNormalizedHashes for comma-separated pairs (e.g. -H d22ead,f225e7)",
+    )
+
     # Add independent flags to run one or more test functions (-1..-7 allowed together)
     parser.add_argument(
         "-1", "--getFileListBetweenNewAndTopHash", action="store_true", help="Run getFileListBetweenNewAndTopHash"
@@ -2195,6 +2206,34 @@ def main():
                 passed += 1
             else:
                 failed += 1
+
+        # Process any explicit getFileListBetweenNormalizedHashes pairs supplied
+        if args.getFileListBetweenNormalizedHashes:
+            for pair in args.getFileListBetweenNormalizedHashes:
+                try:
+                    if not pair:
+                        continue
+                    parts = pair.split(",")
+                    if len(parts) != 2:
+                        print(f"Skipping invalid pair '{pair}'; expected format prev,curr")
+                        continue
+                    prev_hash = parts[0].strip()
+                    curr_hash = parts[1].strip()
+                    label = f"getFileListBetweenNormalizedHashes {prev_hash}->{curr_hash}"
+                    total += 1
+                    try:
+                        l1 = test_repo.getFileListBetweenNormalizedHashes(prev_hash, curr_hash, True)
+                        l2 = test_repo.getFileListBetweenNormalizedHashes(prev_hash, curr_hash, False)
+                        ok = show_diffs(label, l1, l2, args.top, args.raw, args.verbose)
+                    except Exception as e:
+                        test_repo.printException(e, f"invoking getFileListBetweenNormalizedHashes for {pair} failed")
+                        ok = False
+                    if ok:
+                        passed += 1
+                    else:
+                        failed += 1
+                except Exception as e:
+                    test_repo.printException(e, f"processing getFileListBetweenNormalizedHashes option '{pair}' failed")
 
         # If requested, run sampled comparisons separately (outside the to_run loop)
         if args.getFileListSampledComparisons:
