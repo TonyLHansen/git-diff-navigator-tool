@@ -116,6 +116,49 @@ class TestRepo(AppException):
 
     # END: _resolve_tree v1
 
+    # BEGIN: _resolve_token_to_tree v1
+    def _resolve_token_to_tree(self, token):
+        """Resolve a token (NEWREPO/STAGED/MODS or commit-ish) to a pygit2.Tree or None.
+
+        - `STAGED` -> tree built from index
+        - `MODS` -> None (represents working tree for pygit2.diff)
+        - `NEWREPO` -> explicit empty tree via `_empty_tree_for_repo`
+        - otherwise: try `revparse_single` then `repo.get`, and coerce to a tree
+        Returns a `pygit2.Tree` or `None` on failure.
+        """
+        try:
+            repo = self.pygit2_repo
+            if token == self.STAGED:
+                try:
+                    repo.index.read()
+                    oid = repo.index.write_tree()
+                    return repo.get(oid)
+                except Exception as e:
+                    self.printException(e, "_resolve_token_to_tree: index -> tree failed")
+                    return None
+            if token == self.MODS:
+                # Represent working tree as None for pygit2.diff
+                return None
+            if token == self.NEWREPO:
+                return self._empty_tree_for_repo(repo)
+
+            # commit-ish: try revparse_single then repo.get
+            try:
+                obj = repo.revparse_single(token)
+            except Exception as e:
+                self.printException(e, f"_resolve_token_to_tree: revparse_single({token}) failed")
+                try:
+                    obj = repo.get(token)
+                except Exception as e2:
+                    self.printException(e2, f"_resolve_token_to_tree: resolving {token} failed")
+                    return None
+            return self._resolve_tree(obj)
+        except Exception as e:
+            self.printException(e, "_resolve_token_to_tree: unexpected failure")
+            return None
+
+    # END: _resolve_token_to_tree v1
+
     # BEGIN: _format_commit_entry v1
     def _format_commit_entry(self, repo, commit_or_hash) -> tuple[str, str, str]:
         """Format a commit-like entry as "ISO HASH [subject]" when possible.
@@ -445,20 +488,24 @@ class TestRepo(AppException):
         if usePyGit2:
             if not pygit2:
                 raise RuntimeError("pygit2 is not available")
+            repo = self.pygit2_repo
+            # Resolve tokens to trees using the centralized helper
             try:
-                a = self.pygit2_repo.revparse_single(prev_hash)
-                b = self.pygit2_repo.revparse_single(curr_hash)
+                a = self._resolve_token_to_tree(prev_hash)
+                b = self._resolve_token_to_tree(curr_hash)
             except Exception as ex:
-                self.printException(ex, "getFileListBetweenTwoCommits: revparse failed")
+                self.printException(ex, "getFileListBetweenTwoCommits: token resolve failed")
                 return []
             try:
-                a = self._resolve_tree(a)
-                b = self._resolve_tree(b)
+                # Ensure non-tree values are replaced with an explicit empty tree
                 if a is None:
-                    a = self._empty_tree_for_repo(self.pygit2_repo)
+                    a = self._empty_tree_for_repo(repo)
                 if b is None:
-                    b = self._empty_tree_for_repo(self.pygit2_repo)
-                diff = self.pygit2_repo.diff(a, b)
+                    b = self._empty_tree_for_repo(repo)
+                if a is None or b is None:
+                    self.printException(RuntimeError("could not construct empty tree"), "getFileListBetweenTwoCommits: empty-tree substitution failed")
+                    return []
+                diff = repo.diff(a, b)
                 try:
                     flags = _pygit2_similarity_flags()
                     if flags:
