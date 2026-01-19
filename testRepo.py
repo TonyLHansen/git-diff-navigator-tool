@@ -237,25 +237,26 @@ class TestRepo(AppException):
                 return ([], None, None)
 
             try:
-                a = a_raw if a_raw is not None else self._empty_tree_for_repo(repo)
-                b = b_raw if b_raw is not None else self._empty_tree_for_repo(repo)
-                if a is None or b is None:
-                    self.printException(RuntimeError("could not construct empty tree"), "_pygit2_run_pygit2_diff: empty-tree substitution failed")
-                    return ([], a_raw, b_raw)
+                # Try to diff using the resolved raw objects directly. For
+                # working-tree comparisons `a_raw` or `b_raw` may be `None` and
+                # libgit2/python bindings often accept `None` to represent the
+                # working tree. Only fall back to an explicit empty-tree when
+                # repo.diff(a,b) raises an exception.
+                a = a_raw
+                b = b_raw
 
                 try:
                     diff = repo.diff(a, b)
                 except Exception as e:
-                    # Try a more explicit fallback when some libgit2 builds reject None
+                    # Fall back to empty-tree substitution when diff(a,None)
+                    # is not supported by this libgit2 build.
                     self.printException(e, "_pygit2_run_pygit2_diff: repo.diff(a,b) failed, falling back to empty-tree")
                     empty = self._empty_tree_for_repo(repo)
                     if empty is None:
                         self.printException(RuntimeError("failed to construct empty tree"), "_pygit2_run_pygit2_diff: empty tree construction failed")
                         return ([], a_raw, b_raw)
-                    if a_raw is None:
-                        a = empty
-                    if b_raw is None:
-                        b = empty
+                    a = a if a is not None else empty
+                    b = b if b is not None else empty
                     diff = repo.diff(a, b)
 
                 try:
@@ -276,6 +277,18 @@ class TestRepo(AppException):
                 status = self._delta_status_to_str(getattr(delta, "status", None), delta)
                 oid_old = None
                 oid_new = None
+                # Extra debug: print raw delta object and oid objects when verbose
+                if self.verbose > 1:
+                    try:
+                        print(f"DEBUG: raw delta repr={delta!r}")
+                        of = getattr(delta, 'old_file', None)
+                        nf = getattr(delta, 'new_file', None)
+                        oo = getattr(of, 'oid', None) or getattr(of, 'id', None) if of is not None else None
+                        no = getattr(nf, 'oid', None) or getattr(nf, 'id', None) if nf is not None else None
+                        print(f"DEBUG: old_file.path={getattr(of,'path',None)} old_oid_obj={oo}")
+                        print(f"DEBUG: new_file.path={getattr(nf,'path',None)} new_oid_obj={no}")
+                    except Exception as e:
+                        self.printException(e, "_pygit2_run_pygit2_diff: debug print failed")
                 try:
                     oid_old_obj = getattr(delta.old_file, "oid", None) or getattr(delta.old_file, "id", None)
                     if oid_old_obj is not None:
@@ -323,6 +336,19 @@ class TestRepo(AppException):
                 print("DEBUG:raw detailed deltas:")
                 for it in detailed:
                     print(f"DEBUG: delta path={it.get('path')} status={it.get('status')} old_path={it.get('old_path')} new_path={it.get('new_path')} old_oid={it.get('old_oid')} new_oid={it.get('new_oid')}")
+                    # Also print the raw pygit2 delta object and its file oids
+                    try:
+                        d = it.get('delta')
+                        if d is not None:
+                            of = getattr(d, 'old_file', None)
+                            nf = getattr(d, 'new_file', None)
+                            oo = getattr(of, 'oid', None) or getattr(of, 'id', None) if of is not None else None
+                            no = getattr(nf, 'oid', None) or getattr(nf, 'id', None) if nf is not None else None
+                            print(f"DEBUG: raw delta repr={d!r}")
+                            print(f"DEBUG: raw old_file obj={of!r} path={getattr(of,'path',None)} oid_obj={oo}")
+                            print(f"DEBUG: raw new_file obj={nf!r} path={getattr(nf,'path',None)} oid_obj={no}")
+                    except Exception as e:
+                        self.printException(e, "_deltas_to_results: debug print failed")
 
             added_by_oid: dict[str, list[dict]] = {}
             deleted_by_oid: dict[str, list[dict]] = {}
@@ -2117,10 +2143,7 @@ def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool
     else:
         lines = len(disp1)
         if not silent:
-            if verbose > 0:
-                print(f"[{test_name}] No differences found in {lines} lines of output (verbose={verbose})")
-            else:
-                print(f"[{test_name}] No differences found in {lines} lines of output")
+            print(f"[{test_name}] No differences found in {lines} lines of output")
         if top and top > 0:
             print(f"[{test_name}] Top {top} lines from pygit2 result:")
             for ln in list1[:top]:
@@ -2129,7 +2152,6 @@ def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool
                 else:
                     print(fmt(ln))
         return True
-
 
 # END: show_diffs v1
 
