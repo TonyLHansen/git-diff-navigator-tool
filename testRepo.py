@@ -2485,8 +2485,8 @@ def main():
             except Exception as e:
                 test_repo.printException(e, "running runFileListSampledComparisons failed")
 
-        # Final summary
-        print(f"\nTest summary: total={total} passed={passed} failed={failed}")
+    # Final summary
+    print(f"\nTest summary: total={total} passed={passed} failed={failed}")
 
 
 if __name__ == "__main__":
