@@ -18,6 +18,25 @@ import traceback
 import sys
 
 
+def _pygit2_similarity_flags() -> int:
+    """Return the strongest available pygit2 diff similarity flags.
+
+    Combine rename/copy related flags if defined in the installed pygit2.
+    Returns 0 when `pygit2` is not available or no flags are found.
+    """
+    flags = 0
+    # Base support: renames + copies
+    if hasattr(pygit2, "GIT_DIFF_FIND_RENAMES"):
+        flags |= getattr(pygit2, "GIT_DIFF_FIND_RENAMES")
+    if hasattr(pygit2, "GIT_DIFF_FIND_COPIES"):
+        flags |= getattr(pygit2, "GIT_DIFF_FIND_COPIES")
+    # Extend where available
+    for name in ("GIT_DIFF_FIND_COPIES_FROM_UNMODIFIED", "GIT_DIFF_FIND_RENAMES_FROM_REWRITES", "GIT_DIFF_FIND_FOR_UNTRACKED"):
+        if hasattr(pygit2, name):
+            flags |= getattr(pygit2, name)
+    return flags
+
+
 def printException(e: Exception, msg: str) -> None:
     """Module-level exception logger used before TestRepo instances are available."""
     funcName = sys._getframe(1).f_code.co_name
@@ -250,8 +269,12 @@ class TestRepo(AppException):
     # END: _paths_mtime_iso v1
 
     # BEGIN: _delta_status_to_str v1
-    def _delta_status_to_str(self, status_code) -> str:
-        """Map pygit2 delta status codes to human-friendly status strings."""
+    def _delta_status_to_str(self, status_code, delta=None) -> str:
+        """Map pygit2 delta status codes to human-friendly status strings.
+
+        If `delta` is provided and the status indicates a rename, include the
+        target path in the returned string (e.g. "renamed->new/path").
+        """
         try:
             if status_code == pygit2.GIT_DELTA_ADDED:
                 return "added"
@@ -260,7 +283,15 @@ class TestRepo(AppException):
             if status_code == pygit2.GIT_DELTA_DELETED:
                 return "deleted"
             if status_code == pygit2.GIT_DELTA_RENAMED:
-                return "renamed"
+                # Try to include the new path when available
+                new_path = None
+                try:
+                    if delta is not None:
+                        new_path = getattr(delta.new_file, "path", None) or getattr(delta, "new_path", None)
+                except Exception as e:
+                    new_path = None
+                    self.printException(e, "_delta_status_to_str: extracting new_path failed")
+                return f"renamed->{new_path}" if new_path else "renamed"
             if status_code == pygit2.GIT_DELTA_COPIED:
                 return "copied"
         except Exception as e:
@@ -302,6 +333,14 @@ class TestRepo(AppException):
         else:
             path = parts[1].strip() if len(parts) > 1 else ""
         status = self._git_name_status_to_str(code)
+        # If this is a rename line, include the new-path in the status string
+        try:
+            if code.startswith("R") and len(parts) > 2:
+                newp = parts[-1].strip()
+                if newp:
+                    status = f"renamed->{newp}"
+        except Exception as e:
+            self.printException(e, "_parse_git_name_status_line: including rename target failed")
         return (path, status)
 
     # END: _parse_git_name_status_line v1
@@ -421,7 +460,9 @@ class TestRepo(AppException):
                     b = self._empty_tree_for_repo(self.pygit2_repo)
                 diff = self.pygit2_repo.diff(a, b)
                 try:
-                    diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                    flags = _pygit2_similarity_flags()
+                    if flags:
+                        diff.find_similar(flags)
                 except Exception as e:
                     self.printException(e, "getFileListBetweenTwoCommits: find_similar failed")
             except Exception as e:
@@ -433,7 +474,7 @@ class TestRepo(AppException):
                 old_path = getattr(delta.old_file, "path", None)
                 new_path = getattr(delta.new_file, "path", None)
                 path = new_path or old_path
-                status = self._delta_status_to_str(getattr(delta, "status", None))
+                status = self._delta_status_to_str(getattr(delta, "status", None), delta)
                 # Try to extract oid/id in a tolerant way
                 oid_old = None
                 oid_new = None
@@ -441,18 +482,24 @@ class TestRepo(AppException):
                     oid_old_obj = getattr(delta.old_file, "oid", None) or getattr(delta.old_file, "id", None)
                     if oid_old_obj is not None:
                         oid_old = str(oid_old_obj)
-                except Exception:
+                except Exception as e:
                     oid_old = None
+                    self.printException(e, "getFileListBetweenTwoCommits: extracting old oid failed")
                 try:
                     oid_new_obj = getattr(delta.new_file, "oid", None) or getattr(delta.new_file, "id", None)
                     if oid_new_obj is not None:
                         oid_new = str(oid_new_obj)
-                except Exception:
+                except Exception as e:
                     oid_new = None
+                    self.printException(e, "getFileListBetweenTwoCommits: extracting new oid failed")
                 if path:
                     detailed.append({"path": path, "status": status, "old_oid": oid_old, "new_oid": oid_new, "old_path": old_path, "new_path": new_path})
 
             # Post-process: coalesce delete+add pairs into a single 'renamed' when blob OIDs match.
+            if self.verbose > 1:
+                print("DEBUG:raw detailed deltas:")
+                for it in detailed:
+                    print(f"DEBUG: delta path={it.get('path')} status={it.get('status')} old_path={it.get('old_path')} new_path={it.get('new_path')} old_oid={it.get('old_oid')} new_oid={it.get('new_oid')}")
             added_by_oid: dict[str, list[dict]] = {}
             deleted_by_oid: dict[str, list[dict]] = {}
             for item in detailed:
@@ -474,12 +521,13 @@ class TestRepo(AppException):
                             try:
                                 oid_obj = getattr(entry, "oid", None) or getattr(entry, "id", None)
                                 if entry.type == 2:  # tree
-                                    sub = repo.get(oid_obj) if oid_obj is not None else None
+                                    sub = self.pygit2_repo.get(oid_obj) if oid_obj is not None else None
                                     if sub is not None:
                                         walk_commit_tree(sub, p, out_map)
                                 elif entry.type == 3:  # blob
                                     out_map[p] = str(oid_obj) if oid_obj is not None else None
-                            except Exception as _:
+                            except Exception as e:
+                                self.printException(e, "getFileListBetweenTwoCommits: walk_commit_tree entry handling failed")
                                 continue
 
                     try:
@@ -487,9 +535,11 @@ class TestRepo(AppException):
                             walk_commit_tree(a, "", commit_a_map)
                         if b is not None:
                             walk_commit_tree(b, "", commit_b_map)
-                    except Exception:
+                    except Exception as e:
+                        # If tree-walking fails, fall back to empty maps
                         commit_a_map = {}
                         commit_b_map = {}
+                        self.printException(e, "getFileListBetweenTwoCommits: walking commit trees failed")
 
                     # Populate added_by_oid / deleted_by_oid from maps
                     for item in detailed:
@@ -507,9 +557,9 @@ class TestRepo(AppException):
                                 oid = commit_a_map.get(op)
                             if oid:
                                 deleted_by_oid.setdefault(oid, []).append(item)
-                except Exception:
+                except Exception as e:
                     # If any of this fails, fall back to leaving added_by_oid/deleted_by_oid empty
-                    pass
+                    self.printException(e, "getFileListBetweenTwoCommits: resolving blob OIDs from trees failed")
 
             used = set()
             results: list[tuple[str, str]] = []
@@ -520,7 +570,8 @@ class TestRepo(AppException):
                 # Pair up one-to-one as best-effort
                 for a, d in zip(adds, dels):
                     # Use the new path as the canonical renamed path
-                    results.append((a.get("new_path") or a.get("path"), "renamed"))
+                    newp = a.get("new_path") or a.get("path")
+                    results.append((newp, f"renamed->{newp}"))
                     used.add(id(a))
                     used.add(id(d))
 
@@ -547,13 +598,14 @@ class TestRepo(AppException):
                     if best and best_ratio >= 0.6:
                         # coalesce
                         results = [r for r in results if r != (d["path"], d["status"]) and r != (best["path"], best["status"])]
-                        results.append((best.get("new_path") or best.get("path"), "renamed"))
+                        newp = best.get("new_path") or best.get("path")
+                        results.append((newp, f"renamed->{newp}"))
                         used.add(id(d))
                         used.add(id(best))
                         # remove matched add from remaining_added list
                         remaining_added = [x for x in remaining_added if id(x) != id(best)]
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e, "getFileListBetweenTwoCommits: fuzzy rename heuristic failed")
 
             # stable sort by path
             results.sort(key=lambda x: x[0])
@@ -760,7 +812,7 @@ class TestRepo(AppException):
             results: list[tuple[str, str]] = []
             for delta in diff.deltas:
                 path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                status = self._delta_status_to_str(getattr(delta, "status", None))
+                status = self._delta_status_to_str(getattr(delta, "status", None), delta)
                 if path:
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
@@ -815,7 +867,9 @@ class TestRepo(AppException):
                 if head_tree is not None:
                     diff = repo.diff(head_tree, idx_tree)
                     try:
-                        diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                        flags = _pygit2_similarity_flags()
+                        if flags:
+                            diff.find_similar(flags)
                     except Exception as e:
                         self.printException(e, "getFileListBetweenNewRepoAndStaged: find_similar failed")
                 else:
@@ -826,7 +880,7 @@ class TestRepo(AppException):
                 results = []
                 for delta in diff.deltas:
                     path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                    status = self._delta_status_to_str(getattr(delta, "status", None))
+                    status = self._delta_status_to_str(getattr(delta, "status", None), delta)
                     if path:
                         results.append((path, status))
                 results.sort(key=lambda x: x[0])
@@ -968,7 +1022,7 @@ class TestRepo(AppException):
                     elif st & getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0):
                         s = "modified"
                     elif st & getattr(pygit2, "GIT_STATUS_WT_RENAMED", 0):
-                        s = "renamed"
+                        s = f"renamed->{path}"
                     elif st & getattr(pygit2, "GIT_STATUS_WT_TYPECHANGE", 0):
                         s = "modified"
                     else:
@@ -1039,7 +1093,7 @@ class TestRepo(AppException):
                 results: list[tuple[str, str]] = []
                 for delta in diff.deltas:
                     path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                    status = self._delta_status_to_str(getattr(delta, "status", None))
+                    status = self._delta_status_to_str(getattr(delta, "status", None), delta)
                     if path:
                         results.append((path, status))
                 results.sort(key=lambda x: x[0])
@@ -1224,7 +1278,9 @@ class TestRepo(AppException):
                 idx_tree = self.pygit2_repo.get(idx_tree_oid)
                 diff = self.pygit2_repo.diff(head_tree, idx_tree)
                 try:
-                    diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                    flags = _pygit2_similarity_flags()
+                    if flags:
+                        diff.find_similar(flags)
                 except Exception as e:
                     self.printException(e, "getFileListBetweenHashAndCurrentTime: find_similar failed")
             except Exception as e:
@@ -1233,7 +1289,7 @@ class TestRepo(AppException):
             results: list[tuple[str, str]] = []
             for delta in diff.deltas:
                 path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                status = self._delta_status_to_str(getattr(delta, "status", None))
+                status = self._delta_status_to_str(getattr(delta, "status", None), delta)
                 if path:
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
@@ -1279,7 +1335,9 @@ class TestRepo(AppException):
                 try:
                     diff = self.pygit2_repo.diff(idx_tree, None)
                     try:
-                        diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                        flags = _pygit2_similarity_flags()
+                        if flags:
+                            diff.find_similar(flags)
                     except Exception as e:
                         self.printException(e, "getFileListBetweenStagedAndMods: find_similar failed")
                 except Exception as e:
@@ -1297,7 +1355,9 @@ class TestRepo(AppException):
                         return []
                     diff = self.pygit2_repo.diff(idx_tree, empty_tree)
                     try:
-                        diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                        flags = _pygit2_similarity_flags()
+                        if flags:
+                            diff.find_similar(flags)
                     except Exception as e:
                         self.printException(e, "getFileListBetweenStagedAndMods: fallback find_similar failed")
             except Exception as e:
@@ -1306,7 +1366,7 @@ class TestRepo(AppException):
             results: list[tuple[str, str]] = []
             for delta in diff.deltas:
                 path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                status = self._delta_status_to_str(getattr(delta, "status", None))
+                status = self._delta_status_to_str(getattr(delta, "status", None), delta)
                 if path:
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
@@ -1512,7 +1572,9 @@ class TestRepo(AppException):
 
     # BEGIN: getHashListSample v1
     def getHashListSample(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
-        """Return a sampled list of commit hashes for staged, new, and entire repo."""
+        """Return a sampled list of commit hashes for staged, new, and entire repo.
+        in the order newest to oldest.
+        """
         entire = self.getHashListEntireRepo(usePyGit2)
         sampleHashes: list[tuple[str, str, str]] = []
         if len(entire) >= 4:
@@ -1532,16 +1594,30 @@ class TestRepo(AppException):
 
     # BEGIN: getHashListSamplePlusEnds v1
     def getHashListSamplePlusEnds(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
-        """Return a sampled list of commit hashes for staged, new, and entire repo."""
-        sampleHashes = [("", self.NEWREPO, "Newly created repository")]
-        normalHashes = self.getHashListSample(usePyGit2)
-        sampleHashes += normalHashes
-        staged = self.getHashListStagedChanges(usePyGit2)
-        sampleHashes += staged
-        new = self.getHashListNewChanges(usePyGit2)
-        sampleHashes += new
-        return sampleHashes
+        """Return a sampled list of commit hashes for staged, new, and entire repo.
 
+        Order: MODS, STAGED, sampled commits (newest->oldest), NEWREPO
+        """
+        sampleHashes: list[tuple[str, str, str]] = []
+
+        # Put working-tree (MODS) first when present
+        mods = self.getHashListNewChanges(usePyGit2)
+        if mods:
+            sampleHashes += mods
+
+        # Then staged marker
+        staged = self.getHashListStagedChanges(usePyGit2)
+        if staged:
+            sampleHashes += staged
+
+        # Then the sampled commits (getHashListSample returns newest->oldest)
+        normalHashes = self.getHashListSample(usePyGit2)
+        if normalHashes:
+            sampleHashes += normalHashes
+
+        # Place NEWREPO pseudo-entry last
+        sampleHashes.append(("", self.NEWREPO, "Newly created repository"))
+        return sampleHashes
     # END: getHashListSamplePlusEnds v1
 
     # BEGIN: runFileListSampledComparisons v1
@@ -1553,6 +1629,9 @@ class TestRepo(AppException):
         """
         sample = self.getHashListSamplePlusEnds(False)
         tokens: list = [x[1] for x in sample]
+        # Reverse the token order for comparisons (user-requested)
+        tokens.reverse()
+        print(f"Tokens (newest to oldest)={tokens}")
 
         # For each sampled token pair, run both backends (pygit2 and git CLI)
         # and compare their outputs. Track simple statistics so callers can
@@ -1583,7 +1662,7 @@ class TestRepo(AppException):
                     g = []
 
                 try:
-                    ok = show_diffs(f"get {a}->{b}", p, g, top, raw, self.verbose)
+                    ok = show_diffs(f"\nget {a}->{b}", p, g, top, raw, self.verbose)
                     if self.verbose:
                         # Report timings for the sampled pair
                         try:
@@ -1888,7 +1967,9 @@ class TestRepo(AppException):
                         try:
                             # Only enable rename detection when both sides were real trees
                             if not orig_a_none and not orig_b_none:
-                                diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                                flags = _pygit2_similarity_flags()
+                                if flags:
+                                    diff.find_similar(flags)
                         except Exception as e:
                             self.printException(e, "getHashListFromFileName: find_similar failed")
                     except Exception as e:
@@ -2303,7 +2384,7 @@ def main():
         # and avoid mixing their output with the main test loop.
 
     # If no specific flags provided, default to running all tests
-    if not to_run and not args.getFileListSampledComparisons:
+    if not to_run and not args.getFileListSampledComparisons and not args.getFileListBetweenNormalizedHashes:
         args.all = True
         to_run = allfuncs
         args.getFileListSampledComparisons = True
