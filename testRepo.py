@@ -123,22 +123,22 @@ class TestRepo(AppException):
                     ts = int(getattr(c, "time", None) or getattr(c, "commit_time", None) or 0)
                 except Exception as e:
                     self.printException(e, "_format_commit_entry: parsing timestamp failed")
-                    ts = 0
-                try:
-                    msg = getattr(c, "message", None) or ""
-                except Exception as e:
-                    self.printException(e, "_format_commit_entry: reading message failed")
-                    msg = ""
-                subject = msg.splitlines()[0] if msg else ""
-                try:
-                    iso = datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-                except Exception as e:
-                    self.printException(e, "_format_commit_entry: formatting timestamp failed")
-                    iso = "1970-01-01T00:00:00"
-                ch = getattr(c, "hex", None)
-                if not ch:
-                    cid = getattr(c, "id", None)
-                    ch = getattr(cid, "hex", None) or str(cid) if cid is not None else ""
+                    try:
+                        diff = self.pygit2_repo.diff(idx_tree, None)
+                    except Exception as e:
+                        self.printException(
+                            e,
+                            "getFileListBetweenStagedAndMods: repo.diff(idx_tree, None) failed, falling back to empty tree",
+                        )
+                        # Fall back to explicit empty-tree if libgit2 build rejects None
+                        empty_tree = self._empty_tree_for_repo(self.pygit2_repo)
+                        if empty_tree is None:
+                            self.printException(
+                                RuntimeError("failed to construct empty tree"),
+                                "getFileListBetweenStagedAndMods: empty tree construction failed",
+                            )
+                            return []
+                        diff = self.pygit2_repo.diff(idx_tree, empty_tree)
                 return (iso, ch, subject)
 
             # Not a commit object (blob/tree/etc) — return hash-like tuple
@@ -419,6 +419,10 @@ class TestRepo(AppException):
                 if b is None:
                     b = self._empty_tree_for_repo(self.pygit2_repo)
                 diff = self.pygit2_repo.diff(a, b)
+                try:
+                    diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                except Exception as e:
+                    self.printException(e, "getFileListBetweenTwoCommits: find_similar failed")
             except Exception as e:
                 self.printException(e, "getFileListBetweenTwoCommits: pygit2 diff failed")
                 return []
@@ -687,6 +691,10 @@ class TestRepo(AppException):
                 # fall back to empty->index semantics for repositories without HEAD.
                 if head_tree is not None:
                     diff = repo.diff(head_tree, idx_tree)
+                    try:
+                        diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenNewRepoAndStaged: find_similar failed")
                 else:
                     empty = self._empty_tree_for_repo(repo)
                     if empty is None:
@@ -772,8 +780,8 @@ class TestRepo(AppException):
                             try:
                                 if st & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
                                     continue
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                self.printException(e, "getFileListBetweenNewRepoAndMods: status bit test failed")
 
                         # Compute a SHA-1 hash of the file contents; if reading
                         # fails, fall back to storing the file mtime so callers
@@ -784,8 +792,9 @@ class TestRepo(AppException):
                                 for chunk in iter(lambda: fh.read(8192), b""):
                                     hasher.update(chunk)
                             work_files[rel] = {"hash": hasher.hexdigest()}
-                        except FileNotFoundError:
-                            # File disappeared between os.walk and open; skip it
+                        except FileNotFoundError as e:
+                            # File disappeared between os.walk and open; log and skip it
+                            self.printException(e, "getFileListBetweenNewRepoAndMods: file vanished during read")
                             continue
                         except Exception as _no_logging:
                             # self.printException(e, "getFileListBetweenNewRepoAndMods: reading file failed; falling back to mtime")
@@ -1091,6 +1100,10 @@ class TestRepo(AppException):
                 idx_tree_oid = self.pygit2_repo.index.write_tree()
                 idx_tree = self.pygit2_repo.get(idx_tree_oid)
                 diff = self.pygit2_repo.diff(head_tree, idx_tree)
+                try:
+                    diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                except Exception as e:
+                    self.printException(e, "getFileListBetweenHashAndCurrentTime: find_similar failed")
             except Exception as e:
                 self.printException(e, "pygit2 staged-vs-hash diff failed")
                 return []
@@ -1142,6 +1155,10 @@ class TestRepo(AppException):
                 # Prefer diff against the working directory (None) when possible.
                 try:
                     diff = self.pygit2_repo.diff(idx_tree, None)
+                    try:
+                        diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenStagedAndMods: find_similar failed")
                 except Exception as e:
                     self.printException(
                         e,
@@ -1156,6 +1173,10 @@ class TestRepo(AppException):
                         )
                         return []
                     diff = self.pygit2_repo.diff(idx_tree, empty_tree)
+                    try:
+                        diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenStagedAndMods: fallback find_similar failed")
             except Exception as e:
                 self.printException(e, "pygit2 staged->working diff failed")
                 return []
@@ -1444,8 +1465,8 @@ class TestRepo(AppException):
                             dt_py = (t1 - t0) if 't0' in locals() and 't1' in locals() else None
                             dt_cli = (t3 - t2) if 't2' in locals() and 't3' in locals() else None
                             print(f"TIMING: get {a}->{b} pygit2={dt_py:.3f if dt_py is not None else 'N/A'}s git={dt_cli:.3f if dt_cli is not None else 'N/A'}s")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.printException(e, "runFileListSampledComparisons: timing print failed")
                     if ok:
                         passed += 1
                     else:
@@ -1730,7 +1751,7 @@ class TestRepo(AppException):
 
                 walker = repo.walk(head.id, pygit2.GIT_SORT_TIME)
 
-                def path_in_diff(a_tree, b_tree) -> bool:
+                def path_in_diff(a_tree, b_tree, orig_a_none=False, orig_b_none=False) -> bool:
                     try:
                         if a_tree is None:
                             a_tree = self._empty_tree_for_repo(repo)
@@ -1739,6 +1760,12 @@ class TestRepo(AppException):
                         if a_tree is None or b_tree is None:
                             return False
                         diff = repo.diff(a_tree, b_tree)
+                        try:
+                            # Only enable rename detection when both sides were real trees
+                            if not orig_a_none and not orig_b_none:
+                                diff.find_similar(pygit2.GIT_DIFF_FIND_RENAMES)
+                        except Exception as e:
+                            self.printException(e, "getHashListFromFileName: find_similar failed")
                     except Exception as e:
                         self.printException(e, "getHashListFromFileName: repo.diff failed")
                         return False
@@ -1756,7 +1783,7 @@ class TestRepo(AppException):
                         # Root commit: compare against empty tree
                         if not parents:
                             b_tree = self._resolve_tree(c)
-                            if path_in_diff(None, b_tree):
+                            if path_in_diff(None, b_tree, True, False):
                                 matches.append(self._format_commit_entry(repo, c))
                             continue
 
@@ -1766,7 +1793,7 @@ class TestRepo(AppException):
                         all_match = True
                         for p in parents:
                             a_tree = self._resolve_tree(p)
-                            if not path_in_diff(a_tree, b_tree):
+                            if not path_in_diff(a_tree, b_tree, False, False):
                                 all_match = False
                                 break
                         if all_match:

@@ -145,6 +145,27 @@ def list_py_files(root: Path) -> List[Path]:
     return files
 
 
+def is_python_file(p: Path) -> bool:
+    """Return True if `p` is a Python file by extension or shebang.
+
+    This mirrors the heuristic used by `list_py_files` so callers can
+    easily decide whether to treat a supplied path as Python source.
+    """
+    try:
+        if p.suffix.lower() == ".py":
+            return True
+        if not p.is_file():
+            return False
+        with p.open("rb") as fh:
+            first = fh.readline(200).decode("utf-8", errors="ignore")
+        if re.search(r"^#!.*python", first):
+            return True
+    except Exception as e:
+        printException(e, f"is_python_file failed for {p}")
+        return False
+    return False
+
+
 def _find_bare_except_locations(path: Path, text: str, tree: ast.AST) -> List[tuple[int, bool]]:
     """Return list of (lineno, in_class) for bare `except:` handlers in AST.
 
@@ -1368,7 +1389,12 @@ def main(argv: List[str] | None = None) -> int:
                         logger.debug("  found: %s", q)
                         py_files_set.append(q)
                 elif p.exists():
-                    py_files_set.append(p)
+                    # Only include explicit files that look like Python source
+                    if is_python_file(p):
+                        logger.debug("including supplied python file: %s", p)
+                        py_files_set.append(p)
+                    else:
+                        logger.debug("skipping supplied non-python file: %s", p)
             except Exception as e:
                 printException(e, f"processing supplied path {p}")
                 continue
