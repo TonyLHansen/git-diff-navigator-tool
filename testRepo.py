@@ -1990,7 +1990,7 @@ class TestRepo(AppException):
                         # Root commit: compare against empty tree
                         if not parents:
                             b_tree = self._resolve_tree(c)
-                                if path_in_diff(None, b_tree, True, False):
+                            if path_in_diff(None, b_tree, True, False):
                                 matches.append(self._pygit2_format_commit_entry(repo, c))
                             continue
 
