@@ -1363,9 +1363,9 @@ class TestRepo(AppException):
             if not pygit2:
                 raise RuntimeError("pygit2 is not available")
             try:
-                detailed, a_raw, b_raw = self._run_pygit2_diff(self.STAGED, self.MODS)
+                detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff(self.STAGED, self.MODS)
             except Exception as e:
-                self.printException(e, "getFileListBetweenStagedAndMods: _run_pygit2_diff failed")
+                self.printException(e, "getFileListBetweenStagedAndMods: _pygit2_run_pygit2_diff failed")
                 return []
             try:
                 return self._deltas_to_results(detailed, a_raw, b_raw)
