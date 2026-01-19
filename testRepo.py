@@ -1804,7 +1804,7 @@ class TestRepo(AppException):
             commit_info.sort(key=lambda x: (x[0], x[1]), reverse=True)
             formatted: list[tuple[str, str, str]] = []
             for ts, h in commit_info:
-                formatted.append(self._format_commit_entry(repo, h))
+                formatted.append(self._pygit2_format_commit_entry(repo, h))
             return formatted
 
         else:
@@ -1990,8 +1990,8 @@ class TestRepo(AppException):
                         # Root commit: compare against empty tree
                         if not parents:
                             b_tree = self._resolve_tree(c)
-                            if path_in_diff(None, b_tree, True, False):
-                                matches.append(self._format_commit_entry(repo, c))
+                                if path_in_diff(None, b_tree, True, False):
+                                matches.append(self._pygit2_format_commit_entry(repo, c))
                             continue
 
                         # For merges and normal commits: require path to appear
@@ -2004,7 +2004,7 @@ class TestRepo(AppException):
                                 all_match = False
                                 break
                         if all_match:
-                            matches.append(self._format_commit_entry(repo, c))
+                            matches.append(self._pygit2_format_commit_entry(repo, c))
                     except Exception as e:
                         self.printException(e, "getHashListFromFileName: per-commit handling failed")
                         continue
