@@ -116,8 +116,8 @@ class TestRepo(AppException):
 
     # END: _resolve_tree v1
 
-    # BEGIN: _resolve_token_to_tree v1
-    def _resolve_token_to_tree(self, token):
+    # BEGIN: pygit2_resolve_token_to_tree v1
+    def pygit2_resolve_token_to_tree(self, token):
         """Resolve a token (NEWREPO/STAGED/MODS or commit-ish) to a pygit2.Tree or None.
 
         - `STAGED` -> tree built from index
@@ -134,7 +134,7 @@ class TestRepo(AppException):
                     oid = repo.index.write_tree()
                     return repo.get(oid)
                 except Exception as e:
-                    self.printException(e, "_resolve_token_to_tree: index -> tree failed")
+                    self.printException(e, "pygit2_resolve_token_to_tree: index -> tree failed")
                     return None
             if token == self.MODS:
                 # Represent working tree as None for pygit2.diff
@@ -146,21 +146,21 @@ class TestRepo(AppException):
             try:
                 obj = repo.revparse_single(token)
             except Exception as e:
-                self.printException(e, f"_resolve_token_to_tree: revparse_single({token}) failed")
+                self.printException(e, f"pygit2_resolve_token_to_tree: revparse_single({token}) failed")
                 try:
                     obj = repo.get(token)
                 except Exception as e2:
-                    self.printException(e2, f"_resolve_token_to_tree: resolving {token} failed")
+                    self.printException(e2, f"pygit2_resolve_token_to_tree: resolving {token} failed")
                     return None
             return self._resolve_tree(obj)
         except Exception as e:
-            self.printException(e, "_resolve_token_to_tree: unexpected failure")
+            self.printException(e, "pygit2_resolve_token_to_tree: unexpected failure")
             return None
 
-    # END: _resolve_token_to_tree v1
+    # END: pygit2_resolve_token_to_tree v1
 
-    # BEGIN: _format_commit_entry v1
-    def _format_commit_entry(self, repo, commit_or_hash) -> tuple[str, str, str]:
+    # BEGIN: _pygit2_format_commit_entry v1
+    def _pygit2_format_commit_entry(self, repo, commit_or_hash) -> tuple[str, str, str]:
         """Format a commit-like entry as "ISO HASH [subject]" when possible.
 
         If `commit_or_hash` can be resolved to a pygit2.Commit, include
@@ -177,7 +177,7 @@ class TestRepo(AppException):
                 try:
                     c = repo.get(commit_or_hash)
                 except Exception as e:
-                    self.printException(e, "_format_commit_entry: repo.get failed")
+                    self.printException(e, "_pygit2_format_commit_entry: repo.get failed")
                     return ("", str(commit_or_hash), "")
 
             if isinstance(c, pygit2.Commit):
@@ -185,7 +185,7 @@ class TestRepo(AppException):
                 try:
                     ts = int(getattr(c, "time", None) or getattr(c, "commit_time", None) or 0)
                 except Exception as e:
-                    self.printException(e, "_format_commit_entry: parsing timestamp failed")
+                    self.printException(e, "_pygit2_format_commit_entry: parsing timestamp failed")
                     ts = 0
 
                 iso = self._epoch_to_iso(ts)
@@ -199,7 +199,7 @@ class TestRepo(AppException):
                     msg = getattr(c, "message", "") or ""
                     subject = msg.splitlines()[0].strip() if msg else ""
                 except Exception as e:
-                    self.printException(e, "_format_commit_entry: extracting subject failed")
+                    self.printException(e, "_pygit2_format_commit_entry: extracting subject failed")
                     subject = ""
 
                 return (iso, ch, subject)
@@ -212,10 +212,219 @@ class TestRepo(AppException):
             return ("", ch, "")
         except Exception as e:
             # Fallback to raw tuple representation on error
-            self.printException(e, "_format_commit_entry failed")
+            self.printException(e, "_pygit2_format_commit_entry failed")
             return ("", str(commit_or_hash), "")
 
-    # END: _format_commit_entry v1
+    # END: _pygit2_format_commit_entry v1
+
+    # BEGIN: _pygit2_run_pygit2_diff v1
+    def _pygit2_run_pygit2_diff(self, prev_token, curr_token):
+        """Resolve tokens, run a pygit2 diff, and return detailed delta dicts + raw trees.
+
+        Returns a tuple `(detailed_list, a_raw, b_raw)` where `a_raw`/`b_raw` are
+        the resolved tree objects (or None when the token represents the working
+        tree) and `detailed_list` is a list of dicts with keys:
+        `path`, `status`, `old_oid`, `new_oid`, `old_path`, `new_path`, `delta`.
+        """
+        try:
+            repo = self.pygit2_repo
+            try:
+                a_raw = self.pygit2_resolve_token_to_tree(prev_token)
+                b_raw = self.pygit2_resolve_token_to_tree(curr_token)
+            except Exception as e:
+                self.printException(e, "_pygit2_run_pygit2_diff: token resolve failed")
+                return ([], None, None)
+
+            try:
+                a = a_raw if a_raw is not None else self._empty_tree_for_repo(repo)
+                b = b_raw if b_raw is not None else self._empty_tree_for_repo(repo)
+                if a is None or b is None:
+                    self.printException(RuntimeError("could not construct empty tree"), "_pygit2_run_pygit2_diff: empty-tree substitution failed")
+                    return ([], a_raw, b_raw)
+
+                try:
+                    diff = repo.diff(a, b)
+                except Exception as e:
+                    # Try a more explicit fallback when some libgit2 builds reject None
+                    self.printException(e, "_pygit2_run_pygit2_diff: repo.diff(a,b) failed, falling back to empty-tree")
+                    empty = self._empty_tree_for_repo(repo)
+                    if empty is None:
+                        self.printException(RuntimeError("failed to construct empty tree"), "_pygit2_run_pygit2_diff: empty tree construction failed")
+                        return ([], a_raw, b_raw)
+                    if a_raw is None:
+                        a = empty
+                    if b_raw is None:
+                        b = empty
+                    diff = repo.diff(a, b)
+
+                try:
+                    flags = _pygit2_similarity_flags()
+                    if flags:
+                        diff.find_similar(flags)
+                except Exception as e:
+                    self.printException(e, "_pygit2_run_pygit2_diff: find_similar failed")
+            except Exception as e:
+                self.printException(e, "_pygit2_run_pygit2_diff: pygit2 diff failed")
+                return ([], a_raw, b_raw)
+
+            detailed = []
+            for delta in diff.deltas:
+                old_path = getattr(delta.old_file, "path", None)
+                new_path = getattr(delta.new_file, "path", None)
+                path = new_path or old_path
+                status = self._delta_status_to_str(getattr(delta, "status", None), delta)
+                oid_old = None
+                oid_new = None
+                try:
+                    oid_old_obj = getattr(delta.old_file, "oid", None) or getattr(delta.old_file, "id", None)
+                    if oid_old_obj is not None:
+                        oid_old = str(oid_old_obj)
+                except Exception as e:
+                    oid_old = None
+                    self.printException(e, "_pygit2_run_pygit2_diff: extracting old oid failed")
+                try:
+                    oid_new_obj = getattr(delta.new_file, "oid", None) or getattr(delta.new_file, "id", None)
+                    if oid_new_obj is not None:
+                        oid_new = str(oid_new_obj)
+                except Exception as e:
+                    oid_new = None
+                    self.printException(e, "_pygit2_run_pygit2_diff: extracting new oid failed")
+                if path:
+                    detailed.append({
+                        "path": path,
+                        "status": status,
+                        "old_oid": oid_old,
+                        "new_oid": oid_new,
+                        "old_path": old_path,
+                        "new_path": new_path,
+                        "delta": delta,
+                    })
+
+            return (detailed, a_raw, b_raw)
+        except Exception as e:
+            self.printException(e, "_pygit2_run_pygit2_diff: unexpected failure")
+            return ([], None, None)
+    # END: _pygit2_run_pygit2_diff v1
+
+    # BEGIN: _deltas_to_results v1
+    def _deltas_to_results(self, detailed: list, a_raw, b_raw) -> list[tuple[str, str]]:
+        """Convert the detailed delta dicts into final `(path,status)` results.
+
+        This performs OID-based coalescing of delete+add -> rename, falls back
+        to walking the provided trees to resolve OIDs when needed, and finally
+        uses a fuzzy filename heuristic to coalesce likely renames.
+        """
+        try:
+            if not detailed:
+                return []
+
+            if self.verbose > 1:
+                print("DEBUG:raw detailed deltas:")
+                for it in detailed:
+                    print(f"DEBUG: delta path={it.get('path')} status={it.get('status')} old_path={it.get('old_path')} new_path={it.get('new_path')} old_oid={it.get('old_oid')} new_oid={it.get('new_oid')}")
+
+            added_by_oid: dict[str, list[dict]] = {}
+            deleted_by_oid: dict[str, list[dict]] = {}
+            for item in detailed:
+                if item["status"] == "added" and item["new_oid"]:
+                    added_by_oid.setdefault(item["new_oid"], []).append(item)
+                if item["status"] == "deleted" and item["old_oid"]:
+                    deleted_by_oid.setdefault(item["old_oid"], []).append(item)
+
+            # If no oid info, attempt to resolve by walking trees
+            if not added_by_oid and not deleted_by_oid:
+                try:
+                    commit_a_map: dict[str, str] = {}
+                    commit_b_map: dict[str, str] = {}
+
+                    def walk_commit_tree(tree, prefix, out_map):
+                        for entry in tree:
+                            p = os.path.join(prefix, entry.name) if prefix else entry.name
+                            try:
+                                oid_obj = getattr(entry, "oid", None) or getattr(entry, "id", None)
+                                if entry.type == 2:  # tree
+                                    sub = self.pygit2_repo.get(oid_obj) if oid_obj is not None else None
+                                    if sub is not None:
+                                        walk_commit_tree(sub, p, out_map)
+                                elif entry.type == 3:  # blob
+                                    out_map[p] = str(oid_obj) if oid_obj is not None else None
+                            except Exception as e:
+                                self.printException(e, "_deltas_to_results: walk_commit_tree entry handling failed")
+                                continue
+
+                    try:
+                        if a_raw is not None:
+                            walk_commit_tree(a_raw, "", commit_a_map)
+                        if b_raw is not None:
+                            walk_commit_tree(b_raw, "", commit_b_map)
+                    except Exception as e:
+                        commit_a_map = {}
+                        commit_b_map = {}
+                        self.printException(e, "_deltas_to_results: walking commit trees failed")
+
+                    for item in detailed:
+                        if item["status"] == "added":
+                            oid = None
+                            np = item.get("new_path") or item.get("path")
+                            if np and commit_b_map:
+                                oid = commit_b_map.get(np)
+                            if oid:
+                                added_by_oid.setdefault(oid, []).append(item)
+                        if item["status"] == "deleted":
+                            oid = None
+                            op = item.get("old_path") or item.get("path")
+                            if op and commit_a_map:
+                                oid = commit_a_map.get(op)
+                            if oid:
+                                deleted_by_oid.setdefault(oid, []).append(item)
+                except Exception as e:
+                    self.printException(e, "_deltas_to_results: resolving blob OIDs from trees failed")
+
+            used = set()
+            results: list[tuple[str, str]] = []
+
+            for oid in set(added_by_oid.keys()) & set(deleted_by_oid.keys()):
+                adds = added_by_oid.get(oid, [])
+                dels = deleted_by_oid.get(oid, [])
+                for a, d in zip(adds, dels):
+                    newp = a.get("new_path") or a.get("path")
+                    results.append((newp, f"renamed->{newp}"))
+                    used.add(id(a))
+                    used.add(id(d))
+
+            for item in detailed:
+                if id(item) in used:
+                    continue
+                results.append((item["path"], item["status"]))
+
+            try:
+                remaining_added = [it for it in detailed if it["status"] == "added" and id(it) not in used]
+                remaining_deleted = [it for it in detailed if it["status"] == "deleted" and id(it) not in used]
+                for d in remaining_deleted:
+                    best = None
+                    best_ratio = 0.0
+                    for a in remaining_added:
+                        r = difflib.SequenceMatcher(None, d.get("old_path") or d.get("path"), a.get("new_path") or a.get("path")).ratio()
+                        if r > best_ratio:
+                            best_ratio = r
+                            best = a
+                    if best and best_ratio >= 0.6:
+                        results = [r for r in results if r != (d["path"], d["status"]) and r != (best["path"], best["status"]) ]
+                        newp = best.get("new_path") or best.get("path")
+                        results.append((newp, f"renamed->{newp}"))
+                        used.add(id(d))
+                        used.add(id(best))
+                        remaining_added = [x for x in remaining_added if id(x) != id(best)]
+            except Exception as e:
+                self.printException(e, "_deltas_to_results: fuzzy rename heuristic failed")
+
+            results.sort(key=lambda x: x[0])
+            return results
+        except Exception as e:
+            self.printException(e, "_deltas_to_results: unexpected failure")
+            return []
+
+    # END: _deltas_to_results v1
 
     # BEGIN: index_mtime_iso v1
     def index_mtime_iso(self) -> str:
@@ -388,6 +597,37 @@ class TestRepo(AppException):
 
     # END: _parse_git_name_status_line v1
 
+    # BEGIN: _git_cli_name_status v1
+    def _git_cli_name_status(self, args: list) -> list[tuple[str, str]]:
+        """Run a `git` command that emits `--name-status`-style output and parse it.
+
+        `args` should be a list suitable for `subprocess.check_output`, for
+        example `['git','diff','--name-status', 'A', 'B']` or
+        `['git','diff','--name-status','--cached']`.
+        Returns a sorted list of `(path, status)`.
+        """
+        try:
+            try:
+                output = check_output(args, cwd=self.repoRoot, text=True)
+            except CalledProcessError as e:
+                self.printException(e, "git command failed")
+                return []
+
+            results: list[tuple[str, str]] = []
+            for line in output.splitlines():
+                if not line:
+                    continue
+                path, status = self._parse_git_name_status_line(line)
+                if path:
+                    results.append((path, status))
+            results.sort(key=lambda x: x[0])
+            return results
+        except Exception as e:
+            self.printException(e, "_git_cli_name_status: unexpected failure")
+            return []
+
+    # END: _git_cli_name_status v1
+
     # BEGIN: _empty_tree_for_repo v1
     def _empty_tree_for_repo(self, repo) -> "pygit2.Tree | None":
         """Construct and return an empty tree object for `repo`, or None on failure.
@@ -488,197 +728,20 @@ class TestRepo(AppException):
         if usePyGit2:
             if not pygit2:
                 raise RuntimeError("pygit2 is not available")
-            repo = self.pygit2_repo
-            # Resolve tokens to trees using the centralized helper
             try:
-                a = self._resolve_token_to_tree(prev_hash)
-                b = self._resolve_token_to_tree(curr_hash)
+                detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff(prev_hash, curr_hash)
             except Exception as ex:
-                self.printException(ex, "getFileListBetweenTwoCommits: token resolve failed")
+                self.printException(ex, "getFileListBetweenTwoCommits: _pygit2_run_pygit2_diff failed")
                 return []
             try:
-                # Ensure non-tree values are replaced with an explicit empty tree
-                if a is None:
-                    a = self._empty_tree_for_repo(repo)
-                if b is None:
-                    b = self._empty_tree_for_repo(repo)
-                if a is None or b is None:
-                    self.printException(RuntimeError("could not construct empty tree"), "getFileListBetweenTwoCommits: empty-tree substitution failed")
-                    return []
-                diff = repo.diff(a, b)
-                try:
-                    flags = _pygit2_similarity_flags()
-                    if flags:
-                        diff.find_similar(flags)
-                except Exception as e:
-                    self.printException(e, "getFileListBetweenTwoCommits: find_similar failed")
+                return self._deltas_to_results(detailed, a_raw, b_raw)
             except Exception as e:
-                self.printException(e, "getFileListBetweenTwoCommits: pygit2 diff failed")
+                self.printException(e, "getFileListBetweenTwoCommits: _deltas_to_results failed")
                 return []
-            # Collect detailed delta info so we can post-process delete+add -> rename
-            detailed: list[dict] = []
-            for delta in diff.deltas:
-                old_path = getattr(delta.old_file, "path", None)
-                new_path = getattr(delta.new_file, "path", None)
-                path = new_path or old_path
-                status = self._delta_status_to_str(getattr(delta, "status", None), delta)
-                # Try to extract oid/id in a tolerant way
-                oid_old = None
-                oid_new = None
-                try:
-                    oid_old_obj = getattr(delta.old_file, "oid", None) or getattr(delta.old_file, "id", None)
-                    if oid_old_obj is not None:
-                        oid_old = str(oid_old_obj)
-                except Exception as e:
-                    oid_old = None
-                    self.printException(e, "getFileListBetweenTwoCommits: extracting old oid failed")
-                try:
-                    oid_new_obj = getattr(delta.new_file, "oid", None) or getattr(delta.new_file, "id", None)
-                    if oid_new_obj is not None:
-                        oid_new = str(oid_new_obj)
-                except Exception as e:
-                    oid_new = None
-                    self.printException(e, "getFileListBetweenTwoCommits: extracting new oid failed")
-                if path:
-                    detailed.append({"path": path, "status": status, "old_oid": oid_old, "new_oid": oid_new, "old_path": old_path, "new_path": new_path})
-
-            # Post-process: coalesce delete+add pairs into a single 'renamed' when blob OIDs match.
-            if self.verbose > 1:
-                print("DEBUG:raw detailed deltas:")
-                for it in detailed:
-                    print(f"DEBUG: delta path={it.get('path')} status={it.get('status')} old_path={it.get('old_path')} new_path={it.get('new_path')} old_oid={it.get('old_oid')} new_oid={it.get('new_oid')}")
-            added_by_oid: dict[str, list[dict]] = {}
-            deleted_by_oid: dict[str, list[dict]] = {}
-            for item in detailed:
-                if item["status"] == "added" and item["new_oid"]:
-                    added_by_oid.setdefault(item["new_oid"], []).append(item)
-                if item["status"] == "deleted" and item["old_oid"]:
-                    deleted_by_oid.setdefault(item["old_oid"], []).append(item)
-
-            # If libgit2 didn't provide oid information on deltas, attempt
-            # to resolve blob OIDs by walking the commit trees `a` and `b`.
-            if not added_by_oid and not deleted_by_oid:
-                try:
-                    commit_a_map: dict[str, str] = {}
-                    commit_b_map: dict[str, str] = {}
-
-                    def walk_commit_tree(tree, prefix, out_map):
-                        for entry in tree:
-                            p = os.path.join(prefix, entry.name) if prefix else entry.name
-                            try:
-                                oid_obj = getattr(entry, "oid", None) or getattr(entry, "id", None)
-                                if entry.type == 2:  # tree
-                                    sub = self.pygit2_repo.get(oid_obj) if oid_obj is not None else None
-                                    if sub is not None:
-                                        walk_commit_tree(sub, p, out_map)
-                                elif entry.type == 3:  # blob
-                                    out_map[p] = str(oid_obj) if oid_obj is not None else None
-                            except Exception as e:
-                                self.printException(e, "getFileListBetweenTwoCommits: walk_commit_tree entry handling failed")
-                                continue
-
-                    try:
-                        if a is not None:
-                            walk_commit_tree(a, "", commit_a_map)
-                        if b is not None:
-                            walk_commit_tree(b, "", commit_b_map)
-                    except Exception as e:
-                        # If tree-walking fails, fall back to empty maps
-                        commit_a_map = {}
-                        commit_b_map = {}
-                        self.printException(e, "getFileListBetweenTwoCommits: walking commit trees failed")
-
-                    # Populate added_by_oid / deleted_by_oid from maps
-                    for item in detailed:
-                        if item["status"] == "added":
-                            oid = None
-                            np = item.get("new_path") or item.get("path")
-                            if np and commit_b_map:
-                                oid = commit_b_map.get(np)
-                            if oid:
-                                added_by_oid.setdefault(oid, []).append(item)
-                        if item["status"] == "deleted":
-                            oid = None
-                            op = item.get("old_path") or item.get("path")
-                            if op and commit_a_map:
-                                oid = commit_a_map.get(op)
-                            if oid:
-                                deleted_by_oid.setdefault(oid, []).append(item)
-                except Exception as e:
-                    # If any of this fails, fall back to leaving added_by_oid/deleted_by_oid empty
-                    self.printException(e, "getFileListBetweenTwoCommits: resolving blob OIDs from trees failed")
-
-            used = set()
-            results: list[tuple[str, str]] = []
-            # Match OIDs present in both maps
-            for oid in set(added_by_oid.keys()) & set(deleted_by_oid.keys()):
-                adds = added_by_oid.get(oid, [])
-                dels = deleted_by_oid.get(oid, [])
-                # Pair up one-to-one as best-effort
-                for a, d in zip(adds, dels):
-                    # Use the new path as the canonical renamed path
-                    newp = a.get("new_path") or a.get("path")
-                    results.append((newp, f"renamed->{newp}"))
-                    used.add(id(a))
-                    used.add(id(d))
-
-            # Include remaining items that weren't coalesced
-            for item in detailed:
-                if id(item) in used:
-                    continue
-                results.append((item["path"], item["status"]))
-
-            # Additional heuristic: if no OID match was found, try fuzzy
-            # filename matching to coalesce delete+add pairs that look like
-            # renames (best-effort, threshold-based).
-            try:
-                remaining_added = [it for it in detailed if it["status"] == "added" and id(it) not in used]
-                remaining_deleted = [it for it in detailed if it["status"] == "deleted" and id(it) not in used]
-                for d in remaining_deleted:
-                    best = None
-                    best_ratio = 0.0
-                    for a in remaining_added:
-                        r = difflib.SequenceMatcher(None, d.get("old_path") or d.get("path"), a.get("new_path") or a.get("path")).ratio()
-                        if r > best_ratio:
-                            best_ratio = r
-                            best = a
-                    if best and best_ratio >= 0.6:
-                        # coalesce
-                        results = [r for r in results if r != (d["path"], d["status"]) and r != (best["path"], best["status"])]
-                        newp = best.get("new_path") or best.get("path")
-                        results.append((newp, f"renamed->{newp}"))
-                        used.add(id(d))
-                        used.add(id(best))
-                        # remove matched add from remaining_added list
-                        remaining_added = [x for x in remaining_added if id(x) != id(best)]
-            except Exception as e:
-                self.printException(e, "getFileListBetweenTwoCommits: fuzzy rename heuristic failed")
-
-            # stable sort by path
-            results.sort(key=lambda x: x[0])
-            return results
 
         else:
             # git CLI fallback when not using pygit2 (commit -> commit)
-            try:
-                output = check_output(
-                    ["git", "diff", "--name-status", prev_hash, curr_hash],
-                    cwd=self.repoRoot,
-                    text=True,
-                )
-            except CalledProcessError as e:
-                self.printException(e, "git command failed")
-                return []
-
-            results: list[tuple[str, str]] = []
-            for line in output.splitlines():
-                if not line:
-                    continue
-                path, status = self._parse_git_name_status_line(line)
-                if path:
-                    results.append((path, status))
-            results.sort(key=lambda x: x[0])
-            return results
+            return self._git_cli_name_status(["git", "diff", "--name-status", prev_hash, curr_hash])
 
     # END: getFileListBetweenTwoCommits v1
 
@@ -835,35 +898,15 @@ class TestRepo(AppException):
             if not pygit2:
                 raise RuntimeError("pygit2 is not available")
             try:
-                c = self.pygit2_repo.revparse_single(curr_hash)
+                detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff(self.NEWREPO, curr_hash)
             except Exception as e:
-                self.printException(e, "revparse_single failed for curr_hash")
+                self.printException(e, "getFileListBetweenNewRepoAndHash: _pygit2_run_pygit2_diff failed")
                 return []
-            cur_tree = self._resolve_tree(c)
-            if cur_tree is None:
-                self.printException(ValueError("could not resolve curr_tree"), "_resolve_tree failed")
-                return []
-            # Construct an empty tree and diff empty->cur to avoid passing None
             try:
-                empty_tree = self._empty_tree_for_repo(self.pygit2_repo)
-                if empty_tree is None:
-                    self.printException(
-                        RuntimeError("failed to construct empty tree"),
-                        "getFileListBetweenNewRepoAndHash: empty tree construction failed",
-                    )
-                    return []
-                diff = self.pygit2_repo.diff(empty_tree, cur_tree)
+                return self._deltas_to_results(detailed, a_raw, b_raw)
             except Exception as e:
-                self.printException(e, "pygit2 initial-commit diff failed")
+                self.printException(e, "getFileListBetweenNewRepoAndHash: _deltas_to_results failed")
                 return []
-            results: list[tuple[str, str]] = []
-            for delta in diff.deltas:
-                path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                status = self._delta_status_to_str(getattr(delta, "status", None), delta)
-                if path:
-                    results.append((path, status))
-            results.sort(key=lambda x: x[0])
-            return results
 
         else:
             # git CLI fallback when not using pygit2 for initial->commit
@@ -894,63 +937,30 @@ class TestRepo(AppException):
         """
         ST = "STAGED"
         if usePyGit2:
+            repo = self.pygit2_repo
             try:
-                repo = self.pygit2_repo
-                # Build the index tree
-                idx_tree_oid = repo.index.write_tree()
-                idx_tree = repo.get(idx_tree_oid)
-
-                # Prefer comparing HEAD -> index (git --cached semantics).
-                head_tree = None
-                try:
-                    head_obj = repo.revparse_single("HEAD")
-                    head_tree = self._resolve_tree(head_obj)
-                except Exception as e:
-                    self.printException(e, "getFileListBetweenNewRepoAndStaged: HEAD revparse/resolve failed")
-                    head_tree = None
-
-                # If HEAD resolved to a tree, diff HEAD vs index; otherwise
-                # fall back to empty->index semantics for repositories without HEAD.
-                if head_tree is not None:
-                    diff = repo.diff(head_tree, idx_tree)
-                    try:
-                        flags = _pygit2_similarity_flags()
-                        if flags:
-                            diff.find_similar(flags)
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenNewRepoAndStaged: find_similar failed")
-                else:
-                    empty = self._empty_tree_for_repo(repo)
-                    if empty is None:
-                        raise RuntimeError("failed to construct empty tree")
-                    diff = repo.diff(empty, idx_tree)
-                results = []
-                for delta in diff.deltas:
-                    path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                    status = self._delta_status_to_str(getattr(delta, "status", None), delta)
-                    if path:
-                        results.append((path, status))
-                results.sort(key=lambda x: x[0])
-                return results
+                head_tree = self.pygit2_resolve_token_to_tree("HEAD")
             except Exception as e:
-                self.printException(e, "getFileListBetweenNewRepoAndStaged: pygit2 diff failed")
+                self.printException(e, "getFileListBetweenNewRepoAndStaged: token resolve failed")
+                return []
+
+            try:
+                if head_tree is not None:
+                    detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff("HEAD", self.STAGED)
+                else:
+                    detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff(self.NEWREPO, self.STAGED)
+            except Exception as e:
+                self.printException(e, "getFileListBetweenNewRepoAndStaged: _pygit2_run_pygit2_diff failed")
+                return []
+
+            try:
+                return self._deltas_to_results(detailed, a_raw, b_raw)
+            except Exception as e:
+                self.printException(e, "getFileListBetweenNewRepoAndStaged: _deltas_to_results failed")
                 return []
 
         # git CLI fallback when not using pygit2
-        try:
-            output = check_output(["git", "diff", "--name-status", "--cached"], cwd=self.repoRoot, text=True)
-        except CalledProcessError as e:
-            self.printException(e, "git command failed")
-            return []
-        res = []
-        for line in output.splitlines():
-            if not line:
-                continue
-            path, status = self._parse_git_name_status_line(line)
-            if path:
-                res.append((path, status))
-        res.sort(key=lambda x: x[0])
-        return res
+        return self._git_cli_name_status(["git", "diff", "--name-status", "--cached"])
 
     # END: getFileListBetweenNewRepoAndStaged v1
 
@@ -1082,20 +1092,7 @@ class TestRepo(AppException):
                 return []
 
         # git CLI fallback when not using pygit2
-        try:
-            output = check_output(["git", "diff", "--name-status"], cwd=self.repoRoot, text=True)
-        except CalledProcessError as e:
-            self.printException(e, "git command failed")
-            return []
-        res = []
-        for line in output.splitlines():
-            if not line:
-                continue
-            path, status = self._parse_git_name_status_line(line)
-            if path:
-                res.append((path, status))
-        res.sort(key=lambda x: x[0])
-        return res
+        return self._git_cli_name_status(["git", "diff", "--name-status"]) 
 
     # END: getFileListBetweenNewRepoAndMods v1
 
@@ -1312,35 +1309,26 @@ class TestRepo(AppException):
             if not pygit2:
                 raise RuntimeError("pygit2 is not available")
             try:
-                commit = self.pygit2_repo.revparse_single(hash)
+                head_tree = self.pygit2_resolve_token_to_tree(hash)
             except Exception as e:
-                self.printException(e, "revparse_single hash failed")
+                self.printException(e, "getFileListBetweenHashAndStaged: token resolve failed")
                 return []
-            head_tree = self._resolve_tree(commit)
+
             if head_tree is None:
                 self.printException(ValueError("could not resolve tree for hash"), "_resolve_tree failed")
                 return []
+
             try:
-                idx_tree_oid = self.pygit2_repo.index.write_tree()
-                idx_tree = self.pygit2_repo.get(idx_tree_oid)
-                diff = self.pygit2_repo.diff(head_tree, idx_tree)
-                try:
-                    flags = _pygit2_similarity_flags()
-                    if flags:
-                        diff.find_similar(flags)
-                except Exception as e:
-                    self.printException(e, "getFileListBetweenHashAndCurrentTime: find_similar failed")
+                detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff(hash, self.STAGED)
             except Exception as e:
-                self.printException(e, "pygit2 staged-vs-hash diff failed")
+                self.printException(e, "getFileListBetweenHashAndStaged: _pygit2_run_pygit2_diff failed")
                 return []
-            results: list[tuple[str, str]] = []
-            for delta in diff.deltas:
-                path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                status = self._delta_status_to_str(getattr(delta, "status", None), delta)
-                if path:
-                    results.append((path, status))
-            results.sort(key=lambda x: x[0])
-            return results
+
+            try:
+                return self._deltas_to_results(detailed, a_raw, b_raw)
+            except Exception as e:
+                self.printException(e, "getFileListBetweenHashAndStaged: _deltas_to_results failed")
+                return []
 
         else:
             # Use git CLI for staged-vs-HEAD list
@@ -1375,49 +1363,15 @@ class TestRepo(AppException):
             if not pygit2:
                 raise RuntimeError("pygit2 is not available")
             try:
-                # Write the index to a tree and diff index-tree -> working tree (using empty tree substitution)
-                idx_tree_oid = self.pygit2_repo.index.write_tree()
-                idx_tree = self.pygit2_repo.get(idx_tree_oid)
-                # Prefer diff against the working directory (None) when possible.
-                try:
-                    diff = self.pygit2_repo.diff(idx_tree, None)
-                    try:
-                        flags = _pygit2_similarity_flags()
-                        if flags:
-                            diff.find_similar(flags)
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenStagedAndMods: find_similar failed")
-                except Exception as e:
-                    self.printException(
-                        e,
-                        "getFileListBetweenStagedAndMods: repo.diff(idx_tree, None) failed, falling back to empty tree",
-                    )
-                    # Fall back to explicit empty-tree if libgit2 build rejects None
-                    empty_tree = self._empty_tree_for_repo(self.pygit2_repo)
-                    if empty_tree is None:
-                        self.printException(
-                            RuntimeError("failed to construct empty tree"),
-                            "getFileListBetweenStagedAndMods: empty tree construction failed",
-                        )
-                        return []
-                    diff = self.pygit2_repo.diff(idx_tree, empty_tree)
-                    try:
-                        flags = _pygit2_similarity_flags()
-                        if flags:
-                            diff.find_similar(flags)
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenStagedAndMods: fallback find_similar failed")
+                detailed, a_raw, b_raw = self._run_pygit2_diff(self.STAGED, self.MODS)
             except Exception as e:
-                self.printException(e, "pygit2 staged->working diff failed")
+                self.printException(e, "getFileListBetweenStagedAndMods: _run_pygit2_diff failed")
                 return []
-            results: list[tuple[str, str]] = []
-            for delta in diff.deltas:
-                path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                status = self._delta_status_to_str(getattr(delta, "status", None), delta)
-                if path:
-                    results.append((path, status))
-            results.sort(key=lambda x: x[0])
-            return results
+            try:
+                return self._deltas_to_results(detailed, a_raw, b_raw)
+            except Exception as e:
+                self.printException(e, "getFileListBetweenStagedAndMods: _deltas_to_results failed")
+                return []
 
         else:
             # Use git CLI to get the list of files
