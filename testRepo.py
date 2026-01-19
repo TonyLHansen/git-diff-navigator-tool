@@ -81,10 +81,11 @@ class TestRepo(AppException):
     MODS = "MODS"
 
     # BEGIN: __init__ v1
-    def __init__(self, repoRoot: str, verbose: int = 0):
+    def __init__(self, repoRoot: str, verbose: int = 0, silent: bool = False):
         self.repoRoot = repoRoot
         self.pygit2_repo = pygit2.Repository(self.repoRoot)
         self.verbose = verbose
+        self.silent = silent
 
     # END: __init__ v1
 
@@ -1663,7 +1664,7 @@ class TestRepo(AppException):
                     g = []
 
                 try:
-                    ok = show_diffs(f"\nget {a}->{b}", p, g, top, raw, self.verbose)
+                    ok = show_diffs(f"\nget {a}->{b}", p, g, top, raw, self.verbose, self.silent)
                     if self.verbose:
                         # Report timings for the sampled pair
                         try:
@@ -2073,7 +2074,7 @@ class TestRepo(AppException):
 
 
 # BEGIN: show_diffs v1
-def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool = False, verbose: int = 0) -> bool:
+def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool = False, verbose: int = 0, silent: bool = False) -> bool:
     """Show differences between two file lists. If equal and `top` > 0,
     print the first `top` lines from `list1`.
     Returns True when lists are equal, False when differences are found.
@@ -2104,6 +2105,8 @@ def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool
     disp2 = [fmt(e) for e in list2]
     diff = list(difflib.unified_diff(disp1, disp2, fromfile="pygit2", tofile="git", lineterm=""))
     if diff:
+        # Always report when differences are found. `--silent` only
+        # suppresses success/no-diff messages.
         if verbose > 0:
             print(f"[{test_name}] Differences found (verbose={verbose}):")
         else:
@@ -2113,10 +2116,11 @@ def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool
         return False
     else:
         lines = len(disp1)
-        if verbose > 0:
-            print(f"[{test_name}] No differences found in {lines} lines of output (verbose={verbose})")
-        else:
-            print(f"[{test_name}] No differences found in {lines} lines of output")
+        if not silent:
+            if verbose > 0:
+                print(f"[{test_name}] No differences found in {lines} lines of output (verbose={verbose})")
+            else:
+                print(f"[{test_name}] No differences found in {lines} lines of output")
         if top and top > 0:
             print(f"[{test_name}] Top {top} lines from pygit2 result:")
             for ln in list1[:top]:
@@ -2153,6 +2157,14 @@ def main():
         action="count",
         default=0,
         help="Increase verbosity (can be specified multiple times)",
+    )
+
+    parser.add_argument(
+        "-S",
+        "--silent",
+        action="store_true",
+        default=False,
+        help="Silence summary printouts such as 'No differences found in ## lines of output'",
     )
 
     parser.add_argument(
@@ -2286,7 +2298,7 @@ def main():
         disp_name = f"{func_name}:{name}"
         if test_repo.verbose:
             print(f"TIMING: {disp_name} pygit2={dur_py:.3f}s git={dur_cli:.3f}s")
-        return show_diffs(disp_name, l1, l2, args.top, args.raw, args.verbose)
+        return show_diffs(disp_name, l1, l2, args.top, args.raw, args.verbose, args.silent)
 
     allfuncs = [
         ("-1, File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None),
@@ -2396,7 +2408,7 @@ def main():
 
     for path in args.path:
         print(f"\n== Repository: {path} ==")
-        test_repo = TestRepo(path, args.verbose)
+        test_repo = TestRepo(path, args.verbose, args.silent)
 
         for i, (name, func, fname) in enumerate(to_run, 1):
             total += 1
@@ -2428,7 +2440,7 @@ def main():
                     try:
                         l1 = test_repo.getFileListBetweenNormalizedHashes(prev_hash, curr_hash, True)
                         l2 = test_repo.getFileListBetweenNormalizedHashes(prev_hash, curr_hash, False)
-                        ok = show_diffs(label, l1, l2, args.top, args.raw, args.verbose)
+                        ok = show_diffs(label, l1, l2, args.top, args.raw, args.verbose, args.silent)
                     except Exception as e:
                         test_repo.printException(e, f"invoking getFileListBetweenNormalizedHashes for {pair} failed")
                         ok = False
