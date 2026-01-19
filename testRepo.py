@@ -427,12 +427,134 @@ class TestRepo(AppException):
             except Exception as e:
                 self.printException(e, "getFileListBetweenTwoCommits: pygit2 diff failed")
                 return []
-            results: list[tuple[str, str]] = []
+            # Collect detailed delta info so we can post-process delete+add -> rename
+            detailed: list[dict] = []
             for delta in diff.deltas:
-                path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
+                old_path = getattr(delta.old_file, "path", None)
+                new_path = getattr(delta.new_file, "path", None)
+                path = new_path or old_path
                 status = self._delta_status_to_str(getattr(delta, "status", None))
+                # Try to extract oid/id in a tolerant way
+                oid_old = None
+                oid_new = None
+                try:
+                    oid_old_obj = getattr(delta.old_file, "oid", None) or getattr(delta.old_file, "id", None)
+                    if oid_old_obj is not None:
+                        oid_old = str(oid_old_obj)
+                except Exception:
+                    oid_old = None
+                try:
+                    oid_new_obj = getattr(delta.new_file, "oid", None) or getattr(delta.new_file, "id", None)
+                    if oid_new_obj is not None:
+                        oid_new = str(oid_new_obj)
+                except Exception:
+                    oid_new = None
                 if path:
-                    results.append((path, status))
+                    detailed.append({"path": path, "status": status, "old_oid": oid_old, "new_oid": oid_new, "old_path": old_path, "new_path": new_path})
+
+            # Post-process: coalesce delete+add pairs into a single 'renamed' when blob OIDs match.
+            added_by_oid: dict[str, list[dict]] = {}
+            deleted_by_oid: dict[str, list[dict]] = {}
+            for item in detailed:
+                if item["status"] == "added" and item["new_oid"]:
+                    added_by_oid.setdefault(item["new_oid"], []).append(item)
+                if item["status"] == "deleted" and item["old_oid"]:
+                    deleted_by_oid.setdefault(item["old_oid"], []).append(item)
+
+            # If libgit2 didn't provide oid information on deltas, attempt
+            # to resolve blob OIDs by walking the commit trees `a` and `b`.
+            if not added_by_oid and not deleted_by_oid:
+                try:
+                    commit_a_map: dict[str, str] = {}
+                    commit_b_map: dict[str, str] = {}
+
+                    def walk_commit_tree(tree, prefix, out_map):
+                        for entry in tree:
+                            p = os.path.join(prefix, entry.name) if prefix else entry.name
+                            try:
+                                oid_obj = getattr(entry, "oid", None) or getattr(entry, "id", None)
+                                if entry.type == 2:  # tree
+                                    sub = repo.get(oid_obj) if oid_obj is not None else None
+                                    if sub is not None:
+                                        walk_commit_tree(sub, p, out_map)
+                                elif entry.type == 3:  # blob
+                                    out_map[p] = str(oid_obj) if oid_obj is not None else None
+                            except Exception as _:
+                                continue
+
+                    try:
+                        if a is not None:
+                            walk_commit_tree(a, "", commit_a_map)
+                        if b is not None:
+                            walk_commit_tree(b, "", commit_b_map)
+                    except Exception:
+                        commit_a_map = {}
+                        commit_b_map = {}
+
+                    # Populate added_by_oid / deleted_by_oid from maps
+                    for item in detailed:
+                        if item["status"] == "added":
+                            oid = None
+                            np = item.get("new_path") or item.get("path")
+                            if np and commit_b_map:
+                                oid = commit_b_map.get(np)
+                            if oid:
+                                added_by_oid.setdefault(oid, []).append(item)
+                        if item["status"] == "deleted":
+                            oid = None
+                            op = item.get("old_path") or item.get("path")
+                            if op and commit_a_map:
+                                oid = commit_a_map.get(op)
+                            if oid:
+                                deleted_by_oid.setdefault(oid, []).append(item)
+                except Exception:
+                    # If any of this fails, fall back to leaving added_by_oid/deleted_by_oid empty
+                    pass
+
+            used = set()
+            results: list[tuple[str, str]] = []
+            # Match OIDs present in both maps
+            for oid in set(added_by_oid.keys()) & set(deleted_by_oid.keys()):
+                adds = added_by_oid.get(oid, [])
+                dels = deleted_by_oid.get(oid, [])
+                # Pair up one-to-one as best-effort
+                for a, d in zip(adds, dels):
+                    # Use the new path as the canonical renamed path
+                    results.append((a.get("new_path") or a.get("path"), "renamed"))
+                    used.add(id(a))
+                    used.add(id(d))
+
+            # Include remaining items that weren't coalesced
+            for item in detailed:
+                if id(item) in used:
+                    continue
+                results.append((item["path"], item["status"]))
+
+            # Additional heuristic: if no OID match was found, try fuzzy
+            # filename matching to coalesce delete+add pairs that look like
+            # renames (best-effort, threshold-based).
+            try:
+                remaining_added = [it for it in detailed if it["status"] == "added" and id(it) not in used]
+                remaining_deleted = [it for it in detailed if it["status"] == "deleted" and id(it) not in used]
+                for d in remaining_deleted:
+                    best = None
+                    best_ratio = 0.0
+                    for a in remaining_added:
+                        r = difflib.SequenceMatcher(None, d.get("old_path") or d.get("path"), a.get("new_path") or a.get("path")).ratio()
+                        if r > best_ratio:
+                            best_ratio = r
+                            best = a
+                    if best and best_ratio >= 0.6:
+                        # coalesce
+                        results = [r for r in results if r != (d["path"], d["status"]) and r != (best["path"], best["status"])]
+                        results.append((best.get("new_path") or best.get("path"), "renamed"))
+                        used.add(id(d))
+                        used.add(id(best))
+                        # remove matched add from remaining_added list
+                        remaining_added = [x for x in remaining_added if id(x) != id(best)]
+            except Exception:
+                pass
+
             # stable sort by path
             results.sort(key=lambda x: x[0])
             return results
@@ -1962,7 +2084,7 @@ def main():
     parser.add_argument(
         "-H",
         "--getFileListBetweenNormalizedHashes",
-        nargs="*",
+        action="append",
         default=None,
         help="Invoke getFileListBetweenNormalizedHashes for comma-separated pairs (e.g. -H d22ead,f225e7)",
     )
