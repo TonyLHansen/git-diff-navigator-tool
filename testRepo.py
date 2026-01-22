@@ -895,7 +895,14 @@ class TestRepo(AppException):
                             results.append((new_path or old_path, "modified"))
                         elif status_code == pygit2.GIT_DELTA_RENAMED:
                             tgt = new_path or old_path
-                            results.append((tgt, f"renamed->{tgt}" if tgt else "renamed"))
+                            # Guard against spurious rename-to-self cases where
+                            # libgit2/pygit2 reports a rename but the old and
+                            # new paths are identical. Treat these as
+                            # modifications to avoid confusing "renamed->same".
+                            if old_path and new_path and old_path == new_path:
+                                results.append((tgt, "modified"))
+                            else:
+                                results.append((tgt, f"renamed->{tgt}" if tgt else "renamed"))
                         elif status_code == pygit2.GIT_DELTA_COPIED:
                             results.append((new_path or old_path, "copied"))
                         else:
