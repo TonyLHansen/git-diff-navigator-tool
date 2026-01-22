@@ -850,14 +850,65 @@ class TestRepo(AppException):
             if not pygit2:
                 raise RuntimeError("pygit2 is not available")
             try:
-                detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff(prev_hash, curr_hash)
-            except Exception as ex:
-                self.printException(ex, "getFileListBetweenTwoCommits: _pygit2_run_pygit2_diff failed")
-                return []
-            try:
-                return self._deltas_to_results(detailed, a_raw, b_raw)
+                repo = self.pygit2_repo
+                try:
+                    prev_obj = repo.revparse_single(prev_hash)
+                    curr_obj = repo.revparse_single(curr_hash)
+                except Exception as e:
+                    # Fall back to repo.get if revparse_single fails
+                    try:
+                        prev_obj = repo.get(prev_hash)
+                    except Exception:
+                        prev_obj = None
+                    try:
+                        curr_obj = repo.get(curr_hash)
+                    except Exception:
+                        curr_obj = None
+
+                if prev_obj is None or curr_obj is None:
+                    return []
+
+                # Use pygit2 diff between the two commit/tree objects. Keep
+                # ordering consistent with `git diff prev curr`.
+                try:
+                    diff = repo.diff(prev_obj, curr_obj)
+                except Exception as e:
+                    # If direct diff fails, try resolving to trees explicitly
+                    a_tree = self._resolve_tree(prev_obj)
+                    b_tree = self._resolve_tree(curr_obj)
+                    if a_tree is None or b_tree is None:
+                        self.printException(e, "getFileListBetweenTwoCommits: cannot resolve commits to trees for diff")
+                        return []
+                    diff = repo.diff(a_tree, b_tree)
+
+                results: list[tuple[str, str]] = []
+                for delta in diff.deltas:
+                    try:
+                        status_code = getattr(delta, "status", None)
+                        old_path = getattr(delta.old_file, "path", None)
+                        new_path = getattr(delta.new_file, "path", None)
+                        if status_code == pygit2.GIT_DELTA_ADDED:
+                            results.append((new_path or old_path, "added"))
+                        elif status_code == pygit2.GIT_DELTA_DELETED:
+                            results.append((old_path or new_path, "deleted"))
+                        elif status_code == pygit2.GIT_DELTA_MODIFIED:
+                            results.append((new_path or old_path, "modified"))
+                        elif status_code == pygit2.GIT_DELTA_RENAMED:
+                            tgt = new_path or old_path
+                            results.append((tgt, f"renamed->{tgt}" if tgt else "renamed"))
+                        elif status_code == pygit2.GIT_DELTA_COPIED:
+                            results.append((new_path or old_path, "copied"))
+                        else:
+                            # Fallback: treat as modified
+                            results.append((new_path or old_path, "modified"))
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenTwoCommits: processing delta failed")
+                        continue
+
+                results.sort(key=lambda x: x[0])
+                return results
             except Exception as e:
-                self.printException(e, "getFileListBetweenTwoCommits: _deltas_to_results failed")
+                self.printException(e, "getFileListBetweenTwoCommits: pygit2 simple diff failed")
                 return []
 
         else:
