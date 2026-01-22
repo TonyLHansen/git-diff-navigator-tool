@@ -2,6 +2,9 @@
 
 """Test pygit2 and git CLI repository file listing methods."""
 
+#  getFileListBetweenHashAndCurrentTime, getFileListBetweenStagedAndMods,
+# getFileListUntrackedAndIgnored, and getFileListBetweenNewRepoAndMods
+
 import argparse
 import difflib
 import sys
@@ -1281,275 +1284,48 @@ class TestRepo(AppException):
 
     # END: getFileListBetweenTopHashAndCurrentTime v1
 
-    # BEGIN: getFileListBetweenHashAndCurrentTime v1
-    def getFileListBetweenHashAndCurrentTime(self, hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
-        """Return `(path,status)` for files changed between `hash` and working tree.
+    # BEGIN: _getCachedFileList v1
+    def _getCachedFileList(self, key: str, git_args: list) -> list[tuple[str, str]]:
+        """Run `git_args` (list) and cache the parsed name-status results under `key`.
 
-        Generalization of getFileListBetweenTopHashAndCurrentTime for any commit-ish.
+        Returns a sorted list of `(path,status)`. On git failure returns [].
         """
-        if usePyGit2:
-            if not pygit2:
-                raise RuntimeError("pygit2 is not available")
-            try:
-                commit = self.pygit2_repo.revparse_single(hash)
-            except Exception as e:
-                self.printException(e, "revparse_single hash failed")
-                return []
-            # Resolve the commit tree and compare it to the working directory
-            # by inspecting file contents. This avoids passing `None` to
-            # `pygit2.diff` which can raise ValueError in some environments.
-            cur_tree = self._resolve_tree(commit)
-            if cur_tree is None:
-                self.printException(ValueError("could not resolve tree for hash"), "_resolve_tree failed")
-                return []
-
-            repo = self.pygit2_repo
-
-            # Prefer the centralized pygit2 diff runner so we get a stable
-            # `detailed` list (with find_similar applied) and consistent
-            # post-processing via `_deltas_to_results`. Fall back to the
-            # previous manual compare when this fails.
-            try:
-                try:
-                    # Run centralized diff for commit -> working tree
-                    detailed_mods, a_raw_mods, b_raw_mods = self._pygit2_run_pygit2_diff(hash, self.MODS)
-                except Exception as e:
-                    self.printException(e, "getFileListBetweenHashAndCurrentTime: _pygit2_run_pygit2_diff (MODS) failed")
-                    raise
-
-                try:
-                    results_mods = self._deltas_to_results(detailed_mods, a_raw_mods, b_raw_mods)
-                except Exception as e:
-                    self.printException(e, "getFileListBetweenHashAndCurrentTime: _deltas_to_results (MODS) failed")
-                    results_mods = []
-
-                # Also compute commit -> staged (index) diffs to include staged
-                # additions which comparing commit -> working-tree may omit.
-                try:
-                    detailed_staged, a_raw_staged, b_raw_staged = self._pygit2_run_pygit2_diff(hash, self.STAGED)
-                except Exception as e:
-                    # Non-fatal: if staged diff fails, continue with mods-only
-                    self.printException(e, "getFileListBetweenHashAndCurrentTime: _pygit2_run_pygit2_diff (STAGED) failed")
-                    detailed_staged = []
-                    a_raw_staged = None
-                    b_raw_staged = None
-
-                try:
-                    results_staged = self._deltas_to_results(detailed_staged, a_raw_staged, b_raw_staged) if detailed_staged else []
-                except Exception as e:
-                    self.printException(e, "getFileListBetweenHashAndCurrentTime: _deltas_to_results (STAGED) failed")
-                    results_staged = []
-
-                # Union results: prefer 'added' when any backend reports added
-                merged: dict[str, str] = {}
-                for p, s in results_mods:
-                    merged[p] = s
-                for p, s in results_staged:
-                    prev = merged.get(p)
-                    if prev is None:
-                        merged[p] = s
-                    else:
-                        # If either indicates 'added', keep 'added'
-                        if s == 'added' or prev == 'added':
-                            merged[p] = 'added'
-                        else:
-                            merged[p] = prev
-
-                # Supplement with untracked working-tree files (WT_NEW) not in merged
-                try:
-                    st_new = getattr(pygit2, "GIT_STATUS_WT_NEW", 0)
-                    try:
-                        status_map = repo.status()
-                    except Exception:
-                        status_map = {}
-                    for pth, flags in status_map.items():
-                        try:
-                            if not (flags & st_new) or pth in merged:
-                                continue
-
-                            # Skip supplementing if the path is already present
-                            # in the index or in the commit/HEAD tree according
-                            # to pygit2 — this avoids adding tooling/debug
-                            # files that are effectively tracked or staged.
-                            in_index = False
-                            try:
-                                _ = repo.index[pth]
-                                in_index = True
-                            except Exception:
-                                in_index = False
-
-                            in_head = False
-                            try:
-                                _ = repo.revparse_single(f"HEAD:{pth}")
-                                in_head = True
-                            except Exception:
-                                in_head = False
-
-                            if in_index or in_head:
-                                if self.verbose > 1:
-                                    print(f"DEBUG: skipped untracked present in index/HEAD {pth}")
-                                continue
-
-                            merged[pth] = 'added'
-                            if self.verbose > 1:
-                                print(f"DEBUG: supplemented untracked added {pth}")
-                        except Exception:
-                            pass
-                except Exception as e:
-                    self.printException(e, "getFileListBetweenHashAndCurrentTime: supplementing untracked failed")
-
-                results = sorted([(p, s) for p, s in merged.items()], key=lambda x: x[0])
-                return results
-            except Exception:
-                # If the centralized path fails, fall back to the previous
-                # manual tree->workdir compare implementation below.
-                pass
-
-            # Build a mapping of paths -> blob OIDs for the commit tree
-            commit_files: dict[str, str] = {}
-
-            def walk_tree(tree, prefix=""):
-                count = 0
-                for entry in tree:
-                    p = os.path.join(prefix, entry.name) if prefix else entry.name
-                    try:
-                        # Debug small sample of entries
-                        if count < 20:
-                            if self.verbose > 1:
-                                print(f"DEBUG:tree entry name={entry.name} type={entry.type}")
-                        count += 1
-                        # Resolve oid/id attribute in a version-tolerant way
-                        oid = getattr(entry, "oid", None) or getattr(entry, "id", None)
-                        if entry.type == 2:  # tree
-                            if oid is None:
-                                raise RuntimeError("tree entry missing oid/id")
-                            t = repo.get(oid)
-                            walk_tree(t, p)
-                        elif entry.type == 3:  # blob
-                            try:
-                                commit_files[p] = str(oid)
-                                if len(commit_files) < 50:
-                                    if self.verbose > 1:
-                                        print(f"DEBUG:added commit_file {p} -> {oid}")
-                            except Exception as ex:
-                                self.printException(
-                                    ex, f"getFileListBetweenHashAndCurrentTime: failed to add commit_file {p}"
-                                )
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenHashAndCurrentTime: tree entry handling failed")
-                        continue
+        try:
+            if not hasattr(self, "_cmd_cache"):
+                self._cmd_cache = {}
+            if key in self._cmd_cache:
+                return self._cmd_cache[key]
 
             try:
-                # Debug constants
-                if self.verbose > 1:
-                    print(
-                        f"DEBUG:pygit2.GIT_OBJ_TREE={getattr(pygit2,'GIT_OBJ_TREE',None)} GIT_OBJ_BLOB={getattr(pygit2,'GIT_OBJ_BLOB',None)}"
-                    )
-                walk_tree(cur_tree)
-            except Exception as e:
-                self.printException(e, "getFileListBetweenHashAndCurrentTime: walking tree failed")
-                return []
-
-            # Debugging: small summary of discovered commit/work file counts
-            try:
-                if self.verbose > 1:
-                    print(f"DEBUG:getFileListBetweenHashAndCurrentTime commit_files={len(commit_files)}")
-                    try:
-                        print(f"DEBUG:cur_tree_type={type(cur_tree)}")
-                        print(f"DEBUG:cur_tree_len={len(cur_tree)}")
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenHashAndCurrentTime: debug printing failed")
-                    if len(commit_files) < 10:
-                        print(f"DEBUG:commit sample={list(commit_files.keys())[:20]}")
-            except Exception as e:
-                self.printException(e, "getFileListBetweenHashAndCurrentTime: debug summary failed")
-
-            # Build a mapping of working-tree files -> content bytes
-            work_files: dict[str, bytes] = {}
-            for root, dirs, files in os.walk(self.repoRoot):
-                # Skip .git directory
-                if ".git" in root.split(os.sep):
-                    continue
-                for fname in files:
-                    fp = os.path.join(root, fname)
-                    # Skip files outside repository worktree
-                    try:
-                        rel = os.path.relpath(fp, self.repoRoot)
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenHashAndCurrentTime: relpath failed")
-                        continue
-                    if rel.startswith(".git"):
-                        continue
-                    try:
-                        with open(fp, "rb") as fh:
-                            work_files[rel] = fh.read()
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenHashAndCurrentTime: reading work file failed")
-                        continue
-
-            results: list[tuple[str, str]] = []
-            # Compare union of paths
-            all_paths = set(commit_files.keys()) | set(work_files.keys())
-            for path in sorted(all_paths):
-                in_commit = path in commit_files
-                in_work = path in work_files
-                if in_commit and not in_work:
-                    results.append((path, "deleted"))
-                elif not in_commit and in_work:
-                    # Exclude untracked files (WT_NEW) from being reported as
-                    # 'added' — this matches `git diff <commit>` behavior.
-                    try:
-                        st = repo.status_file(path)
-                        # Treat untracked files (WT_NEW) as 'added' so the
-                        # pygit2 path mirrors `git diff <commit>` behavior where
-                        # new working-tree files are reported as added.
-                        # Older behavior skipped untracked files; that caused
-                        # mismatches vs git CLI in sampled comparisons.
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenHashAndCurrentTime: status_file failed")
-                        st = 0
-                    # Report as added regardless of WT_NEW flag
-                    results.append((path, "added"))
-                else:
-                    # Present in both: compare blob content
-                    try:
-                        blob = repo.get(commit_files[path])
-                        commit_data = blob.data if hasattr(blob, "data") else blob.read_raw()
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenHashAndCurrentTime: repo.get blob failed")
-                        commit_data = None
-                    work_data = work_files.get(path)
-                    if commit_data is None:
-                        # If we can't read commit blob, conservatively mark modified
-                        results.append((path, "modified"))
-                    else:
-                        if work_data != commit_data:
-                            results.append((path, "modified"))
-
-            return results
-
-        else:
-            # Use git CLI to get the list of files
-            try:
-                output = check_output(
-                    ["git", "diff", "--name-status", hash],
-                    cwd=self.repoRoot,
-                    text=True,
-                )
+                output = check_output(git_args, cwd=self.repoRoot, text=True)
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
+                self._cmd_cache[key] = []
                 return []
+
             results: list[tuple[str, str]] = []
             for line in output.splitlines():
                 if not line:
                     continue
-                # Parse git --name-status line (handles rename/new-path selection)
                 path, status = self._parse_git_name_status_line(line)
                 if path:
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
+            self._cmd_cache[key] = results
             return results
+        except Exception as e:
+            self.printException(e, "_getCachedFileList: unexpected failure")
+            return []
+    # END: _getCachedFileList v1
 
+    # BEGIN: getFileListBetweenHashAndCurrentTime v1
+    def getFileListBetweenHashAndCurrentTime(self, hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
+        """Return `(path,status)` for files changed between `hash` and working tree.
+
+        Uses the git CLI plus a one-time cache via `_getCachedFileList`.
+        """
+        key = f"getFileListBetweenHashAndCurrentTime:{hash}"
+        return self._getCachedFileList(key, ["git", "diff", "--name-status", hash])
     # END: getFileListBetweenHashAndCurrentTime v1
 
     # BEGIN: getFileListBetweenTopHashAndStaged v1
