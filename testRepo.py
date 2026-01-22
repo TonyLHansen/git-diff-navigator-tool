@@ -236,6 +236,33 @@ class TestRepo(AppException):
                 self.printException(e, "_pygit2_run_pygit2_diff: token resolve failed")
                 return ([], None, None)
 
+            # Instrumentation: small runtime summary for debugging diff invocation
+            try:
+                if self.verbose > 0:
+                    a_type = type(a_raw).__name__ if a_raw is not None else "None"
+                    b_type = type(b_raw).__name__ if b_raw is not None else "None"
+                    print(f"DEBUG: _pygit2_run_pygit2_diff resolved a_raw={a_type} b_raw={b_type} prev={prev_token} curr={curr_token}")
+                    try:
+                        repo.index.read()
+                        try:
+                            idx_oid = repo.index.write_tree()
+                        except Exception:
+                            idx_oid = None
+                        print(f"DEBUG: _pygit2_run_pygit2_diff index write_tree oid={idx_oid}")
+                    except Exception:
+                        print("DEBUG: _pygit2_run_pygit2_diff index info unavailable")
+                    try:
+                        st = repo.status()
+                        total = len(st)
+                        untracked = sum(1 for _, flags in st.items() if flags & getattr(pygit2, 'GIT_STATUS_WT_NEW', 0))
+                        modified = sum(1 for _, flags in st.items() if flags & getattr(pygit2, 'GIT_STATUS_WT_MODIFIED', 0))
+                        deleted = sum(1 for _, flags in st.items() if flags & getattr(pygit2, 'GIT_STATUS_WT_DELETED', 0))
+                        print(f"DEBUG: _pygit2_run_pygit2_diff repo.status summary total={total} untracked={untracked} modified={modified} deleted={deleted}")
+                    except Exception:
+                        print("DEBUG: _pygit2_run_pygit2_diff repo.status unavailable")
+            except Exception:
+                pass
+
             try:
                 # Try to diff using the resolved raw objects directly. For
                 # working-tree comparisons `a_raw` or `b_raw` may be `None` and
@@ -352,11 +379,41 @@ class TestRepo(AppException):
 
             added_by_oid: dict[str, list[dict]] = {}
             deleted_by_oid: dict[str, list[dict]] = {}
+            # Per-item entry tracing for lifecycle debugging
             for item in detailed:
+                if self.verbose > 1:
+                    try:
+                        print(f"DEBUG: entering item id={id(item)} path={item.get('path')} status={item.get('status')} old_oid={item.get('old_oid')} new_oid={item.get('new_oid')}")
+                    except Exception:
+                        pass
                 if item["status"] == "added" and item["new_oid"]:
                     added_by_oid.setdefault(item["new_oid"], []).append(item)
+                    if self.verbose > 1:
+                        try:
+                            print(f"DEBUG: mapped added id={id(item)} new_oid={item.get('new_oid')} -> {item.get('path')}")
+                        except Exception:
+                            pass
                 if item["status"] == "deleted" and item["old_oid"]:
                     deleted_by_oid.setdefault(item["old_oid"], []).append(item)
+                    if self.verbose > 1:
+                        try:
+                            print(f"DEBUG: mapped deleted id={id(item)} old_oid={item.get('old_oid')} -> {item.get('path')}")
+                        except Exception:
+                            pass
+
+            if self.verbose > 1:
+                try:
+                    print(f"DEBUG:_deltas_to_results added_by_oid count={len(added_by_oid)} deleted_by_oid count={len(deleted_by_oid)}")
+                    if added_by_oid:
+                        for k, v in list(added_by_oid.items())[:10]:
+                            paths = [it.get('path') or it.get('new_path') for it in v]
+                            print(f"DEBUG: added_by_oid {k} -> {paths}")
+                    if deleted_by_oid:
+                        for k, v in list(deleted_by_oid.items())[:10]:
+                            paths = [it.get('path') or it.get('old_path') for it in v]
+                            print(f"DEBUG: deleted_by_oid {k} -> {paths}")
+                except Exception as _:
+                    pass
 
             # If no oid info, attempt to resolve by walking trees
             if not added_by_oid and not deleted_by_oid:
@@ -416,13 +473,28 @@ class TestRepo(AppException):
                 for a, d in zip(adds, dels):
                     newp = a.get("new_path") or a.get("path")
                     results.append((newp, f"renamed->{newp}"))
+                    if self.verbose > 1:
+                        try:
+                            print(f"DEBUG: coalesced oid={oid} rename {d.get('path')} -> {newp}")
+                        except Exception:
+                            pass
                     used.add(id(a))
                     used.add(id(d))
 
             for item in detailed:
                 if id(item) in used:
+                    if self.verbose > 1:
+                        try:
+                            print(f"DEBUG: skipping used item {item.get('path')} status={item.get('status')}")
+                        except Exception:
+                            pass
                     continue
                 results.append((item["path"], item["status"]))
+                if self.verbose > 1:
+                    try:
+                        print(f"DEBUG: appended result {item.get('path')} status={item.get('status')}")
+                    except Exception:
+                        pass
 
             try:
                 remaining_added = [it for it in detailed if it["status"] == "added" and id(it) not in used]
@@ -436,7 +508,12 @@ class TestRepo(AppException):
                             best_ratio = r
                             best = a
                     if best and best_ratio >= 0.6:
-                        results = [r for r in results if r != (d["path"], d["status"]) and r != (best["path"], best["status"]) ]
+                        if self.verbose > 1:
+                            try:
+                                print(f"DEBUG: fuzzy rename match {d.get('path')} -> {best.get('path')} ratio={best_ratio}")
+                            except Exception:
+                                pass
+                        results = [r for r in results if r != (d["path"], d["status"]) and r != (best["path"], best["status"])]
                         newp = best.get("new_path") or best.get("path")
                         results.append((newp, f"renamed->{newp}"))
                         used.add(id(d))
@@ -444,6 +521,23 @@ class TestRepo(AppException):
                         remaining_added = [x for x in remaining_added if id(x) != id(best)]
             except Exception as e:
                 self.printException(e, "_deltas_to_results: fuzzy rename heuristic failed")
+
+            try:
+                # Ensure any remaining 'added' items that weren't consumed
+                # by rename/coalesce logic are preserved in the final list.
+                res_paths = {p for p, _ in results}
+                for it in detailed:
+                    try:
+                        if it.get("status") == "added" and id(it) not in used:
+                            p = it.get("new_path") or it.get("path")
+                            if p and p not in res_paths:
+                                results.append((p, "added"))
+                                if self.verbose > 1:
+                                    print(f"DEBUG: preserved remaining added {p}")
+                    except Exception:
+                        pass
+            except Exception as e:
+                self.printException(e, "_deltas_to_results: preserving remaining added entries failed")
 
             results.sort(key=lambda x: x[0])
             return results
@@ -1037,12 +1131,6 @@ class TestRepo(AppException):
                             self.printException(e, "getFileListBetweenNewRepoAndMods: status_file failed")
                         if st is not None:
                             status_map[rel] = st
-                            # Skip untracked files to match git CLI behavior
-                            try:
-                                if st & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
-                                    continue
-                            except Exception as e:
-                                self.printException(e, "getFileListBetweenNewRepoAndMods: status bit test failed")
 
                         # Compute a SHA-1 hash of the file contents; if reading
                         # fails, fall back to storing the file mtime so callers
@@ -1092,13 +1180,14 @@ class TestRepo(AppException):
                             self.printException(e, "getFileListBetweenNewRepoAndMods: status_file failed")
                             continue
 
-                    # Skip untracked files (WT_NEW) to match git CLI behavior
+                    # Include untracked files (WT_NEW) as 'added' to match
+                    # `git diff` semantics for initial->working-tree comparisons.
                     if st & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
-                        continue
-
-                    # Include only working-tree changes
-                    if wt_mask and not (st & wt_mask):
-                        continue
+                        s = "added"
+                    else:
+                        # Include only working-tree changes (mask may be 0)
+                        if wt_mask and not (st & wt_mask):
+                            continue
 
                     # Map working-tree status to human-friendly string
                     if st & getattr(pygit2, "GIT_STATUS_WT_DELETED", 0):
@@ -1158,22 +1247,105 @@ class TestRepo(AppException):
 
             repo = self.pygit2_repo
 
-            # Try libgit2/pygit2 diff against working directory directly first.
+            # Prefer the centralized pygit2 diff runner so we get a stable
+            # `detailed` list (with find_similar applied) and consistent
+            # post-processing via `_deltas_to_results`. Fall back to the
+            # previous manual compare when this fails.
             try:
-                diff = repo.diff(cur_tree, None)
-                results: list[tuple[str, str]] = []
-                for delta in diff.deltas:
-                    path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                    status = self._delta_status_to_str(getattr(delta, "status", None), delta)
-                    if path:
-                        results.append((path, status))
-                results.sort(key=lambda x: x[0])
+                try:
+                    # Run centralized diff for commit -> working tree
+                    detailed_mods, a_raw_mods, b_raw_mods = self._pygit2_run_pygit2_diff(hash, self.MODS)
+                except Exception as e:
+                    self.printException(e, "getFileListBetweenHashAndCurrentTime: _pygit2_run_pygit2_diff (MODS) failed")
+                    raise
+
+                try:
+                    results_mods = self._deltas_to_results(detailed_mods, a_raw_mods, b_raw_mods)
+                except Exception as e:
+                    self.printException(e, "getFileListBetweenHashAndCurrentTime: _deltas_to_results (MODS) failed")
+                    results_mods = []
+
+                # Also compute commit -> staged (index) diffs to include staged
+                # additions which comparing commit -> working-tree may omit.
+                try:
+                    detailed_staged, a_raw_staged, b_raw_staged = self._pygit2_run_pygit2_diff(hash, self.STAGED)
+                except Exception as e:
+                    # Non-fatal: if staged diff fails, continue with mods-only
+                    self.printException(e, "getFileListBetweenHashAndCurrentTime: _pygit2_run_pygit2_diff (STAGED) failed")
+                    detailed_staged = []
+                    a_raw_staged = None
+                    b_raw_staged = None
+
+                try:
+                    results_staged = self._deltas_to_results(detailed_staged, a_raw_staged, b_raw_staged) if detailed_staged else []
+                except Exception as e:
+                    self.printException(e, "getFileListBetweenHashAndCurrentTime: _deltas_to_results (STAGED) failed")
+                    results_staged = []
+
+                # Union results: prefer 'added' when any backend reports added
+                merged: dict[str, str] = {}
+                for p, s in results_mods:
+                    merged[p] = s
+                for p, s in results_staged:
+                    prev = merged.get(p)
+                    if prev is None:
+                        merged[p] = s
+                    else:
+                        # If either indicates 'added', keep 'added'
+                        if s == 'added' or prev == 'added':
+                            merged[p] = 'added'
+                        else:
+                            merged[p] = prev
+
+                # Supplement with untracked working-tree files (WT_NEW) not in merged
+                try:
+                    st_new = getattr(pygit2, "GIT_STATUS_WT_NEW", 0)
+                    try:
+                        status_map = repo.status()
+                    except Exception:
+                        status_map = {}
+                    for pth, flags in status_map.items():
+                        try:
+                            if not (flags & st_new) or pth in merged:
+                                continue
+
+                            # Skip supplementing if the path is already present
+                            # in the index or in the commit/HEAD tree according
+                            # to pygit2 — this avoids adding tooling/debug
+                            # files that are effectively tracked or staged.
+                            in_index = False
+                            try:
+                                _ = repo.index[pth]
+                                in_index = True
+                            except Exception:
+                                in_index = False
+
+                            in_head = False
+                            try:
+                                _ = repo.revparse_single(f"HEAD:{pth}")
+                                in_head = True
+                            except Exception:
+                                in_head = False
+
+                            if in_index or in_head:
+                                if self.verbose > 1:
+                                    print(f"DEBUG: skipped untracked present in index/HEAD {pth}")
+                                continue
+
+                            merged[pth] = 'added'
+                            if self.verbose > 1:
+                                print(f"DEBUG: supplemented untracked added {pth}")
+                        except Exception:
+                            pass
+                except Exception as e:
+                    self.printException(e, "getFileListBetweenHashAndCurrentTime: supplementing untracked failed")
+
+                results = sorted([(p, s) for p, s in merged.items()], key=lambda x: x[0])
                 return results
-            except Exception as e:
-                self.printException(
-                    e,
-                    "getFileListBetweenHashAndCurrentTime: pygit2 tree->workdir diff failed, falling back to manual compare",
-                )
+            except Exception:
+                # If the centralized path fails, fall back to the previous
+                # manual tree->workdir compare implementation below.
+                pass
 
             # Build a mapping of paths -> blob OIDs for the commit tree
             commit_files: dict[str, str] = {}
@@ -1270,11 +1442,15 @@ class TestRepo(AppException):
                     # 'added' — this matches `git diff <commit>` behavior.
                     try:
                         st = repo.status_file(path)
-                        if st & pygit2.GIT_STATUS_WT_NEW:
-                            # skip untracked
-                            continue
+                        # Treat untracked files (WT_NEW) as 'added' so the
+                        # pygit2 path mirrors `git diff <commit>` behavior where
+                        # new working-tree files are reported as added.
+                        # Older behavior skipped untracked files; that caused
+                        # mismatches vs git CLI in sampled comparisons.
                     except Exception as e:
                         self.printException(e, "getFileListBetweenHashAndCurrentTime: status_file failed")
+                        st = 0
+                    # Report as added regardless of WT_NEW flag
                     results.append((path, "added"))
                 else:
                     # Present in both: compare blob content
@@ -1676,7 +1852,18 @@ class TestRepo(AppException):
                 t0 = t1 = t2 = t3 = 0
                 try:
                     t0 = time.perf_counter()
-                    p = self.getFileListBetweenNormalizedHashes(a, b, True)
+                    # Use the public dispatcher so all call paths (including
+                    # commit->staged merging) are exercised for pygit2 results.
+                    try:
+                        p = self.getFileListBetweenNormalizedHashes(a, b, True)
+                    except Exception as e:
+                        self.printException(e, f"runFileListSampledComparisons: pygit2 handler failed for {a}->{b}")
+                        p = []
+                    # Keep detailed raw deltas empty so diagnostics can
+                    # request them if needed (they are expensive).
+                    detailed = None
+                    a_raw = None
+                    b_raw = None
                     t1 = time.perf_counter()
                 except Exception as e:
                     self.printException(e, f"runFileListSampledComparisons: pygit2 diff failed for {a}->{b}")
@@ -1699,6 +1886,60 @@ class TestRepo(AppException):
                             print(f"TIMING: get {a}->{b} pygit2={dt_py:.3f}s git={dt_cli:.3f}s")
                         except Exception as e:
                             self.printException(e, "runFileListSampledComparisons: timing print failed")
+                    # If the sampled comparison failed, produce focused debug
+                    # output to help diagnose mismatches between pygit2 and git CLI.
+                    if not ok and self.verbose:
+                        try:
+                            print(f"DEBUG: Failure diagnostics for sampled pair {a}->{b}")
+                            print(f"DEBUG: pygit2 returned {len(p)} entries; git returned {len(g)} entries")
+                            set_p = set([x[0] for x in p])
+                            set_g = set([x[0] for x in g])
+                            only_p = sorted(list(set_p - set_g))
+                            only_g = sorted(list(set_g - set_p))
+                            print(f"DEBUG: paths only in pygit2 ({len(only_p)}): {only_p[:10]}")
+                            print(f"DEBUG: paths only in git ({len(only_g)}): {only_g[:10]}")
+                            # Request detailed pygit2 delta objects for deeper inspection
+                            try:
+                                # Prefer reusing the previously computed detailed
+                                # list so diagnostics examine the same objects.
+                                if detailed is None:
+                                    detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff(a, b)
+                                print(f"DEBUG: _pygit2_run_pygit2_diff returned {len(detailed)} detailed deltas")
+                                if self.verbose > 1:
+                                    for dd in detailed[:50]:
+                                        try:
+                                            print(f"DEBUG: detailed delta: path={dd.get('path')} status={dd.get('status')} old_oid={dd.get('old_oid')} new_oid={dd.get('new_oid')}")
+                                        except Exception:
+                                            print(f"DEBUG: detailed delta repr: {dd!r}")
+                                # Print raw tree refs (if available)
+                                print(f"DEBUG: a_raw={a_raw!r} b_raw={b_raw!r}")
+
+                                # Run the same post-processing used by the normal pygit2 path
+                                try:
+                                    processed = self._deltas_to_results(detailed, a_raw, b_raw)
+                                    print(f"DEBUG: post-processed pygit2 results (from detailed) count={len(processed)}")
+                                    if self.verbose > 0:
+                                        for it in processed[:50]:
+                                            try:
+                                                print(f"DEBUG: post-processed: {it}")
+                                            except Exception:
+                                                print(f"DEBUG: post-processed repr: {it!r}")
+                                    # Compare processed results to the previously computed `p`
+                                    try:
+                                        set_processed = set([x[0] for x in processed])
+                                        set_p_orig = set([x[0] for x in p])
+                                        only_proc = sorted(list(set_processed - set_p_orig))
+                                        only_orig = sorted(list(set_p_orig - set_processed))
+                                        print(f"DEBUG: paths only in post-processed (not in p): {only_proc[:10]}")
+                                        print(f"DEBUG: paths only in original p (not in post-processed): {only_orig[:10]}")
+                                    except Exception as e:
+                                        self.printException(e, "runFileListSampledComparisons: comparing processed->p failed")
+                                except Exception as e:
+                                    self.printException(e, "runFileListSampledComparisons: post-processing detailed deltas failed")
+                            except Exception as e:
+                                self.printException(e, "runFileListSampledComparisons: fetching detailed pygit2 diff failed")
+                        except Exception as e:
+                            self.printException(e, "runFileListSampledComparisons: failure diagnostics failed")
                     if ok:
                         passed += 1
                     else:
