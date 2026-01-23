@@ -1147,6 +1147,7 @@ class TestRepo(AppException):
     # END: getFileListBetweenNewRepoAndStaged v1
 
     # BEGIN: getFileListBetweenNewRepoAndMods v1
+    # make git-only
     def getFileListBetweenNewRepoAndMods(self, usePyGit2: bool) -> list[tuple[str, str]]:
         """Specialized handler for initial (empty) -> working tree (mods) comparison.
 
@@ -1392,6 +1393,7 @@ class TestRepo(AppException):
     # END: getFileListBetweenHashAndStaged v1
 
     # BEGIN: getFileListBetweenStagedAndMods v1
+    # make git-only
     def getFileListBetweenStagedAndMods(self, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return a list of `(path, status)` for files changed between staged index and working tree (mods)."""
         # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
@@ -1411,30 +1413,14 @@ class TestRepo(AppException):
                 return []
 
         else:
-            # Use git CLI to get the list of files
-            try:
-                output = check_output(
-                    ["git", "diff", "--name-status"],
-                    cwd=self.repoRoot,
-                    text=True,
-                )
-            except CalledProcessError as e:
-                self.printException(e, "git command failed")
-                return []
-            results: list[tuple[str, str]] = []
-            for line in output.splitlines():
-                if not line:
-                    continue
-                # Parse git --name-status line (handles rename/new-path selection)
-                path, status = self._parse_git_name_status_line(line)
-                if path:
-                    results.append((path, status))
-            results.sort(key=lambda x: x[0])
-            return results
+            # Use git CLI to get the list of files; cache the results once per process
+            key = "getFileListBetweenStagedAndMods"
+            return self._getCachedFileList(key, ["git", "diff", "--name-status"]) 
 
     # END: getFileListBetweenStagedAndMods v1
 
     # BEGIN: getFileListUntrackedAndIgnored v1
+    # make git-only
     def getFileListUntrackedAndIgnored(self, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a sorted list of `(path, iso_mtime, status)` for files that are
         either untracked or ignored in the working tree.
