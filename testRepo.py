@@ -34,7 +34,11 @@ def _pygit2_similarity_flags() -> int:
     if hasattr(pygit2, "GIT_DIFF_FIND_COPIES"):
         flags |= getattr(pygit2, "GIT_DIFF_FIND_COPIES")
     # Extend where available
-    for name in ("GIT_DIFF_FIND_COPIES_FROM_UNMODIFIED", "GIT_DIFF_FIND_RENAMES_FROM_REWRITES", "GIT_DIFF_FIND_FOR_UNTRACKED"):
+    for name in (
+        "GIT_DIFF_FIND_COPIES_FROM_UNMODIFIED",
+        "GIT_DIFF_FIND_RENAMES_FROM_REWRITES",
+        "GIT_DIFF_FIND_FOR_UNTRACKED",
+    ):
         if hasattr(pygit2, name):
             flags |= getattr(pygit2, name)
     return flags
@@ -244,7 +248,9 @@ class TestRepo(AppException):
                 if self.verbose > 0:
                     a_type = type(a_raw).__name__ if a_raw is not None else "None"
                     b_type = type(b_raw).__name__ if b_raw is not None else "None"
-                    print(f"DEBUG: _pygit2_run_pygit2_diff resolved a_raw={a_type} b_raw={b_type} prev={prev_token} curr={curr_token}")
+                    print(
+                        f"DEBUG: _pygit2_run_pygit2_diff resolved a_raw={a_type} b_raw={b_type} prev={prev_token} curr={curr_token}"
+                    )
                     try:
                         repo.index.read()
                         try:
@@ -259,10 +265,16 @@ class TestRepo(AppException):
                     try:
                         st = repo.status()
                         total = len(st)
-                        untracked = sum(1 for _, flags in st.items() if flags & getattr(pygit2, 'GIT_STATUS_WT_NEW', 0))
-                        modified = sum(1 for _, flags in st.items() if flags & getattr(pygit2, 'GIT_STATUS_WT_MODIFIED', 0))
-                        deleted = sum(1 for _, flags in st.items() if flags & getattr(pygit2, 'GIT_STATUS_WT_DELETED', 0))
-                        print(f"DEBUG: _pygit2_run_pygit2_diff repo.status summary total={total} untracked={untracked} modified={modified} deleted={deleted}")
+                        untracked = sum(1 for _, flags in st.items() if flags & getattr(pygit2, "GIT_STATUS_WT_NEW", 0))
+                        modified = sum(
+                            1 for _, flags in st.items() if flags & getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0)
+                        )
+                        deleted = sum(
+                            1 for _, flags in st.items() if flags & getattr(pygit2, "GIT_STATUS_WT_DELETED", 0)
+                        )
+                        print(
+                            f"DEBUG: _pygit2_run_pygit2_diff repo.status summary total={total} untracked={untracked} modified={modified} deleted={deleted}"
+                        )
                     except Exception as e:
                         self.printException(e, "_pygit2_run_pygit2_diff: repo.status unavailable")
                         print("DEBUG: _pygit2_run_pygit2_diff repo.status unavailable")
@@ -287,7 +299,10 @@ class TestRepo(AppException):
                     self.printException(e, "_pygit2_run_pygit2_diff: repo.diff(a,b) failed, falling back to empty-tree")
                     empty = self._empty_tree_for_repo(repo)
                     if empty is None:
-                        self.printException(RuntimeError("failed to construct empty tree"), "_pygit2_run_pygit2_diff: empty tree construction failed")
+                        self.printException(
+                            RuntimeError("failed to construct empty tree"),
+                            "_pygit2_run_pygit2_diff: empty tree construction failed",
+                        )
                         return ([], a_raw, b_raw)
                     a = a if a is not None else empty
                     b = b if b is not None else empty
@@ -315,10 +330,10 @@ class TestRepo(AppException):
                 if self.verbose > 1:
                     try:
                         print(f"DEBUG: raw delta repr={delta!r}")
-                        of = getattr(delta, 'old_file', None)
-                        nf = getattr(delta, 'new_file', None)
-                        oo = getattr(of, 'oid', None) or getattr(of, 'id', None) if of is not None else None
-                        no = getattr(nf, 'oid', None) or getattr(nf, 'id', None) if nf is not None else None
+                        of = getattr(delta, "old_file", None)
+                        nf = getattr(delta, "new_file", None)
+                        oo = getattr(of, "oid", None) or getattr(of, "id", None) if of is not None else None
+                        no = getattr(nf, "oid", None) or getattr(nf, "id", None) if nf is not None else None
                         print(f"DEBUG: old_file.path={getattr(of,'path',None)} old_oid_obj={oo}")
                         print(f"DEBUG: new_file.path={getattr(nf,'path',None)} new_oid_obj={no}")
                     except Exception as e:
@@ -338,20 +353,23 @@ class TestRepo(AppException):
                     oid_new = None
                     self.printException(e, "_pygit2_run_pygit2_diff: extracting new oid failed")
                 if path:
-                    detailed.append({
-                        "path": path,
-                        "status": status,
-                        "old_oid": oid_old,
-                        "new_oid": oid_new,
-                        "old_path": old_path,
-                        "new_path": new_path,
-                        "delta": delta,
-                    })
+                    detailed.append(
+                        {
+                            "path": path,
+                            "status": status,
+                            "old_oid": oid_old,
+                            "new_oid": oid_new,
+                            "old_path": old_path,
+                            "new_path": new_path,
+                            "delta": delta,
+                        }
+                    )
 
             return (detailed, a_raw, b_raw)
         except Exception as e:
             self.printException(e, "_pygit2_run_pygit2_diff: unexpected failure")
             return ([], None, None)
+
     # END: _pygit2_run_pygit2_diff v1
 
     # BEGIN: _deltas_to_results v1
@@ -1051,6 +1069,7 @@ class TestRepo(AppException):
         except Exception as e:
             self.printException(e, "_getCachedFileList: unexpected failure")
             return []
+
     # END: _getCachedFileList v1
 
     # BEGIN: getFileListBetweenHashAndCurrentTime v1
@@ -1061,6 +1080,7 @@ class TestRepo(AppException):
         """
         key = f"getFileListBetweenHashAndCurrentTime:{hash}"
         return self._getCachedFileList(key, ["git", "diff", "--name-status", hash])
+
     # END: getFileListBetweenHashAndCurrentTime v1
 
     # BEGIN: getFileListBetweenTopHashAndStaged v1
@@ -1149,7 +1169,7 @@ class TestRepo(AppException):
         else:
             # Use git CLI to get the list of files; cache the results once per process
             key = "getFileListBetweenStagedAndMods"
-            return self._getCachedFileList(key, ["git", "diff", "--name-status"]) 
+            return self._getCachedFileList(key, ["git", "diff", "--name-status"])
 
     # END: getFileListBetweenStagedAndMods v1
 
@@ -1303,6 +1323,7 @@ class TestRepo(AppException):
         # Place NEWREPO pseudo-entry last
         sampleHashes.append(("", self.NEWREPO, "Newly created repository"))
         return sampleHashes
+
     # END: getHashListSamplePlusEnds v1
 
     # BEGIN: runFileListSampledComparisons v1
@@ -1389,7 +1410,9 @@ class TestRepo(AppException):
                                 if self.verbose > 1:
                                     for dd in detailed[:50]:
                                         try:
-                                            print(f"DEBUG: detailed delta: path={dd.get('path')} status={dd.get('status')} old_oid={dd.get('old_oid')} new_oid={dd.get('new_oid')}")
+                                            print(
+                                                f"DEBUG: detailed delta: path={dd.get('path')} status={dd.get('status')} old_oid={dd.get('old_oid')} new_oid={dd.get('new_oid')}"
+                                            )
                                         except Exception as e:
                                             self.printException(e, "debug: printing detailed delta failed")
                                             print(f"DEBUG: detailed delta repr: {dd!r}")
@@ -1399,7 +1422,9 @@ class TestRepo(AppException):
                                 # Run the same post-processing used by the normal pygit2 path
                                 try:
                                     processed = self._deltas_to_results(detailed, a_raw, b_raw)
-                                    print(f"DEBUG: post-processed pygit2 results (from detailed) count={len(processed)}")
+                                    print(
+                                        f"DEBUG: post-processed pygit2 results (from detailed) count={len(processed)}"
+                                    )
                                     if self.verbose > 0:
                                         for it in processed[:50]:
                                             try:
@@ -1414,13 +1439,21 @@ class TestRepo(AppException):
                                         only_proc = sorted(list(set_processed - set_p_orig))
                                         only_orig = sorted(list(set_p_orig - set_processed))
                                         print(f"DEBUG: paths only in post-processed (not in p): {only_proc[:10]}")
-                                        print(f"DEBUG: paths only in original p (not in post-processed): {only_orig[:10]}")
+                                        print(
+                                            f"DEBUG: paths only in original p (not in post-processed): {only_orig[:10]}"
+                                        )
                                     except Exception as e:
-                                        self.printException(e, "runFileListSampledComparisons: comparing processed->p failed")
+                                        self.printException(
+                                            e, "runFileListSampledComparisons: comparing processed->p failed"
+                                        )
                                 except Exception as e:
-                                    self.printException(e, "runFileListSampledComparisons: post-processing detailed deltas failed")
+                                    self.printException(
+                                        e, "runFileListSampledComparisons: post-processing detailed deltas failed"
+                                    )
                             except Exception as e:
-                                self.printException(e, "runFileListSampledComparisons: fetching detailed pygit2 diff failed")
+                                self.printException(
+                                    e, "runFileListSampledComparisons: fetching detailed pygit2 diff failed"
+                                )
                         except Exception as e:
                             self.printException(e, "runFileListSampledComparisons: failure diagnostics failed")
                     if ok:
@@ -1824,7 +1857,9 @@ class TestRepo(AppException):
 
 
 # BEGIN: show_diffs v1
-def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool = False, verbose: int = 0, silent: bool = False) -> bool:
+def show_diffs(
+    test_name: str, list1: list, list2: list, top: int = 0, raw: bool = False, verbose: int = 0, silent: bool = False
+) -> bool:
     """Show differences between two file lists. If equal and `top` > 0,
     print the first `top` lines from `list1`.
     Returns True when lists are equal, False when differences are found.
@@ -1876,6 +1911,7 @@ def show_diffs(test_name: str, list1: list, list2: list, top: int = 0, raw: bool
                 else:
                     print(fmt(ln))
         return True
+
 
 # END: show_diffs v1
 
