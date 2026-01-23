@@ -1425,158 +1425,85 @@ class TestRepo(AppException):
         """Return a sorted list of `(path, iso_mtime, status)` for files that are
         either untracked or ignored in the working tree.
 
+        This implementation is git-CLI-only and ignores the `usePyGit2` flag.
         - `status` is one of: `untracked`, `ignored`.
         - `iso_mtime` is produced from the filesystem mtime via `_epoch_to_iso`.
-
-        Prefer `pygit2` when `usePyGit2` is True; otherwise fall back to `git ls-files`.
         """
-        results: list[tuple[str, str, str]] = []
-        seen: set[str] = set()
         try:
-            if usePyGit2:
-                if not pygit2:
-                    raise RuntimeError("pygit2 is not available")
-                repo = self.pygit2_repo
-                for root, dirs, files in os.walk(self.repoRoot):
-                    # Skip .git directory contents
-                    if ".git" in root.split(os.sep):
-                        continue
-                    for fname in files:
-                        fp = os.path.join(root, fname)
-                        try:
-                            rel = os.path.relpath(fp, self.repoRoot)
-                        except Exception as e:
-                            self.printException(e, "getFileListUntrackedAndIgnored: relpath failed")
-                            continue
-                        if rel.startswith(".git"):
-                            continue
-                        try:
-                            st = repo.status_file(rel)
-                        except Exception as e:
-                            self.printException(e, "getFileListUntrackedAndIgnored: status_file failed")
-                            continue
+            if not hasattr(self, "_cmd_cache"):
+                self._cmd_cache = {}
+            cache_key = "getFileListUntrackedAndIgnored"
+            if cache_key in self._cmd_cache:
+                return self._cmd_cache[cache_key]
 
-                        # Detect untracked and ignored states
-                        if st & getattr(pygit2, "GIT_STATUS_WT_NEW", 0):
-                            status = "untracked"
-                        elif st & getattr(pygit2, "GIT_STATUS_IGNORED", 0):
-                            status = "ignored"
-                        else:
-                            continue
+            results: list[tuple[str, str, str]] = []
+            seen: set[str] = set()
 
-                        if rel in seen:
-                            continue
-                        seen.add(rel)
-                        try:
-                            if os.path.islink(fp):
-                                # explicitly use lstat for symlink's own mtime
-                                mtime = os.lstat(fp).st_mtime
-                            else:
-                                mtime = os.path.getmtime(fp)
-                        except FileNotFoundError as _no_logging:
-                            # file disappeared between listing and stat; skip it
-                            continue
-                        except Exception as e:
-                            # Log initial failure, then fallback: try lstat in case getmtime failed for other reasons
-                            self.printException(e, "getFileListUntrackedAndIgnored: initial mtime attempt failed")
-                            try:
-                                mtime = os.lstat(fp).st_mtime
-                            except FileNotFoundError as _no_logging:
-                                # target not present; skip
-                                continue
-                            except Exception as e2:
-                                self.printException(e2, "getFileListUntrackedAndIgnored: getting mtime failed")
-                                mtime = 0
-                        iso = self._epoch_to_iso(mtime)
-                        results.append((rel, iso, status))
-
-                results.sort(key=lambda x: x[0])
-                return results
-
-            else:
-                # git CLI fallback: use `git ls-files` to list untracked and ignored
+            untracked_out = ""
+            ignored_out = ""
+            try:
+                untracked_out = check_output(
+                    ["git", "ls-files", "--others", "--exclude-standard"], cwd=self.repoRoot, text=True
+                )
+            except CalledProcessError as e:
+                self.printException(e, "git ls-files untracked failed")
                 untracked_out = ""
+
+            try:
+                ignored_out = check_output(
+                    ["git", "ls-files", "--others", "-i", "--exclude-standard"], cwd=self.repoRoot, text=True
+                )
+            except CalledProcessError as e:
+                self.printException(e, "git ls-files ignored failed")
                 ignored_out = ""
+
+            for line in untracked_out.splitlines():
+                rel = line.strip()
+                rel = self._decode_git_quoted_path(rel)
+                if not rel or rel in seen:
+                    continue
+                seen.add(rel)
+                fp = os.path.join(self.repoRoot, rel)
                 try:
-                    untracked_out = check_output(
-                        ["git", "ls-files", "--others", "--exclude-standard"], cwd=self.repoRoot, text=True
-                    )
-                except CalledProcessError as e:
-                    self.printException(e, "git ls-files untracked failed")
-                    untracked_out = ""
+                    if os.path.islink(fp):
+                        mtime = os.lstat(fp).st_mtime
+                    elif os.path.exists(fp):
+                        mtime = os.path.getmtime(fp)
+                    else:
+                        mtime = None
+                except FileNotFoundError:
+                    continue
+                except Exception as e:
+                    self.printException(e, "getFileListUntrackedAndIgnored: stat failed")
+                    mtime = None
+                iso = self._epoch_to_iso(mtime) if mtime is not None else self.index_mtime_iso()
+                results.append((rel, iso, "untracked"))
+
+            for line in ignored_out.splitlines():
+                rel = line.strip()
+                rel = self._decode_git_quoted_path(rel)
+                if not rel or rel in seen:
+                    continue
+                seen.add(rel)
+                fp = os.path.join(self.repoRoot, rel)
                 try:
-                    ignored_out = check_output(
-                        ["git", "ls-files", "--others", "-i", "--exclude-standard"], cwd=self.repoRoot, text=True
-                    )
-                except CalledProcessError as e:
-                    self.printException(e, "git ls-files ignored failed")
-                    ignored_out = ""
+                    if os.path.islink(fp):
+                        mtime = os.lstat(fp).st_mtime
+                    elif os.path.exists(fp):
+                        mtime = os.path.getmtime(fp)
+                    else:
+                        mtime = None
+                except FileNotFoundError:
+                    continue
+                except Exception as e:
+                    self.printException(e, "getFileListUntrackedAndIgnored: stat failed")
+                    mtime = None
+                iso = self._epoch_to_iso(mtime) if mtime is not None else self.index_mtime_iso()
+                results.append((rel, iso, "ignored"))
 
-                for line in untracked_out.splitlines():
-                    rel = line.strip()
-                    # git may emit quoted/escaped paths for special chars; decode them
-                    rel = self._decode_git_quoted_path(rel)
-                    if not rel:
-                        continue
-                    if rel in seen:
-                        continue
-                    seen.add(rel)
-                    fp = os.path.join(self.repoRoot, rel)
-                    try:
-                        if os.path.islink(fp):
-                            mtime = os.lstat(fp).st_mtime
-                        else:
-                            mtime = os.path.getmtime(fp)
-                    except FileNotFoundError as _no_logging:
-                        # file vanished; skip adding
-                        continue
-                    except Exception as e:
-                        # Log initial failure, then fallback to lstat
-                        self.printException(
-                            e, "getFileListUntrackedAndIgnored: initial mtime attempt failed (untracked)"
-                        )
-                        try:
-                            mtime = os.lstat(fp).st_mtime
-                        except FileNotFoundError as _no_logging:
-                            continue
-                        except Exception as e2:
-                            self.printException(e2, "getFileListUntrackedAndIgnored: mtime failed for untracked")
-                            mtime = 0
-                    iso = self._epoch_to_iso(mtime)
-                    results.append((rel, iso, "untracked"))
-
-                for line in ignored_out.splitlines():
-                    rel = line.strip()
-                    # git may emit quoted/escaped paths for special chars; decode them
-                    rel = self._decode_git_quoted_path(rel)
-                    if not rel or rel in seen:
-                        continue
-                    seen.add(rel)
-                    fp = os.path.join(self.repoRoot, rel)
-                    try:
-                        if os.path.islink(fp):
-                            mtime = os.lstat(fp).st_mtime
-                        else:
-                            mtime = os.path.getmtime(fp)
-                    except FileNotFoundError as _no_logging:
-                        # file vanished; skip adding
-                        continue
-                    except Exception as e:
-                        # Log initial failure, then fallback to lstat
-                        self.printException(e, "getFileListUntrackedAndIgnored: initial mtime attempt failed (ignored)")
-                        try:
-                            mtime = os.lstat(fp).st_mtime
-                        except FileNotFoundError as _no_logging:
-                            continue
-                        except Exception as e2:
-                            self.printException(e2, "getFileListUntrackedAndIgnored: mtime failed for ignored")
-                            mtime = 0
-                    iso = self._epoch_to_iso(mtime)
-                    results.append((rel, iso, "ignored"))
-
-                results.sort(key=lambda x: x[0])
-                return results
-
+            results.sort(key=lambda x: x[0])
+            self._cmd_cache[cache_key] = results
+            return results
         except Exception as e:
             self.printException(e, "getFileListUntrackedAndIgnored: unexpected failure")
             return []
