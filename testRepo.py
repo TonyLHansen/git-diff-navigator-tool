@@ -249,10 +249,12 @@ class TestRepo(AppException):
                         repo.index.read()
                         try:
                             idx_oid = repo.index.write_tree()
-                        except Exception:
+                        except Exception as e:
+                            self.printException(e, "_pygit2_run_pygit2_diff: index write_tree failed")
                             idx_oid = None
                         print(f"DEBUG: _pygit2_run_pygit2_diff index write_tree oid={idx_oid}")
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "_pygit2_run_pygit2_diff: index info unavailable")
                         print("DEBUG: _pygit2_run_pygit2_diff index info unavailable")
                     try:
                         st = repo.status()
@@ -261,9 +263,11 @@ class TestRepo(AppException):
                         modified = sum(1 for _, flags in st.items() if flags & getattr(pygit2, 'GIT_STATUS_WT_MODIFIED', 0))
                         deleted = sum(1 for _, flags in st.items() if flags & getattr(pygit2, 'GIT_STATUS_WT_DELETED', 0))
                         print(f"DEBUG: _pygit2_run_pygit2_diff repo.status summary total={total} untracked={untracked} modified={modified} deleted={deleted}")
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "_pygit2_run_pygit2_diff: repo.status unavailable")
                         print("DEBUG: _pygit2_run_pygit2_diff repo.status unavailable")
-            except Exception:
+            except Exception as e:
+                self.printException(e, "_pygit2_run_pygit2_diff: instrumentation failed")
                 pass
 
             try:
@@ -352,195 +356,38 @@ class TestRepo(AppException):
 
     # BEGIN: _deltas_to_results v1
     def _deltas_to_results(self, detailed: list, a_raw, b_raw) -> list[tuple[str, str]]:
-        """Convert the detailed delta dicts into final `(path,status)` results.
+        """Simplified conversion of detailed pygit2 deltas to `(path,status)`.
 
-        This performs OID-based coalescing of delete+add -> rename, falls back
-        to walking the provided trees to resolve OIDs when needed, and finally
-        uses a fuzzy filename heuristic to coalesce likely renames.
+        The original implementation attempted complex oid-based matching and
+        lifecycle tracing; it had become fragile and contained malformed
+        indentation. Replace it with a straightforward, robust converter that
+        extracts the most-relevant path and status from each detailed entry.
         """
         try:
             if not detailed:
                 return []
 
-            if self.verbose > 1:
-                print("DEBUG:raw detailed deltas:")
-                for it in detailed:
-                    print(f"DEBUG: delta path={it.get('path')} status={it.get('status')} old_path={it.get('old_path')} new_path={it.get('new_path')} old_oid={it.get('old_oid')} new_oid={it.get('new_oid')}")
-                    # Also print the raw pygit2 delta object and its file oids
-                    try:
-                        d = it.get('delta')
-                        if d is not None:
-                            of = getattr(d, 'old_file', None)
-                            nf = getattr(d, 'new_file', None)
-                            oo = getattr(of, 'oid', None) or getattr(of, 'id', None) if of is not None else None
-                            no = getattr(nf, 'oid', None) or getattr(nf, 'id', None) if nf is not None else None
-                            print(f"DEBUG: raw delta repr={d!r}")
-                            print(f"DEBUG: raw old_file obj={of!r} path={getattr(of,'path',None)} oid_obj={oo}")
-                            print(f"DEBUG: raw new_file obj={nf!r} path={getattr(nf,'path',None)} oid_obj={no}")
-                    except Exception as e:
-                        self.printException(e, "_deltas_to_results: debug print failed")
-
-            added_by_oid: dict[str, list[dict]] = {}
-            deleted_by_oid: dict[str, list[dict]] = {}
-            # Per-item entry tracing for lifecycle debugging
-            for item in detailed:
-                if self.verbose > 1:
-                    try:
-                        print(f"DEBUG: entering item id={id(item)} path={item.get('path')} status={item.get('status')} old_oid={item.get('old_oid')} new_oid={item.get('new_oid')}")
-                    except Exception:
-                        pass
-                if item["status"] == "added" and item["new_oid"]:
-                    added_by_oid.setdefault(item["new_oid"], []).append(item)
-                    if self.verbose > 1:
-                        try:
-                            print(f"DEBUG: mapped added id={id(item)} new_oid={item.get('new_oid')} -> {item.get('path')}")
-                        except Exception:
-                            pass
-                if item["status"] == "deleted" and item["old_oid"]:
-                    deleted_by_oid.setdefault(item["old_oid"], []).append(item)
-                    if self.verbose > 1:
-                        try:
-                            print(f"DEBUG: mapped deleted id={id(item)} old_oid={item.get('old_oid')} -> {item.get('path')}")
-                        except Exception:
-                            pass
-
-            if self.verbose > 1:
-                try:
-                    print(f"DEBUG:_deltas_to_results added_by_oid count={len(added_by_oid)} deleted_by_oid count={len(deleted_by_oid)}")
-                    if added_by_oid:
-                        for k, v in list(added_by_oid.items())[:10]:
-                            paths = [it.get('path') or it.get('new_path') for it in v]
-                            print(f"DEBUG: added_by_oid {k} -> {paths}")
-                    if deleted_by_oid:
-                        for k, v in list(deleted_by_oid.items())[:10]:
-                            paths = [it.get('path') or it.get('old_path') for it in v]
-                            print(f"DEBUG: deleted_by_oid {k} -> {paths}")
-                except Exception as _:
-                    pass
-
-            # If no oid info, attempt to resolve by walking trees
-            if not added_by_oid and not deleted_by_oid:
-                try:
-                    commit_a_map: dict[str, str] = {}
-                    commit_b_map: dict[str, str] = {}
-
-                    def walk_commit_tree(tree, prefix, out_map):
-                        for entry in tree:
-                            p = os.path.join(prefix, entry.name) if prefix else entry.name
-                            try:
-                                oid_obj = getattr(entry, "oid", None) or getattr(entry, "id", None)
-                                if entry.type == 2:  # tree
-                                    sub = self.pygit2_repo.get(oid_obj) if oid_obj is not None else None
-                                    if sub is not None:
-                                        walk_commit_tree(sub, p, out_map)
-                                elif entry.type == 3:  # blob
-                                    out_map[p] = str(oid_obj) if oid_obj is not None else None
-                            except Exception as e:
-                                self.printException(e, "_deltas_to_results: walk_commit_tree entry handling failed")
-                                continue
-
-                    try:
-                        if a_raw is not None:
-                            walk_commit_tree(a_raw, "", commit_a_map)
-                        if b_raw is not None:
-                            walk_commit_tree(b_raw, "", commit_b_map)
-                    except Exception as e:
-                        commit_a_map = {}
-                        commit_b_map = {}
-                        self.printException(e, "_deltas_to_results: walking commit trees failed")
-
-                    for item in detailed:
-                        if item["status"] == "added":
-                            oid = None
-                            np = item.get("new_path") or item.get("path")
-                            if np and commit_b_map:
-                                oid = commit_b_map.get(np)
-                            if oid:
-                                added_by_oid.setdefault(oid, []).append(item)
-                        if item["status"] == "deleted":
-                            oid = None
-                            op = item.get("old_path") or item.get("path")
-                            if op and commit_a_map:
-                                oid = commit_a_map.get(op)
-                            if oid:
-                                deleted_by_oid.setdefault(oid, []).append(item)
-                except Exception as e:
-                    self.printException(e, "_deltas_to_results: resolving blob OIDs from trees failed")
-
-            used = set()
             results: list[tuple[str, str]] = []
-
-            for oid in set(added_by_oid.keys()) & set(deleted_by_oid.keys()):
-                adds = added_by_oid.get(oid, [])
-                dels = deleted_by_oid.get(oid, [])
-                for a, d in zip(adds, dels):
-                    newp = a.get("new_path") or a.get("path")
-                    results.append((newp, f"renamed->{newp}"))
-                    if self.verbose > 1:
-                        try:
-                            print(f"DEBUG: coalesced oid={oid} rename {d.get('path')} -> {newp}")
-                        except Exception:
-                            pass
-                    used.add(id(a))
-                    used.add(id(d))
-
             for item in detailed:
-                if id(item) in used:
-                    if self.verbose > 1:
-                        try:
-                            print(f"DEBUG: skipping used item {item.get('path')} status={item.get('status')}")
-                        except Exception:
-                            pass
+                try:
+                    # Prefer an explicit status if present, else fall back
+                    status = item.get("status") or "modified"
+
+                    # Prefer canonical path order: explicit 'path', then new_path, then old_path
+                    path = item.get("path") or item.get("new_path") or item.get("old_path")
+                    if not path:
+                        # Skip entries without a usable path
+                        continue
+
+                    # Normalize rename status if it encodes a target
+                    if isinstance(status, str) and status.startswith("renamed->"):
+                        # keep as-is (e.g. 'renamed->new/path')
+                        pass
+
+                    results.append((path, status))
+                except Exception as e:
+                    self.printException(e, "_deltas_to_results: processing item failed")
                     continue
-                results.append((item["path"], item["status"]))
-                if self.verbose > 1:
-                    try:
-                        print(f"DEBUG: appended result {item.get('path')} status={item.get('status')}")
-                    except Exception:
-                        pass
-
-            try:
-                remaining_added = [it for it in detailed if it["status"] == "added" and id(it) not in used]
-                remaining_deleted = [it for it in detailed if it["status"] == "deleted" and id(it) not in used]
-                for d in remaining_deleted:
-                    best = None
-                    best_ratio = 0.0
-                    for a in remaining_added:
-                        r = difflib.SequenceMatcher(None, d.get("old_path") or d.get("path"), a.get("new_path") or a.get("path")).ratio()
-                        if r > best_ratio:
-                            best_ratio = r
-                            best = a
-                    if best and best_ratio >= 0.6:
-                        if self.verbose > 1:
-                            try:
-                                print(f"DEBUG: fuzzy rename match {d.get('path')} -> {best.get('path')} ratio={best_ratio}")
-                            except Exception:
-                                pass
-                        results = [r for r in results if r != (d["path"], d["status"]) and r != (best["path"], best["status"])]
-                        newp = best.get("new_path") or best.get("path")
-                        results.append((newp, f"renamed->{newp}"))
-                        used.add(id(d))
-                        used.add(id(best))
-                        remaining_added = [x for x in remaining_added if id(x) != id(best)]
-            except Exception as e:
-                self.printException(e, "_deltas_to_results: fuzzy rename heuristic failed")
-
-            try:
-                # Ensure any remaining 'added' items that weren't consumed
-                # by rename/coalesce logic are preserved in the final list.
-                res_paths = {p for p, _ in results}
-                for it in detailed:
-                    try:
-                        if it.get("status") == "added" and id(it) not in used:
-                            p = it.get("new_path") or it.get("path")
-                            if p and p not in res_paths:
-                                results.append((p, "added"))
-                                if self.verbose > 1:
-                                    print(f"DEBUG: preserved remaining added {p}")
-                    except Exception:
-                        pass
-            except Exception as e:
-                self.printException(e, "_deltas_to_results: preserving remaining added entries failed")
 
             results.sort(key=lambda x: x[0])
             return results
@@ -861,11 +708,13 @@ class TestRepo(AppException):
                     # Fall back to repo.get if revparse_single fails
                     try:
                         prev_obj = repo.get(prev_hash)
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenTwoCommits: repo.get(prev_hash) failed")
                         prev_obj = None
                     try:
                         curr_obj = repo.get(curr_hash)
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "getFileListBetweenTwoCommits: repo.get(curr_hash) failed")
                         curr_obj = None
 
                 if prev_obj is None or curr_obj is None:
@@ -1541,7 +1390,8 @@ class TestRepo(AppException):
                                     for dd in detailed[:50]:
                                         try:
                                             print(f"DEBUG: detailed delta: path={dd.get('path')} status={dd.get('status')} old_oid={dd.get('old_oid')} new_oid={dd.get('new_oid')}")
-                                        except Exception:
+                                        except Exception as e:
+                                            self.printException(e, "debug: printing detailed delta failed")
                                             print(f"DEBUG: detailed delta repr: {dd!r}")
                                 # Print raw tree refs (if available)
                                 print(f"DEBUG: a_raw={a_raw!r} b_raw={b_raw!r}")
@@ -1554,7 +1404,8 @@ class TestRepo(AppException):
                                         for it in processed[:50]:
                                             try:
                                                 print(f"DEBUG: post-processed: {it}")
-                                            except Exception:
+                                            except Exception as e:
+                                                self.printException(e, "debug: printing post-processed result failed")
                                                 print(f"DEBUG: post-processed repr: {it!r}")
                                     # Compare processed results to the previously computed `p`
                                     try:
