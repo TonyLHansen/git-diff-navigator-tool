@@ -96,8 +96,8 @@ class TestRepo(AppException):
 
     # END: __init__ v1
 
-    # BEGIN: _resolve_tree v1
-    def _resolve_tree(self, obj):
+    # BEGIN: _pygit2_resolve_tree v1
+    def _pygit2_resolve_tree(self, obj):
         """Resolve a pygit2 object (Commit/Tag/Tree) to a Tree or None."""
         try:
             if obj is None:
@@ -115,14 +115,14 @@ class TestRepo(AppException):
                     if isinstance(target, pygit2.Tree):
                         return target
                 except Exception as e:
-                    self.printException(e, "_resolve_tree: tag peel failed")
+                    self.printException(e, "_pygit2_resolve_tree: tag peel failed")
                     return None
         except Exception as e:
-            self.printException(e, "_resolve_tree: unexpected error")
+            self.printException(e, "_pygit2_resolve_tree: unexpected error")
             return None
         return None
 
-    # END: _resolve_tree v1
+    # END: _pygit2_resolve_tree v1
 
     # BEGIN: pygit2_resolve_token_to_tree v1
     def pygit2_resolve_token_to_tree(self, token):
@@ -148,7 +148,7 @@ class TestRepo(AppException):
                 # Represent working tree as None for pygit2.diff
                 return None
             if token == self.NEWREPO:
-                return self._empty_tree_for_repo(repo)
+                return self._pygit2_empty_tree_for_repo(repo)
 
             # commit-ish: try revparse_single then repo.get
             try:
@@ -160,7 +160,7 @@ class TestRepo(AppException):
                 except Exception as e2:
                     self.printException(e2, f"pygit2_resolve_token_to_tree: resolving {token} failed")
                     return None
-            return self._resolve_tree(obj)
+            return self._pygit2_resolve_tree(obj)
         except Exception as e:
             self.printException(e, "pygit2_resolve_token_to_tree: unexpected failure")
             return None
@@ -297,7 +297,7 @@ class TestRepo(AppException):
                     # Fall back to empty-tree substitution when diff(a,None)
                     # is not supported by this libgit2 build.
                     self.printException(e, "_pygit2_run_pygit2_diff: repo.diff(a,b) failed, falling back to empty-tree")
-                    empty = self._empty_tree_for_repo(repo)
+                    empty = self._pygit2_empty_tree_for_repo(repo)
                     if empty is None:
                         self.printException(
                             RuntimeError("failed to construct empty tree"),
@@ -323,7 +323,7 @@ class TestRepo(AppException):
                 old_path = getattr(delta.old_file, "path", None)
                 new_path = getattr(delta.new_file, "path", None)
                 path = new_path or old_path
-                status = self._delta_status_to_str(getattr(delta, "status", None), delta)
+                status = self._pygit2_delta_status_to_str(getattr(delta, "status", None), delta)
                 oid_old = None
                 oid_new = None
                 # Extra debug: print raw delta object and oid objects when verbose
@@ -509,8 +509,8 @@ class TestRepo(AppException):
 
     # END: _paths_mtime_iso v1
 
-    # BEGIN: _delta_status_to_str v1
-    def _delta_status_to_str(self, status_code, delta=None) -> str:
+    # BEGIN: _pygit2_delta_status_to_str v1
+    def _pygit2_delta_status_to_str(self, status_code, delta=None) -> str:
         """Map pygit2 delta status codes to human-friendly status strings.
 
         If `delta` is provided and the status indicates a rename, include the
@@ -528,18 +528,18 @@ class TestRepo(AppException):
                 new_path = None
                 try:
                     if delta is not None:
-                        new_path = getattr(delta.new_file, "path", None) or getattr(delta, "new_path", None)
+                            new_path = getattr(delta.new_file, "path", None) or getattr(delta, "new_path", None)
                 except Exception as e:
-                    new_path = None
-                    self.printException(e, "_delta_status_to_str: extracting new_path failed")
-                return f"renamed->{new_path}" if new_path else "renamed"
+                        new_path = None
+                        self.printException(e, "_pygit2_delta_status_to_str: extracting new_path failed")
+                    return f"renamed->{new_path}" if new_path else "renamed"
             if status_code == pygit2.GIT_DELTA_COPIED:
                 return "copied"
         except Exception as e:
-            self.printException(e, "_delta_status_to_str: mapping failed")
+            self.printException(e, "_pygit2_delta_status_to_str: mapping failed")
         return "modified"
 
-    # END: _delta_status_to_str v1
+    # END: _pygit2_delta_status_to_str v1
 
     # BEGIN: _git_name_status_to_str v1
     def _git_name_status_to_str(self, code: str) -> str:
@@ -617,8 +617,8 @@ class TestRepo(AppException):
 
     # END: _git_cli_name_status v1
 
-    # BEGIN: _empty_tree_for_repo v1
-    def _empty_tree_for_repo(self, repo) -> "pygit2.Tree | None":
+    # BEGIN: _pygit2_empty_tree_for_repo v1
+    def _pygit2_empty_tree_for_repo(self, repo) -> "pygit2.Tree | None":
         """Construct and return an empty tree object for `repo`, or None on failure.
 
         Centralizes `TreeBuilder` usage to avoid repeated try/except blocks.
@@ -628,10 +628,10 @@ class TestRepo(AppException):
             oid = tb.write()
             return repo.get(oid)
         except Exception as e:
-            self.printException(e, "_empty_tree_for_repo: TreeBuilder failed")
+            self.printException(e, "_pygit2_empty_tree_for_repo: TreeBuilder failed")
             return None
 
-    # END: _empty_tree_for_repo v1
+    # END: _pygit2_empty_tree_for_repo v1
 
     # BEGIN: getFileListBetweenNewRepoAndTopHash v1
     def getFileListBetweenNewRepoAndTopHash(self, usePyGit2: bool) -> list[str]:
@@ -744,8 +744,8 @@ class TestRepo(AppException):
                     diff = repo.diff(prev_obj, curr_obj)
                 except Exception as e:
                     # If direct diff fails, try resolving to trees explicitly
-                    a_tree = self._resolve_tree(prev_obj)
-                    b_tree = self._resolve_tree(curr_obj)
+                    a_tree = self._pygit2_resolve_tree(prev_obj)
+                        b_tree = self._pygit2_resolve_tree(curr_obj)
                     if a_tree is None or b_tree is None:
                         self.printException(e, "getFileListBetweenTwoCommits: cannot resolve commits to trees for diff")
                         return []
@@ -1743,9 +1743,9 @@ class TestRepo(AppException):
                 def path_in_diff(a_tree, b_tree, orig_a_none=False, orig_b_none=False) -> bool:
                     try:
                         if a_tree is None:
-                            a_tree = self._empty_tree_for_repo(repo)
+                            a_tree = self._pygit2_empty_tree_for_repo(repo)
                         if b_tree is None:
-                            b_tree = self._empty_tree_for_repo(repo)
+                            b_tree = self._pygit2_empty_tree_for_repo(repo)
                         if a_tree is None or b_tree is None:
                             return False
                         diff = repo.diff(a_tree, b_tree)
@@ -1773,17 +1773,17 @@ class TestRepo(AppException):
                         parents = list(c.parents)
                         # Root commit: compare against empty tree
                         if not parents:
-                            b_tree = self._resolve_tree(c)
+                            b_tree = self._pygit2_resolve_tree(c)
                             if path_in_diff(None, b_tree, True, False):
                                 matches.append(self._pygit2_format_commit_entry(repo, c))
                             continue
 
                         # For merges and normal commits: require path to appear
                         # in the diff versus every parent (differ-from-all).
-                        b_tree = self._resolve_tree(c)
+                        b_tree = self._pygit2_resolve_tree(c)
                         all_match = True
                         for p in parents:
-                            a_tree = self._resolve_tree(p)
+                            a_tree = self._pygit2_resolve_tree(p)
                             if not path_in_diff(a_tree, b_tree, False, False):
                                 all_match = False
                                 break
