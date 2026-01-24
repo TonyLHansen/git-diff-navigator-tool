@@ -187,6 +187,30 @@ class TestRepo(AppException):
 
     # END: _git_cli_decode_quoted_path v1
 
+    # BEGIN: safe_mtime v1
+    def safe_mtime(self, rel: str) -> float | None:
+        """Return the mtime (float) for repository-relative `rel` or None.
+
+        Centralized helper that resolves the filesystem path under `repoRoot`,
+        handles symlinks via `lstat`, catches `FileNotFoundError` and other
+        exceptions, and logs failures via `printException`.
+        """
+        try:
+            fp = os.path.join(self.repoRoot, rel)
+            if os.path.islink(fp):
+                return os.lstat(fp).st_mtime
+            if os.path.exists(fp):
+                return os.path.getmtime(fp)
+            return None
+        except FileNotFoundError as e:
+            self.printException(e, f"safe_mtime: file not found ({rel})")
+            return None
+        except Exception as e:
+            self.printException(e, f"safe_mtime: stat failed ({rel})")
+            return None
+
+    # END: safe_mtime v1
+
     # BEGIN: _paths_mtime_iso v1
     def _paths_mtime_iso(self, paths: list[str]) -> str:
         """
@@ -196,10 +220,10 @@ class TestRepo(AppException):
         """
         mtimes: list[float] = []
         for p in paths:
-            fp = os.path.join(self.repoRoot, p)
             try:
-                if os.path.exists(fp):
-                    mtimes.append(os.path.getmtime(fp))
+                m = self.safe_mtime(p)
+                if m is not None:
+                    mtimes.append(m)
             except Exception as e:
                 self.printException(e, "_paths_mtime_iso: checking path mtime failed")
                 continue
@@ -591,20 +615,7 @@ class TestRepo(AppException):
                 if not rel or rel in seen:
                     continue
                 seen.add(rel)
-                fp = os.path.join(self.repoRoot, rel)
-                try:
-                    if os.path.islink(fp):
-                        mtime = os.lstat(fp).st_mtime
-                    elif os.path.exists(fp):
-                        mtime = os.path.getmtime(fp)
-                    else:
-                        mtime = None
-                except FileNotFoundError as e:
-                    self.printException(e, "getFileListUntrackedAndIgnored: file not found (untracked)")
-                    continue
-                except Exception as e:
-                    self.printException(e, "getFileListUntrackedAndIgnored: stat failed")
-                    mtime = None
+                mtime = self.safe_mtime(rel)
                 iso = self._epoch_to_iso(mtime) if mtime is not None else self.index_mtime_iso()
                 results.append((rel, iso, "untracked"))
 
@@ -614,20 +625,7 @@ class TestRepo(AppException):
                 if not rel or rel in seen:
                     continue
                 seen.add(rel)
-                fp = os.path.join(self.repoRoot, rel)
-                try:
-                    if os.path.islink(fp):
-                        mtime = os.lstat(fp).st_mtime
-                    elif os.path.exists(fp):
-                        mtime = os.path.getmtime(fp)
-                    else:
-                        mtime = None
-                except FileNotFoundError as e:
-                    self.printException(e, "getFileListUntrackedAndIgnored: file not found (ignored)")
-                    continue
-                except Exception as e:
-                    self.printException(e, "getFileListUntrackedAndIgnored: stat failed")
-                    mtime = None
+                mtime = self.safe_mtime(rel)
                 iso = self._epoch_to_iso(mtime) if mtime is not None else self.index_mtime_iso()
                 results.append((rel, iso, "ignored"))
 
