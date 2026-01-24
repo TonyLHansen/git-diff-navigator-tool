@@ -1055,107 +1055,27 @@ def main():
             test_repo.printException(e, f"run_one invocation of {func_name} failed")
             return False
 
-    allfuncs = [
-        ("-1, File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None),
-        (
-            "File List Between TopHash and Current Time",
-            "getFileListBetweenTopHashAndCurrentTime",
-            None,
-        ),
-        (
-            "-2, File List Between TopHash and Current Time",
-            "getFileListBetweenTopHashAndStaged",
-            None,
-        ),
-        ("-3, File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None),
-        ("-4, File List New to Staged", "getFileListBetweenNewRepoAndStaged", None),
-        ("-5, File List New to Mods", "getFileListBetweenNewRepoAndMods", None),
-        ("-6, Hash List Entire Repo", "getHashListEntireRepo", None),
-        ("-7, Hash List Staged Changes", "getHashListStagedChanges", None),
-        (f"-8, Hash List From File {args.file}", "getHashListFromFileName", args.file),
-        ("-9, Hash List New Changes", "getHashListNewChanges", None),
-        ("-a, Hash List New Changes", "getHashListNewChanges", None),
-        ("-b, Hash List Complete", "getHashListComplete", None),
-        ("-c, Hash List Sample", "getHashListSample", None),
-        ("-d, Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None),
-        ("-e, Untracked and Ignored files", "getFileListUntrackedAndIgnored", None),
-    ]
-
-    # Determine which tests to run. If -A/--all is set, run all tests.
-    to_run: list[tuple[str, str, str | None]] = []
-    if args.all:
-        to_run = allfuncs
-        sampled_flag = True
-    else:
-        # Append tests in the numeric/option order to match `allfuncs`:
-        # 1,-2,-3,-4,-5,-6 then -7,-8,-9 then -a,-b,-c
-        if args.getFileListBetweenNewAndTopHash:
-            to_run.append(
-                (
-                    "-1, File List New to Top Hash",
-                    "getFileListBetweenNewRepoAndTopHash",
-                    None,
-                )
-            )
-        if args.getFileListBetweenTopHashAndCurrentTime:
-            to_run.append(
-                (
-                    "-2, File List Between TopHash and Current Time",
-                    "getFileListBetweenTopHashAndCurrentTime",
-                    None,
-                )
-            )
-        if args.getFileListBetweenTopHashAndStaged:
-            to_run.append(
-                (
-                    "-3, File List Between TopHash and Staged",
-                    "getFileListBetweenTopHashAndStaged",
-                    None,
-                )
-            )
-        if args.getFileListBetweenStagedAndMods:
-            to_run.append(
-                (
-                    "-4, File List Between Staged and Mods",
-                    "getFileListBetweenStagedAndMods",
-                    None,
-                )
-            )
-        if args.getFileListBetweenNewAndStaged:
-            to_run.append(
-                (
-                    "-5, File List New to Staged",
-                    "getFileListBetweenNewRepoAndStaged",
-                    None,
-                )
-            )
-        if args.getFileListBetweenNewAndMods:
-            to_run.append(("-6, File List New to Mods", "getFileListBetweenNewRepoAndMods", None))
-        if args.getHashListEntireRepo:
-            to_run.append(("-7, Hash List Entire Repo", "getHashListEntireRepo", None))
-        if args.getHashListStagedChanges:
-            to_run.append(("-8, Hash List Staged Changes", "getHashListStagedChanges", None))
-        if args.getHashListFromFileName:
-            to_run.append((f"-9, Hash List From File {args.file}", "getHashListFromFileName", args.file))
-        if args.getHashListNewChanges:
-            to_run.append(("-a, Hash List New Changes", "getHashListNewChanges", None))
-        if args.getHashListComplete:
-            to_run.append(("-b, Hash List Complete", "getHashListComplete", None))
-        if args.getHashListSample:
-            to_run.append(("-c, Hash List Sample", "getHashListSample", None))
-        # Include sample-plus-ends (-d) then untracked/ignored (-e) in option order
-        if args.getHashListSamplePlusEnds:
-            to_run.append(("-d, Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None))
-        if args.getFileListUntrackedAndIgnored:
-            to_run.append(("-e, Untracked and Ignored files", "getFileListUntrackedAndIgnored", None))
-        # Sampled comparisons are run separately to allow independent reporting
-        # and avoid mixing their output with the main test loop.
-
     # If no specific flags provided, default to running all exercises
-    if not to_run and not args.runFileListSampledComparisons and not args.getFileListBetweenNormalizedHashes:
-        args.all = True
-        to_run = allfuncs
-        args.runFileListSampledComparisons = True
+    any_flag = (
+        args.getFileListBetweenNewAndTopHash
+        or args.getFileListBetweenTopHashAndCurrentTime
+        or args.getFileListBetweenTopHashAndStaged
+        or args.getFileListBetweenStagedAndMods
+        or args.getFileListBetweenNewAndStaged
+        or args.getFileListBetweenNewAndMods
+        or args.getHashListEntireRepo
+        or args.getHashListStagedChanges
+        or args.getHashListFromFileName
+        or args.getHashListNewChanges
+        or args.getHashListComplete
+        or args.getHashListSample
+        or args.getHashListSamplePlusEnds
+        or args.getFileListUntrackedAndIgnored
+        or args.runFileListSampledComparisons
+        or args.getFileListBetweenNormalizedHashes
+    )
+    if not any_flag and not args.all:
+        parser.error("No test functions specified; use -A to run all tests or specify one or more test flags.")
 
     total_exercises = 0
 
@@ -1163,13 +1083,84 @@ def main():
         print(f"\n== Repository: {path} ==")
         test_repo = TestRepo(path, args.verbose)
 
-        for i, (name, func, fname) in enumerate(to_run, 1):
+        # Execute tests directly in the same order previously provided by `allfuncs`.
+        i = 1
+
+        if args.all or args.getFileListBetweenNewAndTopHash:
             total_exercises += 1
-            try:
-                _ = run_one(test_repo, i, name, func, fname, args.limit)
-            except Exception as e:
-                # Use the enumerated index in the error context for clarity
-                test_repo.printException(e, f"running -{i},{func}:{name} failed")
+            run_one(test_repo, i, "-1, File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None, args.limit)
+            i += 1
+
+        if args.all or args.getFileListBetweenTopHashAndCurrentTime:
+            total_exercises += 1
+            run_one(test_repo, i, "File List Between TopHash and Current Time", "getFileListBetweenTopHashAndCurrentTime", None, args.limit)
+            i += 1
+
+        if args.all or args.getFileListBetweenTopHashAndStaged:
+            total_exercises += 1
+            run_one(test_repo, i, "-2, File List Between TopHash and Current Time", "getFileListBetweenTopHashAndStaged", None, args.limit)
+            i += 1
+
+        if args.all or args.getFileListBetweenStagedAndMods:
+            total_exercises += 1
+            run_one(test_repo, i, "-3, File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None, args.limit)
+            i += 1
+
+        if args.all or args.getFileListBetweenNewAndStaged:
+            total_exercises += 1
+            run_one(test_repo, i, "-4, File List New to Staged", "getFileListBetweenNewRepoAndStaged", None, args.limit)
+            i += 1
+
+        if args.all or args.getFileListBetweenNewAndMods:
+            total_exercises += 1
+            run_one(test_repo, i, "-5, File List New to Mods", "getFileListBetweenNewRepoAndMods", None, args.limit)
+            i += 1
+
+        if args.all or args.getHashListEntireRepo:
+            total_exercises += 1
+            run_one(test_repo, i, "-6, Hash List Entire Repo", "getHashListEntireRepo", None, args.limit)
+            i += 1
+
+        if args.all or args.getHashListStagedChanges:
+            total_exercises += 1
+            run_one(test_repo, i, "-7, Hash List Staged Changes", "getHashListStagedChanges", None, args.limit)
+            i += 1
+
+        if args.all or args.getHashListFromFileName:
+            total_exercises += 1
+            run_one(test_repo, i, f"-8, Hash List From File {args.file}", "getHashListFromFileName", args.file, args.limit)
+            i += 1
+
+        # Two separate entries mapping to the same function (preserve original ordering)
+        if args.all or args.getHashListNewChanges:
+            total_exercises += 1
+            run_one(test_repo, i, "-9, Hash List New Changes", "getHashListNewChanges", None, args.limit)
+            i += 1
+
+        if args.all or args.getHashListNewChanges:
+            total_exercises += 1
+            run_one(test_repo, i, "-a, Hash List New Changes", "getHashListNewChanges", None, args.limit)
+            i += 1
+
+        if args.all or args.getHashListComplete:
+            total_exercises += 1
+            run_one(test_repo, i, "-b, Hash List Complete", "getHashListComplete", None, args.limit)
+            i += 1
+
+        if args.all or args.getHashListSample:
+            total_exercises += 1
+            run_one(test_repo, i, "-c, Hash List Sample", "getHashListSample", None, args.limit)
+            i += 1
+
+        if args.all or args.getHashListSamplePlusEnds:
+            total_exercises += 1
+            run_one(test_repo, i, "-d, Hash List Sample Plus Ends", "getHashListSamplePlusEnds", None, args.limit)
+            i += 1
+
+        if args.all or args.getFileListUntrackedAndIgnored:
+            total_exercises += 1
+            run_one(test_repo, i, "-e, Untracked and Ignored files", "getFileListUntrackedAndIgnored", None, args.limit)
+            i += 1
 
         # Process any explicit getFileListBetweenNormalizedHashes pairs supplied
         if args.getFileListBetweenNormalizedHashes:
@@ -1199,7 +1190,7 @@ def main():
                     test_repo.printException(e, f"processing getFileListBetweenNormalizedHashes option '{pair}' failed")
 
         # If requested, run sampled comparisons separately (outside the to_run loop)
-        if args.runFileListSampledComparisons:
+        if args.all or args.runFileListSampledComparisons:
             print("\nRunning sampled pairwise comparisons (separate)...")
             try:
                 # runFileListSampledExercises returns total exercises run
