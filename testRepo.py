@@ -13,7 +13,6 @@ import os
 import hashlib
 import time
 
-import pygit2
 import codecs
 from datetime import datetime, timezone
 from subprocess import check_output, CalledProcessError
@@ -21,27 +20,7 @@ import traceback
 import sys
 
 
-def _pygit2_similarity_flags() -> int:
-    """Return the strongest available pygit2 diff similarity flags.
 
-    Combine rename/copy related flags if defined in the installed pygit2.
-    Returns 0 when `pygit2` is not available or no flags are found.
-    """
-    flags = 0
-    # Base support: renames + copies
-    if hasattr(pygit2, "GIT_DIFF_FIND_RENAMES"):
-        flags |= getattr(pygit2, "GIT_DIFF_FIND_RENAMES")
-    if hasattr(pygit2, "GIT_DIFF_FIND_COPIES"):
-        flags |= getattr(pygit2, "GIT_DIFF_FIND_COPIES")
-    # Extend where available
-    for name in (
-        "GIT_DIFF_FIND_COPIES_FROM_UNMODIFIED",
-        "GIT_DIFF_FIND_RENAMES_FROM_REWRITES",
-        "GIT_DIFF_FIND_FOR_UNTRACKED",
-    ):
-        if hasattr(pygit2, name):
-            flags |= getattr(pygit2, name)
-    return flags
 
 
 def printException(e: Exception, msg: str) -> None:
@@ -90,7 +69,6 @@ class TestRepo(AppException):
     # BEGIN: __init__ v1
     def __init__(self, repoRoot: str, verbose: int = 0, silent: bool = False):
         self.repoRoot = repoRoot
-        self.pygit2_repo = pygit2.Repository(self.repoRoot)
         self.verbose = verbose
         self.silent = silent
         # One-time per-process cache for git CLI command results
@@ -98,280 +76,12 @@ class TestRepo(AppException):
 
     # END: __init__ v1
 
-    # BEGIN: _pygit2_resolve_tree v1
-    def _pygit2_resolve_tree(self, obj):
-        """Resolve a pygit2 object (Commit/Tag/Tree) to a Tree or None."""
-        try:
-            if obj is None:
-                return None
-            if isinstance(obj, pygit2.Tree):
-                return obj
-            if isinstance(obj, pygit2.Commit):
-                return obj.tree
-            if isinstance(obj, pygit2.Tag):
-                # Peel annotated tag to its target via the repository
-                try:
-                    target = self.pygit2_repo.get(obj.target)
-                    if isinstance(target, pygit2.Commit):
-                        return target.tree
-                    if isinstance(target, pygit2.Tree):
-                        return target
-                except Exception as e:
-                    self.printException(e, "_pygit2_resolve_tree: tag peel failed")
-                    return None
-        except Exception as e:
-            self.printException(e, "_pygit2_resolve_tree: unexpected error")
-            return None
-        return None
 
-    # END: _pygit2_resolve_tree v1
+    # pygit2_resolve_token_to_tree removed — git CLI only
 
-    # BEGIN: pygit2_resolve_token_to_tree v1
-    def pygit2_resolve_token_to_tree(self, token):
-        """Resolve a token (NEWREPO/STAGED/MODS or commit-ish) to a pygit2.Tree or None.
+    # _pygit2_format_commit_entry removed — git CLI commit formatting will be used
 
-        - `STAGED` -> tree built from index
-        - `MODS` -> None (represents working tree for pygit2.diff)
-        - `NEWREPO` -> explicit empty tree via `_empty_tree_for_repo`
-        - otherwise: try `revparse_single` then `repo.get`, and coerce to a tree
-        Returns a `pygit2.Tree` or `None` on failure.
-        """
-        try:
-            repo = self.pygit2_repo
-            if token == self.STAGED:
-                try:
-                    repo.index.read()
-                    oid = repo.index.write_tree()
-                    return repo.get(oid)
-                except Exception as e:
-                    self.printException(e, "pygit2_resolve_token_to_tree: index -> tree failed")
-                    return None
-            if token == self.MODS:
-                # Represent working tree as None for pygit2.diff
-                return None
-            if token == self.NEWREPO:
-                return self._pygit2_empty_tree_for_repo(repo)
-
-            # commit-ish: try revparse_single then repo.get
-            try:
-                obj = repo.revparse_single(token)
-            except Exception as e:
-                self.printException(e, f"pygit2_resolve_token_to_tree: revparse_single({token}) failed")
-                try:
-                    obj = repo.get(token)
-                except Exception as e2:
-                    self.printException(e2, f"pygit2_resolve_token_to_tree: resolving {token} failed")
-                    return None
-            return self._pygit2_resolve_tree(obj)
-        except Exception as e:
-            self.printException(e, "pygit2_resolve_token_to_tree: unexpected failure")
-            return None
-
-    # END: pygit2_resolve_token_to_tree v1
-
-    # BEGIN: _pygit2_format_commit_entry v1
-    def _pygit2_format_commit_entry(self, repo, commit_or_hash) -> tuple[str, str, str]:
-        """Format a commit-like entry as "ISO HASH [subject]" when possible.
-
-        If `commit_or_hash` can be resolved to a pygit2.Commit, include
-        the commit timestamp and the top line of the commit message. If it
-        cannot be resolved to a commit (e.g. blob/tree), return a stable
-        hash string.
-        """
-        try:
-            # If already a commit object, use it directly
-            if isinstance(commit_or_hash, pygit2.Commit):
-                c = commit_or_hash
-            else:
-                # Try to resolve via repo.get(); if that fails return raw tuple
-                try:
-                    c = repo.get(commit_or_hash)
-                except Exception as e:
-                    self.printException(e, "_pygit2_format_commit_entry: repo.get failed")
-                    return ("", str(commit_or_hash), "")
-
-            if isinstance(c, pygit2.Commit):
-                # Build ISO timestamp, commit hex, and top-line subject
-                try:
-                    ts = int(getattr(c, "time", None) or getattr(c, "commit_time", None) or 0)
-                except Exception as e:
-                    self.printException(e, "_pygit2_format_commit_entry: parsing timestamp failed")
-                    ts = 0
-
-                iso = self._epoch_to_iso(ts)
-
-                ch = getattr(c, "hex", None)
-                if not ch:
-                    cid = getattr(c, "id", None)
-                    ch = getattr(cid, "hex", None) or (str(cid) if cid is not None else "")
-
-                try:
-                    msg = getattr(c, "message", "") or ""
-                    subject = msg.splitlines()[0].strip() if msg else ""
-                except Exception as e:
-                    self.printException(e, "_pygit2_format_commit_entry: extracting subject failed")
-                    subject = ""
-
-                return (iso, ch, subject)
-
-            # Not a commit object (blob/tree/etc) — return hash-like tuple
-            ch = getattr(c, "hex", None)
-            if not ch:
-                cid = getattr(c, "id", None)
-                ch = getattr(cid, "hex", None) or str(cid) if cid is not None else str(commit_or_hash)
-            return ("", ch, "")
-        except Exception as e:
-            # Fallback to raw tuple representation on error
-            self.printException(e, "_pygit2_format_commit_entry failed")
-            return ("", str(commit_or_hash), "")
-
-    # END: _pygit2_format_commit_entry v1
-
-    # BEGIN: _pygit2_run_pygit2_diff v1
-    def _pygit2_run_pygit2_diff(self, prev_token, curr_token):
-        """Resolve tokens, run a pygit2 diff, and return detailed delta dicts + raw trees.
-
-        Returns a tuple `(detailed_list, a_raw, b_raw)` where `a_raw`/`b_raw` are
-        the resolved tree objects (or None when the token represents the working
-        tree) and `detailed_list` is a list of dicts with keys:
-        `path`, `status`, `old_oid`, `new_oid`, `old_path`, `new_path`, `delta`.
-        """
-        try:
-            repo = self.pygit2_repo
-            try:
-                a_raw = self.pygit2_resolve_token_to_tree(prev_token)
-                b_raw = self.pygit2_resolve_token_to_tree(curr_token)
-            except Exception as e:
-                self.printException(e, "_pygit2_run_pygit2_diff: token resolve failed")
-                return ([], None, None)
-
-            # Instrumentation: small runtime summary for debugging diff invocation
-            try:
-                if self.verbose > 0:
-                    a_type = type(a_raw).__name__ if a_raw is not None else "None"
-                    b_type = type(b_raw).__name__ if b_raw is not None else "None"
-                    print(
-                        f"DEBUG: _pygit2_run_pygit2_diff resolved a_raw={a_type} b_raw={b_type} prev={prev_token} curr={curr_token}"
-                    )
-                    try:
-                        repo.index.read()
-                        try:
-                            idx_oid = repo.index.write_tree()
-                        except Exception as e:
-                            self.printException(e, "_pygit2_run_pygit2_diff: index write_tree failed")
-                            idx_oid = None
-                        print(f"DEBUG: _pygit2_run_pygit2_diff index write_tree oid={idx_oid}")
-                    except Exception as e:
-                        self.printException(e, "_pygit2_run_pygit2_diff: index info unavailable")
-                        print("DEBUG: _pygit2_run_pygit2_diff index info unavailable")
-                    try:
-                        st = repo.status()
-                        total = len(st)
-                        untracked = sum(1 for _, flags in st.items() if flags & getattr(pygit2, "GIT_STATUS_WT_NEW", 0))
-                        modified = sum(
-                            1 for _, flags in st.items() if flags & getattr(pygit2, "GIT_STATUS_WT_MODIFIED", 0)
-                        )
-                        deleted = sum(
-                            1 for _, flags in st.items() if flags & getattr(pygit2, "GIT_STATUS_WT_DELETED", 0)
-                        )
-                        print(
-                            f"DEBUG: _pygit2_run_pygit2_diff repo.status summary total={total} untracked={untracked} modified={modified} deleted={deleted}"
-                        )
-                    except Exception as e:
-                        self.printException(e, "_pygit2_run_pygit2_diff: repo.status unavailable")
-                        print("DEBUG: _pygit2_run_pygit2_diff repo.status unavailable")
-            except Exception as e:
-                self.printException(e, "_pygit2_run_pygit2_diff: instrumentation failed")
-
-            try:
-                # Try to diff using the resolved raw objects directly. For
-                # working-tree comparisons `a_raw` or `b_raw` may be `None` and
-                # libgit2/python bindings often accept `None` to represent the
-                # working tree. Only fall back to an explicit empty-tree when
-                # repo.diff(a,b) raises an exception.
-                a = a_raw
-                b = b_raw
-
-                try:
-                    diff = repo.diff(a, b)
-                except Exception as e:
-                    # Fall back to empty-tree substitution when diff(a,None)
-                    # is not supported by this libgit2 build.
-                    self.printException(e, "_pygit2_run_pygit2_diff: repo.diff(a,b) failed, falling back to empty-tree")
-                    empty = self._pygit2_empty_tree_for_repo(repo)
-                    if empty is None:
-                        self.printException(
-                            RuntimeError("failed to construct empty tree"),
-                            "_pygit2_run_pygit2_diff: empty tree construction failed",
-                        )
-                        return ([], a_raw, b_raw)
-                    a = a if a is not None else empty
-                    b = b if b is not None else empty
-                    diff = repo.diff(a, b)
-
-                try:
-                    flags = _pygit2_similarity_flags()
-                    if flags:
-                        diff.find_similar(flags)
-                except Exception as e:
-                    self.printException(e, "_pygit2_run_pygit2_diff: find_similar failed")
-            except Exception as e:
-                self.printException(e, "_pygit2_run_pygit2_diff: pygit2 diff failed")
-                return ([], a_raw, b_raw)
-
-            detailed = []
-            for delta in diff.deltas:
-                old_path = getattr(delta.old_file, "path", None)
-                new_path = getattr(delta.new_file, "path", None)
-                path = new_path or old_path
-                status = self._pygit2_delta_status_to_str(getattr(delta, "status", None), delta)
-                oid_old = None
-                oid_new = None
-                # Extra debug: print raw delta object and oid objects when verbose
-                if self.verbose > 1:
-                    try:
-                        print(f"DEBUG: raw delta repr={delta!r}")
-                        of = getattr(delta, "old_file", None)
-                        nf = getattr(delta, "new_file", None)
-                        oo = getattr(of, "oid", None) or getattr(of, "id", None) if of is not None else None
-                        no = getattr(nf, "oid", None) or getattr(nf, "id", None) if nf is not None else None
-                        print(f"DEBUG: old_file.path={getattr(of,'path',None)} old_oid_obj={oo}")
-                        print(f"DEBUG: new_file.path={getattr(nf,'path',None)} new_oid_obj={no}")
-                    except Exception as e:
-                        self.printException(e, "_pygit2_run_pygit2_diff: debug print failed")
-                try:
-                    oid_old_obj = getattr(delta.old_file, "oid", None) or getattr(delta.old_file, "id", None)
-                    if oid_old_obj is not None:
-                        oid_old = str(oid_old_obj)
-                except Exception as e:
-                    oid_old = None
-                    self.printException(e, "_pygit2_run_pygit2_diff: extracting old oid failed")
-                try:
-                    oid_new_obj = getattr(delta.new_file, "oid", None) or getattr(delta.new_file, "id", None)
-                    if oid_new_obj is not None:
-                        oid_new = str(oid_new_obj)
-                except Exception as e:
-                    oid_new = None
-                    self.printException(e, "_pygit2_run_pygit2_diff: extracting new oid failed")
-                if path:
-                    detailed.append(
-                        {
-                            "path": path,
-                            "status": status,
-                            "old_oid": oid_old,
-                            "new_oid": oid_new,
-                            "old_path": old_path,
-                            "new_path": new_path,
-                            "delta": delta,
-                        }
-                    )
-
-            return (detailed, a_raw, b_raw)
-        except Exception as e:
-            self.printException(e, "_pygit2_run_pygit2_diff: unexpected failure")
-            return ([], None, None)
-
-    # END: _pygit2_run_pygit2_diff v1
+    # _pygit2_run_pygit2_diff removed — git CLI helpers are used for diffs
 
     # BEGIN: _deltas_to_results v1
     def _deltas_to_results(self, detailed: list, a_raw, b_raw) -> list[tuple[str, str]]:
@@ -510,80 +220,58 @@ class TestRepo(AppException):
 
     # END: _paths_mtime_iso v1
 
-    # BEGIN: _pygit2_delta_status_to_str v1
-    def _pygit2_delta_status_to_str(self, status_code, delta=None) -> str:
-        """Map pygit2 delta status codes to human-friendly status strings.
-
-        If `delta` is provided and the status indicates a rename, include the
-        target path in the returned string (e.g. "renamed->new/path").
-        """
-        try:
-            if status_code == pygit2.GIT_DELTA_ADDED:
-                return "added"
-            if status_code == pygit2.GIT_DELTA_MODIFIED:
-                return "modified"
-            if status_code == pygit2.GIT_DELTA_DELETED:
-                return "deleted"
-            if status_code == pygit2.GIT_DELTA_RENAMED:
-                # Try to include the new path when available
-                new_path = None
-                try:
-                    if delta is not None:
-                        new_path = getattr(delta.new_file, "path", None) or getattr(delta, "new_path", None)
-                except Exception as e:
-                    new_path = None
-                    self.printException(e, "_pygit2_delta_status_to_str: extracting new_path failed")
-                return f"renamed->{new_path}" if new_path else "renamed"
-            if status_code == pygit2.GIT_DELTA_COPIED:
-                return "copied"
-        except Exception as e:
-            self.printException(e, "_pygit2_delta_status_to_str: mapping failed")
-        return "modified"
-
-    # END: _pygit2_delta_status_to_str v1
-
+    # _pygit2_delta_status_to_str removed — mapping handled via git CLI name-status parsing
     # BEGIN: _git_cli_name_status_to_str v1
     def _git_cli_name_status_to_str(self, code: str) -> str:
-        """Map `git --name-status` status codes to human-friendly strings.
+        """Map git `--name-status` codes (e.g. A, M, D, R, C) to status strings.
 
-        Handles codes like 'A','M','D','C' and rename codes that start with 'R'.
+        Accepts codes like 'A', 'M', 'D', 'R100', 'C75' and returns one of:
+        'added', 'modified', 'deleted', 'renamed', 'copied'.
         """
         try:
             if not code:
+                return ""
+            first = code[0]
+            if first == "A":
+                return "added"
+            if first == "M":
                 return "modified"
-            if code.startswith("R"):
+            if first == "D":
+                return "deleted"
+            if first == "R":
                 return "renamed"
-            return {"A": "added", "M": "modified", "D": "deleted", "C": "copied"}.get(code, "modified")
-        except Exception as e:
-            self.printException(e, "_git_cli_name_status_to_str: mapping failed")
+            if first == "C":
+                return "copied"
             return "modified"
-
+        except Exception as e:
+            self.printException(e, "_git_cli_name_status_to_str failed")
+            return "modified"
     # END: _git_cli_name_status_to_str v1
 
     # BEGIN: _git_cli_parse_name_status_line v1
     def _git_cli_parse_name_status_line(self, line: str) -> tuple[str, str]:
-        """Parse a single `git --name-status` line and return (path, status).
+        """Parse a single `--name-status` line into `(path,status)`.
 
-        Handles rename lines like `R087\told\tnew` by selecting the new
-        path (last column). Uses `_git_cli_name_status_to_str` to determine the
-        canonical status string.
+        Handles rename/copy output where the new path may be present.
         """
-        parts = line.split("\t")
-        code = parts[0].strip() if parts else ""
-        if code.startswith("R"):
-            path = parts[-1].strip() if len(parts) > 1 else ""
-        else:
-            path = parts[1].strip() if len(parts) > 1 else ""
-        status = self._git_cli_name_status_to_str(code)
-        # If this is a rename line, include the new-path in the status string
         try:
-            if code.startswith("R") and len(parts) > 2:
-                newp = parts[-1].strip()
-                if newp:
-                    status = f"renamed->{newp}"
+            parts = line.split()
+            if not parts:
+                return ("", "")
+            code = parts[0].strip()
+            path = parts[1].strip() if len(parts) > 1 else ""
+            status = self._git_cli_name_status_to_str(code)
+            try:
+                if code.startswith("R") and len(parts) > 2:
+                    newp = parts[-1].strip()
+                    if newp:
+                        status = f"renamed->{newp}"
+            except Exception as e:
+                self.printException(e, "_git_cli_parse_name_status_line: including rename target failed")
+            return (path, status)
         except Exception as e:
-            self.printException(e, "_git_cli_parse_name_status_line: including rename target failed")
-        return (path, status)
+            self.printException(e, "_git_cli_parse_name_status_line failed")
+            return ("", "")
 
     # END: _git_cli_parse_name_status_line v1
 
@@ -618,21 +306,7 @@ class TestRepo(AppException):
 
     # END: _git_cli_name_status v1
 
-    # BEGIN: _pygit2_empty_tree_for_repo v1
-    def _pygit2_empty_tree_for_repo(self, repo) -> "pygit2.Tree | None":
-        """Construct and return an empty tree object for `repo`, or None on failure.
-
-        Centralizes `TreeBuilder` usage to avoid repeated try/except blocks.
-        """
-        try:
-            tb = repo.TreeBuilder()
-            oid = tb.write()
-            return repo.get(oid)
-        except Exception as e:
-            self.printException(e, "_pygit2_empty_tree_for_repo: TreeBuilder failed")
-            return None
-
-    # END: _pygit2_empty_tree_for_repo v1
+    # _pygit2_empty_tree_for_repo removed — not needed when using git CLI
 
     # BEGIN: getFileListBetweenNewRepoAndTopHash v1
     def getFileListBetweenNewRepoAndTopHash(self, usePyGit2: bool) -> list[str]:
@@ -715,83 +389,8 @@ class TestRepo(AppException):
 
         Extracted helper containing the previous logic for diffing two commits.
         """
-        if usePyGit2:
-            if not pygit2:
-                raise RuntimeError("pygit2 is not available")
-            try:
-                repo = self.pygit2_repo
-                try:
-                    prev_obj = repo.revparse_single(prev_hash)
-                    curr_obj = repo.revparse_single(curr_hash)
-                except Exception as e:
-                    # Fall back to repo.get if revparse_single fails
-                    try:
-                        prev_obj = repo.get(prev_hash)
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenTwoCommits: repo.get(prev_hash) failed")
-                        prev_obj = None
-                    try:
-                        curr_obj = repo.get(curr_hash)
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenTwoCommits: repo.get(curr_hash) failed")
-                        curr_obj = None
-
-                if prev_obj is None or curr_obj is None:
-                    return []
-
-                # Use pygit2 diff between the two commit/tree objects. Keep
-                # ordering consistent with `git diff prev curr`.
-                try:
-                    diff = repo.diff(prev_obj, curr_obj)
-                except Exception as e:
-                    # If direct diff fails, try resolving to trees explicitly
-                    a_tree = self._pygit2_resolve_tree(prev_obj)
-                    b_tree = self._pygit2_resolve_tree(curr_obj)
-                    if a_tree is None or b_tree is None:
-                        self.printException(e, "getFileListBetweenTwoCommits: cannot resolve commits to trees for diff")
-                        return []
-                    diff = repo.diff(a_tree, b_tree)
-
-                results: list[tuple[str, str]] = []
-                for delta in diff.deltas:
-                    try:
-                        status_code = getattr(delta, "status", None)
-                        old_path = getattr(delta.old_file, "path", None)
-                        new_path = getattr(delta.new_file, "path", None)
-                        if status_code == pygit2.GIT_DELTA_ADDED:
-                            results.append((new_path or old_path, "added"))
-                        elif status_code == pygit2.GIT_DELTA_DELETED:
-                            results.append((old_path or new_path, "deleted"))
-                        elif status_code == pygit2.GIT_DELTA_MODIFIED:
-                            results.append((new_path or old_path, "modified"))
-                        elif status_code == pygit2.GIT_DELTA_RENAMED:
-                            tgt = new_path or old_path
-                            # Guard against spurious rename-to-self cases where
-                            # libgit2/pygit2 reports a rename but the old and
-                            # new paths are identical. Treat these as
-                            # modifications to avoid confusing "renamed->same".
-                            if old_path and new_path and old_path == new_path:
-                                results.append((tgt, "modified"))
-                            else:
-                                results.append((tgt, f"renamed->{tgt}" if tgt else "renamed"))
-                        elif status_code == pygit2.GIT_DELTA_COPIED:
-                            results.append((new_path or old_path, "copied"))
-                        else:
-                            # Fallback: treat as modified
-                            results.append((new_path or old_path, "modified"))
-                    except Exception as e:
-                        self.printException(e, "getFileListBetweenTwoCommits: processing delta failed")
-                        continue
-
-                results.sort(key=lambda x: x[0])
-                return results
-            except Exception as e:
-                self.printException(e, "getFileListBetweenTwoCommits: pygit2 simple diff failed")
-                return []
-
-        else:
-            # git CLI fallback when not using pygit2 (commit -> commit)
-            return self._git_cli_name_status(["git", "diff", "--name-status", prev_hash, curr_hash])
+        # Use git CLI for commit->commit diffs (pygit2 removed)
+        return self._git_cli_name_status(["git", "diff", "--name-status", prev_hash, curr_hash])
 
     # END: getFileListBetweenTwoCommits v1
 
@@ -1077,26 +676,9 @@ class TestRepo(AppException):
     # make git-only
     def getFileListBetweenStagedAndMods(self, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return a list of `(path, status)` for files changed between staged index and working tree (mods)."""
-        # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
-        # Else use git CLI to get the list of files
-        if usePyGit2:
-            if not pygit2:
-                raise RuntimeError("pygit2 is not available")
-            try:
-                detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff(self.STAGED, self.MODS)
-            except Exception as e:
-                self.printException(e, "getFileListBetweenStagedAndMods: _pygit2_run_pygit2_diff failed")
-                return []
-            try:
-                return self._deltas_to_results(detailed, a_raw, b_raw)
-            except Exception as e:
-                self.printException(e, "getFileListBetweenStagedAndMods: _deltas_to_results failed")
-                return []
-
-        else:
-            # Use git CLI to get the list of files; cache the results once per process
-            key = "getFileListBetweenStagedAndMods"
-            return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status"]) 
+        # Use git CLI to get the list of files; cache the results once per process
+        key = "getFileListBetweenStagedAndMods"
+        return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status"]) 
 
     # END: getFileListBetweenStagedAndMods v1
 
