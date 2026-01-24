@@ -940,39 +940,34 @@ class TestRepo(AppException):
 
         Status values are the same as other diffs (added/modified/etc.).
         """
-        # Use pygit2 if `usePyGit2` is True (throw an exception if pygit2 is not available)
-        # Else use git CLI to get the list of files
-        if usePyGit2:
-            if not pygit2:
-                raise RuntimeError("pygit2 is not available")
-            try:
-                detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff(self.NEWREPO, curr_hash)
-            except Exception as e:
-                self.printException(e, "getFileListBetweenNewRepoAndHash: _pygit2_run_pygit2_diff failed")
-                return []
-            try:
-                return self._deltas_to_results(detailed, a_raw, b_raw)
-            except Exception as e:
-                self.printException(e, "getFileListBetweenNewRepoAndHash: _deltas_to_results failed")
-                return []
+        # Git-CLI implementation with a one-time per-hash cache. The
+        # `usePyGit2` flag is ignored for this specialized initial->commit case.
+        key = f"getFileListBetweenNewRepoAndHash:{curr_hash}"
+        try:
+            if not hasattr(self, "_cmd_cache"):
+                self._cmd_cache = {}
+            if key in self._cmd_cache:
+                return self._cmd_cache[key]
 
-        else:
-            # git CLI fallback when not using pygit2 for initial->commit
             try:
-                # List all files in the commit (treat as 'added' vs empty repo)
                 output = check_output(["git", "ls-tree", "-r", "--name-only", curr_hash], cwd=self.repoRoot, text=True)
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
+                self._cmd_cache[key] = []
                 return []
+
             results: list[tuple[str, str]] = []
             for line in output.splitlines():
                 ln = line.strip()
                 if not ln:
                     continue
-                # All files present in the commit are 'added' relative to empty repo
                 results.append((ln, "added"))
             results.sort(key=lambda x: x[0])
+            self._cmd_cache[key] = results
             return results
+        except Exception as e:
+            self.printException(e, "getFileListBetweenNewRepoAndHash: unexpected failure")
+            return []
 
     # END: getFileListBetweenNewRepoAndHash v1
 
@@ -983,32 +978,9 @@ class TestRepo(AppException):
         This is the specialized handler for the `prev is None and curr == STAGED`
         case so `getFileListBetweenNormalizedHashes` can remain a dispatcher.
         """
-        ST = "STAGED"
-        if usePyGit2:
-            repo = self.pygit2_repo
-            try:
-                head_tree = self.pygit2_resolve_token_to_tree("HEAD")
-            except Exception as e:
-                self.printException(e, "getFileListBetweenNewRepoAndStaged: token resolve failed")
-                return []
-
-            try:
-                if head_tree is not None:
-                    detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff("HEAD", self.STAGED)
-                else:
-                    detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff(self.NEWREPO, self.STAGED)
-            except Exception as e:
-                self.printException(e, "getFileListBetweenNewRepoAndStaged: _pygit2_run_pygit2_diff failed")
-                return []
-
-            try:
-                return self._deltas_to_results(detailed, a_raw, b_raw)
-            except Exception as e:
-                self.printException(e, "getFileListBetweenNewRepoAndStaged: _deltas_to_results failed")
-                return []
-
-        # git CLI fallback when not using pygit2
-        return self._git_cli_name_status(["git", "diff", "--name-status", "--cached"])
+        # Git-CLI-only implementation cached once per process.
+        key = "getFileListBetweenNewRepoAndStaged"
+        return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status", "--cached"])
 
     # END: getFileListBetweenNewRepoAndStaged v1
 
@@ -1096,52 +1068,10 @@ class TestRepo(AppException):
 
         Generalization of getFileListBetweenTopHashAndStaged for any commit-ish.
         """
-        if usePyGit2:
-            if not pygit2:
-                raise RuntimeError("pygit2 is not available")
-            try:
-                head_tree = self.pygit2_resolve_token_to_tree(hash)
-            except Exception as e:
-                self.printException(e, "getFileListBetweenHashAndStaged: token resolve failed")
-                return []
-
-            if head_tree is None:
-                self.printException(ValueError("could not resolve tree for hash"), "_resolve_tree failed")
-                return []
-
-            try:
-                detailed, a_raw, b_raw = self._pygit2_run_pygit2_diff(hash, self.STAGED)
-            except Exception as e:
-                self.printException(e, "getFileListBetweenHashAndStaged: _pygit2_run_pygit2_diff failed")
-                return []
-
-            try:
-                return self._deltas_to_results(detailed, a_raw, b_raw)
-            except Exception as e:
-                self.printException(e, "getFileListBetweenHashAndStaged: _deltas_to_results failed")
-                return []
-
-        else:
-            # Use git CLI for staged-vs-HEAD list
-            try:
-                output = check_output(
-                    ["git", "diff", "--name-status", "--cached", hash],
-                    cwd=self.repoRoot,
-                    text=True,
-                )
-            except CalledProcessError as e:
-                self.printException(e, "git command failed")
-                return []
-            results: list[tuple[str, str]] = []
-            for line in output.splitlines():
-                if not line:
-                    continue
-                # Parse git --name-status line (handles rename/new-path selection)
-                path, status = self._git_cli_parse_name_status_line(line)
-                if path:
-                    results.append((path, status))
-            results.sort(key=lambda x: x[0])
-            return results
+        # Use git-CLI with a per-hash cache. The `usePyGit2` branch is
+        # intentionally ignored to prefer the cached git-CLI path.
+        key = f"getFileListBetweenHashAndStaged:{hash}"
+        return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status", "--cached", hash])
 
     # END: getFileListBetweenHashAndStaged v1
 
