@@ -274,11 +274,7 @@ class TestRepo(AppException):
         Returns a sorted list of `(path, status)`.
         """
         try:
-            try:
-                output = check_output(args, cwd=self.repoRoot, text=True)
-            except CalledProcessError as e:
-                self.printException(e, "git command failed")
-                return []
+            output = self._git_run(args, text=True)
 
             results: list[tuple[str, str]] = []
             for line in output.splitlines():
@@ -294,6 +290,52 @@ class TestRepo(AppException):
             return []
 
     # END: _git_cli_name_status v1
+
+    # BEGIN: _git_run v1
+    def _git_run(self, args: list, text: bool = True, cache_key: str | None = None):
+        """Run a git subprocess and return its output.
+
+        Behavior:
+        - On success returns the command output (string when text=True).
+        - On CalledProcessError: if `cache_key` is provided, store [] into
+          `self._cmd_cache[cache_key]` and return an empty string. On any
+          failure this function returns an empty string (never `None`).
+        - Caches raw command output under an internal key derived from args
+          so identical subprocess calls are cheap.
+        """
+        try:
+            internal_key = f"_git_run:{' '.join(args)}:{'text' if text else 'bytes'}"
+            if internal_key in self._cmd_cache:
+                return self._cmd_cache[internal_key]
+            try:
+                out = check_output(args, cwd=self.repoRoot, text=text)
+            except CalledProcessError as e:
+                self.printException(e, f"_git_run: git command failed: {' '.join(args)}")
+                # If caller provided a parsed-result cache_key, store an empty
+                # parsed result there so callers can return quickly next time.
+                if cache_key:
+                    self._cmd_cache[cache_key] = []
+                    # record failure for this internal invocation as empty string
+                    self._cmd_cache[internal_key] = ""
+                    return ""
+                # Otherwise, record failure sentinel as empty string and
+                # return empty string (never None)
+                self._cmd_cache[internal_key] = ""
+                return ""
+            # Success: cache raw output under internal key and return it.
+            self._cmd_cache[internal_key] = out
+            return out
+        except Exception as e:
+            self.printException(e, "_git_run: unexpected failure")
+            if cache_key:
+                self._cmd_cache[cache_key] = []
+                self._cmd_cache[internal_key] = ""
+                return ""
+            # Always return an empty string on unexpected failures
+            self._cmd_cache[internal_key] = ""
+            return ""
+
+    # END: _git_run v1
 
     
 
@@ -391,12 +433,7 @@ class TestRepo(AppException):
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            try:
-                output = check_output(["git", "ls-tree", "-r", "--name-only", curr_hash], cwd=self.repoRoot, text=True)
-            except CalledProcessError as e:
-                self.printException(e, "git command failed")
-                self._cmd_cache[key] = []
-                return []
+            output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key)
 
             results: list[tuple[str, str]] = []
             for line in output.splitlines():
@@ -459,12 +496,7 @@ class TestRepo(AppException):
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            try:
-                output = check_output(git_args, cwd=self.repoRoot, text=True)
-            except CalledProcessError as e:
-                self.printException(e, "git command failed")
-                self._cmd_cache[key] = []
-                return []
+            output = self._git_run(git_args, text=True, cache_key=key)
 
             results: list[tuple[str, str]] = []
             for line in output.splitlines():
@@ -539,23 +571,8 @@ class TestRepo(AppException):
             results: list[tuple[str, str, str]] = []
             seen: set[str] = set()
 
-            untracked_out = ""
-            ignored_out = ""
-            try:
-                untracked_out = check_output(
-                    ["git", "ls-files", "--others", "--exclude-standard"], cwd=self.repoRoot, text=True
-                )
-            except CalledProcessError as e:
-                self.printException(e, "git ls-files untracked failed")
-                untracked_out = ""
-
-            try:
-                ignored_out = check_output(
-                    ["git", "ls-files", "--others", "-i", "--exclude-standard"], cwd=self.repoRoot, text=True
-                )
-            except CalledProcessError as e:
-                self.printException(e, "git ls-files ignored failed")
-                ignored_out = ""
+            untracked_out = self._git_run(["git", "ls-files", "--others", "--exclude-standard"], text=True) or ""
+            ignored_out = self._git_run(["git", "ls-files", "--others", "-i", "--exclude-standard"], text=True) or ""
 
             for line in untracked_out.splitlines():
                 rel = line.strip()
@@ -679,14 +696,8 @@ class TestRepo(AppException):
     # BEGIN: getHashListEntireRepo v1
     def getHashListEntireRepo(self) -> list[tuple[str, str, str]]:
         """Return a list of all commit hashes in the repository."""
-        try:
-            # Use git log to get commit epoch time, hash and subject for all refs
-            output = check_output(
-                ["git", "log", "--all", "--pretty=format:%ct %H %s"], cwd=self.repoRoot, text=True
-            )
-        except CalledProcessError as e:
-            self.printException(e, "git command failed")
-            return []
+        # Use git log to get commit epoch time, hash and subject for all refs
+        output = self._git_run(["git", "log", "--all", "--pretty=format:%ct %H %s"], text=True)
         pairs = []
         for line in output.splitlines():
             if not line:
@@ -721,12 +732,7 @@ class TestRepo(AppException):
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            try:
-                names_out = check_output(["git", "diff", "--cached", "--name-only"], cwd=self.repoRoot, text=True)
-            except CalledProcessError as e:
-                self.printException(e, "git command failed")
-                self._cmd_cache[key] = []
-                return []
+            names_out = self._git_run(["git", "diff", "--cached", "--name-only"], text=True, cache_key=key)
 
             if not names_out:
                 self._cmd_cache[key] = []
@@ -752,11 +758,7 @@ class TestRepo(AppException):
         # Detect working-tree vs index differences via git CLI and return a
         # MODS pseudo-hash when there are modified files.
         try:
-            try:
-                names_out = check_output(["git", "diff", "--name-only"], cwd=self.repoRoot, text=True)
-            except CalledProcessError as e:
-                self.printException(e, "git command failed")
-                return []
+            names_out = self._git_run(["git", "diff", "--name-only"], text=True)
 
             if not names_out:
                 return []
@@ -791,14 +793,7 @@ class TestRepo(AppException):
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            try:
-                output = check_output(
-                    ["git", "log", "--pretty=format:%ct %H %s", "--", file_name], cwd=self.repoRoot, text=True
-                )
-            except CalledProcessError as e:
-                self.printException(e, "git command failed")
-                self._cmd_cache[key] = []
-                return []
+            output = self._git_run(["git", "log", "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key)
 
             entries: list[tuple[str, str, str]] = []
             for line in output.splitlines():
@@ -817,13 +812,7 @@ class TestRepo(AppException):
                 iso = self._epoch_to_iso(ts)
                 entries.append((iso, h, subject if subject else ""))
 
-            try:
-                status_out = check_output(
-                    ["git", "status", "--porcelain", "--", file_name], cwd=self.repoRoot, text=True
-                )
-            except CalledProcessError as e:
-                self.printException(e, f"git status failed for {file_name}")
-                status_out = ""
+            status_out = self._git_run(["git", "status", "--porcelain", "--", file_name], text=True) or ""
             if status_out:
                 s = status_out.splitlines()[0]
                 if len(s) >= 2:
