@@ -214,8 +214,7 @@ class TestRepo(AppException):
     def _git_cli_parse_name_status_output(self, output: str) -> list[tuple[str, str]]:
         """Parse `--name-status` output (possibly many lines) into `(path,status)` pairs.
 
-        This consolidates the per-line parsing and status-code mapping into a
-        single robust routine. Returns a sorted list of `(path,status)` tuples.
+        Returns a sorted list of `(path,status)` tuples.
         """
         try:
             results: list[tuple[str, str]] = []
@@ -280,6 +279,33 @@ class TestRepo(AppException):
             return []
 
     # END: _git_cli_name_status v2
+
+    # BEGIN: _git_name_status_dispatch v1
+    def _git_name_status_dispatch(self, prev: str | None = None, curr: str | None = None, cached: bool = False, key: str | None = None) -> list[tuple[str, str]]:
+        """Generalized dispatcher for `git diff --name-status` variants.
+
+        Builds the appropriate `git` argument list from the template and
+        delegates to the cached parser. Use `cached=True` to include
+        `--cached` in the args. If `key` is omitted a synthetic cache key
+        is derived from the parameters.
+        """
+        try:
+            args = ["git", "diff", "--name-status"]
+            if cached:
+                args.append("--cached")
+            if prev is not None and curr is not None:
+                args += [prev, curr]
+            elif prev is not None:
+                args.append(prev)
+            elif curr is not None:
+                args.append(curr)
+            cache_key = key or f"git_name_status:{prev}:{curr}:{'cached' if cached else 'nocache'}"
+            return self._git_cli_getCachedFileList(cache_key, args)
+        except Exception as e:
+            self.printException(e, "_git_name_status_dispatch: unexpected failure")
+            return []
+
+    # END: _git_name_status_dispatch v1
 
     # BEGIN: _git_run v1
     def _git_run(self, args: list, text: bool = True, cache_key: str | None = None):
@@ -406,8 +432,9 @@ class TestRepo(AppException):
 
         Extracted helper containing the previous logic for diffing two commits.
         """
-        # Use git CLI for commit->commit diffs
-        return self._git_cli_name_status(["git", "diff", "--name-status", prev_hash, curr_hash])
+        # Use generalized dispatcher for commit->commit diffs
+        key = f"getFileListBetweenTwoCommits:{prev_hash}:{curr_hash}"
+        return self._git_name_status_dispatch(prev=prev_hash, curr=curr_hash, cached=False, key=key)
 
     # END: getFileListBetweenTwoCommits v1
 
@@ -449,7 +476,7 @@ class TestRepo(AppException):
         """
         # Git-CLI-only implementation cached once per process.
         key = "getFileListBetweenNewRepoAndStaged"
-        return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status", "--cached"])
+        return self._git_name_status_dispatch(prev=None, curr=None, cached=True, key=key)
 
     # END: getFileListBetweenNewRepoAndStaged v1
 
@@ -461,7 +488,7 @@ class TestRepo(AppException):
         This implementation is git-CLI-only and mirrors `git diff --name-status`.
         """
         key = "getFileListBetweenNewRepoAndMods"
-        return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status"])
+        return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
 
     # END: getFileListBetweenNewRepoAndMods v1
 
@@ -505,7 +532,7 @@ class TestRepo(AppException):
         Uses the git CLI plus a one-time cache via `_git_cli_getCachedFileList`.
         """
         key = f"getFileListBetweenHashAndCurrentTime:{hash}"
-        return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status", hash])
+        return self._git_name_status_dispatch(prev=hash, curr=None, cached=False, key=key)
 
     # END: getFileListBetweenHashAndCurrentTime v1
 
@@ -524,7 +551,7 @@ class TestRepo(AppException):
         Generalization of getFileListBetweenTopHashAndStaged for any commit-ish.
         """
         key = f"getFileListBetweenHashAndStaged:{hash}"
-        return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status", "--cached", hash])
+        return self._git_name_status_dispatch(prev=hash, curr=None, cached=True, key=key)
 
     # END: getFileListBetweenHashAndStaged v1
 
@@ -534,7 +561,7 @@ class TestRepo(AppException):
         """Return a list of `(path, status)` for files changed between staged index and working tree (mods)."""
         # Use git CLI to get the list of files; cache the results once per process
         key = "getFileListBetweenStagedAndMods"
-        return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status"]) 
+        return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
 
     # END: getFileListBetweenStagedAndMods v1
 
