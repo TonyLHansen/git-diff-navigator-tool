@@ -883,8 +883,6 @@ class TestRepo(AppException):
     # END: getHashListFromFileName v1
 
 
-
-
 def main():
     """Main function to run the tests."""
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py", description=__doc__)
@@ -1008,7 +1006,8 @@ def main():
                         print(repr(it))
                 else:
                     print(repr(res))
-            except Exception:
+            except Exception as e:
+                test_repo.printException(e, "run_one: pretty-printing result failed")
                 print(repr(res))
             return True
         except Exception as e:
