@@ -211,6 +211,26 @@ class TestRepo(AppException):
 
     # END: safe_mtime v1
 
+    # BEGIN: _make_cache_key v1
+    def _make_cache_key(self, name: str, *args) -> str:
+        """Build a compact cache key from `name` and `args`.
+
+        Produces `name:HEX` where HEX is the first 16 chars of the
+        sha256 of the repr of (name,args). This avoids ad-hoc string
+        formatting throughout the codebase while keeping keys stable
+        within a process.
+        """
+        try:
+            payload = (name,) + tuple(args)
+            h = hashlib.sha256(repr(payload).encode("utf-8")).hexdigest()[:16]
+            return f"{name}:{h}"
+        except Exception as e:
+            self.printException(e, "_make_cache_key: failed to build key")
+            # Fallback to a simple name-based key
+            return f"{name}:{hashlib.sha256(name.encode()).hexdigest()[:16]}"
+
+    # END: _make_cache_key v1
+
     # BEGIN: _paths_mtime_iso v1
     def _paths_mtime_iso(self, paths: list[str]) -> str:
         """
@@ -323,7 +343,7 @@ class TestRepo(AppException):
                 args.append(prev)
             elif curr is not None:
                 args.append(curr)
-            cache_key = key or f"git_name_status:{prev}:{curr}:{'cached' if cached else 'nocache'}"
+            cache_key = key or self._make_cache_key("git_name_status", prev, curr, 'cached' if cached else 'nocache')
             return self._git_cli_getCachedFileList(cache_key, args)
         except Exception as e:
             self.printException(e, "_git_name_status_dispatch: unexpected failure")
@@ -457,7 +477,7 @@ class TestRepo(AppException):
         Extracted helper containing the previous logic for diffing two commits.
         """
         # Use generalized dispatcher for commit->commit diffs
-        key = f"getFileListBetweenTwoCommits:{prev_hash}:{curr_hash}"
+        key = self._make_cache_key("getFileListBetweenTwoCommits", prev_hash, curr_hash)
         return self._git_name_status_dispatch(prev=prev_hash, curr=curr_hash, cached=False, key=key)
 
     # END: getFileListBetweenTwoCommits v1
@@ -469,7 +489,7 @@ class TestRepo(AppException):
         Status values are the same as other diffs (added/modified/etc.).
         """
         # Git-CLI implementation with a one-time per-hash cache. The
-        key = f"getFileListBetweenNewRepoAndHash:{curr_hash}"
+        key = self._make_cache_key("getFileListBetweenNewRepoAndHash", curr_hash)
         try:
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
@@ -555,7 +575,7 @@ class TestRepo(AppException):
 
         Uses the git CLI plus a one-time cache via `_git_cli_getCachedFileList`.
         """
-        key = f"getFileListBetweenHashAndCurrentTime:{hash}"
+        key = self._make_cache_key("getFileListBetweenHashAndCurrentTime", hash)
         return self._git_name_status_dispatch(prev=hash, curr=None, cached=False, key=key)
 
     # END: getFileListBetweenHashAndCurrentTime v1
@@ -574,7 +594,7 @@ class TestRepo(AppException):
 
         Generalization of getFileListBetweenTopHashAndStaged for any commit-ish.
         """
-        key = f"getFileListBetweenHashAndStaged:{hash}"
+        key = self._make_cache_key("getFileListBetweenHashAndStaged", hash)
         return self._git_name_status_dispatch(prev=hash, curr=None, cached=True, key=key)
 
     # END: getFileListBetweenHashAndStaged v1
@@ -584,7 +604,7 @@ class TestRepo(AppException):
     def getFileListBetweenStagedAndMods(self) -> list[tuple[str, str]]:
         """Return a list of `(path, status)` for files changed between staged index and working tree (mods)."""
         # Use git CLI to get the list of files; cache the results once per process
-        key = "getFileListBetweenStagedAndMods"
+        key = self._make_cache_key("getFileListBetweenStagedAndMods")
         return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
 
     # END: getFileListBetweenStagedAndMods v1
@@ -599,7 +619,7 @@ class TestRepo(AppException):
         - `iso_mtime` is produced from the filesystem mtime via `_epoch_to_iso`.
         """
         try:
-            cache_key = "getFileListUntrackedAndIgnored"
+            cache_key = self._make_cache_key("getFileListUntrackedAndIgnored")
             if cache_key in self._cmd_cache:
                 return self._cmd_cache[cache_key]
 
@@ -736,7 +756,7 @@ class TestRepo(AppException):
     def getHashListStagedChanges(self) -> list[tuple[str, str, str]]:
         """Return a list of commit hashes for staged changes."""
         # Use git CLI to detect staged files and return a STAGED pseudo-hash.
-        key = f"getHashListStagedChanges:{self.index_mtime_iso()}"
+        key = self._make_cache_key("getHashListStagedChanges", self.index_mtime_iso())
         try:
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
@@ -777,7 +797,7 @@ class TestRepo(AppException):
                 return []
 
             iso = self._paths_mtime_iso(paths)
-            key = f"getHashListNewChanges:{iso}"
+            key = self._make_cache_key("getHashListNewChanges", iso)
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
             res = [(iso, "MODS", self.MODS_MESSAGE)]
@@ -797,7 +817,7 @@ class TestRepo(AppException):
         `file_name`. The previous walk/diff implementation has been
         removed for performance consistency.
         """
-        key = f"getHashListFromFileName:{file_name}"
+        key = self._make_cache_key("getHashListFromFileName", file_name)
         try:
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
