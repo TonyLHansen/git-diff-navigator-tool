@@ -12,6 +12,7 @@ import time
 import codecs
 from datetime import datetime, timezone
 from subprocess import check_output, CalledProcessError
+
 # (sys and traceback already imported above)
 
 
@@ -66,9 +67,6 @@ class TestRepo(AppException):
         self._cmd_cache = {}
 
     # END: __init__ v1
-
-
-    
 
     # BEGIN: _deltas_to_results v1
     def _deltas_to_results(self, detailed: list, a_raw, b_raw) -> list[tuple[str, str]]:
@@ -280,7 +278,6 @@ class TestRepo(AppException):
 
     # END: _paths_mtime_iso v1
 
-    
     # BEGIN: _git_cli_name_status v2
     def _git_cli_parse_name_status_output(self, output: str) -> list[tuple[str, str]]:
         """Parse `--name-status` output (possibly many lines) into `(path,status)` pairs.
@@ -352,7 +349,9 @@ class TestRepo(AppException):
     # END: _git_cli_name_status v2
 
     # BEGIN: _git_name_status_dispatch v1
-    def _git_name_status_dispatch(self, prev: str | None = None, curr: str | None = None, cached: bool = False, key: str | None = None) -> list[tuple[str, str]]:
+    def _git_name_status_dispatch(
+        self, prev: str | None = None, curr: str | None = None, cached: bool = False, key: str | None = None
+    ) -> list[tuple[str, str]]:
         """Generalized dispatcher for `git diff --name-status` variants.
 
         Builds the appropriate `git` argument list from the template and
@@ -370,7 +369,7 @@ class TestRepo(AppException):
                 args.append(prev)
             elif curr is not None:
                 args.append(curr)
-            cache_key = key or self._make_cache_key("git_name_status", prev, curr, 'cached' if cached else 'nocache')
+            cache_key = key or self._make_cache_key("git_name_status", prev, curr, "cached" if cached else "nocache")
             return self._git_cli_getCachedFileList(cache_key, args)
         except Exception as e:
             self.printException(e, "_git_name_status_dispatch: unexpected failure")
@@ -423,8 +422,6 @@ class TestRepo(AppException):
             return ""
 
     # END: _git_run v1
-
-    
 
     # BEGIN: getFileListBetweenNewRepoAndTopHash v1
     def getFileListBetweenNewRepoAndTopHash(self) -> list[str]:
@@ -834,7 +831,9 @@ class TestRepo(AppException):
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            output = self._git_run(["git", "log", "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key)
+            output = self._git_run(
+                ["git", "log", "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key
+            )
 
             entries: list[tuple[str, str, str]] = []
             parsed = self._parse_git_log_output(output or "")
@@ -945,7 +944,7 @@ def printResults(test_repo: TestRepo, label: str, res, raw: bool, limit: int) ->
 def main():
     """Main function to run the tests."""
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py", description=__doc__)
-    
+
     parser.add_argument(
         "-R",
         "--raw",
@@ -987,8 +986,6 @@ def main():
         default=sys.maxsize,
         help="Maximum number of entries to print when showing results (default: unlimited). Mutually exclusive with --silent.",
     )
-
-    
 
     parser.add_argument(
         "-H",
@@ -1053,7 +1050,6 @@ def main():
     if args.silent:
         args.limit = 0
 
-
     # Helper to run a single exercise and return True on success. Accept
     # a `TestRepo` instance so the helper can be defined once and reused.
     def run_one(test_repo, i: int, name: str, func_name: str, fname: str | None, limit: int) -> bool:
@@ -1117,22 +1113,45 @@ def main():
 
         if args.all or args.getFileListBetweenNewAndTopHash:
             total_exercises += 1
-            run_one(test_repo, i, "-1, File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None, args.limit)
+            run_one(
+                test_repo, i, "-1, File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None, args.limit
+            )
             i += 1
 
         if args.all or args.getFileListBetweenTopHashAndCurrentTime:
             total_exercises += 1
-            run_one(test_repo, i, "File List Between TopHash and Current Time", "getFileListBetweenTopHashAndCurrentTime", None, args.limit)
+            run_one(
+                test_repo,
+                i,
+                "File List Between TopHash and Current Time",
+                "getFileListBetweenTopHashAndCurrentTime",
+                None,
+                args.limit,
+            )
             i += 1
 
         if args.all or args.getFileListBetweenTopHashAndStaged:
             total_exercises += 1
-            run_one(test_repo, i, "-2, File List Between TopHash and Current Time", "getFileListBetweenTopHashAndStaged", None, args.limit)
+            run_one(
+                test_repo,
+                i,
+                "-2, File List Between TopHash and Current Time",
+                "getFileListBetweenTopHashAndStaged",
+                None,
+                args.limit,
+            )
             i += 1
 
         if args.all or args.getFileListBetweenStagedAndMods:
             total_exercises += 1
-            run_one(test_repo, i, "-3, File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None, args.limit)
+            run_one(
+                test_repo,
+                i,
+                "-3, File List Between Staged and Mods",
+                "getFileListBetweenStagedAndMods",
+                None,
+                args.limit,
+            )
             i += 1
 
         if args.all or args.getFileListBetweenNewAndStaged:
@@ -1157,7 +1176,9 @@ def main():
 
         if args.all or args.getHashListFromFileName:
             total_exercises += 1
-            run_one(test_repo, i, f"-8, Hash List From File {args.file}", "getHashListFromFileName", args.file, args.limit)
+            run_one(
+                test_repo, i, f"-8, Hash List From File {args.file}", "getHashListFromFileName", args.file, args.limit
+            )
             i += 1
 
         # Two separate entries mapping to the same function (preserve original ordering)
@@ -1208,7 +1229,7 @@ def main():
                     try:
                         l = test_repo.getFileListBetweenNormalizedHashes(prev_hash, curr_hash)
                         print(f"{label} result ({len(l)} entries):")
-                        for it in l[:args.limit]:
+                        for it in l[: args.limit]:
                             print(repr(it))
                         pass
                     except Exception as e:
