@@ -931,6 +931,14 @@ def main():
         help="Increase verbosity (can be specified multiple times)",
     )
 
+    parser.add_argument(
+        "-T",
+        "--timing",
+        action="store_true",
+        default=False,
+        help="Show timing information for each run (t=...)",
+    )
+
     # Make --silent and --limit mutually exclusive: you may either silence output
     # (which forces no printed entries) or specify a numeric --limit to print.
     mux = parser.add_mutually_exclusive_group()
@@ -1033,7 +1041,9 @@ def main():
                 res = getattr(test_repo, func_name)()
                 t1 = time.perf_counter()
             dur = t1 - t0
-            print(f"RUN: {func_name} {name} returned {len(res) if hasattr(res, '__len__') else '1'} entries (t={dur:.3f}s)")
+            count_str = f"{len(res) if hasattr(res, '__len__') else '1'}"
+            if args.timing:
+                print(f"RUN: {func_name} {name} returned {count_str} entries (t={dur:.3f}s)")
             # Delegate printing to helper to keep output consistent
             try:
                 printResults(test_repo, f"RUN: {func_name} {name}", res, args.raw, limit)
