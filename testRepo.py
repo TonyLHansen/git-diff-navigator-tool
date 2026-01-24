@@ -1008,9 +1008,9 @@ def main():
     )
     parser.add_argument(
         "-f",
-        "--getFileListSampledComparisons",
+        "--runFileListSampledComparisons",
         action="store_true",
-        help="Run getFileListSampledComparisons",
+        help="Run runFileListSampledComparisons",
     )
     parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
     parser.add_argument("-F", "--file", default="README.md", help="Filename for getHashListFromFileName when used")
@@ -1152,10 +1152,10 @@ def main():
         # and avoid mixing their output with the main test loop.
 
     # If no specific flags provided, default to running all exercises
-    if not to_run and not args.getFileListSampledComparisons and not args.getFileListBetweenNormalizedHashes:
+    if not to_run and not args.runFileListSampledComparisons and not args.getFileListBetweenNormalizedHashes:
         args.all = True
         to_run = allfuncs
-        args.getFileListSampledComparisons = True
+        args.runFileListSampledComparisons = True
 
     total_exercises = 0
 
@@ -1199,7 +1199,7 @@ def main():
                     test_repo.printException(e, f"processing getFileListBetweenNormalizedHashes option '{pair}' failed")
 
         # If requested, run sampled comparisons separately (outside the to_run loop)
-        if args.getFileListSampledComparisons:
+        if args.runFileListSampledComparisons:
             print("\nRunning sampled pairwise comparisons (separate)...")
             try:
                 # runFileListSampledExercises returns total exercises run
