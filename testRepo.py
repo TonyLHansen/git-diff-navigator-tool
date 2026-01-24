@@ -3,7 +3,6 @@
 """Harness around git CLI repository file listing methods."""
 
 import argparse
-import difflib
 import sys
 import traceback
 import os
@@ -13,8 +12,7 @@ import time
 import codecs
 from datetime import datetime, timezone
 from subprocess import check_output, CalledProcessError
-import traceback
-import sys
+# (sys and traceback already imported above)
 
 
 def printException(e: Exception, msg: str) -> None:
@@ -250,6 +248,35 @@ class TestRepo(AppException):
         if mtimes:
             return self._epoch_to_iso(max(mtimes))
         return self.index_mtime_iso()
+
+    # BEGIN: _parse_git_log_output v1
+    def _parse_git_log_output(self, output: str) -> list[tuple[int, str, str]]:
+        """Parse `git log --pretty=format:%ct %H %s` style output.
+
+        Returns a list of tuples `(timestamp_int, hash, subject)`.
+        """
+        results: list[tuple[int, str, str]] = []
+        try:
+            for line in output.splitlines():
+                if not line:
+                    continue
+                parts = line.split(None, 2)
+                if len(parts) < 2:
+                    continue
+                try:
+                    ts = int(parts[0])
+                except Exception as e:
+                    self.printException(e, "_parse_git_log_output: parsing timestamp failed")
+                    ts = 0
+                h = parts[1].strip()
+                subject = parts[2].strip() if len(parts) >= 3 else ""
+                results.append((ts, h, subject))
+            return results
+        except Exception as e:
+            self.printException(e, "_parse_git_log_output: unexpected failure")
+            return []
+
+    # END: _parse_git_log_output v1
 
     # END: _paths_mtime_iso v1
 
@@ -727,22 +754,7 @@ class TestRepo(AppException):
         """Return a list of all commit hashes in the repository."""
         # Use git log to get commit epoch time, hash and subject for all refs
         output = self._git_run(["git", "log", "--all", "--pretty=format:%ct %H %s"], text=True)
-        pairs = []
-        for line in output.splitlines():
-            if not line:
-                continue
-            parts = line.split(None, 2)
-            if len(parts) < 2:
-                continue
-            try:
-                ts = int(parts[0])
-            except Exception as e:
-                self.printException(e, "getHashListEntireRepo: parsing git log timestamp failed")
-                ts = 0
-            h = parts[1].strip()
-            subject = parts[2].strip() if len(parts) >= 3 else ""
-            pairs.append((ts, h, subject))
-
+        pairs = self._parse_git_log_output(output or "")
         pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
         formatted: list[tuple[str, str, str]] = []
         for ts, h, subject in pairs:
@@ -825,19 +837,8 @@ class TestRepo(AppException):
             output = self._git_run(["git", "log", "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key)
 
             entries: list[tuple[str, str, str]] = []
-            for line in output.splitlines():
-                if not line:
-                    continue
-                parts = line.split(None, 2)
-                if len(parts) < 2:
-                    continue
-                try:
-                    ts = int(parts[0])
-                except Exception as e:
-                    self.printException(e, "getHashListFromFileName: parsing git log timestamp failed")
-                    ts = 0
-                h = parts[1].strip()
-                subject = parts[2].strip() if len(parts) >= 3 else ""
+            parsed = self._parse_git_log_output(output or "")
+            for ts, h, subject in parsed:
                 iso = self._epoch_to_iso(ts)
                 entries.append((iso, h, subject if subject else ""))
 
@@ -1209,10 +1210,10 @@ def main():
                         print(f"{label} result ({len(l)} entries):")
                         for it in l[:args.limit]:
                             print(repr(it))
-                        ok = True
+                        pass
                     except Exception as e:
                         test_repo.printException(e, f"invoking getFileListBetweenNormalizedHashes for {pair} failed")
-                        ok = False
+                        pass
                     # We treat these as exercises; successes/failures are logged but not tallied.
                 except Exception as e:
                     test_repo.printException(e, f"processing getFileListBetweenNormalizedHashes option '{pair}' failed")
