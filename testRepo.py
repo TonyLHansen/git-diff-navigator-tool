@@ -93,6 +93,8 @@ class TestRepo(AppException):
         self.pygit2_repo = pygit2.Repository(self.repoRoot)
         self.verbose = verbose
         self.silent = silent
+        # One-time per-process cache for git CLI command results
+        self._cmd_cache = {}
 
     # END: __init__ v1
 
@@ -944,8 +946,6 @@ class TestRepo(AppException):
         # `usePyGit2` flag is ignored for this specialized initial->commit case.
         key = f"getFileListBetweenNewRepoAndHash:{curr_hash}"
         try:
-            if not hasattr(self, "_cmd_cache"):
-                self._cmd_cache = {}
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
 
@@ -1015,8 +1015,6 @@ class TestRepo(AppException):
         Returns a sorted list of `(path,status)`. On git failure returns [].
         """
         try:
-            if not hasattr(self, "_cmd_cache"):
-                self._cmd_cache = {}
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
 
@@ -1113,8 +1111,6 @@ class TestRepo(AppException):
         - `iso_mtime` is produced from the filesystem mtime via `_epoch_to_iso`.
         """
         try:
-            if not hasattr(self, "_cmd_cache"):
-                self._cmd_cache = {}
             cache_key = "getFileListUntrackedAndIgnored"
             if cache_key in self._cmd_cache:
                 return self._cmd_cache[cache_key]
@@ -1653,89 +1649,24 @@ class TestRepo(AppException):
     def getHashListFromFileName(self, file_name: str, usePyGit2: bool) -> list[tuple[str, str, str]]:
         """Return a list of commit hashes that modified the given file.
 
-        When `usePyGit2` is True, use `pygit2` only and include a commit
-        only when `file_name` appears in the diff between the commit and
-        ALL of its parents (root commits compared to an empty tree).
+        Uses the git CLI (`git log` + `git status`) with a one-time cache per
+        `file_name`. The previous `pygit2` walk/diff implementation has been
+        removed for performance consistency.
         """
-        if usePyGit2:
-            if not pygit2:
-                raise RuntimeError("pygit2 is not available")
-            repo = self.pygit2_repo
-            matches: list[tuple[str, str, str]] = []
-            try:
-                try:
-                    head = repo.revparse_single("HEAD")
-                except Exception as e:
-                    self.printException(e, "getHashListFromFileName: revparse HEAD failed")
-                    return []
+        key = f"getHashListFromFileName:{file_name}"
+        try:
+            if key in self._cmd_cache:
+                return self._cmd_cache[key]
 
-                walker = repo.walk(head.id, pygit2.GIT_SORT_TIME)
-
-                def path_in_diff(a_tree, b_tree, orig_a_none=False, orig_b_none=False) -> bool:
-                    try:
-                        if a_tree is None:
-                            a_tree = self._pygit2_empty_tree_for_repo(repo)
-                        if b_tree is None:
-                            b_tree = self._pygit2_empty_tree_for_repo(repo)
-                        if a_tree is None or b_tree is None:
-                            return False
-                        diff = repo.diff(a_tree, b_tree)
-                        try:
-                            # Only enable rename detection when both sides were real trees
-                            if not orig_a_none and not orig_b_none:
-                                flags = _pygit2_similarity_flags()
-                                if flags:
-                                    diff.find_similar(flags)
-                        except Exception as e:
-                            self.printException(e, "getHashListFromFileName: find_similar failed")
-                    except Exception as e:
-                        self.printException(e, "getHashListFromFileName: repo.diff failed")
-                        return False
-                    if not diff:
-                        return False
-                    for delta in getattr(diff, "deltas", []):
-                        path = getattr(delta.new_file, "path", None) or getattr(delta.old_file, "path", None)
-                        if path == file_name:
-                            return True
-                    return False
-
-                for c in walker:
-                    try:
-                        parents = list(c.parents)
-                        # Root commit: compare against empty tree
-                        if not parents:
-                            b_tree = self._pygit2_resolve_tree(c)
-                            if path_in_diff(None, b_tree, True, False):
-                                matches.append(self._pygit2_format_commit_entry(repo, c))
-                            continue
-
-                        # For merges and normal commits: require path to appear
-                        # in the diff versus every parent (differ-from-all).
-                        b_tree = self._pygit2_resolve_tree(c)
-                        all_match = True
-                        for p in parents:
-                            a_tree = self._pygit2_resolve_tree(p)
-                            if not path_in_diff(a_tree, b_tree, False, False):
-                                all_match = False
-                                break
-                        if all_match:
-                            matches.append(self._pygit2_format_commit_entry(repo, c))
-                    except Exception as e:
-                        self.printException(e, "getHashListFromFileName: per-commit handling failed")
-                        continue
-            except Exception as e:
-                self.printException(e, "pygit2 log walk failed")
-                return []
-            return matches
-
-        else:
             try:
                 output = check_output(
                     ["git", "log", "--pretty=format:%ct %H %s", "--", file_name], cwd=self.repoRoot, text=True
                 )
             except CalledProcessError as e:
                 self.printException(e, "git command failed")
+                self._cmd_cache[key] = []
                 return []
+
             entries: list[tuple[str, str, str]] = []
             for line in output.splitlines():
                 if not line:
@@ -1752,7 +1683,7 @@ class TestRepo(AppException):
                 subject = parts[2].strip() if len(parts) >= 3 else ""
                 iso = self._epoch_to_iso(ts)
                 entries.append((iso, h, subject if subject else ""))
-            # Detect working-tree/index state for this file and prepend pseudo-entries
+
             try:
                 status_out = check_output(
                     ["git", "status", "--porcelain", "--", file_name], cwd=self.repoRoot, text=True
@@ -1761,7 +1692,6 @@ class TestRepo(AppException):
                 self.printException(e, f"git status failed for {file_name}")
                 status_out = ""
             if status_out:
-                # porcelain: two-char XY at start
                 s = status_out.splitlines()[0]
                 if len(s) >= 2:
                     idx_flag = s[0]
@@ -1769,20 +1699,22 @@ class TestRepo(AppException):
                 else:
                     idx_flag = s[0] if s else " "
                     wt_flag = " "
-                # Prepare timestamps for pseudo-entries
                 iso_index = self.index_mtime_iso()
                 iso_mods = self._paths_mtime_iso([file_name])
-                # If index has a change, represent staged version with index timestamp
                 if idx_flag != " ":
                     entries.insert(0, (iso_index, "STAGED", self.STAGED_MESSAGE))
-                # If working tree has modifications (unstaged), represent as MODS
                 if wt_flag != " ":
-                    # Insert after STAGED if present, otherwise at top
                     if entries and entries[0][1] == "STAGED":
                         entries.insert(1, (iso_mods, "MODS", self.MODS_MESSAGE))
                     else:
                         entries.insert(0, (iso_mods, "MODS", self.MODS_MESSAGE))
+
+            entries.sort(key=lambda x: x[0], reverse=True)
+            self._cmd_cache[key] = entries
             return entries
+        except Exception as e:
+            self.printException(e, "getHashListFromFileName: unexpected failure")
+            return []
 
     # END: getHashListFromFileName v1
 
