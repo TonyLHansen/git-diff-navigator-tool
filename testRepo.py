@@ -61,10 +61,9 @@ class TestRepo(AppException):
     MODS = "MODS"
 
     # BEGIN: __init__ v1
-    def __init__(self, repoRoot: str, verbose: int = 0, silent: bool = False):
+    def __init__(self, repoRoot: str, verbose: int = 0):
         self.repoRoot = repoRoot
         self.verbose = verbose
-        self.silent = silent
         # One-time per-process cache for git CLI command results
         self._cmd_cache = {}
 
@@ -675,37 +674,7 @@ class TestRepo(AppException):
 
     # END: getHashListSamplePlusEnds v1
 
-    # BEGIN: runFileListSampledExercises v1
-    def runFileListSampledExercises(self, raw: bool, limit: int) -> int:
-        """Exercise `getFileListBetweenNormalizedHashes` for all sampled token pairs.
-
-        This helper no longer performs comparisons — it simply calls the
-        dispatcher for each token pair and prints a bounded sample of the
-        returned entries so the code paths are exercised.
-        Returns the total number of exercised token pairs.
-        """
-        sample = self.getHashListSamplePlusEnds()
-        tokens: list = [x[1] for x in sample]
-        tokens.reverse()
-        print(f"Tokens (newest to oldest)={tokens}")
-
-        total = 0
-        for i in range(len(tokens)):
-            for j in range(i + 1, len(tokens)):
-                a = tokens[i]
-                b = tokens[j]
-                total += 1
-                try:
-                    res = self.getFileListBetweenNormalizedHashes(a, b)
-                    print(f"\nEXERCISE: {a}->{b} returned {len(res)} entries:")
-                    for it in res[:limit]:
-                        print(repr(it))
-                except Exception as e:
-                    self.printException(e, f"runFileListSampledExercises: handler failed for {a}->{b}")
-                
-        return total
-
-    # END: runFileListSampledExercises v1
+    # runFileListSampledExercises moved to module-level function
 
     # BEGIN: getHashListEntireRepo v1
     def getHashListEntireRepo(self) -> list[tuple[str, str, str]]:
@@ -883,6 +852,35 @@ class TestRepo(AppException):
     # END: getHashListFromFileName v1
 
 
+def runFileListSampledExercises(test_repo: TestRepo, raw: bool, limit: int) -> int:
+    """Module-level exerciser for `getFileListBetweenNormalizedHashes`.
+
+    Calls the dispatch logic for all sampled token pairs and prints a
+    bounded sample of results. Returns the total number of exercised
+    token pairs.
+    """
+    sample = test_repo.getHashListSamplePlusEnds()
+    tokens: list = [x[1] for x in sample]
+    tokens.reverse()
+    print(f"Tokens (newest to oldest)={tokens}")
+
+    total = 0
+    for i in range(len(tokens)):
+        for j in range(i + 1, len(tokens)):
+            a = tokens[i]
+            b = tokens[j]
+            total += 1
+            try:
+                res = test_repo.getFileListBetweenNormalizedHashes(a, b)
+                print(f"\nEXERCISE: {a}->{b} returned {len(res)} entries:")
+                for it in res[:limit]:
+                    print(repr(it))
+            except Exception as e:
+                test_repo.printException(e, f"runFileListSampledExercises: handler failed for {a}->{b}")
+
+    return total
+
+
 def main():
     """Main function to run the tests."""
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py", description=__doc__)
@@ -902,20 +900,23 @@ def main():
         help="Increase verbosity (can be specified multiple times)",
     )
 
-    parser.add_argument(
+    # Make --silent and --limit mutually exclusive: you may either silence output
+    # (which forces no printed entries) or specify a numeric --limit to print.
+    mux = parser.add_mutually_exclusive_group()
+    mux.add_argument(
         "-S",
         "--silent",
         action="store_true",
         default=False,
-        help="Silence summary printouts such as 'No differences found in ## lines of output'",
+        help="Silence summary printouts such as 'No differences found in ## lines of output' (mutually exclusive with --limit)",
     )
 
-    parser.add_argument(
+    mux.add_argument(
         "-L",
         "--limit",
         type=int,
         default=sys.maxsize,
-        help="Maximum number of entries to print when showing results (default: unlimited)",
+        help="Maximum number of entries to print when showing results (default: unlimited). Mutually exclusive with --silent.",
     )
 
     
@@ -979,7 +980,10 @@ def main():
 
     args = parser.parse_args()
 
-    
+    # If `--silent` is requested, force `--limit` to 0 so no entries are printed.
+    if args.silent:
+        args.limit = 0
+
 
     # Helper to run a single exercise and return True on success. Accept
     # a `TestRepo` instance so the helper can be defined once and reused.
@@ -1120,7 +1124,7 @@ def main():
 
     for path in args.path:
         print(f"\n== Repository: {path} ==")
-        test_repo = TestRepo(path, args.verbose, args.silent)
+        test_repo = TestRepo(path, args.verbose)
 
         for i, (name, func, fname) in enumerate(to_run, 1):
             total_exercises += 1
@@ -1162,7 +1166,7 @@ def main():
             print("\nRunning sampled pairwise comparisons (separate)...")
             try:
                 # runFileListSampledExercises returns total exercises run
-                t = test_repo.runFileListSampledExercises(args.raw, args.limit)
+                t = runFileListSampledExercises(test_repo, args.raw, args.limit)
                 total_exercises += t
             except Exception as e:
                 test_repo.printException(e, "running runFileListSampledExercises failed")
