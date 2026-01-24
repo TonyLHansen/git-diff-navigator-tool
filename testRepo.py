@@ -872,13 +872,55 @@ def runFileListSampledExercises(test_repo: TestRepo, raw: bool, limit: int) -> i
             total += 1
             try:
                 res = test_repo.getFileListBetweenNormalizedHashes(a, b)
-                print(f"\nEXERCISE: {a}->{b} returned {len(res)} entries:")
-                for it in res[:limit]:
-                    print(repr(it))
+                printResults(test_repo, f"EXERCISE: {a}->{b}", res, raw, limit)
             except Exception as e:
                 test_repo.printException(e, f"runFileListSampledExercises: handler failed for {a}->{b}")
 
     return total
+
+
+def printResults(test_repo: TestRepo, label: str, res, raw: bool, limit: int) -> None:
+    """Pretty-print results returned from TestRepo methods.
+
+    - `label` is a short description printed as a header.
+    - `res` may be a list (of tuples) or another value.
+    - `raw` forces printing raw tuple/list reprs.
+    - `limit` bounds printed entries when `res` is a list.
+    """
+    try:
+        count = len(res) if hasattr(res, "__len__") else 1
+        header = f"{label} returned {count} entries:"
+        print(f"\n{header}")
+
+        if raw:
+            # Raw printing: show Python reprs
+            if isinstance(res, list):
+                for it in res[:limit]:
+                    print(repr(it))
+            else:
+                print(repr(res))
+            return
+
+        # Default formatted printing (fallback to repr for unknown types)
+        if isinstance(res, list):
+            for it in res[:limit]:
+                try:
+                    print(repr(it))
+                except Exception as e:
+                    test_repo.printException(e, "printResults: item repr failed")
+                    print(str(it))
+        else:
+            try:
+                print(repr(res))
+            except Exception as e:
+                test_repo.printException(e, "printResults: repr failed")
+                print(str(res))
+    except Exception as e:
+        test_repo.printException(e, "printResults: unexpected failure")
+        try:
+            print(repr(res))
+        except Exception as e:
+            test_repo.printException(e, "printResults: fallback repr failed")
 
 
 def main():
@@ -1003,16 +1045,11 @@ def main():
                 t1 = time.perf_counter()
             dur = t1 - t0
             print(f"RUN: {func_name} {name} returned {len(res) if hasattr(res, '__len__') else '1'} entries (t={dur:.3f}s)")
-            # Pretty-print up to `limit` entries
+            # Delegate printing to helper to keep output consistent
             try:
-                if isinstance(res, list):
-                    for it in res[:limit]:
-                        print(repr(it))
-                else:
-                    print(repr(res))
+                printResults(test_repo, f"RUN: {func_name} {name}", res, args.raw, limit)
             except Exception as e:
-                test_repo.printException(e, "run_one: pretty-printing result failed")
-                print(repr(res))
+                test_repo.printException(e, "run_one: printing result failed")
             return True
         except Exception as e:
             test_repo.printException(e, f"run_one invocation of {func_name} failed")
