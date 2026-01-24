@@ -280,7 +280,6 @@ class TestRepo(AppException):
                         print("DEBUG: _pygit2_run_pygit2_diff repo.status unavailable")
             except Exception as e:
                 self.printException(e, "_pygit2_run_pygit2_diff: instrumentation failed")
-                pass
 
             try:
                 # Try to diff using the resolved raw objects directly. For
@@ -1225,7 +1224,8 @@ class TestRepo(AppException):
                         mtime = os.path.getmtime(fp)
                     else:
                         mtime = None
-                except FileNotFoundError:
+                except FileNotFoundError as e:
+                    self.printException(e, "getFileListUntrackedAndIgnored: file not found (untracked)")
                     continue
                 except Exception as e:
                     self.printException(e, "getFileListUntrackedAndIgnored: stat failed")
@@ -1247,7 +1247,8 @@ class TestRepo(AppException):
                         mtime = os.path.getmtime(fp)
                     else:
                         mtime = None
-                except FileNotFoundError:
+                except FileNotFoundError as e:
+                    self.printException(e, "getFileListUntrackedAndIgnored: file not found (ignored)")
                     continue
                 except Exception as e:
                     self.printException(e, "getFileListUntrackedAndIgnored: stat failed")
