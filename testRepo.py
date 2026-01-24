@@ -458,8 +458,8 @@ class TestRepo(AppException):
 
     # END: _epoch_to_iso v1
 
-    # BEGIN: _decode_git_quoted_path v1
-    def _decode_git_quoted_path(self, rel: str) -> str:
+    # BEGIN: _git_cli_decode_quoted_path v1
+    def _git_cli_decode_quoted_path(self, rel: str) -> str:
         """Decode a git-quoted path ("...") emitted by `git ls-files`.
 
         - If the path is quoted (surrounded by double quotes), unescape
@@ -478,14 +478,14 @@ class TestRepo(AppException):
                 try:
                     return b.decode("utf-8")
                 except UnicodeDecodeError as e:
-                    self.printException(e, "_decode_git_quoted_path: unicode decode failed")
+                    self.printException(e, "_git_cli_decode_quoted_path: unicode decode failed")
                     return b.decode("latin-1")
             except Exception as e:
-                self.printException(e, "_decode_git_quoted_path: decode failed")
+                self.printException(e, "_git_cli_decode_quoted_path: decode failed")
                 return raw
         return rel
 
-    # END: _decode_git_quoted_path v1
+    # END: _git_cli_decode_quoted_path v1
 
     # BEGIN: _paths_mtime_iso v1
     def _paths_mtime_iso(self, paths: list[str]) -> str:
@@ -528,11 +528,11 @@ class TestRepo(AppException):
                 new_path = None
                 try:
                     if delta is not None:
-                            new_path = getattr(delta.new_file, "path", None) or getattr(delta, "new_path", None)
+                        new_path = getattr(delta.new_file, "path", None) or getattr(delta, "new_path", None)
                 except Exception as e:
-                        new_path = None
-                        self.printException(e, "_pygit2_delta_status_to_str: extracting new_path failed")
-                    return f"renamed->{new_path}" if new_path else "renamed"
+                    new_path = None
+                    self.printException(e, "_pygit2_delta_status_to_str: extracting new_path failed")
+                return f"renamed->{new_path}" if new_path else "renamed"
             if status_code == pygit2.GIT_DELTA_COPIED:
                 return "copied"
         except Exception as e:
@@ -541,8 +541,8 @@ class TestRepo(AppException):
 
     # END: _pygit2_delta_status_to_str v1
 
-    # BEGIN: _git_name_status_to_str v1
-    def _git_name_status_to_str(self, code: str) -> str:
+    # BEGIN: _git_cli_name_status_to_str v1
+    def _git_cli_name_status_to_str(self, code: str) -> str:
         """Map `git --name-status` status codes to human-friendly strings.
 
         Handles codes like 'A','M','D','C' and rename codes that start with 'R'.
@@ -554,17 +554,17 @@ class TestRepo(AppException):
                 return "renamed"
             return {"A": "added", "M": "modified", "D": "deleted", "C": "copied"}.get(code, "modified")
         except Exception as e:
-            self.printException(e, "_git_name_status_to_str: mapping failed")
+            self.printException(e, "_git_cli_name_status_to_str: mapping failed")
             return "modified"
 
-    # END: _git_name_status_to_str v1
+    # END: _git_cli_name_status_to_str v1
 
-    # BEGIN: _parse_git_name_status_line v1
-    def _parse_git_name_status_line(self, line: str) -> tuple[str, str]:
+    # BEGIN: _git_cli_parse_name_status_line v1
+    def _git_cli_parse_name_status_line(self, line: str) -> tuple[str, str]:
         """Parse a single `git --name-status` line and return (path, status).
 
         Handles rename lines like `R087\told\tnew` by selecting the new
-        path (last column). Uses `_git_name_status_to_str` to determine the
+        path (last column). Uses `_git_cli_name_status_to_str` to determine the
         canonical status string.
         """
         parts = line.split("\t")
@@ -573,7 +573,7 @@ class TestRepo(AppException):
             path = parts[-1].strip() if len(parts) > 1 else ""
         else:
             path = parts[1].strip() if len(parts) > 1 else ""
-        status = self._git_name_status_to_str(code)
+        status = self._git_cli_name_status_to_str(code)
         # If this is a rename line, include the new-path in the status string
         try:
             if code.startswith("R") and len(parts) > 2:
@@ -581,10 +581,10 @@ class TestRepo(AppException):
                 if newp:
                     status = f"renamed->{newp}"
         except Exception as e:
-            self.printException(e, "_parse_git_name_status_line: including rename target failed")
+            self.printException(e, "_git_cli_parse_name_status_line: including rename target failed")
         return (path, status)
 
-    # END: _parse_git_name_status_line v1
+    # END: _git_cli_parse_name_status_line v1
 
     # BEGIN: _git_cli_name_status v1
     def _git_cli_name_status(self, args: list) -> list[tuple[str, str]]:
@@ -606,7 +606,7 @@ class TestRepo(AppException):
             for line in output.splitlines():
                 if not line:
                     continue
-                path, status = self._parse_git_name_status_line(line)
+                path, status = self._git_cli_parse_name_status_line(line)
                 if path:
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
@@ -745,7 +745,7 @@ class TestRepo(AppException):
                 except Exception as e:
                     # If direct diff fails, try resolving to trees explicitly
                     a_tree = self._pygit2_resolve_tree(prev_obj)
-                        b_tree = self._pygit2_resolve_tree(curr_obj)
+                    b_tree = self._pygit2_resolve_tree(curr_obj)
                     if a_tree is None or b_tree is None:
                         self.printException(e, "getFileListBetweenTwoCommits: cannot resolve commits to trees for diff")
                         return []
@@ -1022,7 +1022,7 @@ class TestRepo(AppException):
         The `usePyGit2` flag is ignored and results are cached once per process.
         """
         key = "getFileListBetweenNewRepoAndMods"
-        return self._getCachedFileList(key, ["git", "diff", "--name-status"])
+        return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status"])
 
     # END: getFileListBetweenNewRepoAndMods v1
 
@@ -1037,8 +1037,8 @@ class TestRepo(AppException):
 
     # END: getFileListBetweenTopHashAndCurrentTime v1
 
-    # BEGIN: _getCachedFileList v1
-    def _getCachedFileList(self, key: str, git_args: list) -> list[tuple[str, str]]:
+    # BEGIN: _git_cli_getCachedFileList v1
+    def _git_cli_getCachedFileList(self, key: str, git_args: list) -> list[tuple[str, str]]:
         """Run `git_args` (list) and cache the parsed name-status results under `key`.
 
         Returns a sorted list of `(path,status)`. On git failure returns [].
@@ -1060,26 +1060,26 @@ class TestRepo(AppException):
             for line in output.splitlines():
                 if not line:
                     continue
-                path, status = self._parse_git_name_status_line(line)
+                path, status = self._git_cli_parse_name_status_line(line)
                 if path:
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
             self._cmd_cache[key] = results
             return results
         except Exception as e:
-            self.printException(e, "_getCachedFileList: unexpected failure")
+            self.printException(e, "_git_cli_getCachedFileList: unexpected failure")
             return []
 
-    # END: _getCachedFileList v1
+    # END: _git_cli_getCachedFileList v1
 
     # BEGIN: getFileListBetweenHashAndCurrentTime v1
     def getFileListBetweenHashAndCurrentTime(self, hash: str, usePyGit2: bool) -> list[tuple[str, str]]:
         """Return `(path,status)` for files changed between `hash` and working tree.
 
-        Uses the git CLI plus a one-time cache via `_getCachedFileList`.
+        Uses the git CLI plus a one-time cache via `_git_cli_getCachedFileList`.
         """
         key = f"getFileListBetweenHashAndCurrentTime:{hash}"
-        return self._getCachedFileList(key, ["git", "diff", "--name-status", hash])
+        return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status", hash])
 
     # END: getFileListBetweenHashAndCurrentTime v1
 
@@ -1138,7 +1138,7 @@ class TestRepo(AppException):
                 if not line:
                     continue
                 # Parse git --name-status line (handles rename/new-path selection)
-                path, status = self._parse_git_name_status_line(line)
+                path, status = self._git_cli_parse_name_status_line(line)
                 if path:
                     results.append((path, status))
             results.sort(key=lambda x: x[0])
@@ -1169,7 +1169,7 @@ class TestRepo(AppException):
         else:
             # Use git CLI to get the list of files; cache the results once per process
             key = "getFileListBetweenStagedAndMods"
-            return self._getCachedFileList(key, ["git", "diff", "--name-status"])
+            return self._git_cli_getCachedFileList(key, ["git", "diff", "--name-status"]) 
 
     # END: getFileListBetweenStagedAndMods v1
 
@@ -1213,7 +1213,7 @@ class TestRepo(AppException):
 
             for line in untracked_out.splitlines():
                 rel = line.strip()
-                rel = self._decode_git_quoted_path(rel)
+                rel = self._git_cli_decode_quoted_path(rel)
                 if not rel or rel in seen:
                     continue
                 seen.add(rel)
@@ -1235,7 +1235,7 @@ class TestRepo(AppException):
 
             for line in ignored_out.splitlines():
                 rel = line.strip()
-                rel = self._decode_git_quoted_path(rel)
+                rel = self._git_cli_decode_quoted_path(rel)
                 if not rel or rel in seen:
                     continue
                 seen.add(rel)
