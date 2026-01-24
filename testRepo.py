@@ -210,61 +210,60 @@ class TestRepo(AppException):
     # END: _paths_mtime_iso v1
 
     
-    # BEGIN: _git_cli_name_status_to_str v1
-    def _git_cli_name_status_to_str(self, code: str) -> str:
-        """Map git `--name-status` codes (e.g. A, M, D, R, C) to status strings.
+    # BEGIN: _git_cli_name_status v2
+    def _git_cli_parse_name_status_output(self, output: str) -> list[tuple[str, str]]:
+        """Parse `--name-status` output (possibly many lines) into `(path,status)` pairs.
 
-        Accepts codes like 'A', 'M', 'D', 'R100', 'C75' and returns one of:
-        'added', 'modified', 'deleted', 'renamed', 'copied'.
+        This consolidates the per-line parsing and status-code mapping into a
+        single robust routine. Returns a sorted list of `(path,status)` tuples.
         """
         try:
-            if not code:
-                return ""
-            first = code[0]
-            if first == "A":
-                return "added"
-            if first == "M":
-                return "modified"
-            if first == "D":
-                return "deleted"
-            if first == "R":
-                return "renamed"
-            if first == "C":
-                return "copied"
-            return "modified"
+            results: list[tuple[str, str]] = []
+            for line in output.splitlines():
+                if not line:
+                    continue
+                try:
+                    parts = line.split()
+                    if not parts:
+                        continue
+                    code = parts[0].strip()
+                    path = parts[1].strip() if len(parts) > 1 else ""
+
+                    # Map code to status
+                    status = "modified"
+                    if code:
+                        first = code[0]
+                        if first == "A":
+                            status = "added"
+                        elif first == "M":
+                            status = "modified"
+                        elif first == "D":
+                            status = "deleted"
+                        elif first == "R":
+                            status = "renamed"
+                        elif first == "C":
+                            status = "copied"
+
+                    # If rename/copy includes a target path, include it
+                    try:
+                        if code.startswith("R") and len(parts) > 2:
+                            newp = parts[-1].strip()
+                            if newp:
+                                status = f"renamed->{newp}"
+                    except Exception as e:
+                        self.printException(e, "_git_cli_parse_name_status_output: including rename target failed")
+
+                    if path:
+                        results.append((path, status))
+                except Exception as e:
+                    self.printException(e, "_git_cli_parse_name_status_output: line parse failed")
+                    continue
+            results.sort(key=lambda x: x[0])
+            return results
         except Exception as e:
-            self.printException(e, "_git_cli_name_status_to_str failed")
-            return "modified"
-    # END: _git_cli_name_status_to_str v1
+            self.printException(e, "_git_cli_parse_name_status_output: unexpected failure")
+            return []
 
-    # BEGIN: _git_cli_parse_name_status_line v1
-    def _git_cli_parse_name_status_line(self, line: str) -> tuple[str, str]:
-        """Parse a single `--name-status` line into `(path,status)`.
-
-        Handles rename/copy output where the new path may be present.
-        """
-        try:
-            parts = line.split()
-            if not parts:
-                return ("", "")
-            code = parts[0].strip()
-            path = parts[1].strip() if len(parts) > 1 else ""
-            status = self._git_cli_name_status_to_str(code)
-            try:
-                if code.startswith("R") and len(parts) > 2:
-                    newp = parts[-1].strip()
-                    if newp:
-                        status = f"renamed->{newp}"
-            except Exception as e:
-                self.printException(e, "_git_cli_parse_name_status_line: including rename target failed")
-            return (path, status)
-        except Exception as e:
-            self.printException(e, "_git_cli_parse_name_status_line failed")
-            return ("", "")
-
-    # END: _git_cli_parse_name_status_line v1
-
-    # BEGIN: _git_cli_name_status v1
     def _git_cli_name_status(self, args: list) -> list[tuple[str, str]]:
         """Run a `git` command that emits `--name-status`-style output and parse it.
 
@@ -274,22 +273,13 @@ class TestRepo(AppException):
         Returns a sorted list of `(path, status)`.
         """
         try:
-            output = self._git_run(args, text=True)
-
-            results: list[tuple[str, str]] = []
-            for line in output.splitlines():
-                if not line:
-                    continue
-                path, status = self._git_cli_parse_name_status_line(line)
-                if path:
-                    results.append((path, status))
-            results.sort(key=lambda x: x[0])
-            return results
+            output = self._git_run(args, text=True) or ""
+            return self._git_cli_parse_name_status_output(output)
         except Exception as e:
             self.printException(e, "_git_cli_name_status: unexpected failure")
             return []
 
-    # END: _git_cli_name_status v1
+    # END: _git_cli_name_status v2
 
     # BEGIN: _git_run v1
     def _git_run(self, args: list, text: bool = True, cache_key: str | None = None):
@@ -498,14 +488,8 @@ class TestRepo(AppException):
 
             output = self._git_run(git_args, text=True, cache_key=key)
 
-            results: list[tuple[str, str]] = []
-            for line in output.splitlines():
-                if not line:
-                    continue
-                path, status = self._git_cli_parse_name_status_line(line)
-                if path:
-                    results.append((path, status))
-            results.sort(key=lambda x: x[0])
+            # Parse the whole output using the consolidated parser
+            results = self._git_cli_parse_name_status_output(output or "")
             self._cmd_cache[key] = results
             return results
         except Exception as e:
