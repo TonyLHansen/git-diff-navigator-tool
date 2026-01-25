@@ -13,8 +13,6 @@ import codecs
 from datetime import datetime, timezone
 from subprocess import check_output, CalledProcessError
 
-# (sys and traceback already imported above)
-
 
 def printException(e: Exception, msg: str) -> None:
     """Module-level exception logger used before TestRepo instances are available."""
@@ -67,6 +65,80 @@ class TestRepo(AppException):
         self._cmd_cache = {}
 
     # END: __init__ v1
+
+    # BEGIN: cache and path utility methods v1
+    def reset_cache(self) -> None:
+        """Reset the per-process command/result cache."""
+        self._cmd_cache = {}
+
+    @classmethod
+    def resolve_repo_top(cls, path: str, raise_on_missing: bool = False) -> tuple[str | None, Exception | None]:
+        """Resolve the git repository top-level directory for `path`.
+
+        `path` may be a file or directory; returns a tuple `(out, err)` where
+        `out` is the absolute path to the repository top (as reported by
+        `git rev-parse --show-toplevel`) and `err` is `None` on success. If
+        resolution fails and `raise_on_missing` is False, returns `(None, e)`
+        where `e` is the exception encountered. If `raise_on_missing` is
+        True the function raises on failure.
+
+        This is a `classmethod` so it can be used without instantiating
+        a `TestRepo` object.
+        """
+        if not path:
+            e = RuntimeError("resolve_repo_top: empty path")
+            if raise_on_missing:
+                raise e
+            return (None, e)
+        cur = os.path.abspath(path)
+        if os.path.isfile(cur):
+            cur = os.path.dirname(cur)
+        try:
+            out = check_output(["git", "rev-parse", "--show-toplevel"], cwd=cur, text=True).strip()
+            return (out, None)
+        except FileNotFoundError as e:
+            # git not installed or not on PATH
+            printException(e, "resolve_repo_top: git not found")
+            if raise_on_missing:
+                raise RuntimeError("git not available on PATH") from e
+            return (None, e)
+        except CalledProcessError as e:
+            # Not a git work-tree or other git error
+            if raise_on_missing:
+                raise RuntimeError(f"not a git working tree: {path}") from e
+            return (None, e)
+        except Exception as e:
+            printException(e, "resolve_repo_top failed")
+            if raise_on_missing:
+                raise
+            return (None, e)
+
+    @classmethod
+    def relpath_if_within(cls, base_path: str, full_path: str) -> str | None:
+        """
+        Return `full_path` relative to `base_path` if it is inside it, else None.
+
+        Paths are normalized/absolutized before comparison. Returns the
+        relative path (possibly '.' when equal) or `None` when `full_path`
+        is not within `base_path`.
+        """
+        try:
+            if not base_path or not full_path:
+                return None
+            base = os.path.abspath(os.path.normpath(base_path))
+            full = os.path.abspath(os.path.normpath(full_path))
+            try:
+                common = os.path.commonpath([base, full])
+            except Exception as _no_logging:
+                return None
+            if common != base:
+                return None
+            return os.path.relpath(full, base)
+        except Exception as e:
+            printException(e, "relpath_if_within failed")
+            return None
+
+    # END: cache and path utility methods v1
 
     # BEGIN: _deltas_to_results v1
     def _deltas_to_results(self, detailed: list, a_raw, b_raw) -> list[tuple[str, str]]:
@@ -278,6 +350,7 @@ class TestRepo(AppException):
 
     # END: _paths_mtime_iso v1
 
+    
     # BEGIN: _git_cli_name_status v2
     def _git_cli_parse_name_status_output(self, output: str) -> list[tuple[str, str]]:
         """Parse `--name-status` output (possibly many lines) into `(path,status)` pairs.
@@ -349,9 +422,7 @@ class TestRepo(AppException):
     # END: _git_cli_name_status v2
 
     # BEGIN: _git_name_status_dispatch v1
-    def _git_name_status_dispatch(
-        self, prev: str | None = None, curr: str | None = None, cached: bool = False, key: str | None = None
-    ) -> list[tuple[str, str]]:
+    def _git_name_status_dispatch(self, prev: str | None = None, curr: str | None = None, cached: bool = False, key: str | None = None) -> list[tuple[str, str]]:
         """Generalized dispatcher for `git diff --name-status` variants.
 
         Builds the appropriate `git` argument list from the template and
@@ -369,7 +440,7 @@ class TestRepo(AppException):
                 args.append(prev)
             elif curr is not None:
                 args.append(curr)
-            cache_key = key or self._make_cache_key("git_name_status", prev, curr, "cached" if cached else "nocache")
+            cache_key = key or self._make_cache_key("git_name_status", prev, curr, 'cached' if cached else 'nocache')
             return self._git_cli_getCachedFileList(cache_key, args)
         except Exception as e:
             self.printException(e, "_git_name_status_dispatch: unexpected failure")
@@ -422,6 +493,8 @@ class TestRepo(AppException):
             return ""
 
     # END: _git_run v1
+
+    
 
     # BEGIN: getFileListBetweenNewRepoAndTopHash v1
     def getFileListBetweenNewRepoAndTopHash(self) -> list[str]:
@@ -831,9 +904,7 @@ class TestRepo(AppException):
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            output = self._git_run(
-                ["git", "log", "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key
-            )
+            output = self._git_run(["git", "log", "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key)
 
             entries: list[tuple[str, str, str]] = []
             parsed = self._parse_git_log_output(output or "")
@@ -944,7 +1015,7 @@ def printResults(test_repo: TestRepo, label: str, res, raw: bool, limit: int) ->
 def main():
     """Main function to run the tests."""
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py", description=__doc__)
-
+    
     parser.add_argument(
         "-R",
         "--raw",
@@ -986,6 +1057,8 @@ def main():
         default=sys.maxsize,
         help="Maximum number of entries to print when showing results (default: unlimited). Mutually exclusive with --silent.",
     )
+
+    
 
     parser.add_argument(
         "-H",
@@ -1031,6 +1104,12 @@ def main():
         help="Run getFileListUntrackedAndIgnored",
     )
     parser.add_argument(
+        "-g",
+        "--test-resolve",
+        action="store_true",
+        help="Test resolve_repo_top and relpath_if_within for the provided paths",
+    )
+    parser.add_argument(
         "-f",
         "--runFileListSampledComparisons",
         action="store_true",
@@ -1049,6 +1128,7 @@ def main():
     # If `--silent` is requested, force `--limit` to 0 so no entries are printed.
     if args.silent:
         args.limit = 0
+
 
     # Helper to run a single exercise and return True on success. Accept
     # a `TestRepo` instance so the helper can be defined once and reused.
@@ -1098,6 +1178,7 @@ def main():
         or args.getFileListUntrackedAndIgnored
         or args.runFileListSampledComparisons
         or args.getFileListBetweenNormalizedHashes
+        or args.test_resolve
     )
     if not any_flag and not args.all:
         parser.error("No test functions specified; use -A to run all tests or specify one or more test flags.")
@@ -1108,50 +1189,47 @@ def main():
         print(f"\n== Repository: {path} ==")
         test_repo = TestRepo(path, args.verbose)
 
+        if args.test_resolve:
+            total_exercises += 1
+            # Test resolve_repo_top (returns (out, err))
+            out, err = TestRepo.resolve_repo_top(path, raise_on_missing=False)
+            if out:
+                print(f"resolve_repo_top: {path} -> {out}")
+            else:
+                print(f"resolve_repo_top: {path} -> FAILED: {err}")
+
+            # Test relpath_if_within using the configured file (args.file)
+            total_exercises += 1
+            rel = TestRepo.relpath_if_within(out, path)
+            print(f"relpath_if_within: base={out}, full={path} -> {rel}")
+
+            # Test relpath_if_within using the configured file (args.file)
+            total_exercises += 1
+            relpath = path + os.path.sep + args.file
+            rel = TestRepo.relpath_if_within(out, relpath)
+            print(f"relpath_if_within: base={out}, full={relpath} -> {rel}")
+
         # Execute tests directly in the same order previously provided by `allfuncs`.
         i = 1
 
         if args.all or args.getFileListBetweenNewAndTopHash:
             total_exercises += 1
-            run_one(
-                test_repo, i, "-1, File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None, args.limit
-            )
+            run_one(test_repo, i, "-1, File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None, args.limit)
             i += 1
 
         if args.all or args.getFileListBetweenTopHashAndCurrentTime:
             total_exercises += 1
-            run_one(
-                test_repo,
-                i,
-                "File List Between TopHash and Current Time",
-                "getFileListBetweenTopHashAndCurrentTime",
-                None,
-                args.limit,
-            )
+            run_one(test_repo, i, "File List Between TopHash and Current Time", "getFileListBetweenTopHashAndCurrentTime", None, args.limit)
             i += 1
 
         if args.all or args.getFileListBetweenTopHashAndStaged:
             total_exercises += 1
-            run_one(
-                test_repo,
-                i,
-                "-2, File List Between TopHash and Current Time",
-                "getFileListBetweenTopHashAndStaged",
-                None,
-                args.limit,
-            )
+            run_one(test_repo, i, "-2, File List Between TopHash and Current Time", "getFileListBetweenTopHashAndStaged", None, args.limit)
             i += 1
 
         if args.all or args.getFileListBetweenStagedAndMods:
             total_exercises += 1
-            run_one(
-                test_repo,
-                i,
-                "-3, File List Between Staged and Mods",
-                "getFileListBetweenStagedAndMods",
-                None,
-                args.limit,
-            )
+            run_one(test_repo, i, "-3, File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None, args.limit)
             i += 1
 
         if args.all or args.getFileListBetweenNewAndStaged:
@@ -1176,9 +1254,7 @@ def main():
 
         if args.all or args.getHashListFromFileName:
             total_exercises += 1
-            run_one(
-                test_repo, i, f"-8, Hash List From File {args.file}", "getHashListFromFileName", args.file, args.limit
-            )
+            run_one(test_repo, i, f"-8, Hash List From File {args.file}", "getHashListFromFileName", args.file, args.limit)
             i += 1
 
         # Two separate entries mapping to the same function (preserve original ordering)
@@ -1229,12 +1305,10 @@ def main():
                     try:
                         l = test_repo.getFileListBetweenNormalizedHashes(prev_hash, curr_hash)
                         print(f"{label} result ({len(l)} entries):")
-                        for it in l[: args.limit]:
+                        for it in l[:args.limit]:
                             print(repr(it))
-                        pass
                     except Exception as e:
                         test_repo.printException(e, f"invoking getFileListBetweenNormalizedHashes for {pair} failed")
-                        pass
                     # We treat these as exercises; successes/failures are logged but not tallied.
                 except Exception as e:
                     test_repo.printException(e, f"processing getFileListBetweenNormalizedHashes option '{pair}' failed")
