@@ -21,11 +21,7 @@ import pprint
 import difflib
 import re
 
-# Optional pygit2 support — best-effort import to enable repo status checks
-try:
-    import pygit2  # type: ignore
-except Exception as _no_logging:
-    pygit2 = None
+from gitrepo import GitRepo
 
 # Third-party UI and rendering imports
 from rich.text import Text
@@ -229,6 +225,925 @@ class AppException:
             # Fall back to module-level printer
             printException(e, msg)
             printException(e_fallback, "AppException.printException fallback")
+
+
+class GitRepo(AppException):
+    """
+    Tools for working on a git repository.
+    There are four main functions or classes of functions.
+
+    To use the class, start by creating a:
+
+    gitRepo = GitRepo(directory/filename)
+
+    GitRepo.__init__() in turn calls resolve_repo_top() to retrieve the root of the repo that
+        contains the directory or filename. An exception is returned if there is no git repo.
+    
+        (repoRoot, e) = GitRepo.resolve_repo_top(directory/filename, raise_on_missing)
+            Returns the root of a git repository
+
+            If the path is for the top of a git repository, or a directory or file within,
+            then the full path to that git repository is returned (with e set to None)..
+            If not, then
+                if raise_on_missing, throws an exception
+                if not, return (None, e), where e is the exception that would have been raised.
+
+    gitRepo.get_repo_root() will return the repoRoot.
+
+    If you have a path (relative to the current directory), you can trim it down to one
+    rooted in the repoRoot by using GitRepo.relpath_if_within(). 
+
+        relpath = GitRepo.relpath_if_within(repoRoot, query_path)
+            Both repoRoot and query_path to full paths based on the current directory.
+            Returns "" if the query_path and repoRoot are the same.
+            Returns a path relative to repoRoot if the file is within the repoRoot directory
+            Raises an exception otherwise
+
+    Most of the remaining functions return information about the repository from various points of view,
+    in particular file lists associated with hashes, hash lists associated with the repo or files,
+    and differences for a file with a given set of hashes.
+
+    gitRepo.getFileListBetweenNormalizedHashes(hash1, hash2)
+        Returns a list of the files that were modified between two hashes, along
+        with a status indicator and the timestamp for when that hash was committed
+        In addition to the normal hex-string hashes that git normally supports, there
+        are three pseudo-hashes that are supported:
+            GitRepo.NEWREPO -- the initial state of a repository
+            GitRepo.STAGED -- files that have been added to a repository but not yet committed
+            GitRepo.MODS -- files that have been modified since STAGED or HEAD (if nothing is staged)
+
+    gitRepo.getHashListComplete()
+        Returns a list of the hashes, their timestamps and commit messages for the entire repository.
+    gitRepo.getHashListFromFileName(filename)
+        Returns a list of the hashes, their timestamps and commit messages associated with the specified filename.
+        The filename is relative to the repoRoot.
+
+
+    gitRepo.reset_cache() will reset the cache used by GitRepo's functions. Use this if you ever wish
+    to have gitRepo restart with a fresh view of the repository.
+
+    other getFileList and getHashList functions also exist
+
+    
+
+    Internally the git command is used to retrieve the information and cached.
+
+    Note: an earlier version of this class used pyGit2, but it was found to produce
+    results for getHashListFromFileName() and gitRepo.getFileListBetweenNormalizedHashes()
+    that were sufficiently different to be troublesome. Also, various operations were actually
+    slower than forking the git command.
+    """
+
+    # Pseudo-hash tokens used across diff dispatching
+    NEWREPO = "NEWREPO"
+    STAGED = "STAGED"
+    MODS = "MODS"
+
+    STAGED_MESSAGE = "Staged changes"
+    MODS_MESSAGE = "Unstaged modifications"
+
+    def __init__(self, repoRoot: str):
+        # One-time per-process cache for git CLI command results
+        self._cmd_cache = {}
+        # Resolve the provided path to the git repository top; allow
+        # exceptions from `resolve_repo_top(..., raise_on_missing=True)` to
+        # propagate so callers receive a clear failure immediately.
+        resolved, _ = GitRepo.resolve_repo_top(repoRoot, raise_on_missing=True)
+        self.repoRoot = resolved
+
+
+    def reset_cache(self) -> None:
+        """Reset the per-process command/result cache."""
+        self._cmd_cache = {}
+
+    @classmethod
+    def resolve_repo_top(cls, path: str, raise_on_missing: bool = False) -> tuple[str | None, Exception | None]:
+        """Resolve the git repository top-level directory for `path`.
+
+        `path` may be a file or directory; returns a tuple `(out, err)` where
+        `out` is the absolute path to the repository top (as reported by
+        `git rev-parse --show-toplevel`) and `err` is `None` on success. If
+        resolution fails and `raise_on_missing` is False, returns `(None, e)`
+        where `e` is the exception encountered. If `raise_on_missing` is
+        True the function raises on failure.
+
+        This is a `classmethod` so it can be used without instantiating
+        a `GitRepo` object.
+        """
+        if not path:
+            e = RuntimeError("resolve_repo_top: empty path")
+            if raise_on_missing:
+                raise e
+            return (None, e)
+        cur = os.path.abspath(path)
+        if os.path.isfile(cur):
+            cur = os.path.dirname(cur)
+        try:
+            out = check_output(["git", "rev-parse", "--show-toplevel"], cwd=cur, text=True).strip()
+            return (out, None)
+        except FileNotFoundError as e:
+            # git not installed or not on PATH
+            printException(e, "resolve_repo_top: git not found")
+            if raise_on_missing:
+                raise RuntimeError("git not available on PATH") from e
+            return (None, e)
+        except CalledProcessError as e:
+            # Not a git work-tree or other git error
+            if raise_on_missing:
+                raise RuntimeError(f"not a git working tree: {path}") from e
+            return (None, e)
+        except Exception as e:
+            printException(e, "resolve_repo_top failed")
+            if raise_on_missing:
+                raise
+            return (None, e)
+
+    @classmethod
+    def relpath_if_within(cls, base_path: str, conv_path: str) -> str | None:
+        """
+        Return `full_path` relative to `base_path` if it is inside it, else None.
+
+        If base_path is not a full path (starts with /), 
+        it will be augmented with the current directory, 
+        then converted to the minimal version.
+
+        If base_path is a full path (starts with /), 
+        it will be converted to the minimal version.
+
+        If conv_path is not a full path, it will be treated as relative to the current directory,
+        then converted to the minimal version.
+
+        If conv_path is a full path, it will be converted to the minimal version.
+
+        If conv_path is within base_path, the relative path from base_path to conv_path is returned.
+        If conv_path is not within base_path, None is returned. 
+        """
+        # Raise on invalid inputs.
+        print(f"base_path= '{base_path}'")
+        print(f"conv_path= '{conv_path}'")
+        if not base_path:
+            raise ValueError("relpath_if_within: empty base_path")
+        if not conv_path:
+            raise ValueError("relpath_if_within: empty conv_path")
+        try:
+            if base_path[0] != os.sep:
+                base_path = os.path.abspath(os.path.join(os.getcwd(), base_path))
+            base_path = os.path.abspath(os.path.normpath(base_path))
+            print(f"base_path> '{base_path}'")
+            if conv_path[0] != os.sep:
+                conv_path = os.path.abspath(os.path.join(os.getcwd(), conv_path))
+            conv_path = os.path.abspath(os.path.normpath(conv_path))
+            print(f"conv_path> '{conv_path}'")
+            if base_path == conv_path:
+                common = ""
+            else:
+                common = os.path.relpath(conv_path, base_path)
+            print(f"common> '{common}'")
+            return common
+        except Exception as e:
+            raise ValueError(f"relpath_if_within: path evaluation failed: {e}") from e
+    
+    def get_repo_root(self) -> str:
+        """Return the resolved repository root path for this GitRepo instance."""
+        return self.repoRoot
+
+    def _deltas_to_results(self, detailed: list, a_raw, b_raw) -> list[tuple[str, str]]:
+        """Simplified conversion of detailed delta dicts to `(path,status)`.
+
+        The original implementation attempted complex oid-based matching and
+        lifecycle tracing; it had become fragile and contained malformed
+        indentation. Replace it with a straightforward, robust converter that
+        extracts the most-relevant path and status from each detailed entry.
+        """
+        try:
+            if not detailed:
+                return []
+
+            results: list[tuple[str, str]] = []
+            for item in detailed:
+                try:
+                    # Prefer an explicit status if present, else fall back
+                    status = item.get("status") or "modified"
+
+                    # Prefer canonical path order: explicit 'path', then new_path, then old_path
+                    path = item.get("path") or item.get("new_path") or item.get("old_path")
+                    if not path:
+                        # Skip entries without a usable path
+                        continue
+
+                    # Normalize rename status if it encodes a target
+                    if isinstance(status, str) and status.startswith("renamed->"):
+                        # keep as-is (e.g. 'renamed->new/path')
+                        pass
+
+                    results.append((path, status))
+                except Exception as e:
+                    self.printException(e, "_deltas_to_results: processing item failed")
+                    continue
+
+            results.sort(key=lambda x: x[0])
+            return results
+        except Exception as e:
+            self.printException(e, "_deltas_to_results: unexpected failure")
+            return []
+
+
+    def index_mtime_iso(self) -> str:
+        """
+        Return an ISO timestamp (UTC) based on the repository index mtime.
+
+        Prefer `.git/index`, falling back to `index` at repo root, and
+        finally to the current time if not available.
+        """
+        idx_candidates = [
+            os.path.join(self.repoRoot, ".git", "index"),
+            os.path.join(self.repoRoot, "index"),
+        ]
+        idx_mtime = None
+        for p in idx_candidates:
+            try:
+                if os.path.exists(p):
+                    idx_mtime = os.path.getmtime(p)
+                    break
+            except Exception as e:
+                self.printException(e, "index_mtime_iso: checking index candidate failed")
+                continue
+        if idx_mtime is None:
+            idx_mtime = datetime.now(timezone.utc).timestamp()
+        return self._epoch_to_iso(idx_mtime)
+
+
+    def _epoch_to_iso(self, epoch: float) -> str:
+        """
+        Convert an epoch (seconds) to an ISO UTC timestamp string.
+
+        Centralized helper to avoid repeating the same try/except timestamp
+        formatting logic throughout the codebase.
+        """
+        try:
+            return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception as e:
+            self.printException(e, "_epoch_to_iso: formatting timestamp failed")
+            return "1970-01-01T00:00:00"
+
+
+    def _git_cli_decode_quoted_path(self, rel: str) -> str:
+        """Decode a git-quoted path ("...") emitted by `git ls-files`.
+
+        - If the path is quoted (surrounded by double quotes), unescape
+          backslash sequences (e.g. \\xHH, \\ooo) and interpret the resulting
+          byte values as UTF-8 when possible. If UTF-8 decoding fails,
+          fall back to latin-1 so the original byte values are preserved.
+        - If the path is not quoted, return it unchanged.
+        """
+        if not rel:
+            return rel
+        if rel.startswith('"') and rel.endswith('"'):
+            raw = rel[1:-1]
+            try:
+                tmp = codecs.decode(raw, "unicode_escape")
+                b = tmp.encode("latin-1", "surrogatepass")
+                try:
+                    return b.decode("utf-8")
+                except UnicodeDecodeError as e:
+                    self.printException(e, "_git_cli_decode_quoted_path: unicode decode failed")
+                    return b.decode("latin-1")
+            except Exception as e:
+                self.printException(e, "_git_cli_decode_quoted_path: decode failed")
+                return raw
+        return rel
+
+
+    def safe_mtime(self, rel: str) -> float | None:
+        """Return the mtime (float) for repository-relative `rel` or None.
+
+        Centralized helper that resolves the filesystem path under `repoRoot`,
+        handles symlinks via `lstat`, catches `FileNotFoundError` and other
+        exceptions, and logs failures via `printException`.
+        """
+        try:
+            fp = os.path.join(self.repoRoot, rel)
+            if os.path.islink(fp):
+                return os.lstat(fp).st_mtime
+            if os.path.exists(fp):
+                return os.path.getmtime(fp)
+            return None
+        except FileNotFoundError as e:
+            self.printException(e, f"safe_mtime: file not found ({rel})")
+            return None
+        except Exception as e:
+            self.printException(e, f"safe_mtime: stat failed ({rel})")
+            return None
+
+
+    def _make_cache_key(self, name: str, *args) -> str:
+        """Build a compact cache key from `name` and `args`.
+
+        Produces `name:HEX` where HEX is the first 16 chars of the
+        sha256 of the repr of (name,args). This avoids ad-hoc string
+        formatting throughout the codebase while keeping keys stable
+        within a process.
+        """
+        try:
+            payload = (name,) + tuple(args)
+            h = hashlib.sha256(repr(payload).encode("utf-8")).hexdigest()[:16]
+            return f"{name}:{h}"
+        except Exception as e:
+            self.printException(e, "_make_cache_key: failed to build key")
+            # Fallback to a simple name-based key
+            return f"{name}:{hashlib.sha256(name.encode()).hexdigest()[:16]}"
+
+
+    def _paths_mtime_iso(self, paths: list[str]) -> str:
+        """
+        Given a list of repository-relative paths, return an ISO timestamp
+        (UTC) representing the most-recent modification time among those
+        files. If no mtimes can be determined, fall back to the index mtime.
+        """
+        mtimes: list[float] = []
+        for p in paths:
+            try:
+                m = self.safe_mtime(p)
+                if m is not None:
+                    mtimes.append(m)
+            except Exception as e:
+                self.printException(e, "_paths_mtime_iso: checking path mtime failed")
+                continue
+        if mtimes:
+            return self._epoch_to_iso(max(mtimes))
+        return self.index_mtime_iso()
+
+    def _parse_git_log_output(self, output: str) -> list[tuple[int, str, str]]:
+        """Parse `git log --pretty=format:%ct %H %s` style output.
+
+        Returns a list of tuples `(timestamp_int, hash, subject)`.
+        """
+        results: list[tuple[int, str, str]] = []
+        try:
+            for line in output.splitlines():
+                if not line:
+                    continue
+                parts = line.split(None, 2)
+                if len(parts) < 2:
+                    continue
+                try:
+                    ts = int(parts[0])
+                except Exception as e:
+                    self.printException(e, "_parse_git_log_output: parsing timestamp failed")
+                    ts = 0
+                h = parts[1].strip()
+                subject = parts[2].strip() if len(parts) >= 3 else ""
+                results.append((ts, h, subject))
+            return results
+        except Exception as e:
+            self.printException(e, "_parse_git_log_output: unexpected failure")
+            return []
+
+
+
+    
+    def _git_cli_parse_name_status_output(self, output: str) -> list[tuple[str, str]]:
+        """Parse `--name-status` output (possibly many lines) into `(path,status)` pairs.
+
+        Returns a sorted list of `(path,status)` tuples.
+        """
+        try:
+            results: list[tuple[str, str]] = []
+            for line in output.splitlines():
+                if not line:
+                    continue
+                try:
+                    parts = line.split()
+                    if not parts:
+                        continue
+                    code = parts[0].strip()
+                    path = parts[1].strip() if len(parts) > 1 else ""
+
+                    # Map code to status
+                    status = "modified"
+                    if code:
+                        first = code[0]
+                        if first == "A":
+                            status = "added"
+                        elif first == "M":
+                            status = "modified"
+                        elif first == "D":
+                            status = "deleted"
+                        elif first == "R":
+                            status = "renamed"
+                        elif first == "C":
+                            status = "copied"
+
+                    # If rename/copy includes a target path, include it
+                    try:
+                        if code.startswith("R") and len(parts) > 2:
+                            newp = parts[-1].strip()
+                            if newp:
+                                status = f"renamed->{newp}"
+                    except Exception as e:
+                        self.printException(e, "_git_cli_parse_name_status_output: including rename target failed")
+
+                    if path:
+                        results.append((path, status))
+                except Exception as e:
+                    self.printException(e, "_git_cli_parse_name_status_output: line parse failed")
+                    continue
+            results.sort(key=lambda x: x[0])
+            return results
+        except Exception as e:
+            self.printException(e, "_git_cli_parse_name_status_output: unexpected failure")
+            return []
+
+    def _git_cli_name_status(self, args: list) -> list[tuple[str, str]]:
+        """Run a `git` command that emits `--name-status`-style output and parse it.
+
+        `args` should be a list suitable for `subprocess.check_output`, for
+        example `['git','diff','--name-status', 'A', 'B']` or
+        `['git','diff','--name-status','--cached']`.
+        Returns a sorted list of `(path, status)`.
+        """
+        try:
+            output = self._git_run(args, text=True) or ""
+            return self._git_cli_parse_name_status_output(output)
+        except Exception as e:
+            self.printException(e, "_git_cli_name_status: unexpected failure")
+            return []
+
+
+    def _git_name_status_dispatch(self, prev: str | None = None, curr: str | None = None, cached: bool = False, key: str | None = None) -> list[tuple[str, str]]:
+        """Generalized dispatcher for `git diff --name-status` variants.
+
+        Builds the appropriate `git` argument list from the template and
+        delegates to the cached parser. Use `cached=True` to include
+        `--cached` in the args. If `key` is omitted a synthetic cache key
+        is derived from the parameters.
+        """
+        try:
+            args = ["git", "diff", "--name-status"]
+            if cached:
+                args.append("--cached")
+            if prev is not None and curr is not None:
+                args += [prev, curr]
+            elif prev is not None:
+                args.append(prev)
+            elif curr is not None:
+                args.append(curr)
+            cache_key = key or self._make_cache_key("git_name_status", prev, curr, 'cached' if cached else 'nocache')
+            return self._git_cli_getCachedFileList(cache_key, args)
+        except Exception as e:
+            self.printException(e, "_git_name_status_dispatch: unexpected failure")
+            return []
+
+
+    def _git_run(self, args: list, text: bool = True, cache_key: str | None = None):
+        """Run a git subprocess and return its output.
+
+        Behavior:
+        - On success returns the command output (string when text=True).
+        - On CalledProcessError: if `cache_key` is provided, store [] into
+          `self._cmd_cache[cache_key]` and return an empty string. On any
+          failure this function returns an empty string (never `None`).
+        - Caches raw command output under an internal key derived from args
+          so identical subprocess calls are cheap.
+        """
+        try:
+            internal_key = f"_git_run:{' '.join(args)}:{'text' if text else 'bytes'}"
+            if internal_key in self._cmd_cache:
+                return self._cmd_cache[internal_key]
+            try:
+                out = check_output(args, cwd=self.repoRoot, text=text)
+            except CalledProcessError as e:
+                self.printException(e, f"_git_run: git command failed: {' '.join(args)}")
+                # If caller provided a parsed-result cache_key, store an empty
+                # parsed result there so callers can return quickly next time.
+                if cache_key:
+                    self._cmd_cache[cache_key] = []
+                    # record failure for this internal invocation as empty string
+                    self._cmd_cache[internal_key] = ""
+                    return ""
+                # Otherwise, record failure sentinel as empty string and
+                # return empty string (never None)
+                self._cmd_cache[internal_key] = ""
+                return ""
+            # Success: cache raw output under internal key and return it.
+            self._cmd_cache[internal_key] = out
+            return out
+        except Exception as e:
+            self.printException(e, "_git_run: unexpected failure")
+            if cache_key:
+                self._cmd_cache[cache_key] = []
+                self._cmd_cache[internal_key] = ""
+                return ""
+            # Always return an empty string on unexpected failures
+            self._cmd_cache[internal_key] = ""
+            return ""
+
+
+    
+
+    def getFileListBetweenNormalizedHashes(self, prev_hash: str, curr_hash: str) -> list[tuple[str, str]]:
+        """Return a list of `(path, status)` for files changed between `prev_hash` and `curr_hash`.
+
+        Status values: `added`, `modified`, `deleted`, `renamed`, `copied`.
+        This function expects `prev_hash` and `curr_hash` to be commit-ish values
+        (i.e. resolvable by valid git commit refs).
+        This function MUST be a dispatch to specialized handlers for each case.
+        """
+        # Dispatch to specialized handlers for common token combinations.
+
+        # Validate tokens: disallow bare `None` — require explicit `NEWREPO` token.
+        if prev_hash is None or curr_hash is None:
+            raise ValueError(
+                "getFileListBetweenNormalizedHashes: None is not a valid token; use GitRepo.NEWREPO for initial repository"
+            )
+
+        # If identical tokens were passed, there are no changes.
+        if prev_hash == curr_hash:
+            return []
+
+        # If prev is the pseudo-NewRepo token and curr is a normal hash -> new->hash
+        if prev_hash == self.NEWREPO and curr_hash not in (self.STAGED, self.MODS):
+            return self.getFileListBetweenNewRepoAndHash(curr_hash)
+
+        # If prev is NEWREPO and curr is staged -> initial->staged
+        if prev_hash == self.NEWREPO and curr_hash == self.STAGED:
+            return self.getFileListBetweenNewRepoAndStaged()
+
+        # If prev is NEWREPO and curr is working tree (mods) -> initial->mods
+        if prev_hash == self.NEWREPO and curr_hash == self.MODS:
+            return self.getFileListBetweenNewRepoAndMods()
+
+        # If prev and curr are both normal hashes -> direct commit->commit diff
+        if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash not in (
+            self.NEWREPO,
+            self.STAGED,
+            self.MODS,
+        ):
+            return self.getFileListBetweenTwoCommits(prev_hash, curr_hash)
+
+        # Hash -> staged
+        if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash == self.STAGED:
+            return self.getFileListBetweenHashAndStaged(prev_hash)
+
+        # Hash -> working tree (mods)
+        if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash == self.MODS:
+            return self.getFileListBetweenHashAndCurrentTime(prev_hash)
+
+        # staged -> mods (working tree)
+        if prev_hash == self.STAGED and curr_hash == self.MODS:
+            return self.getFileListBetweenStagedAndMods()
+
+        # Fallback: for remaining (likely commit-ish) combos delegate to the
+        # explicit two-commit handler rather than the fully generic resolver.
+        return self.getFileListBetweenTwoCommits(prev_hash, curr_hash)
+
+
+    def getFileListBetweenNewRepoAndTopHash(self) -> list[str]:
+        """Return a list of `(path, status)` for files present in HEAD.
+
+        Status will be `committed` to indicate file is present in the
+        given commit (HEAD).
+        """
+        # Delegate to the new initial->commit helper to avoid duplication
+        return self.getFileListBetweenNewRepoAndHash("HEAD")
+
+
+    def getFileListBetweenTwoCommits(self, prev_hash: str, curr_hash: str) -> list[tuple[str, str]]:
+        """Direct commit->commit diff (both args expected to be commit-ish).
+
+        Extracted helper containing the previous logic for diffing two commits.
+        """
+        # Use generalized dispatcher for commit->commit diffs
+        key = self._make_cache_key("getFileListBetweenTwoCommits", prev_hash, curr_hash)
+        return self._git_name_status_dispatch(prev=prev_hash, curr=curr_hash, cached=False, key=key)
+
+
+    def getFileListBetweenNewRepoAndHash(self, curr_hash: str) -> list[tuple[str, str]]:
+        """Return a list of `(path, status)` for files changed between the beginning and `curr_hash`.
+
+        Status values are the same as other diffs (added/modified/etc.).
+        """
+        # Git-CLI implementation with a one-time per-hash cache. The
+        key = self._make_cache_key("getFileListBetweenNewRepoAndHash", curr_hash)
+        try:
+            if key in self._cmd_cache:
+                return self._cmd_cache[key]
+
+            output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key)
+
+            results: list[tuple[str, str]] = []
+            for line in output.splitlines():
+                ln = line.strip()
+                if not ln:
+                    continue
+                results.append((ln, "added"))
+            results.sort(key=lambda x: x[0])
+            self._cmd_cache[key] = results
+            return results
+        except Exception as e:
+            self.printException(e, "getFileListBetweenNewRepoAndHash: unexpected failure")
+            return []
+
+
+    def getFileListBetweenNewRepoAndStaged(self) -> list[tuple[str, str]]:
+        """Return file list for the initial (empty) tree -> staged index comparison.
+
+        This is the specialized handler for the `prev is None and curr == STAGED`
+        case so `getFileListBetweenNormalizedHashes` can remain a dispatcher.
+        """
+        # Git-CLI-only implementation cached once per process.
+        key = "getFileListBetweenNewRepoAndStaged"
+        return self._git_name_status_dispatch(prev=None, curr=None, cached=True, key=key)
+
+
+    # make git-only
+    def getFileListBetweenNewRepoAndMods(self) -> list[tuple[str, str]]:
+        """Specialized handler for initial (empty) -> working tree (mods) comparison.
+
+        This implementation is git-CLI-only and mirrors `git diff --name-status`.
+        """
+        key = "getFileListBetweenNewRepoAndMods"
+        return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
+
+
+    def getFileListBetweenTopHashAndCurrentTime(self) -> list[str]:
+        """Return a list of `(path, status)` for files changed between HEAD and working tree.
+
+        Status will reflect the working-tree change type (modified/added/deleted).
+        """
+        # Delegate to the general handler to avoid duplicating logic
+        return self.getFileListBetweenHashAndCurrentTime("HEAD")
+
+
+    def _git_cli_getCachedFileList(self, key: str, git_args: list) -> list[tuple[str, str]]:
+        """Run `git_args` (list) and cache the parsed name-status results under `key`.
+
+        Returns a sorted list of `(path,status)`. On git failure returns [].
+        """
+        try:
+            if key in self._cmd_cache:
+                return self._cmd_cache[key]
+
+            output = self._git_run(git_args, text=True, cache_key=key)
+
+            # Parse the whole output using the consolidated parser
+            results = self._git_cli_parse_name_status_output(output or "")
+            self._cmd_cache[key] = results
+            return results
+        except Exception as e:
+            self.printException(e, "_git_cli_getCachedFileList: unexpected failure")
+            return []
+
+
+    def getFileListBetweenHashAndCurrentTime(self, hash: str) -> list[tuple[str, str]]:
+        """Return `(path,status)` for files changed between `hash` and working tree.
+
+        Uses the git CLI plus a one-time cache via `_git_cli_getCachedFileList`.
+        """
+        key = self._make_cache_key("getFileListBetweenHashAndCurrentTime", hash)
+        return self._git_name_status_dispatch(prev=hash, curr=None, cached=False, key=key)
+
+
+    def getFileListBetweenTopHashAndStaged(self) -> list[tuple[str, str]]:
+        """Return a list of `(path, status)` for files changed between HEAD and staged index."""
+        # Delegate to the generalized staged-vs-hash implementation to avoid duplication
+        return self.getFileListBetweenHashAndStaged("HEAD")
+
+
+    def getFileListBetweenHashAndStaged(self, hash: str) -> list[tuple[str, str]]:
+        """Return `(path,status)` for files changed between `hash` and the staged index.
+
+        Generalization of getFileListBetweenTopHashAndStaged for any commit-ish.
+        """
+        key = self._make_cache_key("getFileListBetweenHashAndStaged", hash)
+        return self._git_name_status_dispatch(prev=hash, curr=None, cached=True, key=key)
+
+
+    # make git-only
+    def getFileListBetweenStagedAndMods(self) -> list[tuple[str, str]]:
+        """Return a list of `(path, status)` for files changed between staged index and working tree (mods)."""
+        # Use git CLI to get the list of files; cache the results once per process
+        key = self._make_cache_key("getFileListBetweenStagedAndMods")
+        return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
+
+
+    # make git-only
+    def getFileListUntrackedAndIgnored(self) -> list[tuple[str, str, str]]:
+        """Return a sorted list of `(path, iso_mtime, status)` for files that are
+        either untracked or ignored in the working tree.
+
+        - `status` is one of: `untracked`, `ignored`.
+        - `iso_mtime` is produced from the filesystem mtime via `_epoch_to_iso`.
+        """
+        try:
+            cache_key = self._make_cache_key("getFileListUntrackedAndIgnored")
+            if cache_key in self._cmd_cache:
+                return self._cmd_cache[cache_key]
+
+            results: list[tuple[str, str, str]] = []
+            seen: set[str] = set()
+
+            untracked_out = self._git_run(["git", "ls-files", "--others", "--exclude-standard"], text=True) or ""
+            ignored_out = self._git_run(["git", "ls-files", "--others", "-i", "--exclude-standard"], text=True) or ""
+
+            for line in untracked_out.splitlines():
+                rel = line.strip()
+                rel = self._git_cli_decode_quoted_path(rel)
+                if not rel or rel in seen:
+                    continue
+                seen.add(rel)
+                mtime = self.safe_mtime(rel)
+                iso = self._epoch_to_iso(mtime) if mtime is not None else self.index_mtime_iso()
+                results.append((rel, iso, "untracked"))
+
+            for line in ignored_out.splitlines():
+                rel = line.strip()
+                rel = self._git_cli_decode_quoted_path(rel)
+                if not rel or rel in seen:
+                    continue
+                seen.add(rel)
+                mtime = self.safe_mtime(rel)
+                iso = self._epoch_to_iso(mtime) if mtime is not None else self.index_mtime_iso()
+                results.append((rel, iso, "ignored"))
+
+            results.sort(key=lambda x: x[0])
+            self._cmd_cache[cache_key] = results
+            return results
+        except Exception as e:
+            self.printException(e, "getFileListUntrackedAndIgnored: unexpected failure")
+            return []
+
+
+    def getHashListComplete(self) -> list[tuple[str, str, str]]:
+        """Return a combined list of commit hashes for staged, new, and entire repo."""
+        new = self.getHashListNewChanges()
+        staged = self.getHashListStagedChanges()
+        entire = self.getHashListEntireRepo()
+        combined = new + staged + entire
+        return combined
+
+
+    def getHashListSample(self) -> list[tuple[str, str, str]]:
+        """Return a sampled list of commit hashes for staged, new, and entire repo.
+        in the order newest to oldest.
+        """
+        entire = self.getHashListEntireRepo()
+        sampleHashes: list[tuple[str, str, str]] = []
+        if len(entire) >= 4:
+            sampleHashes.append(entire[0])
+            sampleHashes.append(entire[len(entire) // 3])
+            sampleHashes.append(entire[len(entire) * 2 // 3])
+        elif len(entire) == 3:
+            sampleHashes.append(entire[0])
+            sampleHashes.append(entire[len(entire) // 2])
+        elif len(entire) == 2:
+            sampleHashes.append(entire[0])
+        if len(entire) >= 1:
+            sampleHashes.append(entire[-1])  # always add TOP
+        return sampleHashes
+
+
+    def getHashListSamplePlusEnds(self) -> list[tuple[str, str, str]]:
+        """Return a sampled list of commit hashes for staged, new, and entire repo.
+
+        Order: MODS, STAGED, sampled commits (newest->oldest), NEWREPO
+        """
+        sampleHashes: list[tuple[str, str, str]] = []
+
+        # Put working-tree (MODS) first when present
+        mods = self.getHashListNewChanges()
+        if mods:
+            sampleHashes += mods
+
+        # Then staged marker
+        staged = self.getHashListStagedChanges()
+        if staged:
+            sampleHashes += staged
+
+        # Then the sampled commits (getHashListSample returns newest->oldest)
+        normalHashes = self.getHashListSample()
+        if normalHashes:
+            sampleHashes += normalHashes
+
+        # Place NEWREPO pseudo-entry last
+        sampleHashes.append(("", self.NEWREPO, "Newly created repository"))
+        return sampleHashes
+
+
+    # runFileListSampledExercises moved to module-level function
+
+    def getHashListEntireRepo(self) -> list[tuple[str, str, str]]:
+        """Return a list of all commit hashes in the repository."""
+        # Use git log to get commit epoch time, hash and subject for all refs
+        output = self._git_run(["git", "log", "--all", "--pretty=format:%ct %H %s"], text=True)
+        pairs = self._parse_git_log_output(output or "")
+        pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        formatted: list[tuple[str, str, str]] = []
+        for ts, h, subject in pairs:
+            iso = self._epoch_to_iso(ts)
+            formatted.append((iso, h, subject))
+        return formatted
+
+
+    def getHashListStagedChanges(self) -> list[tuple[str, str, str]]:
+        """Return a list of commit hashes for staged changes."""
+        # Use git CLI to detect staged files and return a STAGED pseudo-hash.
+        key = self._make_cache_key("getHashListStagedChanges", self.index_mtime_iso())
+        try:
+            if key in self._cmd_cache:
+                return self._cmd_cache[key]
+
+            names_out = self._git_run(["git", "diff", "--cached", "--name-only"], text=True, cache_key=key)
+
+            if not names_out:
+                self._cmd_cache[key] = []
+                return []
+
+            if any(ln.strip() for ln in names_out.splitlines()):
+                iso = self.index_mtime_iso()
+                res = [(iso, "STAGED", self.STAGED_MESSAGE)]
+                self._cmd_cache[key] = res
+                return res
+
+            self._cmd_cache[key] = []
+            return []
+        except Exception as e:
+            self.printException(e, "getHashListStagedChanges: failure")
+            return []
+
+
+    def getHashListNewChanges(self) -> list[tuple[str, str, str]]:
+        """Return a list of commit hashes for new changes."""
+        # Detect working-tree vs index differences via git CLI and return a
+        # MODS pseudo-hash when there are modified files.
+        try:
+            names_out = self._git_run(["git", "diff", "--name-only"], text=True)
+
+            if not names_out:
+                return []
+
+            paths = [ln.strip() for ln in names_out.splitlines() if ln.strip()]
+            if not paths:
+                return []
+
+            iso = self._paths_mtime_iso(paths)
+            key = self._make_cache_key("getHashListNewChanges", iso)
+            if key in self._cmd_cache:
+                return self._cmd_cache[key]
+            res = [(iso, "MODS", self.MODS_MESSAGE)]
+            self._cmd_cache[key] = res
+            return res
+        except Exception as e:
+            self.printException(e, "getHashListNewChanges: failure")
+            return []
+
+
+    def getHashListFromFileName(self, file_name: str) -> list[tuple[str, str, str]]:
+        """Return a list of commit hashes that modified the given file.
+
+        Uses the git CLI (`git log` + `git status`) with a one-time cache per
+        `file_name`. The previous walk/diff implementation has been
+        removed for performance consistency.
+        """
+        key = self._make_cache_key("getHashListFromFileName", file_name)
+        try:
+            if key in self._cmd_cache:
+                return self._cmd_cache[key]
+
+            output = self._git_run(["git", "log", "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key)
+
+            entries: list[tuple[str, str, str]] = []
+            parsed = self._parse_git_log_output(output or "")
+            for ts, h, subject in parsed:
+                iso = self._epoch_to_iso(ts)
+                entries.append((iso, h, subject if subject else ""))
+
+            status_out = self._git_run(["git", "status", "--porcelain", "--", file_name], text=True) or ""
+            if status_out:
+                s = status_out.splitlines()[0]
+                if len(s) >= 2:
+                    idx_flag = s[0]
+                    wt_flag = s[1]
+                else:
+                    idx_flag = s[0] if s else " "
+                    wt_flag = " "
+                iso_index = self.index_mtime_iso()
+                iso_mods = self._paths_mtime_iso([file_name])
+                if idx_flag != " ":
+                    entries.insert(0, (iso_index, "STAGED", self.STAGED_MESSAGE))
+                if wt_flag != " ":
+                    if entries and entries[0][1] == "STAGED":
+                        entries.insert(1, (iso_mods, "MODS", self.MODS_MESSAGE))
+                    else:
+                        entries.insert(0, (iso_mods, "MODS", self.MODS_MESSAGE))
+
+            entries.sort(key=lambda x: x[0], reverse=True)
+            self._cmd_cache[key] = entries
+            return entries
+        except Exception as e:
+            self.printException(e, "getHashListFromFileName: unexpected failure")
+            return []
+
 
 
 def run_cmd_log(cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
