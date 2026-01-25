@@ -122,21 +122,20 @@ class TestRepo(AppException):
         relative path (possibly '.' when equal) or `None` when `full_path`
         is not within `base_path`.
         """
+        # Raise on invalid inputs or when `full_path` is not inside `base_path`.
+        if not base_path:
+            raise ValueError("relpath_if_within: empty base_path")
+        if not full_path:
+            raise ValueError("relpath_if_within: empty full_path")
+        base = os.path.abspath(os.path.normpath(base_path))
+        full = os.path.abspath(os.path.normpath(full_path))
         try:
-            if not base_path or not full_path:
-                return None
-            base = os.path.abspath(os.path.normpath(base_path))
-            full = os.path.abspath(os.path.normpath(full_path))
-            try:
-                common = os.path.commonpath([base, full])
-            except Exception as _no_logging:
-                return None
-            if common != base:
-                return None
-            return os.path.relpath(full, base)
+            common = os.path.commonpath([base, full])
         except Exception as e:
-            printException(e, "relpath_if_within failed")
-            return None
+            raise ValueError(f"relpath_if_within: path evaluation failed: {e}") from e
+        if common != base:
+            raise ValueError(f"{full!s} is not within base path {base!s}")
+        return os.path.relpath(full, base)
 
     # END: cache and path utility methods v1
 
@@ -1200,14 +1199,29 @@ def main():
 
             # Test relpath_if_within using the configured file (args.file)
             total_exercises += 1
-            rel = TestRepo.relpath_if_within(out, path)
-            print(f"relpath_if_within: base={out}, full={path} -> {rel}")
+            try:
+                rel = TestRepo.relpath_if_within(out, path)
+                print(f"relpath_if_within: base={out}, relpath={path} -> {rel}")
+            except Exception as e:
+                print(f"relpath_if_within: base={out}, relpath={path} -> FAILED: {e}")
+
+            # Test relpath_if_within using the configured file (args.file)
+            total_exercises += 1
+            relpath = args.file
+            try:
+                rel = TestRepo.relpath_if_within(out, relpath)
+                print(f"relpath_if_within: base={out}, relpath={relpath} -> {rel}")
+            except Exception as e:
+                print(f"relpath_if_within: base={out}, relpath={relpath} -> FAILED: {e}")
 
             # Test relpath_if_within using the configured file (args.file)
             total_exercises += 1
             relpath = path + os.path.sep + args.file
-            rel = TestRepo.relpath_if_within(out, relpath)
-            print(f"relpath_if_within: base={out}, full={relpath} -> {rel}")
+            try:
+                rel = TestRepo.relpath_if_within(out, relpath)
+                print(f"relpath_if_within: base={out}, relpath={relpath} -> {rel}")
+            except Exception as e:
+                print(f"relpath_if_within: base={out}, relpath={relpath} -> FAILED: {e}")
 
         # Execute tests directly in the same order previously provided by `allfuncs`.
         i = 1
