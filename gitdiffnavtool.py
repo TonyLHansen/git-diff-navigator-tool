@@ -20,8 +20,10 @@ from functools import wraps
 import pprint
 import difflib
 import re
-
-from gitrepo import GitRepo
+import hashlib
+import codecs
+import time
+from subprocess import check_output, CalledProcessError
 
 # Third-party UI and rendering imports
 from rich.text import Text
@@ -299,6 +301,7 @@ class GitRepo(AppException):
     STAGED = "STAGED"
     MODS = "MODS"
 
+    NEWREPO_MESSAGE = "Newly created repository"
     STAGED_MESSAGE = "Staged changes"
     MODS_MESSAGE = "Unstaged modifications"
 
@@ -571,6 +574,68 @@ class GitRepo(AppException):
                 continue
         if mtimes:
             return self._epoch_to_iso(max(mtimes))
+        return self.index_mtime_iso()
+
+
+    def _newrepo_timestamp_iso(self) -> str:
+        """
+        Compute an ISO timestamp for the pseudo-`NEWREPO` entry.
+
+        Strategy:
+        - Determine the timestamp (epoch seconds) of the first commit in the
+          repository (oldest commit). If unable to obtain it, treat as None.
+        - Walk the `.git` directory collecting file mtimes (using `lstat`
+          for symlinks) and take the oldest (minimum) mtime if any are
+          present.
+        - Return the earliest (smallest) of the first-commit ts and the
+          `.git`-files mtimes as an ISO UTC string. If neither is
+          available, fall back to `index_mtime_iso()`.
+        """
+        first_commit_ts: float | None = None
+        git_dir = os.path.join(self.repoRoot, ".git")
+        try:
+            out = self._git_run(["git", "log", "--reverse", "--pretty=format:%ct"], text=True)
+            if out:
+                for line in out.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        first_commit_ts = float(int(line))
+                        break
+                    except Exception:
+                        continue
+        except Exception as e:
+            self.printException(e, "_newrepo_timestamp_iso: git log failed")
+
+        git_mtimes: list[float] = []
+        try:
+            if os.path.exists(git_dir):
+                for root, dirs, files in os.walk(git_dir):
+                    for name in files:
+                        fp = os.path.join(root, name)
+                        try:
+                            if os.path.islink(fp):
+                                git_mtimes.append(os.lstat(fp).st_mtime)
+                            else:
+                                git_mtimes.append(os.path.getmtime(fp))
+                        except Exception:
+                            # ignore individual failures
+                            continue
+        except Exception as e:
+            self.printException(e, "_newrepo_timestamp_iso: walking .git failed")
+
+        candidates: list[float] = []
+        if first_commit_ts is not None:
+            candidates.append(first_commit_ts)
+        if git_mtimes:
+            candidates.append(min(git_mtimes))
+
+        if candidates:
+            earliest = min(candidates)
+            return self._epoch_to_iso(earliest)
+
+        # Fallback: use index mtime ISO
         return self.index_mtime_iso()
 
     def _parse_git_log_output(self, output: str) -> list[tuple[int, str, str]]:
@@ -979,7 +1044,8 @@ class GitRepo(AppException):
         new = self.getHashListNewChanges()
         staged = self.getHashListStagedChanges()
         entire = self.getHashListEntireRepo()
-        combined = new + staged + entire
+        newrepo = self.getHashListNewRepo()
+        combined = new + staged + entire + newrepo
         return combined
 
 
@@ -1025,8 +1091,8 @@ class GitRepo(AppException):
         if normalHashes:
             sampleHashes += normalHashes
 
-        # Place NEWREPO pseudo-entry last
-        sampleHashes.append(("", self.NEWREPO, "Newly created repository"))
+        # Place NEWREPO pseudo-entry last using centralized helper
+        sampleHashes += self.getHashListNewRepo()
         return sampleHashes
 
 
@@ -1096,6 +1162,21 @@ class GitRepo(AppException):
         except Exception as e:
             self.printException(e, "getHashListNewChanges: failure")
             return []
+
+
+    def getHashListNewRepo(self) -> list[tuple[str, str, str]]:
+        """Return the pseudo-hash entry for a newly-created repository.
+
+        Returns a single-entry list containing `(iso_timestamp, NEWREPO, NEWREPO_MESSAGE)`.
+        The timestamp is computed from the earliest of the first commit time
+        and mtimes under the `.git` directory; falls back to index mtime.
+        """
+        try:
+            iso = self._newrepo_timestamp_iso()
+            return [(iso, self.NEWREPO, self.NEWREPO_MESSAGE)]
+        except Exception as e:
+            self.printException(e, "getHashListNewRepo: failure")
+            return [(self.index_mtime_iso(), self.NEWREPO, self.NEWREPO_MESSAGE)]
 
 
     def getHashListFromFileName(self, file_name: str) -> list[tuple[str, str, str]]:
