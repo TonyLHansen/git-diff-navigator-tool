@@ -344,23 +344,20 @@ class GitRepo(AppException):
         try:
             out = check_output(["git", "rev-parse", "--show-toplevel"], cwd=cur, text=True).strip()
             return (out, None)
-        except FileNotFoundError as e:
+        except FileNotFoundError as _use_raise:
             # git not installed or not on PATH
-            printException(e, "resolve_repo_top: git not found")
             if raise_on_missing:
-                raise RuntimeError("git not available on PATH") from e
-            return (None, e)
-        except CalledProcessError as e:
+                raise RuntimeError("git not available on PATH") from _use_raise
+            return (None, _use_raise)
+        except CalledProcessError as _use_raise:
             # Not a git work-tree or other git error
             if raise_on_missing:
-                raise RuntimeError(f"not a git working tree: {path}") from e
-            return (None, e)
-        except Exception as e:
-            printException(e, "resolve_repo_top failed")
+                raise RuntimeError(f"not a git working tree: {path}") from _use_raise
+            return (None, _use_raise)
+        except Exception as _use_raise:
             if raise_on_missing:
                 raise
-            return (None, e)
-
+            return (None, _use_raise)
     @classmethod
     def relpath_if_within(cls, base_path: str, conv_path: str) -> str | None:
         """
@@ -403,8 +400,8 @@ class GitRepo(AppException):
                 common = os.path.relpath(conv_path, base_path)
             print(f"common> '{common}'")
             return common
-        except Exception as e:
-            raise ValueError(f"relpath_if_within: path evaluation failed: {e}") from e
+        except Exception as _use_raise:
+            raise ValueError(f"relpath_if_within: path evaluation failed: {_use_raise}") from _use_raise
     
     def get_repo_root(self) -> str:
         """Return the resolved repository root path for this GitRepo instance."""
@@ -603,7 +600,7 @@ class GitRepo(AppException):
                     try:
                         first_commit_ts = float(int(line))
                         break
-                    except Exception:
+                    except Exception as _no_logging:
                         continue
         except Exception as e:
             self.printException(e, "_newrepo_timestamp_iso: git log failed")
@@ -619,7 +616,7 @@ class GitRepo(AppException):
                                 git_mtimes.append(os.lstat(fp).st_mtime)
                             else:
                                 git_mtimes.append(os.path.getmtime(fp))
-                        except Exception:
+                        except Exception as _no_logging:
                             # ignore individual failures
                             continue
         except Exception as e:

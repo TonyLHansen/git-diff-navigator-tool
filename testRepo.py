@@ -12,10 +12,14 @@ import time
 import codecs
 from datetime import datetime, timezone
 from subprocess import check_output, CalledProcessError
+import io
+import contextlib
+import difflib
 
-
-from gitrepo import GitRepo
-
+# GitRepo implementation moved into `gitdiffnavtool.py`; import it so
+# this test harness continues to exercise the exact same class and
+# methods without duplicating code.
+from gitdiffnavtool import GitRepo
 
 def runFileListSampledExercises(test_repo: GitRepo, raw: bool, limit: int) -> int:
     """Module-level exerciser for `getFileListBetweenNormalizedHashes`.
@@ -91,7 +95,7 @@ def printResults(test_repo: GitRepo, label: str, res, raw: bool, limit: int) -> 
 def main():
     """Main function to run the tests."""
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py", description=__doc__)
-    
+
     parser.add_argument(
         "-R",
         "--raw",
@@ -111,12 +115,24 @@ def main():
         "-T",
         "--timing",
         action="store_true",
-        default=False,
-        help="Show timing information for each run (t=...)",
+        dest="timing",
+        help="Print timing for each run",
     )
 
-    # Make --silent and --limit mutually exclusive: you may either silence output
-    # (which forces no printed entries) or specify a numeric --limit to print.
+    parser.add_argument(
+        "--capture",
+        metavar="DIR",
+        help="Capture outputs for exercised tests into directory DIR",
+        default=None,
+    )
+
+    parser.add_argument(
+        "--test",
+        metavar="DIR",
+        help="Compare current outputs against captured files in DIR",
+        default=None,
+    )
+
     mux = parser.add_mutually_exclusive_group()
     mux.add_argument(
         "-S",
@@ -133,8 +149,6 @@ def main():
         default=sys.maxsize,
         help="Maximum number of entries to print when showing results (default: unlimited). Mutually exclusive with --silent.",
     )
-
-    
 
     parser.add_argument(
         "-H",
@@ -180,16 +194,26 @@ def main():
         help="Run getFileListUntrackedAndIgnored",
     )
     parser.add_argument(
+        "-f",
+        "--getFileListSampledComparisons",
+        action="store_true",
+        help="Run getFileListSampledComparisons",
+    )
+
+    # Alias for legacy option name used in some call sites
+    parser.add_argument(
+        "--runFileListSampledComparisons",
+        action="store_true",
+        dest="runFileListSampledComparisons",
+        help="Run runFileListSampledComparisons (alias)",
+    )
+
+    parser.add_argument(
         "-g",
         "--test-resolve",
         action="store_true",
-        help="Test resolve_repo_top and relpath_if_within for the provided paths",
-    )
-    parser.add_argument(
-        "-f",
-        "--runFileListSampledComparisons",
-        action="store_true",
-        help="Run runFileListSampledComparisons",
+        dest="test_resolve",
+        help="Exercise resolve_repo_top and relpath_if_within for quick verification",
     )
     parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
     parser.add_argument("-F", "--file", default="README.md", help="Filename for getHashListFromFileName when used")
@@ -213,28 +237,93 @@ def main():
         if args.verbose > 1:
             print(f"DEBUG: run_one invoking {func_name} (display name: {name})")
         # Run the test function once (git-CLI implementation) and print results.
+        # Capture stdout for optional capture/compare behavior
+        buf = io.StringIO()
+        success = False
         try:
-            if fname is not None:
-                t0 = time.perf_counter()
-                res = getattr(test_repo, func_name)(fname)
-                t1 = time.perf_counter()
-            else:
-                t0 = time.perf_counter()
-                res = getattr(test_repo, func_name)()
-                t1 = time.perf_counter()
-            dur = t1 - t0
-            count_str = f"{len(res) if hasattr(res, '__len__') else '1'}"
-            if args.timing:
-                print(f"RUN: {func_name} {name} returned {count_str} entries (t={dur:.3f}s)")
-            # Delegate printing to helper to keep output consistent
-            try:
-                printResults(test_repo, f"RUN: {func_name} {name}", res, args.raw, limit)
-            except Exception as e:
-                test_repo.printException(e, "run_one: printing result failed")
-            return True
+            with contextlib.redirect_stdout(buf):
+                if fname is not None:
+                    t0 = time.perf_counter()
+                    res = getattr(test_repo, func_name)(fname)
+                    t1 = time.perf_counter()
+                else:
+                    t0 = time.perf_counter()
+                    res = getattr(test_repo, func_name)()
+                    t1 = time.perf_counter()
+                dur = t1 - t0
+                count_str = f"{len(res) if hasattr(res, '__len__') else '1'}"
+                if args.timing:
+                    print(f"RUN: {func_name} {name} returned {count_str} entries (t={dur:.3f}s)")
+                # Delegate printing to helper to keep output consistent
+                try:
+                    printResults(test_repo, f"RUN: {func_name} {name}", res, args.raw, limit)
+                except Exception as e:
+                    test_repo.printException(e, "run_one: printing result failed")
+            success = True
         except Exception as e:
+            # printException prints to logger; still capture current stdout
             test_repo.printException(e, f"run_one invocation of {func_name} failed")
-            return False
+            success = False
+
+        out_str = buf.getvalue()
+
+        # Always print current output to stdout so behavior is unchanged
+        try:
+            if out_str:
+                print(out_str, end="")
+        except Exception as _:
+            test_repo.printException(_, "run_one: printing stdout failed")
+
+        # If capture dir specified, save output to file named after func and flags
+        if getattr(args, "capture", None):
+            try:
+                capdir = args.capture
+                os.makedirs(capdir, exist_ok=True)
+                flags: list[str] = []
+                if getattr(args, "raw", False):
+                    flags.append("raw")
+                if getattr(args, "timing", False):
+                    flags.append("timing")
+                suffix = ("-" + "-".join(flags)) if flags else ""
+                capfile = os.path.join(capdir, f"{func_name}{suffix}.txt")
+                with open(capfile, "w", encoding="utf-8") as f:
+                    f.write(out_str)
+            except Exception as e:
+                test_repo.printException(e, "run_one: capturing output failed")
+
+        # If test dir specified, compare current output to captured file
+        if getattr(args, "test", None):
+            try:
+                testdir = args.test
+                flags: list[str] = []
+                if getattr(args, "raw", False):
+                    flags.append("raw")
+                if getattr(args, "timing", False):
+                    flags.append("timing")
+                suffix = ("-" + "-".join(flags)) if flags else ""
+                testfile = os.path.join(testdir, f"{func_name}{suffix}.txt")
+                if not os.path.exists(testfile):
+                    print(f"TEST-MISSING: expected capture file not found: {testfile}")
+                    return False
+                with open(testfile, "r", encoding="utf-8") as f:
+                    expected = f.read()
+                # compute unified diff
+                diff_lines = list(difflib.unified_diff(
+                    expected.splitlines(keepends=True),
+                    out_str.splitlines(keepends=True),
+                    fromfile=f"expected/{func_name}",
+                    tofile=f"current/{func_name}",
+                ))
+                if diff_lines:
+                    print(f"TEST-DIFF for {func_name}:")
+                    for ln in diff_lines:
+                        print(ln, end="")
+                    return False
+            except Exception as e:
+                test_repo.printException(e, "run_one: test comparison failed")
+                return False
+
+        return success
 
     # If no specific flags provided, default to running all exercises
     any_flag = (
@@ -263,7 +352,11 @@ def main():
 
     for path in args.path:
         print(f"\n== Repository: {path} ==")
-        test_repo = GitRepo(path)
+        try:
+            test_repo = GitRepo(path)
+        except Exception as _use_stderr:
+            print(f"ERROR: initializing GitRepo for {path} failed: {_use_stderr}")
+            continue
 
         if args.test_resolve:
             total_exercises += 1
@@ -279,7 +372,7 @@ def main():
             try:
                 rel = GitRepo.relpath_if_within(out, path)
                 print(f"relpath_if_within: base={out}, relpath={path} -> {rel}")
-            except Exception as e:
+            except Exception as _use_stderr:
                 print(f"relpath_if_within: base={out}, relpath={path} -> FAILED: {e}")
 
             # Test relpath_if_within using the configured file (args.file)
@@ -288,7 +381,7 @@ def main():
             try:
                 rel = GitRepo.relpath_if_within(out, relpath)
                 print(f"relpath_if_within: base={out}, relpath={relpath} -> {rel}")
-            except Exception as e:
+            except Exception as _use_stderr:
                 print(f"relpath_if_within: base={out}, relpath={relpath} -> FAILED: {e}")
 
             # Test relpath_if_within using the configured file (args.file)
@@ -297,7 +390,7 @@ def main():
             try:
                 rel = GitRepo.relpath_if_within(out, relpath)
                 print(f"relpath_if_within: base={out}, relpath={relpath} -> {rel}")
-            except Exception as e:
+            except Exception as _use_stderr:
                 print(f"relpath_if_within: base={out}, relpath={relpath} -> FAILED: {e}")
 
         # Execute tests directly in the same order previously provided by `allfuncs`.
@@ -420,3 +513,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

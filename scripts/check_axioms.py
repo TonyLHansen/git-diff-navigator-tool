@@ -435,6 +435,7 @@ def check_file(
                             name.startswith("_use_stderr")
                             or name.startswith("_use_pass")
                             or name.startswith("_no_logging")
+                            or name.startswith("_use_raise")
                         )
                     ):
                         continue
