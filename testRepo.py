@@ -499,13 +499,71 @@ def main():
 
         # If requested, run sampled comparisons separately (outside the to_run loop)
         if args.all or args.runFileListSampledComparisons:
-            print("\nRunning sampled pairwise comparisons (separate)...")
+            # Capture the sampled comparisons output so --capture and --test work
+            buf = io.StringIO()
             try:
-                # runFileListSampledExercises returns total exercises run
-                t = runFileListSampledExercises(test_repo, args.raw, args.limit)
-                total_exercises += t
+                with contextlib.redirect_stdout(buf):
+                    print("\nRunning sampled pairwise comparisons (separate)...")
+                    # runFileListSampledExercises returns total exercises run
+                    t = runFileListSampledExercises(test_repo, args.raw, args.limit)
+                    total_exercises += t
+                success_sampled = True
             except Exception as e:
                 test_repo.printException(e, "running runFileListSampledExercises failed")
+                success_sampled = False
+
+            out_str = buf.getvalue()
+            try:
+                if out_str:
+                    print(out_str, end="")
+            except Exception as _:
+                test_repo.printException(_, "printing sampled comparisons output failed")
+
+            # If capture dir specified, save sampled comparisons output
+            if getattr(args, "capture", None):
+                try:
+                    capdir = args.capture
+                    os.makedirs(capdir, exist_ok=True)
+                    flags: list[str] = []
+                    if getattr(args, "raw", False):
+                        flags.append("raw")
+                    if getattr(args, "timing", False):
+                        flags.append("timing")
+                    suffix = ("-" + "-".join(flags)) if flags else ""
+                    capfile = os.path.join(capdir, f"runFileListSampledComparisons{suffix}.txt")
+                    with open(capfile, "w", encoding="utf-8") as f:
+                        f.write(out_str)
+                except Exception as e:
+                    test_repo.printException(e, "capturing sampled comparisons output failed")
+
+            # If test dir specified, compare sampled comparisons output to captured file
+            if getattr(args, "test", None):
+                try:
+                    testdir = args.test
+                    flags: list[str] = []
+                    if getattr(args, "raw", False):
+                        flags.append("raw")
+                    if getattr(args, "timing", False):
+                        flags.append("timing")
+                    suffix = ("-" + "-".join(flags)) if flags else ""
+                    testfile = os.path.join(testdir, f"runFileListSampledComparisons{suffix}.txt")
+                    if not os.path.exists(testfile):
+                        print(f"TEST-MISSING: expected capture file not found: {testfile}")
+                    else:
+                        with open(testfile, "r", encoding="utf-8") as f:
+                            expected = f.read()
+                        diff_lines = list(difflib.unified_diff(
+                            expected.splitlines(keepends=True),
+                            out_str.splitlines(keepends=True),
+                            fromfile=f"expected/runFileListSampledComparisons",
+                            tofile=f"current/runFileListSampledComparisons",
+                        ))
+                        if diff_lines:
+                            print(f"TEST-DIFF for runFileListSampledComparisons:")
+                            for ln in diff_lines:
+                                print(ln, end="")
+                except Exception as e:
+                    test_repo.printException(e, "test comparison for sampled comparisons failed")
 
     # Final summary
     print(f"\nExercise summary: total_exercises={total_exercises}")
