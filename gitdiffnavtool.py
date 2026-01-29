@@ -801,6 +801,44 @@ class GitRepo(AppException):
             return ""
 
 
+    def _empty_tree_hash(self) -> str:
+        """
+        Return the canonical empty-tree object id for this repository's
+        object format. Uses `git rev-parse --show-object-format` to detect
+        the repository format and returns a constant for supported formats.
+
+        Returns SHA-1 empty-tree by default if detection fails.
+        """
+        # Known constants per object format
+        sha1_empty = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        sha256_empty = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"
+
+        try:
+            cache_key = "_empty_tree_hash"
+            if cache_key in self._cmd_cache:
+                return self._cmd_cache[cache_key]
+
+            # Ask git which object format this repo uses. Example responses:
+            #   sha1
+            #   sha256
+            out = self._git_run(["git", "rev-parse", "--show-object-format"], text=True) or ""
+            fmt = out.strip().lower()
+
+            if fmt == "sha256":
+                res = sha256_empty
+            else:
+                # Default to sha1 for "sha1" or any unknown/empty response
+                res = sha1_empty
+
+            # Cache result for this process
+            self._cmd_cache[cache_key] = res
+            return res
+        except Exception as e:
+            # On unexpected failures default to sha1 canonical id
+            self.printException(e, "_empty_tree_hash: detection failed, defaulting to sha1")
+            return sha1_empty
+
+
     
 
     def getFileListBetweenNormalizedHashes(self, prev_hash: str, curr_hash: str) -> list[tuple[str, str]]:
@@ -1221,6 +1259,89 @@ class GitRepo(AppException):
         except Exception as e:
             self.printException(e, "getHashListFromFileName: unexpected failure")
             return []
+
+    def getDiff(self, filename: str, hash1: str, hash2: str, variation: list[str] | None = None) -> list[str]:
+        """
+        Return the lines produced by `git diff` for `filename` between `hash1` and `hash2`.
+
+        - `filename` is repository-relative path to a file in this repo.
+        - `hash1` and `hash2` must be non-None strings and may be full/partial
+          git commit-ish hashes or the pseudo-hashes `NEWREPO`, `STAGED`, `MODS`.
+        - `variation` is an optional list of additional git-diff arguments (e.g.
+          ['--ignore-space-change', '--diff-algorithm=patience']).
+
+        Raises ValueError if `filename` is empty or either hash is None. On
+        unexpected failures the exception is logged and re-raised.
+        """
+        try:
+            if filename is None or filename == "":
+                raise ValueError("getDiff: filename must be a non-empty repository-relative path")
+            if hash1 is None or hash2 is None:
+                raise ValueError("getDiff: hash1 and hash2 must be specified (not None)")
+
+            # Normalize variation list
+            var_args: list[str] = []
+            if variation:
+                try:
+                    for v in variation:
+                        # Accept strings or single-item tuples/lists for backwards compat
+                        if isinstance(v, (list, tuple)) and len(v) == 1:
+                            var_args.append(str(v[0]))
+                        else:
+                            var_args.append(str(v))
+                except Exception as e:
+                    self.printException(e, "getDiff: processing variation args failed")
+
+            # Validate and build git diff arguments
+            # Use the repository-format empty-tree object for NEWREPO diffs
+            EMPTY_TREE = self._empty_tree_hash()
+
+            def token_to_ref(token: str):
+                if token == self.NEWREPO:
+                    return EMPTY_TREE
+                if token == self.MODS:
+                    # working tree; represented by absence of a tree/ref
+                    return None
+                if token == self.STAGED:
+                    # staged/index is represented via --cached flag
+                    return "__STAGED__"
+                return token
+
+            ref1 = token_to_ref(hash1)
+            ref2 = token_to_ref(hash2)
+
+            # If both refs resolve to the special staged marker, map to cached diff
+            args: list[str] = ["git", "diff"]
+            args.extend(var_args)
+
+            # If either side is staged, use --cached and include the other ref if present
+            if ref1 == "__STAGED__" or ref2 == "__STAGED__":
+                args.append("--cached")
+                # include the non-staged ref if it maps to a concrete ref
+                other_ref = ref2 if ref1 == "__STAGED__" else ref1
+                if other_ref is not None and other_ref != "__STAGED__":
+                    args.append(other_ref)
+            else:
+                # Neither side staged: include concrete refs when available.
+                # `None` indicates working tree (MODS) and is omitted so git diff
+                # will compare commit<->working-tree when only one ref is present.
+                if ref1 is not None:
+                    args.append(ref1)
+                if ref2 is not None:
+                    args.append(ref2)
+
+            # Append separator and filename
+            args += ["--", filename]
+
+            out = self._git_run(args, text=True)
+            # Return output lines (preserve empty output as empty list)
+            if not out:
+                return []
+            return out.splitlines()
+        except Exception as e:
+            # Log and re-raise so callers can handle errors explicitly
+            self.printException(e, "getDiff: failed")
+            raise
 
 
 
