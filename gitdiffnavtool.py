@@ -274,12 +274,13 @@ class GitRepo(AppException):
             GitRepo.STAGED -- files that have been added to a repository but not yet committed
             GitRepo.MODS -- files that have been modified since STAGED or HEAD (if nothing is staged)
 
-    gitRepo.getHashListComplete()
+    gitRepo.getNormalizedHashListComplete()
         Returns a list of the hashes, their timestamps and commit messages for the entire repository.
-    gitRepo.getHashListFromFileName(filename)
+    gitRepo.getNormalizedHashListFromFileName(filename)
         Returns a list of the hashes, their timestamps and commit messages associated with the specified filename.
         The filename is relative to the repoRoot.
 
+    gitRepo.getNormalizedHashListFromFileName(filename)
 
     gitRepo.reset_cache() will reset the cache used by GitRepo's functions. Use this if you ever wish
     to have gitRepo restart with a fresh view of the repository.
@@ -291,7 +292,7 @@ class GitRepo(AppException):
     Internally the git command is used to retrieve the information and cached.
 
     Note: an earlier version of this class used pyGit2, but it was found to produce
-    results for getHashListFromFileName() and gitRepo.getFileListBetweenNormalizedHashes()
+    results for getNormalizedHashListFromFileName() and gitRepo.getFileListBetweenNormalizedHashes()
     that were sufficiently different to be troublesome. Also, various operations were actually
     slower than forking the git command.
     """
@@ -1074,7 +1075,7 @@ class GitRepo(AppException):
             return []
 
 
-    def getHashListComplete(self) -> list[tuple[str, str, str]]:
+    def getNormalizedHashListComplete(self) -> list[tuple[str, str, str]]:
         """Return a combined list of commit hashes for staged, new, and entire repo."""
         new = self.getHashListNewChanges()
         staged = self.getHashListStagedChanges()
@@ -1169,14 +1170,14 @@ class GitRepo(AppException):
             return [(self.index_mtime_iso(), self.NEWREPO, self.NEWREPO_MESSAGE)]
 
 
-    def getHashListFromFileName(self, file_name: str) -> list[tuple[str, str, str]]:
+    def getNormalizedHashListFromFileName(self, file_name: str) -> list[tuple[str, str, str]]:
         """Return a list of commit hashes that modified the given file.
 
         Uses the git CLI (`git log` + `git status`) with a one-time cache per
         `file_name`. The previous walk/diff implementation has been
         removed for performance consistency.
         """
-        key = self._make_cache_key("getHashListFromFileName", file_name)
+        key = self._make_cache_key("getNormalizedHashListFromFileName", file_name)
         try:
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
@@ -1217,7 +1218,7 @@ class GitRepo(AppException):
                     iso_mods = self._paths_mtime_iso([file_name])
                     mods_entry = (iso_mods, "MODS", self.MODS_MESSAGE)
             except Exception as e:
-                self.printException(e, "getHashListFromFileName: computing pseudo-entry timestamps failed")
+                self.printException(e, "getNormalizedHashListFromFileName: computing pseudo-entry timestamps failed")
 
             # Assemble final entries in newest->oldest order. Place MODS
             # before STAGED here so that callers that reverse the list
@@ -1236,7 +1237,7 @@ class GitRepo(AppException):
             self._cmd_cache[key] = entries
             return entries
         except Exception as e:
-            self.printException(e, "getHashListFromFileName: unexpected failure")
+            self.printException(e, "getNormalizedHashListFromFileName: unexpected failure")
             return []
 
     def getDiff(self, filename: str, hash1: str, hash2: str, variation: list[str] | None = None) -> list[str]:

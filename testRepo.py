@@ -120,7 +120,7 @@ def runGetDiffTests(test_repo: GitRepo, file_name: str, raw: bool, limit: int, s
     # Build a chronological list of refs for this file (oldest->newest).
     refs: list[str] = [test_repo.NEWREPO]
     try:
-        entries = test_repo.getHashListFromFileName(file_name)
+        entries = test_repo.getNormalizedHashListFromFileName(file_name)
         # entries are returned newest->oldest; reverse to oldest->newest
         for iso, h, subj in reversed(entries):
             if h not in refs:
@@ -288,9 +288,9 @@ def main():
     )
     parser.add_argument("-7", "--getHashListEntireRepo", action="store_true", help="Run getHashListEntireRepo")
     parser.add_argument("-8", "--getHashListStagedChanges", action="store_true", help="Run getHashListStagedChanges")
-    parser.add_argument("-9", "--getHashListFromFileName", action="store_true", help="Run getHashListFromFileName")
+    parser.add_argument("-9", "--getNormalizedHashListFromFileName", action="store_true", help="Run getNormalizedHashListFromFileName")
     parser.add_argument("-a", "--getHashListNewChanges", action="store_true", help="Run getHashListNewChanges")
-    parser.add_argument("-b", "--getHashListComplete", action="store_true", help="Run getHashListComplete")
+    parser.add_argument("-b", "--getNormalizedHashListComplete", action="store_true", help="Run getNormalizedHashListComplete")
     parser.add_argument("-c", "--getHashListSample", action="store_true", help="Run getHashListSample")
     parser.add_argument("-d", "--getHashListSamplePlusEnds", action="store_true", help="Run getHashListSamplePlusEnds")
     parser.add_argument(
@@ -329,7 +329,7 @@ def main():
         help="Exercise resolve_repo_top and relpath_if_within for quick verification",
     )
     parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
-    parser.add_argument("-F", "--file", action="append", default=["README.md", "docs/notes.txt", "data/file_030.txt"], help="Filename(s) for getHashListFromFileName when used; may be specified multiple times")
+    parser.add_argument("-F", "--file", action="append", default=["README.md", "docs/notes.txt", "data/file_030.txt"], help="Filename(s) for getNormalizedHashListFromFileName when used; may be specified multiple times")
     parser.add_argument(
         "path",
         nargs="+",
@@ -599,9 +599,9 @@ def main():
         or args.getFileListBetweenNewAndMods
         or args.getHashListEntireRepo
         or args.getHashListStagedChanges
-        or args.getHashListFromFileName
+        or args.getNormalizedHashListFromFileName
         or args.getHashListNewChanges
-        or args.getHashListComplete
+        or args.getNormalizedHashListComplete
         or args.getHashListSample
         or args.getHashListSamplePlusEnds
         or args.getFileListUntrackedAndIgnored
@@ -694,11 +694,11 @@ def main():
             run_one(test_repo, i, "-8, Hash List Staged Changes", "getHashListStagedChanges", None, args.limit)
             i += 1
 
-        if args.all or args.getHashListFromFileName:
+        if args.all or args.getNormalizedHashListFromFileName:
             if args.file:
                 for f in args.file:
                     total_exercises += 1
-                    run_one(test_repo, i, f"-9, Hash List From File {f}", "getHashListFromFileName", f, args.limit)
+                    run_one(test_repo, i, f"-9, Hash List From File {f}", "getNormalizedHashListFromFileName", f, args.limit)
                     i += 1
 
         if args.all or args.getHashListNewChanges:
@@ -706,9 +706,9 @@ def main():
             run_one(test_repo, i, "-a, Hash List New Changes", "getHashListNewChanges", None, args.limit)
             i += 1
 
-        if args.all or args.getHashListComplete:
+        if args.all or args.getNormalizedHashListComplete:
             total_exercises += 1
-            run_one(test_repo, i, "-b, Hash List Complete", "getHashListComplete", None, args.limit)
+            run_one(test_repo, i, "-b, Hash List Complete", "getNormalizedHashListComplete", None, args.limit)
             i += 1
 
         if args.all or args.getHashListSample:
