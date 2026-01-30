@@ -274,8 +274,8 @@ def main():
     args = parser.parse_args()
 
     # If `--silent` is requested, force `--limit` to 0 so no entries are printed.
-    if args.silent:
-        args.limit = 0
+    # Do not modify `args.limit` for `--silent` — suppress printing later
+    # without altering captured output used for `--test` comparisons.
 
 
     # Tally of test comparison successes/failures and record names.
@@ -577,7 +577,10 @@ def main():
                 with contextlib.redirect_stdout(buf):
                     print("\nRunning sampled pairwise comparisons (separate)...")
                     # runFileListSampledExercises returns total exercises run
-                    t = runFileListSampledExercises(test_repo, args.raw, args.limit, args.silent)
+                    # Always capture the full output for `--test`/`--capture` comparisons
+                    # (do not pass the `silent` flag into the worker so captured
+                    # output is identical whether --silent is used or not).
+                    t = runFileListSampledExercises(test_repo, args.raw, args.limit, False)
                     total_exercises += t
                 success_sampled = True
             except Exception as e:
