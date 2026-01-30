@@ -1084,51 +1084,11 @@ class GitRepo(AppException):
         return combined
 
 
-    def getHashListSample(self) -> list[tuple[str, str, str]]:
-        """Return a sampled list of commit hashes for staged, new, and entire repo.
-        in the order newest to oldest.
-        """
-        entire = self.getHashListEntireRepo()
-        sampleHashes: list[tuple[str, str, str]] = []
-        if len(entire) >= 4:
-            sampleHashes.append(entire[0])
-            sampleHashes.append(entire[len(entire) // 3])
-            sampleHashes.append(entire[len(entire) * 2 // 3])
-        elif len(entire) == 3:
-            sampleHashes.append(entire[0])
-            sampleHashes.append(entire[len(entire) // 2])
-        elif len(entire) == 2:
-            sampleHashes.append(entire[0])
-        if len(entire) >= 1:
-            sampleHashes.append(entire[-1])  # always add TOP
-        return sampleHashes
-
-
-    def getHashListSamplePlusEnds(self) -> list[tuple[str, str, str]]:
-        """Return a sampled list of commit hashes for staged, new, and entire repo.
-
-        Order: MODS, STAGED, sampled commits (newest->oldest), NEWREPO
-        """
-        sampleHashes: list[tuple[str, str, str]] = []
-
-        # Put working-tree (MODS) first when present
-        mods = self.getHashListNewChanges()
-        if mods:
-            sampleHashes += mods
-
-        # Then staged marker
-        staged = self.getHashListStagedChanges()
-        if staged:
-            sampleHashes += staged
-
-        # Then the sampled commits (getHashListSample returns newest->oldest)
-        normalHashes = self.getHashListSample()
-        if normalHashes:
-            sampleHashes += normalHashes
-
-        # Place NEWREPO pseudo-entry last using centralized helper
-        sampleHashes += self.getHashListNewRepo()
-        return sampleHashes
+    # NOTE: `getHashListSample` and `getHashListSamplePlusEnds` were moved
+    # out of this class into module-level helpers (see testRepo.py). They
+    # were intentionally removed to keep GitRepo focused on repository
+    # operations. If callers still expect these symbols as methods, they
+    # should call the module-level helpers instead.
 
 
     # runFileListSampledExercises moved to module-level function
@@ -1279,6 +1239,10 @@ class GitRepo(AppException):
             if hash1 is None or hash2 is None:
                 raise ValueError("getDiff: hash1 and hash2 must be specified (not None)")
 
+            # return empty diff if both hashes are identical
+            if hash1 == hash2:
+                return []
+
             # Normalize variation list
             var_args: list[str] = []
             if variation:
@@ -1304,7 +1268,7 @@ class GitRepo(AppException):
                     return None
                 if token == self.STAGED:
                     # staged/index is represented via --cached flag
-                    return "__STAGED__"
+                    return self.STAGED
                 return token
 
             ref1 = token_to_ref(hash1)
@@ -1315,11 +1279,11 @@ class GitRepo(AppException):
             args.extend(var_args)
 
             # If either side is staged, use --cached and include the other ref if present
-            if ref1 == "__STAGED__" or ref2 == "__STAGED__":
+            if ref1 == self.STAGED or ref2 == self.STAGED:
                 args.append("--cached")
                 # include the non-staged ref if it maps to a concrete ref
-                other_ref = ref2 if ref1 == "__STAGED__" else ref1
-                if other_ref is not None and other_ref != "__STAGED__":
+                other_ref = ref2 if ref1 == self.STAGED else ref1
+                if other_ref is not None and other_ref != self.STAGED:
                     args.append(other_ref)
             else:
                 # Neither side staged: include concrete refs when available.

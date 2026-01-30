@@ -21,17 +21,18 @@ import difflib
 # methods without duplicating code.
 from gitdiffnavtool import GitRepo
 
-def runFileListSampledExercises(test_repo: GitRepo, raw: bool, limit: int) -> int:
+def runFileListSampledExercises(test_repo: GitRepo, raw: bool, limit: int, silent: bool = False) -> int:
     """Module-level exerciser for `getFileListBetweenNormalizedHashes`.
 
     Calls the dispatch logic for all sampled token pairs and prints a
     bounded sample of results. Returns the total number of exercised
     token pairs.
     """
-    sample = test_repo.getHashListSamplePlusEnds()
+    sample = getHashListSamplePlusEnds(test_repo)
     tokens: list = [x[1] for x in sample]
     tokens.reverse()
-    print(f"Tokens (newest to oldest)={tokens}")
+    if not silent:
+        print(f"Tokens (newest to oldest)={tokens}")
 
     total = 0
     for i in range(len(tokens)):
@@ -46,6 +47,53 @@ def runFileListSampledExercises(test_repo: GitRepo, raw: bool, limit: int) -> in
                 test_repo.printException(e, f"runFileListSampledExercises: handler failed for {a}->{b}")
 
     return total
+
+
+def getHashListSample(repo: GitRepo) -> list[tuple[str, str, str]]:
+    """
+    Returns a sampled list of commit tuples (iso, hash, subject) in
+    newest-to-oldest order.
+    """
+    entire = repo.getHashListEntireRepo()
+    sampleHashes: list[tuple[str, str, str]] = []
+    if len(entire) >= 4:
+        sampleHashes.append(entire[0])
+        sampleHashes.append(entire[len(entire) // 3])
+        sampleHashes.append(entire[len(entire) * 2 // 3])
+    elif len(entire) == 3:
+        sampleHashes.append(entire[0])
+        sampleHashes.append(entire[len(entire) // 2])
+    elif len(entire) == 2:
+        sampleHashes.append(entire[0])
+    if len(entire) >= 1:
+        sampleHashes.append(entire[-1])  # always add TOP
+    return sampleHashes
+
+
+def getHashListSamplePlusEnds(repo: GitRepo) -> list[tuple[str, str, str]]:
+    """
+    Order: MODS, STAGED, sampled commits (newest->oldest), NEWREPO
+    """
+    sampleHashes: list[tuple[str, str, str]] = []
+
+    # Put working-tree (MODS) first when present
+    mods = repo.getHashListNewChanges()
+    if mods:
+        sampleHashes += mods
+
+    # Then staged marker
+    staged = repo.getHashListStagedChanges()
+    if staged:
+        sampleHashes += staged
+
+    # Then the sampled commits (getHashListSample returns newest->oldest)
+    normalHashes = getHashListSample(repo)
+    if normalHashes:
+        sampleHashes += normalHashes
+
+    # Place NEWREPO pseudo-entry last using centralized helper
+    sampleHashes += repo.getHashListNewRepo()
+    return sampleHashes
 
 
 def printResults(test_repo: GitRepo, label: str, res, raw: bool, limit: int) -> None:
@@ -230,6 +278,9 @@ def main():
         args.limit = 0
 
 
+    # Tally of test comparison successes/failures and record names.
+    stats = {"succ": 0, "fail": 0, "succ_names": [], "fail_names": []}
+
     # Helper to run a single exercise and return True on success. Accept
     # a `GitRepo` instance so the helper can be defined once and reused.
     def run_one(test_repo, i: int, name: str, func_name: str, fname: str | None, limit: int) -> bool:
@@ -242,14 +293,25 @@ def main():
         success = False
         try:
             with contextlib.redirect_stdout(buf):
-                if fname is not None:
-                    t0 = time.perf_counter()
-                    res = getattr(test_repo, func_name)(fname)
-                    t1 = time.perf_counter()
+                # Prefer method on the test_repo instance; fall back to
+                # module-level helper functions that accept the repo as
+                # their first parameter (these were moved out of GitRepo).
+                t0 = time.perf_counter()
+                if hasattr(test_repo, func_name):
+                    if fname is not None:
+                        res = getattr(test_repo, func_name)(fname)
+                    else:
+                        res = getattr(test_repo, func_name)()
                 else:
-                    t0 = time.perf_counter()
-                    res = getattr(test_repo, func_name)()
-                    t1 = time.perf_counter()
+                    # Attempt to call a module-level function
+                    fn = globals().get(func_name)
+                    if fn is None:
+                        raise AttributeError(f"no function or method named {func_name}")
+                    if fname is not None:
+                        res = fn(test_repo, fname)
+                    else:
+                        res = fn(test_repo)
+                t1 = time.perf_counter()
                 dur = t1 - t0
                 count_str = f"{len(res) if hasattr(res, '__len__') else '1'}"
                 if args.timing:
@@ -267,9 +329,10 @@ def main():
 
         out_str = buf.getvalue()
 
-        # Always print current output to stdout so behavior is unchanged
+        # Print current output only when not running in silent mode; keep
+        # `out_str` available for capture/test comparison regardless.
         try:
-            if out_str:
+            if out_str and not getattr(args, "silent", False):
                 print(out_str, end="")
         except Exception as _:
             test_repo.printException(_, "run_one: printing stdout failed")
@@ -304,9 +367,10 @@ def main():
                 testfile = os.path.join(testdir, f"{func_name}{suffix}.txt")
                 if not os.path.exists(testfile):
                     print(f"TEST-MISSING: expected capture file not found: {testfile}")
-                    return False
-                with open(testfile, "r", encoding="utf-8") as f:
-                    expected = f.read()
+                    success = False
+                else:
+                    with open(testfile, "r", encoding="utf-8") as f:
+                        expected = f.read()
                 # compute unified diff
                 diff_lines = list(difflib.unified_diff(
                     expected.splitlines(keepends=True),
@@ -316,12 +380,25 @@ def main():
                 ))
                 if diff_lines:
                     print(f"TEST-DIFF for {func_name}:")
+                    print("vvvvvvvvvvvv")
                     for ln in diff_lines:
                         print(ln, end="")
-                    return False
+                    print("^^^^^^^^^^^^")
+                    success = False
             except Exception as e:
                 test_repo.printException(e, "run_one: test comparison failed")
                 return False
+
+        # Update global stats for this test invocation and record the name
+        try:
+            if success:
+                stats["succ"] += 1
+                stats["succ_names"].append(func_name)
+            else:
+                stats["fail"] += 1
+                stats["fail_names"].append(func_name)
+        except Exception as e:
+            test_repo.printException(e, "run_one: updating stats failed")
 
         return success
 
@@ -351,7 +428,8 @@ def main():
     total_exercises = 0
 
     for path in args.path:
-        print(f"\n== Repository: {path} ==")
+        if not getattr(args, "silent", False):
+            print(f"\n== Repository: {path} ==")
         try:
             test_repo = GitRepo(path)
         except Exception as _use_stderr:
@@ -403,48 +481,42 @@ def main():
 
         if args.all or args.getFileListBetweenTopHashAndCurrentTime:
             total_exercises += 1
-            run_one(test_repo, i, "File List Between TopHash and Current Time", "getFileListBetweenTopHashAndCurrentTime", None, args.limit)
+            run_one(test_repo, i, "-2, File List Between TopHash and Current Time", "getFileListBetweenTopHashAndCurrentTime", None, args.limit)
             i += 1
 
         if args.all or args.getFileListBetweenTopHashAndStaged:
             total_exercises += 1
-            run_one(test_repo, i, "-2, File List Between TopHash and Current Time", "getFileListBetweenTopHashAndStaged", None, args.limit)
+            run_one(test_repo, i, "-3, File List Between TopHash and Staged", "getFileListBetweenTopHashAndStaged", None, args.limit)
             i += 1
 
         if args.all or args.getFileListBetweenStagedAndMods:
             total_exercises += 1
-            run_one(test_repo, i, "-3, File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None, args.limit)
+            run_one(test_repo, i, "-4, File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None, args.limit)
             i += 1
 
         if args.all or args.getFileListBetweenNewAndStaged:
             total_exercises += 1
-            run_one(test_repo, i, "-4, File List New to Staged", "getFileListBetweenNewRepoAndStaged", None, args.limit)
+            run_one(test_repo, i, "-5, File List New to Staged", "getFileListBetweenNewRepoAndStaged", None, args.limit)
             i += 1
 
         if args.all or args.getFileListBetweenNewAndMods:
             total_exercises += 1
-            run_one(test_repo, i, "-5, File List New to Mods", "getFileListBetweenNewRepoAndMods", None, args.limit)
+            run_one(test_repo, i, "-6, File List New to Mods", "getFileListBetweenNewRepoAndMods", None, args.limit)
             i += 1
 
         if args.all or args.getHashListEntireRepo:
             total_exercises += 1
-            run_one(test_repo, i, "-6, Hash List Entire Repo", "getHashListEntireRepo", None, args.limit)
+            run_one(test_repo, i, "-7, Hash List Entire Repo", "getHashListEntireRepo", None, args.limit)
             i += 1
 
         if args.all or args.getHashListStagedChanges:
             total_exercises += 1
-            run_one(test_repo, i, "-7, Hash List Staged Changes", "getHashListStagedChanges", None, args.limit)
+            run_one(test_repo, i, "-8, Hash List Staged Changes", "getHashListStagedChanges", None, args.limit)
             i += 1
 
         if args.all or args.getHashListFromFileName:
             total_exercises += 1
-            run_one(test_repo, i, f"-8, Hash List From File {args.file}", "getHashListFromFileName", args.file, args.limit)
-            i += 1
-
-        # Two separate entries mapping to the same function (preserve original ordering)
-        if args.all or args.getHashListNewChanges:
-            total_exercises += 1
-            run_one(test_repo, i, "-9, Hash List New Changes", "getHashListNewChanges", None, args.limit)
+            run_one(test_repo, i, f"-9, Hash List From File {args.file}", "getHashListFromFileName", args.file, args.limit)
             i += 1
 
         if args.all or args.getHashListNewChanges:
@@ -505,7 +577,7 @@ def main():
                 with contextlib.redirect_stdout(buf):
                     print("\nRunning sampled pairwise comparisons (separate)...")
                     # runFileListSampledExercises returns total exercises run
-                    t = runFileListSampledExercises(test_repo, args.raw, args.limit)
+                    t = runFileListSampledExercises(test_repo, args.raw, args.limit, args.silent)
                     total_exercises += t
                 success_sampled = True
             except Exception as e:
@@ -514,7 +586,7 @@ def main():
 
             out_str = buf.getvalue()
             try:
-                if out_str:
+                if out_str and not getattr(args, "silent", False):
                     print(out_str, end="")
             except Exception as _:
                 test_repo.printException(_, "printing sampled comparisons output failed")
@@ -549,6 +621,11 @@ def main():
                     testfile = os.path.join(testdir, f"runFileListSampledComparisons{suffix}.txt")
                     if not os.path.exists(testfile):
                         print(f"TEST-MISSING: expected capture file not found: {testfile}")
+                        try:
+                            stats["fail"] += 1
+                            stats["fail_names"].append("runFileListSampledComparisons")
+                        except Exception as e:
+                            test_repo.printException(e, "runFileListSampledComparisons: recording missing-test failure failed")
                     else:
                         with open(testfile, "r", encoding="utf-8") as f:
                             expected = f.read()
@@ -560,13 +637,32 @@ def main():
                         ))
                         if diff_lines:
                             print(f"TEST-DIFF for runFileListSampledComparisons:")
+                            print("vvvvvvvv")
                             for ln in diff_lines:
                                 print(ln, end="")
+                            print("^^^^^^^^")
+                            try:
+                                stats["fail"] += 1
+                                stats["fail_names"].append("runFileListSampledComparisons")
+                            except Exception as e:
+                                test_repo.printException(e, "runFileListSampledComparisons: recording diff failure failed")
+                        else:
+                            try:
+                                stats["succ"] += 1
+                                stats["succ_names"].append("runFileListSampledComparisons")
+                            except Exception as e:
+                                test_repo.printException(e, "runFileListSampledComparisons: recording success failed")
+                        
                 except Exception as e:
                     test_repo.printException(e, "test comparison for sampled comparisons failed")
 
     # Final summary
     print(f"\nExercise summary: total_exercises={total_exercises}")
+    passed = stats.get("succ", 0)
+    failed = stats.get("fail", 0)
+    print(f"Test comparisons: passed={passed} failed={failed}")
+    print("Failed tests:", ", ".join(stats.get("fail_names")))
+    print("Passed tests:", ", ".join(stats.get("succ_names")))
 
 
 if __name__ == "__main__":
