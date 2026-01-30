@@ -15,6 +15,7 @@ from subprocess import check_output, CalledProcessError
 import io
 import contextlib
 import difflib
+import urllib.parse
 
 # GitRepo implementation moved into `gitdiffnavtool.py`; import it so
 # this test harness continues to exercise the exact same class and
@@ -47,6 +48,14 @@ def runFileListSampledExercises(test_repo: GitRepo, raw: bool, limit: int, silen
                 test_repo.printException(e, f"runFileListSampledExercises: handler failed for {a}->{b}")
 
     return total
+
+
+def _safe_name_for_capture(name: str) -> str:
+    """Produce a filesystem-safe representation of `name` for capture/test filenames."""
+    if not name:
+        return ""
+    # Percent-encode to avoid path separators or odd characters
+    return urllib.parse.quote_plus(name, safe="")
 
 
 def getHashListSample(repo: GitRepo) -> list[tuple[str, str, str]]:
@@ -401,7 +410,11 @@ def main():
                 if args.timing:
                     flags.append("timing")
                 suffix = ("-" + "-".join(flags)) if flags else ""
-                capfile = os.path.join(capdir, f"{func_name}{suffix}.txt")
+                if fname:
+                    safe = _safe_name_for_capture(fname)
+                    capfile = os.path.join(capdir, f"{func_name}--{safe}{suffix}.txt")
+                else:
+                    capfile = os.path.join(capdir, f"{func_name}{suffix}.txt")
                 with open(capfile, "w", encoding="utf-8") as f:
                     f.write(out_str)
             except Exception as e:
@@ -417,7 +430,11 @@ def main():
                 if args.timing:
                     flags.append("timing")
                 suffix = ("-" + "-".join(flags)) if flags else ""
-                testfile = os.path.join(testdir, f"{func_name}{suffix}.txt")
+                if fname:
+                    safe = _safe_name_for_capture(fname)
+                    testfile = os.path.join(testdir, f"{func_name}--{safe}{suffix}.txt")
+                else:
+                    testfile = os.path.join(testdir, f"{func_name}{suffix}.txt")
                 if not os.path.exists(testfile):
                     print(f"TEST-MISSING: expected capture file not found: {testfile}")
                     success = False
