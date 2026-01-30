@@ -13,6 +13,7 @@ import codecs
 from datetime import datetime, timezone
 from subprocess import check_output, CalledProcessError
 import io
+import re
 import contextlib
 import difflib
 import urllib.parse
@@ -441,6 +442,22 @@ def main():
                 else:
                     with open(testfile, "r", encoding="utf-8") as f:
                         expected = f.read()
+                    # If this is a runGetDiffTests baseline, ensure the
+                    # baseline was captured for the same filename as the
+                    # current run. If not, surface a clearer mismatch
+                    # message instead of dumping a huge unified diff.
+                    if recorded_name.startswith("runGetDiffTests"):
+                        m = re.search(r"Running getDiff combinations for file (.+)\.\.\.", expected)
+                        if m:
+                            expected_file = m.group(1).strip()
+                            if expected_file != args.file:
+                                print(f"TEST-MISMATCH: baseline {testfile} is for file {expected_file} but current run uses {args.file}")
+                                try:
+                                    stats["fail"] += 1
+                                    stats["fail_names"].append(recorded_name)
+                                except Exception as e:
+                                    test_repo.printException(e, f"{recorded_name}: recording mismatch failed")
+                                testfile = None
                 # compute unified diff
                 diff_lines = list(difflib.unified_diff(
                     expected.splitlines(keepends=True),
@@ -471,6 +488,122 @@ def main():
             test_repo.printException(e, "run_one: updating stats failed")
 
         return success
+
+    def run_and_capture(label: str, recorded_name: str, runner) -> tuple[bool, int]:
+        """Helper to run a callable that prints to stdout, capture output,
+        optionally write capture files, compare against test baselines, and
+        update `stats`.
+
+        - `label`: human-readable label printed before running.
+        - `recorded_name`: base name used for capture/test filenames.
+        - `runner`: callable invoked with no args; may return an int count of
+                    exercises performed (or None/0).
+
+        Returns (success, produced_count).
+        """
+        buf = io.StringIO()
+        produced = 0
+        success = False
+        try:
+            with contextlib.redirect_stdout(buf):
+                print(label)
+                r = runner()
+                if isinstance(r, int):
+                    produced = r
+                else:
+                    produced = 0
+            success = True
+        except Exception as e:
+            test_repo.printException(e, f"{recorded_name}: runner failed")
+            success = False
+
+        out_str = buf.getvalue()
+        try:
+            if out_str and not args.silent:
+                print(out_str, end="")
+        except Exception as _:
+            test_repo.printException(_, f"{recorded_name}: printing output failed")
+
+        # Build suffix based on flags
+        flags: list[str] = []
+        if args.raw:
+            flags.append("raw")
+        if args.timing:
+            flags.append("timing")
+        suffix = ("-" + "-".join(flags)) if flags else ""
+
+        # Capture to file if requested
+        if args.capture:
+            try:
+                capdir = args.capture
+                os.makedirs(capdir, exist_ok=True)
+                capfile = os.path.join(capdir, f"{recorded_name}{suffix}.txt")
+                with open(capfile, "w", encoding="utf-8") as f:
+                    f.write(out_str)
+            except Exception as e:
+                test_repo.printException(e, f"{recorded_name}: capturing output failed")
+
+        # Compare to test baseline if requested and update stats
+        if args.test:
+            try:
+                testdir = args.test
+                testfile = os.path.join(testdir, f"{recorded_name}{suffix}.txt")
+                if not os.path.exists(testfile):
+                    # Fallback: some baselines were captured without
+                    # filename suffixes. If so, try the base recorded name
+                    # (portion before any '--') to remain backward compatible.
+                    base_name = recorded_name.split("--")[0]
+                    alt_testfile = os.path.join(testdir, f"{base_name}{suffix}.txt")
+                    if os.path.exists(alt_testfile):
+                        testfile = alt_testfile
+                    else:
+                        print(f"TEST-MISSING: expected capture file not found: {testfile}")
+                        try:
+                            stats["fail"] += 1
+                            stats["fail_names"].append(recorded_name)
+                        except Exception as e:
+                            test_repo.printException(e, f"{recorded_name}: recording missing-test failure failed")
+                        testfile = None
+                if testfile:
+                    with open(testfile, "r", encoding="utf-8") as f:
+                        expected = f.read()
+                    # Normalize minor repository-header formatting differences
+                    # (e.g., trailing slash on the repo path) to avoid spurious
+                    # diffs for `runGetDiffTests` captures.
+                    if recorded_name.startswith("runGetDiffTests"):
+                        expected = expected.replace("== Repository: ../test-repo/ ==", "== Repository: ../test-repo ==")
+                        out_norm = out_str.replace("== Repository: ../test-repo/ ==", "== Repository: ../test-repo ==")
+                    else:
+                        out_norm = out_str
+
+                    diff_lines = list(difflib.unified_diff(
+                        expected.splitlines(keepends=True),
+                        out_norm.splitlines(keepends=True),
+                        fromfile=f"expected/{recorded_name}",
+                        tofile=f"current/{recorded_name}",
+                    ))
+                    if diff_lines:
+                        print(f"TEST-DIFF for {recorded_name}:")
+                        print("vvvvvvvv")
+                        for ln in diff_lines:
+                            print(ln, end="")
+                        print("^^^^^^^^")
+                        try:
+                            stats["fail"] += 1
+                            stats["fail_names"].append(recorded_name)
+                        except Exception as e:
+                            test_repo.printException(e, f"{recorded_name}: recording diff failure failed")
+                    else:
+                        try:
+                            stats["succ"] += 1
+                            stats["succ_names"].append(recorded_name)
+                        except Exception as e:
+                            test_repo.printException(e, f"{recorded_name}: recording success failed")
+
+            except Exception as e:
+                test_repo.printException(e, f"{recorded_name}: test comparison failed")
+
+        return (success, produced)
 
     # If no specific flags provided, default to running all exercises
     any_flag = (
@@ -643,177 +776,30 @@ def main():
         # If requested, run sampled comparisons separately (outside the to_run loop)
         if args.all or args.runFileListSampledComparisons:
             # Capture the sampled comparisons output so --capture and --test work
-            buf = io.StringIO()
-            try:
-                with contextlib.redirect_stdout(buf):
-                    print("\nRunning sampled pairwise comparisons (separate)...")
-                    # runFileListSampledExercises returns total exercises run
-                    # Always capture the full output for `--test`/`--capture` comparisons
-                    # (do not pass the `silent` flag into the worker so captured
-                    # output is identical whether --silent is used or not).
-                    t = runFileListSampledExercises(test_repo, args.raw, args.limit, False)
-                    total_exercises += t
-                success_sampled = True
-            except Exception as e:
-                test_repo.printException(e, "running runFileListSampledExercises failed")
-                success_sampled = False
+            label = "\nRunning sampled pairwise comparisons (separate)..."
+            recorded_name = "runFileListSampledComparisons"
+            def _runner_sampled() -> int:
+                # Ensure captured output includes the repository header so
+                # comparisons are identical whether `--silent` is used or not.
+                print(f"\n== Repository: {path} ==")
+                return runFileListSampledExercises(test_repo, args.raw, args.limit, False)
 
-            out_str = buf.getvalue()
-            try:
-                if out_str and not args.silent:
-                    print(out_str, end="")
-            except Exception as _:
-                test_repo.printException(_, "printing sampled comparisons output failed")
-
-            # If capture dir specified, save sampled comparisons output
-            if args.capture:
-                try:
-                    capdir = args.capture
-                    os.makedirs(capdir, exist_ok=True)
-                    flags: list[str] = []
-                    if args.raw:
-                        flags.append("raw")
-                    if args.timing:
-                        flags.append("timing")
-                    suffix = ("-" + "-".join(flags)) if flags else ""
-                    capfile = os.path.join(capdir, f"runFileListSampledComparisons{suffix}.txt")
-                    with open(capfile, "w", encoding="utf-8") as f:
-                        f.write(out_str)
-                except Exception as e:
-                    test_repo.printException(e, "capturing sampled comparisons output failed")
-
-            # If test dir specified, compare sampled comparisons output to captured file
-            if args.test:
-                try:
-                    testdir = args.test
-                    flags: list[str] = []
-                    if args.raw:
-                        flags.append("raw")
-                    if args.timing:
-                        flags.append("timing")
-                    suffix = ("-" + "-".join(flags)) if flags else ""
-                    testfile = os.path.join(testdir, f"runFileListSampledComparisons{suffix}.txt")
-                    if not os.path.exists(testfile):
-                        print(f"TEST-MISSING: expected capture file not found: {testfile}")
-                        try:
-                            stats["fail"] += 1
-                            stats["fail_names"].append("runFileListSampledComparisons")
-                        except Exception as e:
-                            test_repo.printException(e, "runFileListSampledComparisons: recording missing-test failure failed")
-                    else:
-                        with open(testfile, "r", encoding="utf-8") as f:
-                            expected = f.read()
-                        diff_lines = list(difflib.unified_diff(
-                            expected.splitlines(keepends=True),
-                            out_str.splitlines(keepends=True),
-                            fromfile=f"expected/runFileListSampledComparisons",
-                            tofile=f"current/runFileListSampledComparisons",
-                        ))
-                        if diff_lines:
-                            print(f"TEST-DIFF for runFileListSampledComparisons:")
-                            print("vvvvvvvv")
-                            for ln in diff_lines:
-                                print(ln, end="")
-                            print("^^^^^^^^")
-                            try:
-                                stats["fail"] += 1
-                                stats["fail_names"].append("runFileListSampledComparisons")
-                            except Exception as e:
-                                test_repo.printException(e, "runFileListSampledComparisons: recording diff failure failed")
-                        else:
-                            try:
-                                stats["succ"] += 1
-                                stats["succ_names"].append("runFileListSampledComparisons")
-                            except Exception as e:
-                                test_repo.printException(e, "runFileListSampledComparisons: recording success failed")
-                        
-                except Exception as e:
-                    test_repo.printException(e, "test comparison for sampled comparisons failed")
+            ok, produced = run_and_capture(label, recorded_name, _runner_sampled)
+            total_exercises += produced
 
         # If requested, run getDiff combination tests for the configured file
         if args.all or args.getDiffTests:
-            buf = io.StringIO()
-            try:
-                with contextlib.redirect_stdout(buf):
-                    print(f"\nRunning getDiff combinations for file {args.file}...")
-                    t = runGetDiffTests(test_repo, args.file, args.raw, args.limit, False)
-                    total_exercises += t
-                success_getdiff = True
-            except Exception as e:
-                test_repo.printException(e, "running runGetDiffTests failed")
-                success_getdiff = False
+            label = f"\nRunning getDiff combinations for file {args.file}..."
+            safe_fname = _safe_name_for_capture(args.file)
+            recorded_name = f"runGetDiffTests--{safe_fname}"
+            def _runner_getdiff() -> int:
+                # Ensure captured output includes the repository header so
+                # comparisons are identical whether `--silent` is used or not.
+                print(f"\n== Repository: {path} ==")
+                return runGetDiffTests(test_repo, args.file, args.raw, args.limit, False)
 
-            out_str = buf.getvalue()
-            try:
-                if out_str and not args.silent:
-                    print(out_str, end="")
-            except Exception as _:
-                test_repo.printException(_, "printing getDiffTests output failed")
-
-            # If capture dir specified, save getDiffTests output
-            if args.capture:
-                try:
-                    capdir = args.capture
-                    os.makedirs(capdir, exist_ok=True)
-                    flags: list[str] = []
-                    if args.raw:
-                        flags.append("raw")
-                    if args.timing:
-                        flags.append("timing")
-                    suffix = ("-" + "-".join(flags)) if flags else ""
-                    capfile = os.path.join(capdir, f"runGetDiffTests{suffix}.txt")
-                    with open(capfile, "w", encoding="utf-8") as f:
-                        f.write(out_str)
-                except Exception as e:
-                    test_repo.printException(e, "capturing getDiffTests output failed")
-
-            # If test dir specified, compare getDiffTests output to captured file
-            if args.test:
-                try:
-                    testdir = args.test
-                    flags: list[str] = []
-                    if args.raw:
-                        flags.append("raw")
-                    if args.timing:
-                        flags.append("timing")
-                    suffix = ("-" + "-".join(flags)) if flags else ""
-                    testfile = os.path.join(testdir, f"runGetDiffTests{suffix}.txt")
-                    if not os.path.exists(testfile):
-                        print(f"TEST-MISSING: expected capture file not found: {testfile}")
-                        try:
-                            stats["fail"] += 1
-                            stats["fail_names"].append("runGetDiffTests")
-                        except Exception as e:
-                            test_repo.printException(e, "runGetDiffTests: recording missing-test failure failed")
-                    else:
-                        with open(testfile, "r", encoding="utf-8") as f:
-                            expected = f.read()
-                        diff_lines = list(difflib.unified_diff(
-                            expected.splitlines(keepends=True),
-                            out_str.splitlines(keepends=True),
-                            fromfile=f"expected/runGetDiffTests",
-                            tofile=f"current/runGetDiffTests",
-                        ))
-                        if diff_lines:
-                            print(f"TEST-DIFF for runGetDiffTests:")
-                            print("vvvvvvvv")
-                            for ln in diff_lines:
-                                print(ln, end="")
-                            print("^^^^^^^^")
-                            try:
-                                stats["fail"] += 1
-                                stats["fail_names"].append("runGetDiffTests")
-                            except Exception as e:
-                                test_repo.printException(e, "runGetDiffTests: recording diff failure failed")
-                        else:
-                            try:
-                                stats["succ"] += 1
-                                stats["succ_names"].append("runGetDiffTests")
-                            except Exception as e:
-                                test_repo.printException(e, "runGetDiffTests: recording success failed")
-
-                except Exception as e:
-                    test_repo.printException(e, "test comparison for getDiffTests failed")
+            ok, produced = run_and_capture(label, recorded_name, _runner_getdiff)
+            total_exercises += produced
 
     # Final summary
     print(f"\nExercise summary: total_exercises={total_exercises}")
