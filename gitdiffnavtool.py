@@ -1084,11 +1084,6 @@ class GitRepo(AppException):
         return combined
 
 
-    # NOTE: `getHashListSample` and `getHashListSamplePlusEnds` were moved
-    # out of this class into module-level helpers (see testRepo.py). They
-    # were intentionally removed to keep GitRepo focused on repository
-    # operations. If callers still expect these symbols as methods, they
-    # should call the module-level helpers instead.
 
 
     # runFileListSampledExercises moved to module-level function
@@ -1188,13 +1183,21 @@ class GitRepo(AppException):
 
             output = self._git_run(["git", "log", "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key)
 
-            entries: list[tuple[str, str, str]] = []
+            parsed_entries: list[tuple[str, str, str]] = []
             parsed = self._parse_git_log_output(output or "")
             for ts, h, subject in parsed:
                 iso = self._epoch_to_iso(ts)
-                entries.append((iso, h, subject if subject else ""))
+                parsed_entries.append((iso, h, subject if subject else ""))
 
+            # Inspect working-tree/index status for the file and construct
+            # explicit pseudo-entries for MODS/STAGED when present. We will
+            # then assemble the final list in newest->oldest order with a
+            # deterministic placement for these pseudo-entries so callers
+            # that reverse the list (oldest->newest) observe STAGED before
+            # MODS.
             status_out = self._git_run(["git", "status", "--porcelain", "--", file_name], text=True) or ""
+            idx_flag = " "
+            wt_flag = " "
             if status_out:
                 s = status_out.splitlines()[0]
                 if len(s) >= 2:
@@ -1203,17 +1206,33 @@ class GitRepo(AppException):
                 else:
                     idx_flag = s[0] if s else " "
                     wt_flag = " "
-                iso_index = self.index_mtime_iso()
-                iso_mods = self._paths_mtime_iso([file_name])
-                if idx_flag != " ":
-                    entries.insert(0, (iso_index, "STAGED", self.STAGED_MESSAGE))
-                if wt_flag != " ":
-                    if entries and entries[0][1] == "STAGED":
-                        entries.insert(1, (iso_mods, "MODS", self.MODS_MESSAGE))
-                    else:
-                        entries.insert(0, (iso_mods, "MODS", self.MODS_MESSAGE))
 
-            entries.sort(key=lambda x: x[0], reverse=True)
+            staged_entry = None
+            mods_entry = None
+            try:
+                if idx_flag != " ":
+                    iso_index = self.index_mtime_iso()
+                    staged_entry = (iso_index, "STAGED", self.STAGED_MESSAGE)
+                if wt_flag != " ":
+                    iso_mods = self._paths_mtime_iso([file_name])
+                    mods_entry = (iso_mods, "MODS", self.MODS_MESSAGE)
+            except Exception as e:
+                self.printException(e, "getHashListFromFileName: computing pseudo-entry timestamps failed")
+
+            # Assemble final entries in newest->oldest order. Place MODS
+            # before STAGED here so that callers that reverse the list
+            # (oldest->newest) will see STAGED before MODS.
+            entries: list[tuple[str, str, str]] = []
+            if mods_entry is not None:
+                entries.append(mods_entry)
+            if staged_entry is not None:
+                entries.append(staged_entry)
+
+            # Append parsed commits newest->oldest
+            parsed_entries.sort(key=lambda x: x[0], reverse=True)
+            entries.extend(parsed_entries)
+
+            # Cache and return
             self._cmd_cache[key] = entries
             return entries
         except Exception as e:

@@ -96,6 +96,54 @@ def getHashListSamplePlusEnds(repo: GitRepo) -> list[tuple[str, str, str]]:
     return sampleHashes
 
 
+def runGetDiffTests(test_repo: GitRepo, file_name: str, raw: bool, limit: int, silent: bool = False) -> int:
+    """Run getDiff for all older->newer pairs for `file_name`.
+
+    Produces DIFF outputs via `printResults` so the harness can capture
+    and compare them. Returns the total number of diff invocations run.
+    """
+    if not file_name:
+        if not silent:
+            print("runGetDiffTests: no file specified via --file; skipping")
+        return 0
+
+    # Build a chronological list of refs for this file (oldest->newest).
+    refs: list[str] = [test_repo.NEWREPO]
+    try:
+        entries = test_repo.getHashListFromFileName(file_name)
+        # entries are returned newest->oldest; reverse to oldest->newest
+        for iso, h, subj in reversed(entries):
+            if h not in refs:
+                refs.append(h)
+    except Exception as e:
+        test_repo.printException(e, "runGetDiffTests: getting hash list failed")
+        return 0
+
+    # Print the list of refs used for diffs (oldest->newest)
+    if not silent:
+        print(f"Refs (oldest->newest)={refs}")
+
+    # If there are fewer than 2 refs, nothing to diff
+    if len(refs) < 2:
+        if not silent:
+            print(f"runGetDiffTests: insufficient refs for {file_name}; refs={refs}")
+        return 0
+
+    total = 0
+    for i in range(len(refs)):
+        for j in range(i + 1, len(refs)):
+            older = refs[i]
+            newer = refs[j]
+            total += 1
+            try:
+                diff_lines = test_repo.getDiff(file_name, older, newer)
+                printResults(test_repo, f"DIFF: {older}->{newer}", diff_lines, raw, limit)
+            except Exception as e:
+                test_repo.printException(e, f"runGetDiffTests: handler failed for {older}->{newer}")
+
+    return total
+
+
 def printResults(test_repo: GitRepo, label: str, res, raw: bool, limit: int) -> None:
     """Pretty-print results returned from GitRepo methods.
 
@@ -248,6 +296,13 @@ def main():
         help="Run getFileListSampledComparisons",
     )
 
+    parser.add_argument(
+        "--getDiffTests",
+        action="store_true",
+        dest="getDiffTests",
+        help="Run getDiff combinations for the file specified by -F/--file",
+    )
+
     # Alias for legacy option name used in some call sites
     parser.add_argument(
         "--runFileListSampledComparisons",
@@ -274,8 +329,6 @@ def main():
     args = parser.parse_args()
 
     # If `--silent` is requested, force `--limit` to 0 so no entries are printed.
-    # Do not modify `args.limit` for `--silent` — suppress printing later
-    # without altering captured output used for `--test` comparisons.
 
 
     # Tally of test comparison successes/failures and record names.
@@ -419,6 +472,7 @@ def main():
         or args.getHashListSamplePlusEnds
         or args.getFileListUntrackedAndIgnored
         or args.runFileListSampledComparisons
+        or args.getDiffTests
         or args.getFileListBetweenNormalizedHashes
         or args.test_resolve
     )
@@ -658,6 +712,91 @@ def main():
                         
                 except Exception as e:
                     test_repo.printException(e, "test comparison for sampled comparisons failed")
+
+        # If requested, run getDiff combination tests for the configured file
+        if args.all or args.getDiffTests:
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf):
+                    print(f"\nRunning getDiff combinations for file {args.file}...")
+                    t = runGetDiffTests(test_repo, args.file, args.raw, args.limit, False)
+                    total_exercises += t
+                success_getdiff = True
+            except Exception as e:
+                test_repo.printException(e, "running runGetDiffTests failed")
+                success_getdiff = False
+
+            out_str = buf.getvalue()
+            try:
+                if out_str and not args.silent:
+                    print(out_str, end="")
+            except Exception as _:
+                test_repo.printException(_, "printing getDiffTests output failed")
+
+            # If capture dir specified, save getDiffTests output
+            if args.capture:
+                try:
+                    capdir = args.capture
+                    os.makedirs(capdir, exist_ok=True)
+                    flags: list[str] = []
+                    if args.raw:
+                        flags.append("raw")
+                    if args.timing:
+                        flags.append("timing")
+                    suffix = ("-" + "-".join(flags)) if flags else ""
+                    capfile = os.path.join(capdir, f"runGetDiffTests{suffix}.txt")
+                    with open(capfile, "w", encoding="utf-8") as f:
+                        f.write(out_str)
+                except Exception as e:
+                    test_repo.printException(e, "capturing getDiffTests output failed")
+
+            # If test dir specified, compare getDiffTests output to captured file
+            if args.test:
+                try:
+                    testdir = args.test
+                    flags: list[str] = []
+                    if args.raw:
+                        flags.append("raw")
+                    if args.timing:
+                        flags.append("timing")
+                    suffix = ("-" + "-".join(flags)) if flags else ""
+                    testfile = os.path.join(testdir, f"runGetDiffTests{suffix}.txt")
+                    if not os.path.exists(testfile):
+                        print(f"TEST-MISSING: expected capture file not found: {testfile}")
+                        try:
+                            stats["fail"] += 1
+                            stats["fail_names"].append("runGetDiffTests")
+                        except Exception as e:
+                            test_repo.printException(e, "runGetDiffTests: recording missing-test failure failed")
+                    else:
+                        with open(testfile, "r", encoding="utf-8") as f:
+                            expected = f.read()
+                        diff_lines = list(difflib.unified_diff(
+                            expected.splitlines(keepends=True),
+                            out_str.splitlines(keepends=True),
+                            fromfile=f"expected/runGetDiffTests",
+                            tofile=f"current/runGetDiffTests",
+                        ))
+                        if diff_lines:
+                            print(f"TEST-DIFF for runGetDiffTests:")
+                            print("vvvvvvvv")
+                            for ln in diff_lines:
+                                print(ln, end="")
+                            print("^^^^^^^^")
+                            try:
+                                stats["fail"] += 1
+                                stats["fail_names"].append("runGetDiffTests")
+                            except Exception as e:
+                                test_repo.printException(e, "runGetDiffTests: recording diff failure failed")
+                        else:
+                            try:
+                                stats["succ"] += 1
+                                stats["succ_names"].append("runGetDiffTests")
+                            except Exception as e:
+                                test_repo.printException(e, "runGetDiffTests: recording success failed")
+
+                except Exception as e:
+                    test_repo.printException(e, "test comparison for getDiffTests failed")
 
     # Final summary
     print(f"\nExercise summary: total_exercises={total_exercises}")
