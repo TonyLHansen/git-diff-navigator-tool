@@ -332,20 +332,20 @@ def main():
         # Print current output only when not running in silent mode; keep
         # `out_str` available for capture/test comparison regardless.
         try:
-            if out_str and not getattr(args, "silent", False):
+            if out_str and not args.silent:
                 print(out_str, end="")
         except Exception as _:
             test_repo.printException(_, "run_one: printing stdout failed")
 
         # If capture dir specified, save output to file named after func and flags
-        if getattr(args, "capture", None):
+        if args.capture:
             try:
                 capdir = args.capture
                 os.makedirs(capdir, exist_ok=True)
                 flags: list[str] = []
-                if getattr(args, "raw", False):
+                if args.raw:
                     flags.append("raw")
-                if getattr(args, "timing", False):
+                if args.timing:
                     flags.append("timing")
                 suffix = ("-" + "-".join(flags)) if flags else ""
                 capfile = os.path.join(capdir, f"{func_name}{suffix}.txt")
@@ -355,13 +355,13 @@ def main():
                 test_repo.printException(e, "run_one: capturing output failed")
 
         # If test dir specified, compare current output to captured file
-        if getattr(args, "test", None):
+        if args.test:
             try:
                 testdir = args.test
                 flags: list[str] = []
-                if getattr(args, "raw", False):
+                if args.raw:
                     flags.append("raw")
-                if getattr(args, "timing", False):
+                if args.timing:
                     flags.append("timing")
                 suffix = ("-" + "-".join(flags)) if flags else ""
                 testfile = os.path.join(testdir, f"{func_name}{suffix}.txt")
@@ -428,7 +428,7 @@ def main():
     total_exercises = 0
 
     for path in args.path:
-        if not getattr(args, "silent", False):
+        if not args.silent:
             print(f"\n== Repository: {path} ==")
         try:
             test_repo = GitRepo(path)
@@ -586,20 +586,20 @@ def main():
 
             out_str = buf.getvalue()
             try:
-                if out_str and not getattr(args, "silent", False):
+                if out_str and not args.silent:
                     print(out_str, end="")
             except Exception as _:
                 test_repo.printException(_, "printing sampled comparisons output failed")
 
             # If capture dir specified, save sampled comparisons output
-            if getattr(args, "capture", None):
+            if args.capture:
                 try:
                     capdir = args.capture
                     os.makedirs(capdir, exist_ok=True)
                     flags: list[str] = []
-                    if getattr(args, "raw", False):
+                    if args.raw:
                         flags.append("raw")
-                    if getattr(args, "timing", False):
+                    if args.timing:
                         flags.append("timing")
                     suffix = ("-" + "-".join(flags)) if flags else ""
                     capfile = os.path.join(capdir, f"runFileListSampledComparisons{suffix}.txt")
@@ -609,13 +609,13 @@ def main():
                     test_repo.printException(e, "capturing sampled comparisons output failed")
 
             # If test dir specified, compare sampled comparisons output to captured file
-            if getattr(args, "test", None):
+            if args.test:
                 try:
                     testdir = args.test
                     flags: list[str] = []
-                    if getattr(args, "raw", False):
+                    if args.raw:
                         flags.append("raw")
-                    if getattr(args, "timing", False):
+                    if args.timing:
                         flags.append("timing")
                     suffix = ("-" + "-".join(flags)) if flags else ""
                     testfile = os.path.join(testdir, f"runFileListSampledComparisons{suffix}.txt")
