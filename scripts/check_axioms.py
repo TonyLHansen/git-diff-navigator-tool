@@ -792,8 +792,6 @@ def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tupl
         printException(e, f"collecting class attrs/getattr usages in {path}")
         return errs
 
-    if not classes:
-        return errs
 
     # We can't reliably map which class scope a getattr usage belongs to
     # without doing more complex AST mapping, so we'll conservatively flag
@@ -822,13 +820,13 @@ def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tupl
         printException(e)
         parse_args_vars = set()
 
+
     if parse_args_vars:
         try:
             getattr_on_args = _find_getattr_on_vars(path, parse_args_vars, text=text, tree=tree)
             for lineno, varname, attr, func in getattr_on_args:
-                errs.append(
-                    (str(path), lineno, f"{func}({varname}, '{attr}', ...) used on parse_args() result; prefer direct access {varname}.{attr}")
-                )
+                tpl = (str(path), lineno, f"{func}({varname}, '{attr}', ...) used on parse_args() result; prefer direct access {varname}.{attr}")
+                errs.append(tpl)
         except Exception as e:
             printException(e, f"checking parse_args getattr usages in {path}")
 
@@ -1316,6 +1314,8 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("files", nargs="*", help="Optional explicit files or directories to check (overrides discovery)")
     args = parser.parse_args(argv)
 
+    # (debug prints removed)
+
     root = Path(args.root)
 
     # Configure logging verbosity: 0=WARNING (default), 1=INFO, 2+=DEBUG
@@ -1339,6 +1339,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_printexception_in_try = False
         args.check_imports = False
         args.check_docstrings = False
+
+    # (debug prints removed)
 
     # Honor explicit enable flags after -N/--NONE
 
@@ -1369,6 +1371,7 @@ def main(argv: List[str] | None = None) -> int:
         args.check_docstrings = True
 
     logger.info("cwd: %s", Path.cwd())
+    # (debug prints removed)
 
     # If explicit files/dirs were provided, use them (override discovery).
     if args.files:
