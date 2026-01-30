@@ -329,7 +329,7 @@ def main():
         help="Exercise resolve_repo_top and relpath_if_within for quick verification",
     )
     parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
-    parser.add_argument("-F", "--file", default="README.md", help="Filename for getHashListFromFileName when used")
+    parser.add_argument("-F", "--file", action="append", default=["README.md", "docs/notes.txt", "data/file_030.txt"], help="Filename(s) for getHashListFromFileName when used; may be specified multiple times")
     parser.add_argument(
         "path",
         nargs="+",
@@ -442,36 +442,20 @@ def main():
                 else:
                     with open(testfile, "r", encoding="utf-8") as f:
                         expected = f.read()
-                    # If this is a runGetDiffTests baseline, ensure the
-                    # baseline was captured for the same filename as the
-                    # current run. If not, surface a clearer mismatch
-                    # message instead of dumping a huge unified diff.
-                    if recorded_name.startswith("runGetDiffTests"):
-                        m = re.search(r"Running getDiff combinations for file (.+)\.\.\.", expected)
-                        if m:
-                            expected_file = m.group(1).strip()
-                            if expected_file != args.file:
-                                print(f"TEST-MISMATCH: baseline {testfile} is for file {expected_file} but current run uses {args.file}")
-                                try:
-                                    stats["fail"] += 1
-                                    stats["fail_names"].append(recorded_name)
-                                except Exception as e:
-                                    test_repo.printException(e, f"{recorded_name}: recording mismatch failed")
-                                testfile = None
-                # compute unified diff
-                diff_lines = list(difflib.unified_diff(
-                    expected.splitlines(keepends=True),
-                    out_str.splitlines(keepends=True),
-                    fromfile=f"expected/{func_name}",
-                    tofile=f"current/{func_name}",
-                ))
-                if diff_lines:
-                    print(f"TEST-DIFF for {func_name}:")
-                    print("vvvvvvvvvvvv")
-                    for ln in diff_lines:
-                        print(ln, end="")
-                    print("^^^^^^^^^^^^")
-                    success = False
+                    # compute unified diff only when expected exists
+                    diff_lines = list(difflib.unified_diff(
+                        expected.splitlines(keepends=True),
+                        out_str.splitlines(keepends=True),
+                        fromfile=f"expected/{func_name}",
+                        tofile=f"current/{func_name}",
+                    ))
+                    if diff_lines:
+                        print(f"TEST-DIFF for {func_name}:")
+                        print("vvvvvvvvvvvv")
+                        for ln in diff_lines:
+                            print(ln, end="")
+                        print("^^^^^^^^^^^^")
+                        success = False
             except Exception as e:
                 test_repo.printException(e, "run_one: test comparison failed")
                 return False
@@ -567,14 +551,14 @@ def main():
                 if testfile:
                     with open(testfile, "r", encoding="utf-8") as f:
                         expected = f.read()
+                    # Default: compare against current output unchanged
+                    out_norm = out_str
                     # Normalize minor repository-header formatting differences
                     # (e.g., trailing slash on the repo path) to avoid spurious
                     # diffs for `runGetDiffTests` captures.
                     if recorded_name.startswith("runGetDiffTests"):
                         expected = expected.replace("== Repository: ../test-repo/ ==", "== Repository: ../test-repo ==")
-                        out_norm = out_str.replace("== Repository: ../test-repo/ ==", "== Repository: ../test-repo ==")
-                    else:
-                        out_norm = out_str
+                        out_norm = out_norm.replace("== Repository: ../test-repo/ ==", "== Repository: ../test-repo ==")
 
                     diff_lines = list(difflib.unified_diff(
                         expected.splitlines(keepends=True),
@@ -649,31 +633,23 @@ def main():
             else:
                 print(f"resolve_repo_top: {path} -> FAILED: {err}")
 
-            # Test relpath_if_within using the configured file (args.file)
-            total_exercises += 1
-            try:
-                rel = GitRepo.relpath_if_within(out, path)
-                print(f"relpath_if_within: base={out}, relpath={path} -> {rel}")
-            except Exception as _use_stderr:
-                print(f"relpath_if_within: base={out}, relpath={path} -> FAILED: {e}")
+            # Test relpath_if_within using the configured file(s) (args.file)
+            if args.file:
+                for f in args.file:
+                    total_exercises += 1
+                    try:
+                        rel = GitRepo.relpath_if_within(out, f)
+                        print(f"relpath_if_within: base={out}, relpath={f} -> {rel}")
+                    except Exception as _use_stderr:
+                        print(f"relpath_if_within: base={out}, relpath={f} -> FAILED: {_use_stderr}")
 
-            # Test relpath_if_within using the configured file (args.file)
-            total_exercises += 1
-            relpath = args.file
-            try:
-                rel = GitRepo.relpath_if_within(out, relpath)
-                print(f"relpath_if_within: base={out}, relpath={relpath} -> {rel}")
-            except Exception as _use_stderr:
-                print(f"relpath_if_within: base={out}, relpath={relpath} -> FAILED: {e}")
-
-            # Test relpath_if_within using the configured file (args.file)
-            total_exercises += 1
-            relpath = path + os.path.sep + args.file
-            try:
-                rel = GitRepo.relpath_if_within(out, relpath)
-                print(f"relpath_if_within: base={out}, relpath={relpath} -> {rel}")
-            except Exception as _use_stderr:
-                print(f"relpath_if_within: base={out}, relpath={relpath} -> FAILED: {e}")
+                    total_exercises += 1
+                    relpath = path + os.path.sep + f
+                    try:
+                        rel = GitRepo.relpath_if_within(out, relpath)
+                        print(f"relpath_if_within: base={out}, relpath={relpath} -> {rel}")
+                    except Exception as _use_stderr:
+                        print(f"relpath_if_within: base={out}, relpath={relpath} -> FAILED: {_use_stderr}")
 
         # Execute tests directly in the same order previously provided by `allfuncs`.
         i = 1
@@ -719,9 +695,11 @@ def main():
             i += 1
 
         if args.all or args.getHashListFromFileName:
-            total_exercises += 1
-            run_one(test_repo, i, f"-9, Hash List From File {args.file}", "getHashListFromFileName", args.file, args.limit)
-            i += 1
+            if args.file:
+                for f in args.file:
+                    total_exercises += 1
+                    run_one(test_repo, i, f"-9, Hash List From File {f}", "getHashListFromFileName", f, args.limit)
+                    i += 1
 
         if args.all or args.getHashListNewChanges:
             total_exercises += 1
@@ -789,17 +767,20 @@ def main():
 
         # If requested, run getDiff combination tests for the configured file
         if args.all or args.getDiffTests:
-            label = f"\nRunning getDiff combinations for file {args.file}..."
-            safe_fname = _safe_name_for_capture(args.file)
-            recorded_name = f"runGetDiffTests--{safe_fname}"
-            def _runner_getdiff() -> int:
-                # Ensure captured output includes the repository header so
-                # comparisons are identical whether `--silent` is used or not.
-                print(f"\n== Repository: {path} ==")
-                return runGetDiffTests(test_repo, args.file, args.raw, args.limit, False)
+            if args.file:
+                for f in args.file:
+                    label = f"\nRunning getDiff combinations for file {f}..."
+                    safe_fname = _safe_name_for_capture(f)
+                    recorded_name = f"runGetDiffTests--{safe_fname}"
 
-            ok, produced = run_and_capture(label, recorded_name, _runner_getdiff)
-            total_exercises += produced
+                    def _runner_getdiff(file_to_test=f) -> int:
+                        # Ensure captured output includes the repository header so
+                        # comparisons are identical whether `--silent` is used or not.
+                        print(f"\n== Repository: {path} ==")
+                        return runGetDiffTests(test_repo, file_to_test, args.raw, args.limit, False)
+
+                    ok, produced = run_and_capture(label, recorded_name, _runner_getdiff)
+                    total_exercises += produced
 
     # Final summary
     print(f"\nExercise summary: total_exercises={total_exercises}")
@@ -812,4 +793,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
