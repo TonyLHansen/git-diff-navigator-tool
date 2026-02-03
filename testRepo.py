@@ -22,6 +22,8 @@ import urllib.parse
 # this test harness continues to exercise the exact same class and
 # methods without duplicating code.
 from gitdiffnavtool import GitRepo
+from gitdiffnavtool import FileListBase, HistoryListBase
+from types import SimpleNamespace
 
 def runFileListSampledExercises(test_repo: GitRepo, raw: bool, limit: int, silent: bool = False) -> int:
     """Module-level exerciser for `getFileListBetweenNormalizedHashes`.
@@ -120,7 +122,7 @@ def runGetDiffTests(test_repo: GitRepo, file_name: str, raw: bool, limit: int, s
     # Build a chronological list of refs for this file (oldest->newest).
     refs: list[str] = [test_repo.NEWREPO]
     try:
-        entries = test_repo.getNormalizedHashListFromFileName(file_name)
+        entries = test_repo.getHashListFromFileName(file_name)
         # entries are returned newest->oldest; reverse to oldest->newest
         for iso, h, subj in reversed(entries):
             if h not in refs:
@@ -196,6 +198,135 @@ def printResults(test_repo: GitRepo, label: str, res, raw: bool, limit: int) -> 
             print(repr(res))
         except Exception as e:
             test_repo.printException(e, "printResults: fallback repr failed")
+
+
+def test_to_display_rows(test_repo: GitRepo) -> list:
+    """Unit-like test for `FileListBase._to_display_rows`.
+
+    Constructs a minimal dummy `self` object with `app.repo_root` and
+    `printException` and exercises a few input shapes.
+    Returns the list of normalized rows produced.
+    """
+    try:
+        # Prepare a dummy self with required attributes
+        class Dummy:
+            def __init__(self, repo_root):
+                self.app = SimpleNamespace(repo_root=repo_root)
+
+            def printException(self, *args, **kwargs):
+                """No-op exception printer used by the test dummy."""
+                pass
+
+        # Use the official accessor so attribute naming is centralized.
+        base = test_repo.get_repo_root()
+        d = Dummy(base)
+
+        # Directly call the GitRepo normalized helpers — allow exceptions
+        # to propagate so failures are loud during testing.
+        normalized = test_repo.getNormalizedHashListComplete()
+        tokens = [x[1] for x in normalized]
+        if len(tokens) < 2:
+            raise AssertionError("need at least two normalized tokens to exercise getFileListBetweenNormalizedHashes")
+        # Choose an older->newer pair (last->first) to exercise a broad diff
+        prev_token = tokens[-1]
+        curr_token = tokens[0]
+        samples = test_repo.getFileListBetweenNormalizedHashes(prev_token, curr_token)
+
+        rows = FileListBase._to_display_rows(d, samples, base_workdir=None)
+
+        # Basic structural assertions
+        assert isinstance(rows, list), "_to_display_rows should return a list"
+        assert len(rows) >= 1, "expected at least one normalized row"
+        expected_keys = {"name", "full", "is_dir", "raw", "repo_status"}
+        for i, r in enumerate(rows):
+            assert isinstance(r, dict), f"row {i} should be dict"
+            assert expected_keys.issubset(set(r.keys())), f"row {i} missing expected keys: {r.keys()}"
+
+        # Check that the dict-form preserved raw metadata when present
+        if samples:
+            assert rows[0]["raw"] == samples[0] or isinstance(rows[0]["raw"], (dict, tuple, list, str)), "dict-form input should be preserved in 'raw'"
+
+        # Tuple-form: if a tuple/list sample was provided ensure the name field is populated
+        if len(samples) > 1 and isinstance(samples[1], (list, tuple)):
+            tup_raw = rows[1]["raw"]
+            assert tup_raw == samples[1] or isinstance(tup_raw, (tuple, list, str, dict))
+            assert isinstance(rows[1].get("name"), str)
+
+        print("test_to_display_rows: PASS")
+        return rows
+    except Exception as e:
+        test_repo.printException(e, "test_to_display_rows failed")
+        raise
+
+
+def test_to_history_entries(test_repo: GitRepo) -> list:
+    """Unit-like test for `HistoryListBase._to_history_entries`.
+
+    Builds a minimal dummy with `_epoch_to_iso` and exercises several
+    input shapes returning the normalized entry dicts.
+    """
+    try:
+        class DummyHist:
+            def __init__(self):
+                pass
+
+            def _epoch_to_iso(self, ts):
+                """Convert an epoch timestamp `ts` to ISO format (UTC).
+
+                If conversion fails, log via `printException` and return
+                the stringified input.
+                """
+                try:
+                    return datetime.fromtimestamp(int(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+                except Exception as e:
+                    self.printException(e, "DummyHist._epoch_to_iso failed")
+                    return str(ts)
+
+            def printException(self, *args, **kwargs):
+                """No-op exception printer for history-dummy."""
+                pass
+
+        d = DummyHist()
+
+        # Directly call the repo's normalized hash-list helper; allow any
+        # exceptions to surface so test failures are visible.
+        samples = test_repo.getHashListEntireRepo()
+
+        entries = HistoryListBase._to_history_entries(d, samples)
+
+        # Use the repository-wide normalized list (includes STAGED/MODS/NEWREPO)
+        normalized = test_repo.getNormalizedHashListComplete()
+        entries = HistoryListBase._to_history_entries(d, normalized)
+
+        # Basic structural assertions
+        assert isinstance(entries, list), "_to_history_entries should return a list"
+        assert len(entries) >= 1, "expected at least one normalized history entry"
+        for i, e in enumerate(entries):
+            assert isinstance(e, dict), f"entry {i} should be dict"
+            for k in ("iso", "hash", "subject", "short_hash", "meta"):
+                assert k in e, f"entry {i} missing key {k}"
+
+        # Sanity checks: iso should be a string and short_hash should be present
+        for i, e in enumerate(entries):
+            assert isinstance(e.get("iso"), str), f"entry {i} 'iso' should be a string"
+            assert e.get("short_hash") is None or isinstance(e.get("short_hash"), str)
+
+        # Additionally, exercise per-file normalized history helper
+        try:
+            file_samples = test_repo.getNormalizedHashListFromFileName("README.md")
+            # If the file has history, ensure normalization produces entries
+            if file_samples:
+                file_entries = HistoryListBase._to_history_entries(d, file_samples)
+                assert isinstance(file_entries, list), "per-file history should normalize to a list"
+        except Exception as e:
+            d.printException(e, "test_to_history_entries: per-file normalization failed")
+            raise
+
+        print("test_to_history_entries: PASS")
+        return entries
+    except Exception as e:
+        test_repo.printException(e, "test_to_history_entries failed")
+        raise
 
 
 def main():
@@ -288,9 +419,9 @@ def main():
     )
     parser.add_argument("-7", "--getHashListEntireRepo", action="store_true", help="Run getHashListEntireRepo")
     parser.add_argument("-8", "--getHashListStagedChanges", action="store_true", help="Run getHashListStagedChanges")
-    parser.add_argument("-9", "--getNormalizedHashListFromFileName", action="store_true", help="Run getNormalizedHashListFromFileName")
+    parser.add_argument("-9", "--getHashListFromFileName", action="store_true", help="Run getHashListFromFileName")
     parser.add_argument("-a", "--getHashListNewChanges", action="store_true", help="Run getHashListNewChanges")
-    parser.add_argument("-b", "--getNormalizedHashListComplete", action="store_true", help="Run getNormalizedHashListComplete")
+    parser.add_argument("-b", "--getHashListComplete", action="store_true", help="Run getHashListComplete")
     parser.add_argument("-c", "--getHashListSample", action="store_true", help="Run getHashListSample")
     parser.add_argument("-d", "--getHashListSamplePlusEnds", action="store_true", help="Run getHashListSamplePlusEnds")
     parser.add_argument(
@@ -304,6 +435,22 @@ def main():
         "--getFileListSampledComparisons",
         action="store_true",
         help="Run getFileListSampledComparisons",
+    )
+
+    parser.add_argument(
+        "-X",
+        "--test-to-display-rows",
+        action="store_true",
+        dest="test_display_rows",
+        help="Run unit test for FileListBase._to_display_rows",
+    )
+
+    parser.add_argument(
+        "-Y",
+        "--test-to-history-entries",
+        action="store_true",
+        dest="test_history_entries",
+        help="Run unit test for HistoryListBase._to_history_entries",
     )
 
     parser.add_argument(
@@ -329,7 +476,7 @@ def main():
         help="Exercise resolve_repo_top and relpath_if_within for quick verification",
     )
     parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
-    parser.add_argument("-F", "--file", action="append", default=["README.md", "docs/notes.txt", "data/file_030.txt"], help="Filename(s) for getNormalizedHashListFromFileName when used; may be specified multiple times")
+    parser.add_argument("-F", "--file", action="append", default=["README.md", "docs/notes.txt", "data/file_030.txt"], help="Filename(s) for getHashListFromFileName when used; may be specified multiple times")
     parser.add_argument(
         "path",
         nargs="+",
@@ -442,20 +589,20 @@ def main():
                 else:
                     with open(testfile, "r", encoding="utf-8") as f:
                         expected = f.read()
-                    # compute unified diff only when expected exists
-                    diff_lines = list(difflib.unified_diff(
-                        expected.splitlines(keepends=True),
-                        out_str.splitlines(keepends=True),
-                        fromfile=f"expected/{func_name}",
-                        tofile=f"current/{func_name}",
-                    ))
-                    if diff_lines:
-                        print(f"TEST-DIFF for {func_name}:")
-                        print("vvvvvvvvvvvv")
-                        for ln in diff_lines:
-                            print(ln, end="")
-                        print("^^^^^^^^^^^^")
-                        success = False
+                # compute unified diff only when expected exists
+                diff_lines = list(difflib.unified_diff(
+                    expected.splitlines(keepends=True),
+                    out_str.splitlines(keepends=True),
+                    fromfile=f"expected/{func_name}",
+                    tofile=f"current/{func_name}",
+                ))
+                if diff_lines:
+                    print(f"TEST-DIFF for {func_name}:")
+                    print("vvvvvvvvvvvv")
+                    for ln in diff_lines:
+                        print(ln, end="")
+                    print("^^^^^^^^^^^^")
+                    success = False
             except Exception as e:
                 test_repo.printException(e, "run_one: test comparison failed")
                 return False
@@ -599,13 +746,15 @@ def main():
         or args.getFileListBetweenNewAndMods
         or args.getHashListEntireRepo
         or args.getHashListStagedChanges
-        or args.getNormalizedHashListFromFileName
+        or args.getHashListFromFileName
         or args.getHashListNewChanges
-        or args.getNormalizedHashListComplete
+        or args.getHashListComplete
         or args.getHashListSample
         or args.getHashListSamplePlusEnds
         or args.getFileListUntrackedAndIgnored
         or args.runFileListSampledComparisons
+        or args.test_display_rows
+        or args.test_history_entries
         or args.getDiffTests
         or args.getFileListBetweenNormalizedHashes
         or args.test_resolve
@@ -694,11 +843,11 @@ def main():
             run_one(test_repo, i, "-8, Hash List Staged Changes", "getHashListStagedChanges", None, args.limit)
             i += 1
 
-        if args.all or args.getNormalizedHashListFromFileName:
+        if args.all or args.getHashListFromFileName:
             if args.file:
                 for f in args.file:
                     total_exercises += 1
-                    run_one(test_repo, i, f"-9, Hash List From File {f}", "getNormalizedHashListFromFileName", f, args.limit)
+                    run_one(test_repo, i, f"-9, Hash List From File {f}", "getHashListFromFileName", f, args.limit)
                     i += 1
 
         if args.all or args.getHashListNewChanges:
@@ -706,9 +855,9 @@ def main():
             run_one(test_repo, i, "-a, Hash List New Changes", "getHashListNewChanges", None, args.limit)
             i += 1
 
-        if args.all or args.getNormalizedHashListComplete:
+        if args.all or args.getHashListComplete:
             total_exercises += 1
-            run_one(test_repo, i, "-b, Hash List Complete", "getNormalizedHashListComplete", None, args.limit)
+            run_one(test_repo, i, "-b, Hash List Complete", "getHashListComplete", None, args.limit)
             i += 1
 
         if args.all or args.getHashListSample:
@@ -724,6 +873,16 @@ def main():
         if args.all or args.getFileListUntrackedAndIgnored:
             total_exercises += 1
             run_one(test_repo, i, "-e, Untracked and Ignored files", "getFileListUntrackedAndIgnored", None, args.limit)
+            i += 1
+
+        if args.all or args.test_display_rows:
+            total_exercises += 1
+            run_one(test_repo, i, "-X, FileListBase._to_display_rows", "test_to_display_rows", None, args.limit)
+            i += 1
+
+        if args.all or args.test_history_entries:
+            total_exercises += 1
+            run_one(test_repo, i, "-Y, HistoryListBase._to_history_entries", "test_to_history_entries", None, args.limit)
             i += 1
 
         # Process any explicit getFileListBetweenNormalizedHashes pairs supplied

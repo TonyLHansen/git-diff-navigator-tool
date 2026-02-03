@@ -280,8 +280,6 @@ class GitRepo(AppException):
         Returns a list of the hashes, their timestamps and commit messages associated with the specified filename.
         The filename is relative to the repoRoot.
 
-    gitRepo.getNormalizedHashListFromFileName(filename)
-
     gitRepo.reset_cache() will reset the cache used by GitRepo's functions. Use this if you ever wish
     to have gitRepo restart with a fresh view of the repository.
 
@@ -357,8 +355,9 @@ class GitRepo(AppException):
             return (None, _use_raise)
         except Exception as _use_raise:
             if raise_on_missing:
-                raise
+                raise RuntimeError(f"not a git working tree: {path}") from _use_raise
             return (None, _use_raise)
+
     @classmethod
     def relpath_if_within(cls, base_path: str, conv_path: str) -> str | None:
         """
@@ -2974,9 +2973,97 @@ class FileListBase(AppBase):
                     continue
         except Exception as e:
             self.printException(e, "_populate_from_file_infos failed")
+
+    def _to_display_rows(self, raw_filelist: list, base_workdir: str | None = None) -> list[dict]:
+        """Convert raw file-list items from backends into display-ready dicts.
+
+        Accepts backend outputs such as lists of `(path, status)` tuples
+        (repo-relative or absolute paths) or dicts with `display`/`full`.
+        Returns list of dicts with keys: `name`, `full`, `is_dir`, `raw`, `repo_status`.
+
+        - `base_workdir` (optional) is used to resolve repo-relative paths
+          into absolute full paths; falls back to `self.app.repo_root`.
+        """
+        rows: list[dict] = []
+        try:
+            base = base_workdir or self.app.repo_root or ""
+            for entry in raw_filelist or []:
+                try:
+                    # If already a normalized dict use it as-is (but ensure keys)
+                    if isinstance(entry, dict):
+                        full = entry.get("full") or entry.get("display") or entry.get("path")
+                        name = entry.get("name") or (os.path.basename(full) if full else entry.get("display"))
+                        is_dir = bool(entry.get("is_dir", False))
+                        raw = entry.get("raw", name)
+                        repo_status = entry.get("repo_status")
+                        # Resolve full to an absolute realpath when possible
+                        try:
+                            if full and not os.path.isabs(full) and base:
+                                full = os.path.realpath(os.path.join(base, full))
+                            elif full:
+                                full = os.path.realpath(full)
+                        except Exception as e:
+                            self.printException(e, "_to_display_rows: resolving full realpath failed")
+                        rows.append({"name": name, "full": full, "is_dir": is_dir, "raw": raw, "repo_status": repo_status})
+                        continue
+
+                    # Tuples of (path, status) are common from git diff helpers
+                    if isinstance(entry, (list, tuple)) and len(entry) >= 1:
+                        path = entry[0]
+                        status = entry[1] if len(entry) > 1 else None
+                        # Resolve full path
+                        try:
+                            if path and os.path.isabs(path):
+                                full = os.path.realpath(path)
+                            else:
+                                full = os.path.realpath(os.path.join(base, path)) if base else os.path.realpath(path)
+                        except Exception as e:
+                            self.printException(e, "_to_display_rows: resolving full path failed")
+                            full = path
+
+                        # Determine name and directory-ness
+                        try:
+                            is_dir = os.path.isdir(full)
+                        except Exception as e:
+                            self.printException(e, "_to_display_rows: isdir check failed")
+                            is_dir = False
+                        name = os.path.basename(full) if full else path
+                        raw = full if is_dir else name
+
+                        # Conservative repo_status: leave None for diff-driven lists
+                        repo_status = None
+                        # However map a few well-known status tokens when present
+                        try:
+                            s = str(status) if status is not None else ""
+                            s_up = s.upper()
+                            if s_up in ("??", "UNTRACKED"):
+                                repo_status = "untracked"
+                            elif s_up in ("!!", "IGNORED"):
+                                repo_status = "ignored"
+                            elif "U" in s_up or "!" in s_up:
+                                repo_status = "conflicted"
+                            elif s_up == "D" or "DELETED" in s_up:
+                                repo_status = "wt_deleted"
+                            elif s_up == "A" or "ADDED" in s_up:
+                                repo_status = "staged"
+                            elif s_up == "M" or "MODIFIED" in s_up:
+                                repo_status = "modified"
+                        except Exception as e:
+                            self.printException(e, "_to_display_rows: mapping status failed")
+                            repo_status = None
+
+                        rows.append({"name": name, "full": full, "is_dir": is_dir, "raw": raw, "repo_status": repo_status})
+                        continue
+
+                    # Fallback: stringify and append
+                    s = str(entry)
+                    rows.append({"name": os.path.basename(s), "full": s, "is_dir": False, "raw": s, "repo_status": None})
+                except Exception as e:
+                    self.printException(e, "_to_display_rows: processing entry failed")
+                    continue
         except Exception as e:
-            self.printException(e, "_build_status_map failed")
-            return None
+            self.printException(e, "_to_display_rows failed")
+        return rows
 
 
 class FileModeFileList(FileListBase):
@@ -4199,6 +4286,79 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "_format_commit_row failed")
             return f"{h or ''} {msg}".strip()
+
+    def _to_history_entries(self, raw_list: list) -> list[dict]:
+        """Normalize various backend hash-list formats into HistoryEntry dicts.
+
+        Accepts items produced by GitRepo helpers (tuples like
+        `(iso, hash, subject)`) or raw strings/tuples and returns a list of
+        dicts with keys: `iso`, `hash`, `subject`, `short_hash`, `meta`.
+        This is defensive and will try to preserve as much information as
+        possible when inputs vary.
+        """
+        out: list[dict] = []
+        try:
+            for item in raw_list or []:
+                try:
+                    iso = ""
+                    h = None
+                    subject = ""
+                    meta = item
+
+                    # Handle tuple/list forms: prefer (iso, hash, subject)
+                    if isinstance(item, (list, tuple)):
+                        if len(item) >= 3:
+                            iso = item[0]
+                            h = item[1]
+                            subject = item[2] or ""
+                        elif len(item) == 2:
+                            iso = item[0]
+                            h = item[1]
+                            subject = ""
+                        elif len(item) == 1:
+                            # single-element tuple
+                            iso = str(item[0])
+                    elif isinstance(item, str):
+                        # Try to parse strings like "<iso> <hash> <subject>"
+                        parts = item.split(None, 2)
+                        if parts:
+                            if len(parts) >= 1:
+                                iso = parts[0]
+                            if len(parts) >= 2:
+                                h = parts[1]
+                            if len(parts) == 3:
+                                subject = parts[2]
+                    else:
+                        # Fallback: stringify the item
+                        iso = str(item)
+
+                    # Normalize iso value (if it's numeric epoch convert to iso)
+                    try:
+                        if isinstance(iso, (int, float)):
+                            iso = self._epoch_to_iso(int(iso))
+                        else:
+                            # leave as string; if object with strftime use that
+                            if hasattr(iso, "strftime"):
+                                try:
+                                    iso = iso.strftime("%Y-%m-%dT%H:%M:%S")
+                                except Exception as e:
+                                    self.printException(e, "_to_history_entries: iso.strftime failed")
+                                    iso = str(iso)
+                            else:
+                                iso = str(iso)
+                    except Exception as e:
+                        self.printException(e, "_to_history_entries: iso normalization failed")
+                        iso = str(iso)
+
+                    short_hash = (h or "")[:HASH_LENGTH] if h else ""
+
+                    out.append({"iso": iso, "hash": h, "subject": subject, "short_hash": short_hash, "meta": meta})
+                except Exception as e:
+                    self.printException(e, "_to_history_entries: processing item failed")
+                    continue
+        except Exception as e:
+            self.printException(e, "_to_history_entries failed")
+        return out
 
     def toggle_check_current(self, idx: int | None = None) -> None:
         """Toggle a single-mark (checked) state on the selected history row.
