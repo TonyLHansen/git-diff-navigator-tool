@@ -5008,7 +5008,8 @@ class GitHistoryNavTool(AppException, App):
         no_color: bool,
         repo_first: bool,
         repo_hashes: list,
-        repo_root: str,
+        repo_root: str | None = None,
+        gitRepo: GitRepo | None = None,
         **kwargs,
     ):
         # Accept CLI options here so the app can inspect them during mount
@@ -5021,7 +5022,12 @@ class GitHistoryNavTool(AppException, App):
         self.repo_hashes = repo_hashes or []
         # placeholders for runtime state
         # `repo_root` is provided by main and should not be modified further.
-        self.repo_root = repo_root
+        # prefer explicit gitRepo-provided root when available
+        if gitRepo is not None:
+            self.gitRepo = gitRepo
+            self.repo_root = gitRepo.get_repo_root()
+        else:
+            self.repo_root = repo_root
         # Set the application title to include the repository path
         self.title = f"GitHistoryNavTool ({self.repo_root or '.'})"
         self._saved_state = None
@@ -6156,17 +6162,25 @@ def main(argv: Optional[list[str]] = None) -> int:
             args.repo_first = True
 
         # Determine repository worktree root once and store on the app.
-        repo_root = discover_repo_worktree(args.path)
+        # Use the first provided path as the discovery start point.
+        start_path = args.path[0] if args.path else None
+        repo_root = discover_repo_worktree(start_path)
         logger.debug("Discovered repository worktree root: %s", repo_root)
+        # Allocate the shared `GitRepo` instance here and compute the
+        # repository-relative `relpath` for the provided path. The app will
+        # receive the `gitRepo` instance so helpers can call into it.
+        gitrepo = GitRepo(repo_root)
+        raw_path = args.path[0] if args.path else None
+        relpath = GitRepo.relpath_if_within(gitrepo.get_repo_root(), raw_path) if raw_path else None
 
-        # Wire CLI into the Textual app and run it.
-        logger.debug("Starting GitHistoryNavTool; args=%s repo_root=%s", args, repo_root)
+        logger.debug("Starting GitHistoryNavTool; args=%s repo_root=%s relpath=%r", args, repo_root, relpath)
         app = GitHistoryNavTool(
-            path=args.path,
+            path=relpath or (raw_path or ""),
             no_color=args.no_color,
             repo_first=args.repo_first,
             repo_hashes=repo_hashes,
             repo_root=repo_root,
+            gitRepo=gitrepo,
         )
         # Run the textual app (blocks until exit)
         app.run()
