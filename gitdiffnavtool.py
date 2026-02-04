@@ -289,10 +289,8 @@ class GitRepo(AppException):
 
     Internally the git command is used to retrieve the information and cached.
 
-    Note: an earlier version of this class used pyGit2, but it was found to produce
-    results for getNormalizedHashListFromFileName() and gitRepo.getFileListBetweenNormalizedHashes()
-    that were sufficiently different to be troublesome. Also, various operations were actually
-    slower than forking the git command.
+    Note: earlier attempts used alternative backends, but the git CLI proved
+    to be the most reliable and performant option for these helpers.
     """
 
     # Pseudo-hash tokens used across diff dispatching
@@ -1317,10 +1315,155 @@ class GitRepo(AppException):
             args += ["--", filename]
 
             out = self._git_run(args, text=True)
+            # If textual diff is empty, attempt metadata summary fallback
+            if not (out and out.strip()):
+                try:
+                    pseudo_names = (self.MODS, self.STAGED)
+                    # Determine whether metadata diff should use --cached.
+                    if hash1 in pseudo_names and hash2 in pseudo_names and {hash1, hash2} == {self.STAGED, self.MODS}:
+                        use_cached = False
+                    else:
+                        use_cached = hash1 == self.STAGED or hash2 == self.STAGED
+                    meta_cmd = ["git", "-C", self.repoRoot, "diff"]
+                    if use_cached:
+                        meta_cmd.append("--cached")
+                    meta_cmd += ["--name-status", "--summary"]
+                    # Include explicit refs when provided (avoid pseudo names)
+                    if hash1 in pseudo_names or hash2 in pseudo_names:
+                        if hash1 and hash1 not in pseudo_names and hash2 and hash2 not in pseudo_names:
+                            meta_cmd += [hash1, hash2]
+                        elif hash2 and hash2 not in pseudo_names:
+                            meta_cmd.append(hash2)
+                        elif hash1 and hash1 not in pseudo_names:
+                            meta_cmd.append(hash1)
+                    else:
+                        if hash1 and hash2:
+                            meta_cmd += [hash1, hash2]
+                        elif hash2 and not hash1:
+                            meta_cmd.append(hash2)
+                    if filename:
+                        meta_cmd += ["--", filename]
+                    meta_out = self._git_run(meta_cmd, text=True)
+                    if meta_out and meta_out.strip():
+                        out = meta_out
+                    else:
+                        out = "(no textual changes for this file)"
+                except Exception as e:
+                    self.printException(e, "getDiff: metadata diff failed")
+
             # Return output lines (preserve empty output as empty list)
             if not out:
                 return []
             return out.splitlines()
+        except Exception as e:
+            # Log and re-raise so callers can handle errors explicitly
+            self.printException(e, "getDiff: failed")
+            raise
+
+    def build_diff_cmd(self, filename: str, prev: str, curr: str, variant_index: int = 0) -> list[str]:
+        """
+        Return a git diff argv list for the given filenames and commit-ish pair.
+        """
+        try:
+            repo_root = self.repoRoot
+
+            # Determine repository empty-tree object id (sha1 or sha256)
+            empty_tree = self._empty_tree_hash()
+
+            # Map special tokens to git refs/markers used below.
+            def token_to_ref(token: str):
+                if token == self.NEWREPO:
+                    return empty_tree
+                if token == self.MODS:
+                    # working tree represented by absence of a ref
+                    return None
+                if token == self.STAGED:
+                    # staged/index is represented via --cached flag
+                    return self.STAGED
+                return token
+
+            ref_prev = token_to_ref(prev) if prev is not None else None
+            ref_curr = token_to_ref(curr) if curr is not None else None
+
+            # Helper to build base diff argv
+            def base_diff(use_cached: bool = False) -> list[str]:
+                base = ["git", "-C", repo_root, "diff"]
+                if use_cached:
+                    base.append("--cached")
+                return base
+
+            # If either side refers to the staged index marker, prefer --cached
+            use_cached = (ref_prev == self.STAGED) or (ref_curr == self.STAGED)
+
+            # If both resolved refs are identical, return a diff invocation
+            # that will produce empty output (no-op) rather than attempting
+            # to build a meaningful comparison.
+            if ref_prev == ref_curr:
+                cmd = base_diff(use_cached=use_cached)
+                if ref_prev is not None:
+                    cmd.append(ref_prev)
+                    cmd.append(ref_curr)
+                if filename:
+                    cmd += ["--", filename]
+                return cmd
+
+            # Cases to consider:
+            # - working-tree side present (None) -> use diff/show semantics
+            # - both concrete refs (including empty-tree) -> normal diff
+            # - single concrete curr (prev None and prev token was NEWREPO) -> use show for commit
+            if ref_prev is None or ref_curr is None:
+                # If only curr specified and prev was the implicit working-tree
+                if prev is None and ref_curr is not None and ref_prev is None:
+                    # Show the commit's patch (git show produces patch for commit)
+                    cmd = ["git", "-C", repo_root, "show", "--pretty=format:", ref_curr]
+                else:
+                    cmd = base_diff(use_cached=use_cached)
+                    if ref_prev is not None:
+                        cmd.append(ref_prev)
+                    if ref_curr is not None:
+                        cmd.append(ref_curr)
+            else:
+                # Both sides are concrete refs (may be empty-tree hash)
+                cmd = base_diff(use_cached=use_cached)
+                cmd.append(ref_prev)
+                cmd.append(ref_curr)
+
+            if filename:
+                cmd += ["--", filename]
+
+            return cmd
+        except Exception as e:
+            self.printException(e, "GitRepo.build_diff_cmd failed")
+            return ["git", "diff"]
+
+    def getFileContents(self, hashval: str, relpath: str) -> bytes | None:
+        """Return raw bytes for the given repository-relative `relpath` at `hashval`.
+
+        - `MODS` reads the working-tree file bytes.
+        - `STAGED` reads from index via `git show :<relpath>`.
+        - commit-ish reads from `git show <hash>:<relpath>`.
+        Returns None on failure.
+        """
+        try:
+            if hashval == self.MODS:
+                try:
+                    full = os.path.join(self.repoRoot, relpath)
+                    with open(full, "rb") as f:
+                        return f.read()
+                except Exception as e:
+                    self.printException(e, "getFileContents: reading working-tree failed")
+                    return None
+
+            if hashval == self.STAGED:
+                out = self._git_run(["git", "-C", self.repoRoot, "show", f":{relpath}"], text=False)
+                return out if out else None
+
+            # commit-ish
+            out = self._git_run(["git", "-C", self.repoRoot, "show", f"{hashval}:{relpath}"], text=False)
+            return out if out else None
+        except Exception as e:
+            self.printException(e, "getFileContents failed")
+            return None
         except Exception as e:
             # Log and re-raise so callers can handle errors explicitly
             self.printException(e, "getDiff: failed")
@@ -1370,9 +1513,7 @@ class AppBase(AppException, ListView):
         # Per-widget highlight background; subclasses override with specific backgrounds
         self.highlight_bg_style = HIGHLIGHT_DEFAULT_BG
 
-    # (pygit2 support removed) 
 
-    # `printException` provided by AppException mixin
 
     def _run_cmd_log(self, cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
         """Run subprocess command, log stderr as warning and stdout at TRACE.
@@ -1568,7 +1709,6 @@ class AppBase(AppException, ListView):
             self.printException(e, "_parse_git_log_lines failed")
         return out
 
-    # pygit2 comparison helpers removed; tool now uses git CLI code paths only.
 
     def text_of(self, node) -> str:
         """Extract visible text from a ListItem's Label or renderable."""
@@ -2402,12 +2542,11 @@ class SaveSnapshotModal(AppException, ModalScreen):
         if hashval == "STAGED":
             # Read from index via git show :<relpath>
             try:
-                cmd = ["git", "-C", self.repo_root, "show", f":{relpath}"]
-                proc = subprocess.run(cmd, capture_output=True)
-                if proc.returncode != 0:
-                    err = proc.stderr.decode(errors="replace") if proc.stderr else ""
-                    raise Exception(f"git show failed: {err}")
-                _write_bytes(proc.stdout)
+                gitrepo = self.app.gitRepo
+                data = gitrepo.getFileContents("STAGED", relpath)
+                if data is None:
+                    raise Exception("git show STAGED failed")
+                _write_bytes(data)
                 return
             except Exception as e:
                 self.printException(e, "SaveSnapshotModal._save STAGED failed")
@@ -2415,12 +2554,11 @@ class SaveSnapshotModal(AppException, ModalScreen):
 
         # Otherwise treat as commit-ish hash: git show <hash>:<relpath>
         try:
-            cmd = ["git", "-C", self.repo_root, "show", f"{hashval}:{relpath}"]
-            proc = subprocess.run(cmd, capture_output=True)
-            if proc.returncode != 0:
-                err = proc.stderr.decode(errors="replace") if proc.stderr else ""
-                raise Exception(f"git show failed: {err}")
-            _write_bytes(proc.stdout)
+            gitrepo = self.app.gitRepo
+            data = gitrepo.getFileContents(hashval, relpath)
+            if data is None:
+                raise Exception("git show failed")
+            _write_bytes(data)
         except Exception as e:
             self.printException(e, "SaveSnapshotModal._save commit show failed")
 
@@ -2817,13 +2955,11 @@ class FileListBase(AppBase):
     def _build_status_map(self, path: str) -> dict | None:
         """Build and return a porcelain `status_map` for `path` or None.
 
-        When `self.app.test_pygit2` is true we still prefer the git CLI map
-        for parity testing. If `pygit2` is available and not testing,
-        return None so callers may rely on pygit2-based per-file status
-        helpers instead of a precomputed map.
+        Always prefer the git CLI based status map. Return None only on
+        unexpected failures so callers may fall back if necessary.
         """
         try:
-            # Always use the git CLI based status map; pygit2 support removed.
+            # Always use the git CLI based status map.
             return self._prepFileModeFileList_status_map_from_git(path)
         except Exception as e:
             self.printException(e, "_build_status_map failed")
@@ -3059,7 +3195,7 @@ class FileModeFileList(FileListBase):
             # Examples: ' M' (worktree modified), 'A ' (staged/index added),
             # '??' (untracked), '!!' (ignored); codes containing 'U' indicate
             # conflicts. Use the centralized helper which respects the
-            # `test_pygit2` flag and backend availability.
+            # Use the centralized helper which builds a git-CLI porcelain status map.
             status_map = self._build_status_map(path)
 
             # clear and populate
@@ -3090,7 +3226,7 @@ class FileModeFileList(FileListBase):
                 self.printException(e, "prepFileModeFileList: adding parent directory failed")
             try:
                 file_infos: list[dict] = []
-                # Use git CLI preparer (pygit2 support removed)
+
                 file_infos = self._prepFileModeFileList_from_git(path, relpath, status_map)
 
                 # Trim file_infos using highlight_filename when provided.
@@ -3382,18 +3518,11 @@ class RepoModeFileList(FileListBase):
             pseudo_names = ("MODS", "STAGED")
             pseudo_entries = []
             try:
-                # Delegate pseudo-entry collection to backend helpers so
-                # implementations can use either `git` or `pygit2`.
+                # Collect pseudo-entries (working-tree/index) using the git CLI
                 if prev_hash in pseudo_names:
-                    if pygit2:
-                        pseudo_entries.extend(self._prepRepoModePseudo_from_pygit2(prev_hash))
-                    else:
-                        pseudo_entries.extend(self._prepRepoModePseudo_from_git(prev_hash))
+                    pseudo_entries.extend(self._prepRepoModePseudo_from_git(prev_hash))
                 if curr_hash in pseudo_names:
-                    if pygit2:
-                        pseudo_entries.extend(self._prepRepoModePseudo_from_pygit2(curr_hash))
-                    else:
-                        pseudo_entries.extend(self._prepRepoModePseudo_from_git(curr_hash))
+                    pseudo_entries.extend(self._prepRepoModePseudo_from_git(curr_hash))
                 # If both prev and curr were pseudo names their collected
                 # entries may overlap (a file can be both STAGED and MODS).
                 # Prefer entries from `curr_hash` when duplicates appear by
@@ -3427,12 +3556,10 @@ class RepoModeFileList(FileListBase):
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList rendering pseudo entries failed")
             else:
-                # Delegate diff collection to helpers so alternate backends
-                # (pygit2 vs git CLI) can provide entries. Each helper returns
+                # Delegate diff collection to helpers; each helper returns
                 # a list of dicts with keys: display, full, is_dir.
-                    try:
-                        # Use git CLI preparer (pygit2 support removed)
-                        entries = self._prepRepoModeFileList_from_git(prev_hash, curr_hash)
+                try:
+                    entries = self._prepRepoModeFileList_from_git(prev_hash, curr_hash)
 
                     # Normalize entries and delegate row creation to shared helper
                     try:
@@ -4016,7 +4143,7 @@ class FileModeHistoryList(HistoryListBase):
                 pseudo_entries: list[tuple[str, str]] = []
                 entries: list[tuple[str, str, str]] = []
                 if repo_root:
-                    # Use git CLI preparer (pygit2 support removed)
+
                     pseudo_entries, entries = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
 
                 # render pseudo entries first
@@ -4190,7 +4317,7 @@ class RepoModeHistoryList(HistoryListBase):
             self.clear()
             # Collect pseudo-entries and commit rows via backend helpers
             try:
-                # Use git CLI preparer (pygit2 support removed)
+
                 pseudo_entries, commits = self._prepRepoModeHistoryList_for_git(repo_path, prev_hash, curr_hash)
 
                 # Insert MODS then STAGED at the top if present
@@ -4395,8 +4522,8 @@ class RepoModeHistoryList(HistoryListBase):
 class DiffList(AppBase):
     """List view for showing diffs.
 
-    `prepDiffList` is a stub here; later steps will call `git diff` or pygit2
-    and colorize output. Key handlers toggle colorization and expose actions.
+    `prepDiffList` is a stub here; later steps will call `git diff` and
+    colorize output. Key handlers toggle colorization and expose actions.
     """
 
     def __init__(self, *args, **kwargs):
@@ -4433,57 +4560,21 @@ class DiffList(AppBase):
                 go_back,
             )
             # Prefer the canonicalized `current_path` on the app when available
-            out = ""
             try:
-                cmd = self.app.build_diff_cmd(filename, prev, curr, variant_index)
-                proc = self._run_cmd_log(cmd, label="prepDiffList diff")
-                # Prefer stdout when available; keep empty string on failure
-                out = proc.stdout or ""
-            except Exception as e:
-                self.printException(e, "prepDiffList: running git diff failed")
-                out = ""
-
-            # If the textual diff is empty, attempt to collect metadata (renames,
-            # mode changes, summary) so the UI can indicate non-textual changes.
-            if not (out and out.strip()):
+                gitrepo = self.app.gitRepo
+                variant_arg = None
                 try:
-                    repo_root = self.app.repo_root
-                    pseudo_names = ("MODS", "STAGED")
-                    # Determine whether metadata diff should use --cached.
-                    # When comparing STAGED <-> MODS prefer non-cached (index
-                    # vs working tree). Otherwise use --cached if either side
-                    # is STAGED so we compare index to HEAD when appropriate.
-                    if prev in pseudo_names and curr in pseudo_names and {prev, curr} == {"STAGED", "MODS"}:
-                        use_cached = False
-                    else:
-                        use_cached = prev == "STAGED" or curr == "STAGED"
-                    meta_cmd = ["git", "-C", repo_root, "diff"]
-                    if use_cached:
-                        meta_cmd.append("--cached")
-                    meta_cmd += ["--name-status", "--summary"]
-                    # Include explicit refs when provided (avoid pseudo names)
-                    if prev in pseudo_names or curr in pseudo_names:
-                        if prev and prev not in pseudo_names and curr and curr not in pseudo_names:
-                            meta_cmd += [prev, curr]
-                        elif curr and curr not in pseudo_names:
-                            meta_cmd.append(curr)
-                        elif prev and prev not in pseudo_names:
-                            meta_cmd.append(prev)
-                    else:
-                        if prev and curr:
-                            meta_cmd += [prev, curr]
-                        elif curr and not prev:
-                            meta_cmd.append(curr)
-                    if filename:
-                        meta_cmd += ["--", filename]
-                    proc_meta = self._run_cmd_log(meta_cmd, label="prepDiffList metadata diff")
-                    meta_out = proc_meta.stdout or ""
-                    if meta_out.strip():
-                        out = meta_out
-                    else:
-                        out = "(no textual changes for this file)"
-                except Exception as e:
-                    self.printException(e, "prepDiffList: metadata diff failed")
+                    app = self.app
+                    if app and hasattr(app, "diff_variants") and 0 <= variant_index < len(app.diff_variants):
+                        variant_arg = app.diff_variants[variant_index]
+                except Exception as _ex:
+                    self.printException(_ex, "prepDiffList: retrieving app.diff_variants failed")
+                    variant_arg = None
+                variation = [variant_arg] if variant_arg else None
+                out_lines = gitrepo.getDiff(filename, prev, curr, variation)
+                out = "\n".join(out_lines) if out_lines else ""
+            except Exception as e:
+                self.printException(e, "prepDiffList: gitRepo.getDiff failed")
 
             # Save output lines on the object and render via helper
             # Prepend a human-readable header describing the diff context
@@ -4728,8 +4819,7 @@ Overview:
 - gitdiffnavtool is a terminal UI for exploring a Git repository: the
     left/right columns show file trees and per-file history, the central
     commit lists show repository history, and the diff column shows patches
-    for a selected file/commit pair. It can use the `git` CLI or `pygit2`
-    as backends for status and history operations.
+    for a selected file/commit pair. It uses the `git` CLI for status and history operations.
 
 Invocation:
 - Run `gitdiffnavtool [path]` to open the app for `path` (directory or
@@ -4796,8 +4886,7 @@ Tips and behavior notes:
 - `STAGED` lists index changes (files that were added (staged) but not committed).
 - When diffing between `STAGED` and `MODS` the UI shows the comparison the user
     expects (index vs working-tree).
-- If available, the app uses `pygit2` for its work. If `pygit2` is not installed or
-    cannot open the repository, the app falls back to using the `git` CLI.
+- The app uses the `git` CLI for its repository operations.
 """
 
 #    - `toggle-color` / `c`: toggle colorized diff output.
@@ -4807,7 +4896,7 @@ Tips and behavior notes:
 #    commands to wire up include:
 #    - `open-file`, `diff <file> [prev] <curr>`, `file-history <path>`,
 #        `goto-commit <hash>`, `toggle-color`, `next-hunk`, `prev-hunk`,
-#        `stage <path>`, `unstage <path>`, `refresh`, `use-pygit2 on|off`.
+#        `stage <path>`, `unstage <path>`, `refresh`.
 
 
 class HelpList(AppBase):
@@ -4891,7 +4980,6 @@ class GitHistoryNavTool(AppException, App):
         repo_first: bool,
         repo_hashes: list,
         repo_root: str,
-        test_pygit2: bool = False,
         **kwargs,
     ):
         # Accept CLI options here so the app can inspect them during mount
@@ -4914,7 +5002,6 @@ class GitHistoryNavTool(AppException, App):
         # Track the currently-selected and previous commit hashes
         self.current_hash = None
         self.previous_hash = None
-        # pygit2 support removed; use git CLI backends exclusively.
 
         # Optional diff variant arguments indexed by variant_index.
         # index 0 -> None (no extra arg), 1 -> ignore-space-change, 2 -> patience algorithm
@@ -4924,7 +5011,6 @@ class GitHistoryNavTool(AppException, App):
         # it's a directory, or the dirname when `path` is a file.
         # Use the property setter so the value is canonicalized.
         self._current_path = self.path if os.path.isdir(self.path) else os.path.dirname(self.path)
-        # pygit2/test mode removed; preparers use git CLI only.
 
         # Create a single GitRepo instance for the app and reuse it
         # Let its exception propagate if repo initialization fails.
@@ -5317,84 +5403,12 @@ class GitHistoryNavTool(AppException, App):
             self.printException(e, "error applying column layout")
 
     def build_diff_cmd(self, filename: str, prev: str, curr: str, variant_index: int = 0) -> list[str]:
-        """Return a git diff command list for the given filenames and commit-ish pair.
+        """Delegate to the app-level `GitRepo` to construct a git diff argv list.
 
-        This is a small helper used by `DiffList.prepDiffList` to centralize
-        how diffs are constructed. It returns an argv list suitable for
-        `subprocess.check_output`.
+        Keeping `git` command construction inside `GitRepo` ensures all
+        direct `git` invocations remain within that class.
         """
-        try:
-            repo_root = self.repo_root
-            pseudo_names = ("MODS", "STAGED")
-
-            # Determine the optional variant argument (insert after 'diff')
-            variant_arg = None
-            try:
-                if 0 <= variant_index < len(self.diff_variants):
-                    variant_arg = self.diff_variants[variant_index]
-            except Exception as e:
-                self.printException(e, "determining variant_arg in build_diff_cmd")
-                variant_arg = None
-
-            # Helper to create base diff command (without refs/filename yet)
-            def _base_diff(use_cached: bool = False) -> list[str]:
-                base = ["git", "-C", self.repo_root, "diff"]
-                # insert variant arg immediately after 'diff' when present
-                if variant_arg:
-                    try:
-                        idx = base.index("diff")
-                        base.insert(idx + 1, variant_arg)
-                    except Exception as e:
-                        self.printException(e, "inserting variant_arg in base diff command")
-                        # best-effort: append if lookup fails
-                        base.append(variant_arg)
-                if use_cached:
-                    base.append("--cached")
-                return base
-
-            # Build command considering pseudo-names
-            if prev in pseudo_names or curr in pseudo_names:
-                # When both sides are pseudo (e.g. STAGED and MODS) prefer
-                # the working-tree vs index comparison (git diff) so users
-                # see what is staged vs what is modified. Only use
-                # --cached when appropriate (e.g. comparing staged vs a
-                # concrete commit).
-                if prev in pseudo_names and curr in pseudo_names and {prev, curr} == {"STAGED", "MODS"}:
-                    use_cached = False
-                else:
-                    use_cached = prev == "STAGED" or curr == "STAGED"
-                cmd = _base_diff(use_cached=use_cached)
-                # If a concrete ref is provided (not pseudo) include it
-                if prev and prev not in pseudo_names and curr and curr not in pseudo_names:
-                    cmd += [prev, curr]
-                elif curr and curr not in pseudo_names:
-                    cmd.append(curr)
-                elif prev and prev not in pseudo_names:
-                    cmd.append(prev)
-            else:
-                # When only a single commit is provided (no `prev`), prefer
-                # `git show <commit> -- <file>` which produces a patch against
-                # /dev/null for new files (initial commit) and generally
-                # represents the commit's changes. `git diff <commit> -- <file>`
-                # compares the commit to the working tree and can yield empty
-                # output for initial commits.
-                if curr and not prev:
-                    cmd = ["git", "-C", self.repo_root, "show", "--pretty=format:", curr]
-                else:
-                    cmd = _base_diff(use_cached=False)
-                    if prev and curr:
-                        cmd += [prev, curr]
-
-            if filename:
-                cmd += ["--", filename]
-
-            logger.debug(
-                f"build_diff_cmd: filename={filename} prev={prev} curr={curr} variant_index={variant_index} -> cmd={' '.join(cmd)}"
-            )
-            return cmd
-        except Exception as e:
-            self.printException(e, "build_diff_cmd failed")
-            return ["git", "diff"]
+        return self.gitRepo.build_diff_cmd(filename, prev, curr, variant_index)
 
     def change_layout(self, newlayout: str) -> None:
         """Change column layout using a named layout."""
@@ -6032,56 +6046,22 @@ class GitHistoryNavTool(AppException, App):
 
 def discover_repo_worktree(start_path: str | None) -> str:
     """Discover the repository worktree root starting at `start_path`.
-
-    Uses `pygit2.discover_repository` when available; otherwise uses
-    git -C <start_path> rev-parse --show-toplevel to find the worktree root.
-    If no repository is found this function exits the program with an error message.
+    Discover the repository worktree root by deferring to `GitRepo.resolve_repo_top`.
+    Exits the program with an error message if no repository is found.
     """
     try:
         start = os.path.abspath(start_path or os.getcwd())
     except Exception as _ex:
         printException(_ex)
         start = os.getcwd()
-
-    # Try pygit2 discovery first
-    if pygit2:
+    topo, err = GitRepo.resolve_repo_top(start, raise_on_missing=False)
+    if topo:
         try:
-            gitdir = pygit2.discover_repository(start)
-            logger.debug("discover_repo_worktree: pygit2 discovered gitdir=%s", gitdir)
-            if gitdir:
-                try:
-                    gitdir = os.fspath(gitdir)
-                    logger.debug("discover_repo_worktree: pygit2 gitdir fspath=%s", gitdir)
-                except Exception as e:
-                    printException(e, "discover_repo_worktree: converting gitdir to fspath failed")
-                gitdir_real = os.path.realpath(gitdir)
-                logger.debug(f"discover_repo_worktree: pygit2 gitdir realpath={gitdir_real}")
-                # Worktree root is parent of the .git directory
-                worktree = os.path.realpath(os.path.dirname(gitdir_real))
-                logger.debug("discover_repo_worktree: pygit2 discovered gitdir=%s worktree=%s", gitdir_real, worktree)
-                return worktree
-        except Exception as e:
-            printException(e, "discover_repo_worktree: pygit2 discovery failed, falling back to git CLI")
-
-    # Next try git CLI discovery using `git -C <start> rev-parse --show-toplevel`.
-    try:
-        cmd = ["git", "-C", start or ".", "rev-parse", "--show-toplevel"]
-        proc = run_cmd_log(cmd, label="discover_repo_worktree rev-parse")
-        topo = (proc.stdout or "").strip() if proc.returncode == 0 else ""
-        if topo:
-            try:
-                worktree = os.path.realpath(topo)
-            except Exception as _ex:
-                printException(_ex)
-                logger.debug("discover_repo_worktree: realpath failed for topo=%s", topo)
-                worktree = topo
-            logger.debug("discover_repo_worktree: git rev-parse -> %s (worktree=%s)", topo, worktree)
-            return worktree
-    except Exception as e:
-        printException(e, "discover_repo_worktree: git rev-parse failed, falling back to directory walk")
-
-    # If pygit2 and git discovery both fail, fail fast — no filesystem walk.
-    sys.exit(f"Not a git repository (pygit2 and git discovery failed) starting at {start}")
+            return os.path.realpath(topo)
+        except Exception as _ex:
+            printException(_ex)
+            return topo
+    sys.exit(f"Not a git repository starting at {start}")
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -6107,7 +6087,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="enable TRACE-level (very verbose) logging",
     )
-    # pygit2-related CLI options removed
     parser.add_argument(
         "-R",
         "--repo-hash",
@@ -6118,7 +6097,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # pygit2 toggles removed
 
     # Configure logging if debug file requested
     try:
