@@ -289,8 +289,10 @@ class GitRepo(AppException):
 
     Internally the git command is used to retrieve the information and cached.
 
-    Note: earlier attempts used alternative backends, but the git CLI proved
-    to be the most reliable and performant option for these helpers.
+    Note: an earlier version of this class used pyGit2, but it was found to produce
+    results for getNormalizedHashListFromFileName() and gitRepo.getFileListBetweenNormalizedHashes()
+    that were sufficiently different to be troublesome. Also, various operations were actually
+    slower than forking the git command.
     """
 
     # Pseudo-hash tokens used across diff dispatching
@@ -2959,8 +2961,35 @@ class FileListBase(AppBase):
         unexpected failures so callers may fall back if necessary.
         """
         try:
-            # Always use the git CLI based status map.
-            return self._prepFileModeFileList_status_map_from_git(path)
+            # Build a map of repo-relative path -> two-char porcelain code
+            # (index, worktree) by invoking `git status --porcelain` via
+            # the shared GitRepo instance on the app. This centralizes git
+            # command invocation and reuses GitRepo's helpers.
+            gitrepo = self.app.gitRepo
+            out = gitrepo._git_run(["git", "status", "--porcelain", "--", path], text=True) or ""
+            if not out:
+                return {}
+
+            status_map: dict = {}
+            for line in out.splitlines():
+                if not line:
+                    continue
+                # porcelain format: XY SP PATH  (or '?? PATH')
+                try:
+                    # Prefer the common XY<space>path form
+                    if len(line) >= 4 and line[2] == " ":
+                        code = line[:2]
+                        p = line[3:]
+                    else:
+                        # Fallback: take first two chars as code and the rest as path
+                        code = (line + "  ")[:2]
+                        p = line[2:].lstrip()
+                    p = gitrepo._git_cli_decode_quoted_path(p.strip())
+                    status_map[p] = code
+                except Exception as _ex:
+                    self.printException(_ex, "_build_status_map: parsing line failed")
+                    continue
+            return status_map
         except Exception as e:
             self.printException(e, "_build_status_map failed")
             return None
