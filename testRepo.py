@@ -25,6 +25,7 @@ from gitdiffnavtool import GitRepo
 from gitdiffnavtool import FileListBase, HistoryListBase
 from types import SimpleNamespace
 
+
 def runFileListSampledExercises(test_repo: GitRepo, raw: bool, limit: int, silent: bool = False) -> int:
     """Module-level exerciser for `getFileListBetweenNormalizedHashes`.
 
@@ -232,7 +233,7 @@ def test_to_display_rows(test_repo: GitRepo) -> list:
         curr_token = tokens[0]
         samples = test_repo.getFileListBetweenNormalizedHashes(prev_token, curr_token)
 
-        rows = FileListBase._to_display_rows(d, samples, base_workdir=None)
+        rows = FileListBase._to_display_rows(d, samples)
 
         # Basic structural assertions
         assert isinstance(rows, list), "_to_display_rows should return a list"
@@ -244,7 +245,9 @@ def test_to_display_rows(test_repo: GitRepo) -> list:
 
         # Check that the dict-form preserved raw metadata when present
         if samples:
-            assert rows[0]["raw"] == samples[0] or isinstance(rows[0]["raw"], (dict, tuple, list, str)), "dict-form input should be preserved in 'raw'"
+            assert rows[0]["raw"] == samples[0] or isinstance(
+                rows[0]["raw"], (dict, tuple, list, str)
+            ), "dict-form input should be preserved in 'raw'"
 
         # Tuple-form: if a tuple/list sample was provided ensure the name field is populated
         if len(samples) > 1 and isinstance(samples[1], (list, tuple)):
@@ -266,6 +269,7 @@ def test_to_history_entries(test_repo: GitRepo) -> list:
     input shapes returning the normalized entry dicts.
     """
     try:
+
         class DummyHist:
             def __init__(self):
                 pass
@@ -476,7 +480,13 @@ def main():
         help="Exercise resolve_repo_top and relpath_if_within for quick verification",
     )
     parser.add_argument("-A", "--all", action="store_true", help="Run all tests")
-    parser.add_argument("-F", "--file", action="append", default=["README.md", "docs/notes.txt", "data/file_030.txt"], help="Filename(s) for getHashListFromFileName when used; may be specified multiple times")
+    parser.add_argument(
+        "-F",
+        "--file",
+        action="append",
+        default=["README.md", "docs/notes.txt", "data/file_030.txt"],
+        help="Filename(s) for getHashListFromFileName when used; may be specified multiple times",
+    )
     parser.add_argument(
         "path",
         nargs="+",
@@ -486,7 +496,6 @@ def main():
     args = parser.parse_args()
 
     # If `--silent` is requested, force `--limit` to 0 so no entries are printed.
-
 
     # Tally of test comparison successes/failures and record names.
     stats = {"succ": 0, "fail": 0, "succ_names": [], "fail_names": []}
@@ -590,12 +599,14 @@ def main():
                     with open(testfile, "r", encoding="utf-8") as f:
                         expected = f.read()
                 # compute unified diff only when expected exists
-                diff_lines = list(difflib.unified_diff(
-                    expected.splitlines(keepends=True),
-                    out_str.splitlines(keepends=True),
-                    fromfile=f"expected/{func_name}",
-                    tofile=f"current/{func_name}",
-                ))
+                diff_lines = list(
+                    difflib.unified_diff(
+                        expected.splitlines(keepends=True),
+                        out_str.splitlines(keepends=True),
+                        fromfile=f"expected/{func_name}",
+                        tofile=f"current/{func_name}",
+                    )
+                )
                 if diff_lines:
                     print(f"TEST-DIFF for {func_name}:")
                     print("vvvvvvvvvvvv")
@@ -707,12 +718,14 @@ def main():
                         expected = expected.replace("== Repository: ../test-repo/ ==", "== Repository: ../test-repo ==")
                         out_norm = out_norm.replace("== Repository: ../test-repo/ ==", "== Repository: ../test-repo ==")
 
-                    diff_lines = list(difflib.unified_diff(
-                        expected.splitlines(keepends=True),
-                        out_norm.splitlines(keepends=True),
-                        fromfile=f"expected/{recorded_name}",
-                        tofile=f"current/{recorded_name}",
-                    ))
+                    diff_lines = list(
+                        difflib.unified_diff(
+                            expected.splitlines(keepends=True),
+                            out_norm.splitlines(keepends=True),
+                            fromfile=f"expected/{recorded_name}",
+                            tofile=f"current/{recorded_name}",
+                        )
+                    )
                     if diff_lines:
                         print(f"TEST-DIFF for {recorded_name}:")
                         print("vvvvvvvv")
@@ -805,22 +818,45 @@ def main():
 
         if args.all or args.getFileListBetweenNewAndTopHash:
             total_exercises += 1
-            run_one(test_repo, i, "-1, File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None, args.limit)
+            run_one(
+                test_repo, i, "-1, File List New to Top Hash", "getFileListBetweenNewRepoAndTopHash", None, args.limit
+            )
             i += 1
 
         if args.all or args.getFileListBetweenTopHashAndCurrentTime:
             total_exercises += 1
-            run_one(test_repo, i, "-2, File List Between TopHash and Current Time", "getFileListBetweenTopHashAndCurrentTime", None, args.limit)
+            run_one(
+                test_repo,
+                i,
+                "-2, File List Between TopHash and Current Time",
+                "getFileListBetweenTopHashAndCurrentTime",
+                None,
+                args.limit,
+            )
             i += 1
 
         if args.all or args.getFileListBetweenTopHashAndStaged:
             total_exercises += 1
-            run_one(test_repo, i, "-3, File List Between TopHash and Staged", "getFileListBetweenTopHashAndStaged", None, args.limit)
+            run_one(
+                test_repo,
+                i,
+                "-3, File List Between TopHash and Staged",
+                "getFileListBetweenTopHashAndStaged",
+                None,
+                args.limit,
+            )
             i += 1
 
         if args.all or args.getFileListBetweenStagedAndMods:
             total_exercises += 1
-            run_one(test_repo, i, "-4, File List Between Staged and Mods", "getFileListBetweenStagedAndMods", None, args.limit)
+            run_one(
+                test_repo,
+                i,
+                "-4, File List Between Staged and Mods",
+                "getFileListBetweenStagedAndMods",
+                None,
+                args.limit,
+            )
             i += 1
 
         if args.all or args.getFileListBetweenNewAndStaged:
@@ -882,7 +918,9 @@ def main():
 
         if args.all or args.test_history_entries:
             total_exercises += 1
-            run_one(test_repo, i, "-Y, HistoryListBase._to_history_entries", "test_to_history_entries", None, args.limit)
+            run_one(
+                test_repo, i, "-Y, HistoryListBase._to_history_entries", "test_to_history_entries", None, args.limit
+            )
             i += 1
 
         # Process any explicit getFileListBetweenNormalizedHashes pairs supplied
@@ -902,7 +940,7 @@ def main():
                     try:
                         l = test_repo.getFileListBetweenNormalizedHashes(prev_hash, curr_hash)
                         print(f"{label} result ({len(l)} entries):")
-                        for it in l[:args.limit]:
+                        for it in l[: args.limit]:
                             print(repr(it))
                     except Exception as e:
                         test_repo.printException(e, f"invoking getFileListBetweenNormalizedHashes for {pair} failed")
@@ -915,6 +953,7 @@ def main():
             # Capture the sampled comparisons output so --capture and --test work
             label = "\nRunning sampled pairwise comparisons (separate)..."
             recorded_name = "runFileListSampledComparisons"
+
             def _runner_sampled() -> int:
                 # Ensure captured output includes the repository header so
                 # comparisons are identical whether `--silent` is used or not.
