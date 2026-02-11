@@ -382,6 +382,7 @@ def check_file(
     check_pass: bool,
     check_logger_in_try: bool,
     check_printexception_in_try: bool,
+    call_example: str,
 ) -> List[Tuple[str, int, str]]:
     """Run the core AST-based checks for bare excepts, except-as-print, and related checks.
 
@@ -409,7 +410,7 @@ def check_file(
             printException(e)
             no_name_linenos = []
         for lineno in no_name_linenos:
-            errs.append((str(path), lineno, "'except [<type>]:' without 'as <var>' detected. Add the 'as <var>' and a printException call (without its own try/except)."))
+            errs.append((str(path), lineno, f"'except [<type>]:' without 'as <var>' detected. Add the 'as <var>' and a {call_example} call (without its own try/except)."))
 
     # Detect 'except Exception:' without 'as' and ensure except-as blocks
     # reference the exception variable in a subsequent printException call.
@@ -447,9 +448,9 @@ def check_file(
                         if isinstance(sub, ast.Call):
                             func = sub.func
                             is_print = False
-                            if isinstance(func, ast.Name) and func.id == "printException":
+                            if isinstance(func, ast.Name) and func.id == call_example:
                                 is_print = True
-                            elif isinstance(func, ast.Attribute) and func.attr == "printException":
+                            elif isinstance(func, ast.Attribute) and func.attr == call_example:
                                 is_print = True
                             if not is_print:
                                 continue
@@ -483,13 +484,13 @@ def check_file(
                                 parts.append(cur.id)
                                 typ = ".".join(reversed(parts))
                         typ = typ or "<type>"
-                        msg = f"'except {typ} as {name}:' not followed by printException({name}, ...) or self.printException({name}, ...) in handler body. That printException does NOT in turn require its own try/except."
+                        msg = f"'except {typ} as {name}:' not followed by {call_example}({name}) or self.{call_example}({name}, ...) in handler body. That {call_example}() does NOT in turn require its own try/except."
                         # If the except body is a single `pass`, give a more
                         # actionable message suggesting replacement.
                         try:
                             body = getattr(node, "body", []) or []
                             if len(body) == 1 and isinstance(body[0], ast.Pass):
-                                msg += ". Replace the 'pass' with printException"
+                                msg += f". Replace the 'pass' with {call_example}"
                         except Exception as e:
                             printException(e, f"inspecting except body in {path}")
                         errs.append((str(path), lineno, msg))
@@ -608,7 +609,7 @@ def check_unnecessary_pass_in_except(path: Path, text: str, tree: ast.AST) -> Li
                         lineno = getattr(s, "lineno", None)
                         if lineno is not None:
                             errs.append(
-                                (str(path), lineno, "unnecessary 'pass' in except block that also contains other statements (e.g., printException)")
+                                (str(path), lineno, f"unnecessary 'pass' in except block that also contains other statements (e.g., {call_example}())")
                             )
             except Exception as e:
                 printException(e, f"walking ExceptHandler in {path}")
@@ -817,7 +818,7 @@ def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tupl
     try:
         parse_args_vars = _find_parse_args_targets(path, text=text, tree=tree)
     except Exception as e:
-        printException(e)
+        printException(e, f"finding parse_args targets in {path}")
         parse_args_vars = set()
 
 
@@ -1190,6 +1191,13 @@ def main(argv: List[str] | None = None) -> int:
         help="Enable except-as-print check (opposite of -E)."
     )
 
+    parser.add_argument(
+        "--print",
+        dest="print_mode",
+        action="store_true",
+        help="When true, suggested messages will reference print() instead of printException (used for checking codebases that use print() instead of printException).",
+    )
+
     gi = parser.add_mutually_exclusive_group()
     gi.add_argument("-I",
         "--no-check-imports",
@@ -1314,8 +1322,6 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("files", nargs="*", help="Optional explicit files or directories to check (overrides discovery)")
     args = parser.parse_args(argv)
 
-    # (debug prints removed)
-
     root = Path(args.root)
 
     # Configure logging verbosity: 0=WARNING (default), 1=INFO, 2+=DEBUG
@@ -1339,8 +1345,6 @@ def main(argv: List[str] | None = None) -> int:
         args.check_printexception_in_try = False
         args.check_imports = False
         args.check_docstrings = False
-
-    # (debug prints removed)
 
     # Honor explicit enable flags after -N/--NONE
 
@@ -1371,7 +1375,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_docstrings = True
 
     logger.info("cwd: %s", Path.cwd())
-    # (debug prints removed)
+    # Single computed display token for suggested calls: either 'print' or 'printException'
+    call_example = "print" if args.print_mode else "printException"
 
     # If explicit files/dirs were provided, use them (override discovery).
     if args.files:
@@ -1444,6 +1449,7 @@ def main(argv: List[str] | None = None) -> int:
                         bool(args.check_pass),
                         bool(args.check_logger_in_try),
                         bool(args.check_printexception_in_try),
+                        call_example,
                     )
                 # Enforce 'prefer direct attribute access' axiom
                 if args.check_prefer_direct_attrs:

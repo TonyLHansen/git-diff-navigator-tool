@@ -312,7 +312,7 @@ class GitRepo(AppException):
         # exceptions from `resolve_repo_top(..., raise_on_missing=True)` to
         # propagate so callers receive a clear failure immediately.
         resolved, _ = GitRepo.resolve_repo_top(repoRoot, raise_on_missing=True)
-        self.repoRoot = resolved
+        self._repoRoot = resolved
 
     def reset_cache(self) -> None:
         """Reset the per-process command/result cache."""
@@ -405,7 +405,49 @@ class GitRepo(AppException):
 
     def get_repo_root(self) -> str:
         """Return the resolved repository root path for this GitRepo instance."""
-        return self.repoRoot
+        return self._repoRoot
+
+    def full_path_for(self, rel_dir: str | None, rel_file: str | None) -> str:
+        """Return an absolute filesystem path for a repository-relative directory/file pair.
+
+        Contract:
+        - `rel_dir` is a repository-relative directory path (relative to the repo root),
+          or an empty string / None to indicate the repo root itself.
+        - `rel_file` is a filename (possibly including subpath) relative to `rel_dir`,
+          or an empty string / None to indicate the directory itself.
+
+        The function validates that neither argument is absolute and that the
+        resulting path resides within the repository root. A normalized
+        absolute path is returned on success; a `ValueError` is raised on
+        invalid inputs or if the computed path would escape the repository.
+        """
+        if rel_dir is None:
+            rel_dir = ""
+        if rel_file is None:
+            rel_file = ""
+
+        # Reject absolute components — callers should pass repository-relative
+        if rel_dir and os.path.isabs(rel_dir):
+            raise ValueError("full_path_for: rel_dir must be repository-relative (not absolute)")
+        if rel_file and os.path.isabs(rel_file):
+            raise ValueError("full_path_for: rel_file must be repository-relative (not absolute)")
+
+        # Join and normalize
+        try:
+            full = os.path.normpath(os.path.join(self._repoRoot, rel_dir or "", rel_file or ""))
+        except Exception as e:
+            raise ValueError(f"full_path_for: failed to construct path: {e}") from e
+
+        # Ensure the resulting path is inside the repository root
+        try:
+            repo_norm = os.path.normpath(self._repoRoot)
+            common = os.path.commonpath([repo_norm, full])
+            if common != repo_norm:
+                raise ValueError("full_path_for: computed path is outside the repository root")
+        except Exception as e:
+            raise ValueError(f"full_path_for: validation failed: {e}") from e
+
+        return full
 
     def _deltas_to_results(self, detailed: list, a_raw, b_raw) -> list[tuple[str, str]]:
         """Simplified conversion of detailed delta dicts to `(path,status)`.
@@ -455,8 +497,8 @@ class GitRepo(AppException):
         finally to the current time if not available.
         """
         idx_candidates = [
-            os.path.join(self.repoRoot, ".git", "index"),
-            os.path.join(self.repoRoot, "index"),
+            os.path.join(self._repoRoot, ".git", "index"),
+            os.path.join(self._repoRoot, "index"),
         ]
         idx_mtime = None
         for p in idx_candidates:
@@ -518,7 +560,7 @@ class GitRepo(AppException):
         exceptions, and logs failures via `printException`.
         """
         try:
-            fp = os.path.join(self.repoRoot, rel)
+            fp = os.path.join(self._repoRoot, rel)
             if os.path.islink(fp):
                 return os.lstat(fp).st_mtime
             if os.path.exists(fp):
@@ -582,7 +624,7 @@ class GitRepo(AppException):
           available, fall back to `index_mtime_iso()`.
         """
         first_commit_ts: float | None = None
-        git_dir = os.path.join(self.repoRoot, ".git")
+        git_dir = os.path.join(self._repoRoot, ".git")
         try:
             out = self._git_run(["git", "log", "--reverse", "--pretty=format:%ct"], text=True)
             if out:
@@ -763,7 +805,7 @@ class GitRepo(AppException):
             if internal_key in self._cmd_cache:
                 return self._cmd_cache[internal_key]
             try:
-                out = check_output(args, cwd=self.repoRoot, text=text)
+                out = check_output(args, cwd=self._repoRoot, text=text)
             except CalledProcessError as e:
                 self.printException(e, f"_git_run: git command failed: {' '.join(args)}")
                 # If caller provided a parsed-result cache_key, store an empty
@@ -1294,7 +1336,7 @@ class GitRepo(AppException):
                         use_cached = False
                     else:
                         use_cached = hash1 == self.STAGED or hash2 == self.STAGED
-                    meta_cmd = ["git", "-C", self.repoRoot, "diff"]
+                    meta_cmd = ["git", "-C", self._repoRoot, "diff"]
                     if use_cached:
                         meta_cmd.append("--cached")
                     meta_cmd += ["--name-status", "--summary"]
@@ -1335,7 +1377,7 @@ class GitRepo(AppException):
         Return a git diff argv list for the given filenames and commit-ish pair.
         """
         try:
-            repo_root = self.repoRoot
+            repo_root = self._repoRoot
 
             # Determine repository empty-tree object id (sha1 or sha256)
             empty_tree = self._empty_tree_hash()
@@ -1417,7 +1459,7 @@ class GitRepo(AppException):
         try:
             if hashval == self.MODS:
                 try:
-                    full = os.path.join(self.repoRoot, relpath)
+                    full = os.path.join(self._repoRoot, relpath)
                     with open(full, "rb") as f:
                         return f.read()
                 except Exception as e:
@@ -1425,11 +1467,11 @@ class GitRepo(AppException):
                     return None
 
             if hashval == self.STAGED:
-                out = self._git_run(["git", "-C", self.repoRoot, "show", f":{relpath}"], text=False)
+                out = self._git_run(["git", "-C", self._repoRoot, "show", f":{relpath}"], text=False)
                 return out if out else None
 
             # commit-ish
-            out = self._git_run(["git", "-C", self.repoRoot, "show", f"{hashval}:{relpath}"], text=False)
+            out = self._git_run(["git", "-C", self._repoRoot, "show", f"{hashval}:{relpath}"], text=False)
             return out if out else None
         except Exception as e:
             self.printException(e, "getFileContents failed")
@@ -3188,7 +3230,6 @@ class FileModeFileList(FileListBase):
 
     def prepFileModeFileList(
         self,
-        gitRepo: "GitRepo",
         rel_dir: str | None = None,
         rel_path: str | None = None,
         highlight_filename: str | None = None,
@@ -3201,8 +3242,8 @@ class FileModeFileList(FileListBase):
         """
         try:
             # Compute absolute `path` from provided repo-relative inputs.
-            repo_root = gitRepo.get_repo_root()
             try:
+                repo_root = self.app.gitRepo.get_repo_root()
                 if rel_path:
                     path = os.path.join(repo_root, rel_dir, rel_path) if rel_dir else os.path.join(repo_root, rel_path)
                 elif rel_dir:
@@ -3211,7 +3252,7 @@ class FileModeFileList(FileListBase):
                     path = repo_root
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: computing absolute path failed")
-                path = repo_root
+                path = self.app.repo_root
 
             logger.debug(
                 "prepFileModeFileList: path=%r rel_dir=%r rel_path=%r highlight_filename=%r",
@@ -3225,7 +3266,7 @@ class FileModeFileList(FileListBase):
                 raise ValueError("prepFileModeFileList requires highlight_filename not be None")
             # Collect normalized hash list from provided GitRepo and cache it
             try:
-                normalized_hashes = gitRepo.getNormalizedHashListComplete() or []
+                normalized_hashes = self.app.gitRepo.getNormalizedHashListComplete() or []
                 # Cache a compact representation on the widget for later use
                 self._cached_normalized_hashes = [
                     {"iso": iso, "hash": h, "subject": subj, "short": (h[:HASH_LENGTH] if h else "")}
@@ -3497,7 +3538,7 @@ class FileModeFileList(FileListBase):
                         else:
                             rdir = os.path.dirname(rel) or ""
                             rpath = os.path.basename(rel)
-                        self.prepFileModeFileList(gitrepo, rdir, rpath)
+                        self.prepFileModeFileList(rdir, rpath)
                     except Exception as _ex:
                         self.printException(_ex, "FileModeFileList._nav_dir_if prep failed")
                 except Exception as e:
@@ -3557,7 +3598,7 @@ class FileModeFileList(FileListBase):
                                 else:
                                     rdir = os.path.dirname(rel) or ""
                                     rpath = os.path.basename(rel)
-                                self.prepFileModeFileList(gitrepo, rdir, rpath)
+                                self.prepFileModeFileList(rdir, rpath)
                             except Exception as _ex:
                                 self.printException(_ex, "_activate_or_open: prepFileModeFileList failed")
                         except Exception as e:
@@ -4442,7 +4483,6 @@ class RepoModeHistoryList(HistoryListBase):
 
     def prepRepoModeHistoryList(
         self,
-        gitRepo: "GitRepo",
         repo_path: str | None = None,
         prev_hash: str | None = None,
         curr_hash: str | None = None,
@@ -4465,7 +4505,7 @@ class RepoModeHistoryList(HistoryListBase):
             # pseudo-entries like MODS/STAGED). GitRepo centralizes git CLI
             # invocation and caching so prefer its helpers.
             try:
-                entries = gitRepo.getNormalizedHashListComplete() or []
+                entries = self.app.gitRepo.getNormalizedHashListComplete() or []
             except Exception as e:
                 self.printException(e, "prepRepoModeHistoryList: gitRepo.getNormalizedHashListComplete failed")
                 entries = []
@@ -4581,7 +4621,7 @@ class DiffList(AppBase):
                 variant_index,
                 go_back,
             )
-            # Prefer the canonicalized `current_path` on the app when available
+            # Use the app-level `gitRepo` and build the selected variant
             try:
                 gitrepo = self.app.gitRepo
                 variant_arg = None
@@ -5005,18 +5045,50 @@ class GitHistoryNavTool(AppException, App):
         no_color: bool,
         **kwargs,
     ):
+        """
+        Create the textual app.
+
+        Parameters contract:
+        - `rel_dir`: a repository-relative directory path (relative to the
+          repository root). May be an empty string or None to indicate the
+          repository root itself. Must NOT be an absolute filesystem path.
+        - `rel_file`: a filename relative to `rel_dir`. Must be a basename
+            (no path separators or subdirectories). May be an empty string or
+            None to indicate no file selection. Must NOT be an absolute
+            filesystem path.
+
+        The application and preparers expect only repository-relative paths in
+        their state; absolute/full filesystem paths are constructed only when
+        performing filesystem or git calls using `GitRepo.full_path_for()`.
+        """
         # Accept CLI options here so the app can inspect them during mount
         super().__init__(**kwargs)
         self.gitRepo = gitRepo
         # Record rel_dir/rel_file and compute canonical self.path for
         # backward compatibility with existing code paths.
-        self.rel_dir = rel_dir
-        self.rel_file = rel_file
+        # Normalize and validate inputs per the documented contract
+        self.rel_dir = os.path.normpath(rel_dir) if rel_dir else ""
+        # Normalize but reject any path separators in rel_file immediately.
+        if rel_file:
+            # Reject any rel_file that is not a basename (no subpath)
+            if os.path.basename(rel_file) != rel_file:
+                raise ValueError("GitHistoryNavTool.__init__: rel_file must be a basename (no subpath)")
+            # Assign the validated basename directly (no normalization needed)
+            self.rel_file = rel_file
+        else:
+            self.rel_file = ""
+
+        # Normalize `.` to empty string for rel_dir
+        if self.rel_dir == ".":
+            self.rel_dir = ""
+
+        # Keep `self.path` as a repository-relative canonical path (or empty)
         if self.rel_file:
             self.path = os.path.join(self.rel_dir, self.rel_file) if self.rel_dir else self.rel_file
         else:
-            # If no file provided, treat path as directory
+            # If no file provided, treat path as directory (possibly empty)
             self.path = self.rel_dir
+
         self.no_color = no_color
         self.repo_first = repo_first
         # optional repo hash initialization (list of 1 or 2 hashes)
@@ -5144,28 +5216,37 @@ class GitHistoryNavTool(AppException, App):
             try:
                 if not self.repo_first:
                     try:
-                        # Compute an initial absolute path for preparers.
-                        init_path = self.current_path or (
-                            os.path.join(self.gitRepo.get_repo_root(), self.rel_dir)
-                            if self.rel_dir
-                            else self.gitRepo.get_repo_root()
-                        )
+                        # Compute an initial repository-relative `rel` for preparers.
+                        if self.current_path:
+                            # `current_path` should be repo-relative; if it's
+                            # absolute, try to convert it to a relpath within
+                            # the repo; otherwise treat it as already relative.
+                            if os.path.isabs(self.current_path):
+                                try:
+                                    rel = GitRepo.relpath_if_within(self.gitRepo.get_repo_root(), self.current_path)
+                                except Exception:
+                                    # Fall back to an os.relpath conversion
+                                    rel = os.path.relpath(self.current_path, self.gitRepo.get_repo_root())
+                            else:
+                                rel = os.path.normpath(self.current_path)
+                        else:
+                            rel = self.rel_dir or ""
+
+                        # Resolve a full filesystem path only to test whether
+                        # the repo-relative path is a directory or not.
+                        if rel:
+                            full_candidate = self.gitRepo.full_path_for(os.path.dirname(rel), os.path.basename(rel))
+                        else:
+                            full_candidate = self.gitRepo.get_repo_root()
+
+                        if os.path.isdir(full_candidate):
+                            rdir = rel
+                            rpath = None
+                        else:
+                            rdir = os.path.dirname(rel) or ""
+                            rpath = os.path.basename(rel)
                         try:
-                            root = self.gitRepo.get_repo_root()
-                            ip = init_path
-                            if ip == root:
-                                rel = ""
-                            elif ip.startswith(root + os.sep):
-                                rel = ip[len(root) + 1 :]
-                            else:
-                                rel = os.path.relpath(ip, root)
-                            if os.path.isdir(ip):
-                                rdir = rel
-                                rpath = None
-                            else:
-                                rdir = os.path.dirname(rel) or ""
-                                rpath = os.path.basename(rel)
-                            self.file_mode_file_list.prepFileModeFileList(self.gitRepo, rdir, rpath)
+                            self.file_mode_file_list.prepFileModeFileList(rdir, rpath)
                         except Exception as _ex:
                             self.printException(_ex, "on_mount: prepFileModeFileList failed")
                         # Centralize layout/focus/footer handling via change_state.
@@ -5191,29 +5272,33 @@ class GitHistoryNavTool(AppException, App):
                         # Call preparer once with any provided hashes so it may
                         # highlight/mark the requested commits during prep.
                         try:
-                            init_path = self.current_path or (
-                                os.path.join(self.gitRepo.get_repo_root(), self.rel_dir)
-                                if self.rel_dir
-                                else self.gitRepo.get_repo_root()
-                            )
+                            # Compute repository-relative `rel` and only resolve
+                            # an absolute path when needed for filesystem checks.
+                            if self.current_path:
+                                if os.path.isabs(self.current_path):
+                                    try:
+                                        rel = GitRepo.relpath_if_within(self.gitRepo.get_repo_root(), self.current_path)
+                                    except Exception:
+                                        rel = os.path.relpath(self.current_path, self.gitRepo.get_repo_root())
+                                else:
+                                    rel = os.path.normpath(self.current_path)
+                            else:
+                                rel = self.rel_dir or ""
+
+                            if rel:
+                                ip = self.gitRepo.full_path_for(os.path.dirname(rel), os.path.basename(rel))
+                            else:
+                                ip = self.gitRepo.get_repo_root()
+
+                            if os.path.isdir(ip):
+                                rdir = rel
+                                rpath = None
+                            else:
+                                rdir = os.path.dirname(rel) or ""
+                                rpath = os.path.basename(rel)
+
                             try:
-                                root = self.gitRepo.get_repo_root()
-                                ip = init_path
-                                if ip == root:
-                                    rel = ""
-                                elif ip.startswith(root + os.sep):
-                                    rel = ip[len(root) + 1 :]
-                                else:
-                                    rel = os.path.relpath(ip, root)
-                                if os.path.isdir(ip):
-                                    rdir = rel
-                                    rpath = None
-                                else:
-                                    rdir = os.path.dirname(rel) or ""
-                                    rpath = os.path.basename(rel)
-                                self.repo_mode_history_list.prepRepoModeHistoryList(
-                                    self.gitRepo, repo_path=init_path, prev_hash=prev, curr_hash=curr
-                                )
+                                self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=rel, prev_hash=prev, curr_hash=curr)
                             except Exception as _ex:
                                 self.printException(_ex, "on_mount: prepRepoModeHistoryList failed")
                         except Exception as e:
@@ -5366,7 +5451,7 @@ class GitHistoryNavTool(AppException, App):
                         else:
                             rdir = os.path.dirname(rel) or ""
                             rpath = os.path.basename(rel)
-                        app.file_mode_file_list.prepFileModeFileList(gitrepo, rdir, rpath)
+                        app.file_mode_file_list.prepFileModeFileList(rdir, rpath)
                     except Exception as e:
                         self.printException(e, "key_r: prepFileModeFileList failed")
             except Exception as e:
@@ -5387,7 +5472,7 @@ class GitHistoryNavTool(AppException, App):
                 if hasattr(app, "repo_mode_history_list") and _is_visible(app.repo_mode_history_list):
                     try:
                         app.repo_mode_history_list.prepRepoModeHistoryList(
-                            app.gitRepo, repo_path=path, prev_hash=prev, curr_hash=curr
+                            repo_path=path, prev_hash=prev, curr_hash=curr
                         )
                     except Exception as e:
                         self.printException(e, "key_r: prepRepoModeHistoryList failed")
@@ -5971,21 +6056,30 @@ class GitHistoryNavTool(AppException, App):
 
         Prepares the paired view content so the transition feels immediate.
         """
+        # When toggling from file_fullscreen, populate the repo history
+        # so the paired history_fullscreen view is ready.
         try:
-            # When toggling from file_fullscreen, populate the repo history
-            # so the paired history_fullscreen view is ready.
-            try:
-                repo_path = self.current_path or (
-                    os.path.join(self.gitRepo.get_repo_root(), self.rel_dir)
-                    if self.rel_dir
-                    else self.gitRepo.get_repo_root()
-                )
-            except Exception as e:
-                self.printException(e, "toggle_file_fullscreen: computing repo_path failed")
-                repo_path = "."
-            self.repo_mode_history_list.prepRepoModeHistoryList(self.gitRepo, repo_path=repo_path)
+                try:
+                    # Determine a repository-relative path to request from the preparer.
+                    if self.current_path:
+                        if os.path.isabs(self.current_path):
+                            try:
+                                repo_path = GitRepo.relpath_if_within(self.gitRepo.get_repo_root(), self.current_path)
+                            except Exception:
+                                repo_path = os.path.relpath(self.current_path, self.gitRepo.get_repo_root())
+                        else:
+                            repo_path = os.path.normpath(self.current_path)
+                    else:
+                        repo_path = self.rel_dir or ""
+                except Exception as e:
+                    self.printException(e, "toggle_file_fullscreen: computing repo_path failed")
+                    repo_path = ""
+                try:
+                    self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=repo_path)
+                except Exception as e:
+                    self.printException(e, "toggle_file_fullscreen prepRepoModeHistoryList failed")
         except Exception as e:
-            self.printException(e, "toggle_file_fullscreen prepRepoModeHistoryList failed")
+            self.printException(e, "toggle_file_fullscreen unexpected failure")
         try:
             self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
         except Exception as e:
@@ -6021,7 +6115,7 @@ class GitHistoryNavTool(AppException, App):
                 else:
                     rdir = os.path.dirname(rel) or ""
                     rpath = os.path.basename(rel)
-                self.file_mode_file_list.prepFileModeFileList(gitrepo, rdir, rpath, hl)
+                self.file_mode_file_list.prepFileModeFileList(rdir, rpath, hl)
             except Exception as _ex:
                 self.printException(_ex, "toggle_history_fullscreen prepFileModeFileList failed")
         except Exception as e:
@@ -6052,17 +6146,21 @@ class GitHistoryNavTool(AppException, App):
             # preparer will update app-level state to reflect the highlighted
             # selection and we will read back the authoritative values.
             try:
-                repo_path = self.current_path or (
-                    os.path.join(self.gitRepo.get_repo_root(), self.rel_dir)
-                    if self.rel_dir
-                    else self.gitRepo.get_repo_root()
-                )
+                if self.current_path:
+                    if os.path.isabs(self.current_path):
+                        try:
+                            repo_path = GitRepo.relpath_if_within(self.gitRepo.get_repo_root(), self.current_path)
+                        except Exception:
+                            repo_path = os.path.relpath(self.current_path, self.gitRepo.get_repo_root())
+                    else:
+                        repo_path = os.path.normpath(self.current_path)
+                else:
+                    repo_path = self.rel_dir or ""
             except Exception as e:
                 self.printException(e, "toggle_file_history: computing repo_path failed")
-                repo_path = "."
-            self.repo_mode_history_list.prepRepoModeHistoryList(
-                self.gitRepo, repo_path=repo_path, prev_hash=self.previous_hash, curr_hash=self.current_hash
-            )
+                repo_path = ""
+
+            self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=repo_path, prev_hash=self.previous_hash, curr_hash=self.current_hash)
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo history failed")
         try:
@@ -6132,7 +6230,7 @@ class GitHistoryNavTool(AppException, App):
                 else:
                     rdir = os.path.dirname(rel) or ""
                     rpath = os.path.basename(rel)
-                self.file_mode_file_list.prepFileModeFileList(gitrepo, rdir, rpath, hl)
+                self.file_mode_file_list.prepFileModeFileList(rdir, rpath, hl)
             except Exception as _ex:
                 self.printException(_ex, "toggle_history_file prepFileModeFileList failed")
         except Exception as e:
@@ -6291,13 +6389,29 @@ def main(argv: Optional[list[str]] = None) -> int:
         relpath = GitRepo.relpath_if_within(gitrepo.get_repo_root(), raw_path)
 
         # Split relpath into directory and filename parts relative to repo root.
-        full_candidate = os.path.join(gitrepo.get_repo_root(), relpath) if relpath else gitrepo.get_repo_root()
+        # Compute a validated absolute candidate path using repo-relative
+        # components. `relpath` is repository-relative ("" when at repo root).
+        try:
+            if relpath:
+                full_candidate = gitrepo.full_path_for(os.path.dirname(relpath), os.path.basename(relpath))
+            else:
+                full_candidate = gitrepo.get_repo_root()
+        except Exception as e:
+            printException(e, f"Not a git repository or invalid path: {raw_path}")
+            sys.exit(f"Not a git repository: {raw_path}")
+
         if os.path.isdir(full_candidate):
-            rel_dir = relpath
+            rel_dir = relpath or ""
             rel_file = ""
         else:
-            rel_dir = os.path.dirname(relpath)
-            rel_file = os.path.basename(relpath)
+            rel_dir = os.path.dirname(relpath) if relpath else ""
+            rel_file = os.path.basename(relpath) if relpath else ""
+
+        # Sanity-check the prepared rel_dir/rel_file before passing to the app
+        if rel_dir and os.path.isabs(rel_dir):
+            sys.exit(f"internal error: rel_dir must be repository-relative: {rel_dir}")
+        if rel_file and os.path.isabs(rel_file):
+            sys.exit(f"internal error: rel_file must be repository-relative: {rel_file}")
 
         logger.debug(
             "Starting GitHistoryNavTool; raw_path=%s repo_root=%s relpath=%r rel_dir=%r rel_file=%r",
