@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """
 Repository helper module extracted from gitdiffnavtool.
 
@@ -13,7 +15,6 @@ import codecs
 import hashlib
 import logging
 import os
-import subprocess
 import sys
 import traceback
 from datetime import datetime, timezone
@@ -116,6 +117,9 @@ class GitRepo(AppException):
     gitRepo.getNormalizedHashListFromFileName(filename)
         Returns a list of the hashes, their timestamps and commit messages associated with the specified filename.
         The filename is relative to the repoRoot.
+
+    gitRepo.getFileListUntrackedAndIgnored()
+        Returns a list of the untracked and ignored files in the repository,
 
     gitRepo.reset_cache() will reset the cache used by GitRepo's functions. Use this if you ever wish
     to have gitRepo restart with a fresh view of the repository.
@@ -1360,3 +1364,138 @@ class GitRepo(AppException):
             # Log and re-raise so callers can handle errors explicitly
             self.printException(e, "getDiff: failed")
             raise
+
+
+def _print_result(res):
+    print(repr(res))
+    #try:
+    #    # try to json-serialize common types, fall back to repr
+    #    import json
+    #
+    #    print(json.dumps(res, default=lambda o: repr(o), indent=2))
+    #except Exception:
+    #    print(repr(res))
+
+
+def _invoke(repo: GitRepo, name: str, args, param_names: list[str], use_class: bool = False):
+    """
+    Invoke method `name` on `repo` (or class) using parameters from `args`.
+
+    `param_names` lists attribute names on `args` to pass to the call in order.
+    If `use_class` is True the call is made on the `GitRepo` class.
+    """
+    params = []
+    for p in param_names:
+        val = getattr(args, p, None)
+        if val is None:
+            raise ValueError(f"missing required argument for {name}: {p}")
+        params.append(val)
+
+    target = GitRepo if use_class else repo
+    if not hasattr(target, name):
+        raise AttributeError(f"{target!r} has no attribute {name}")
+    fn = getattr(target, name)
+    return fn(*params)
+
+
+def main(argv=None):
+    import argparse
+
+    parser = argparse.ArgumentParser(description="CLI helper for GitRepo internals")
+    parser.add_argument("path", help="file or directory used to discover the git repo")
+    parser.add_argument("-1", "--hash1", dest="hash1", help="first hash/token")
+    parser.add_argument("-2", "--hash2", dest="hash2", help="second hash/token")
+    parser.add_argument("-f", "--file", dest="file", help="file (repo-relative or path)")
+    parser.add_argument("-F", "--file2", dest="file2", help="second file")
+
+    # Add boolean flags for many GitRepo methods (name matches method)
+    flags = [
+        "resolve_repo_top",
+        "relpath_if_within",
+        "get_repo_root",
+        "index_mtime_iso",
+        "safe_mtime",
+        "getFileListBetweenNormalizedHashes",
+        "getFileListBetweenNewRepoAndTopHash",
+        "getFileListBetweenTwoCommits",
+        "getFileListBetweenNewRepoAndHash",
+        "getFileListBetweenNewRepoAndStaged",
+        "getFileListBetweenNewRepoAndMods",
+        "getFileListBetweenHashAndCurrentTime",
+        "getFileListBetweenHashAndStaged",
+        "getFileListBetweenStagedAndMods",
+        "getFileListUntrackedAndIgnored",
+        "getNormalizedHashListComplete",
+        "getHashListEntireRepo",
+        "getHashListStagedChanges",
+        "getHashListNewChanges",
+        "getHashListNewRepo",
+        "getNormalizedHashListFromFileName",
+        "getDiff",
+        "getFileContents",
+    ]
+
+    for f in flags:
+        parser.add_argument(f"--{f}", dest=f, action="store_true", help=f"invoke GitRepo.{f}()")
+
+    parsed = parser.parse_args(argv)
+
+    # Create GitRepo using provided path
+    try:
+        repo = GitRepo(parsed.path)
+    except Exception as e:
+        print(f"failed to create GitRepo for {parsed.path}: {e}")
+        raise
+
+    # mapping: option name -> (method_name, param_names, use_class)
+    mapping = {
+        "resolve_repo_top": ("resolve_repo_top", ["path"], True),
+        "relpath_if_within": ("relpath_if_within", ["path", "file"], True),
+        "get_repo_root": ("get_repo_root", [], False),
+        "index_mtime_iso": ("index_mtime_iso", [], False),
+        "safe_mtime": ("safe_mtime", ["file"], False),
+        "getFileListBetweenNormalizedHashes": ("getFileListBetweenNormalizedHashes", ["hash1", "hash2"], False),
+        "getFileListBetweenNewRepoAndTopHash": ("getFileListBetweenNewRepoAndTopHash", [], False),
+        "getFileListBetweenTwoCommits": ("getFileListBetweenTwoCommits", ["hash1", "hash2"], False),
+        "getFileListBetweenNewRepoAndHash": ("getFileListBetweenNewRepoAndHash", ["hash2"], False),
+        "getFileListBetweenNewRepoAndStaged": ("getFileListBetweenNewRepoAndStaged", [], False),
+        "getFileListBetweenNewRepoAndMods": ("getFileListBetweenNewRepoAndMods", [], False),
+        "getFileListBetweenHashAndCurrentTime": ("getFileListBetweenHashAndCurrentTime", ["hash1"], False),
+        "getFileListBetweenHashAndStaged": ("getFileListBetweenHashAndStaged", ["hash1"], False),
+        "getFileListBetweenStagedAndMods": ("getFileListBetweenStagedAndMods", [], False),
+        "getFileListUntrackedAndIgnored": ("getFileListUntrackedAndIgnored", [], False),
+        "getNormalizedHashListComplete": ("getNormalizedHashListComplete", [], False),
+        "getHashListEntireRepo": ("getHashListEntireRepo", [], False),
+        "getHashListStagedChanges": ("getHashListStagedChanges", [], False),
+        "getHashListNewChanges": ("getHashListNewChanges", [], False),
+        "getHashListNewRepo": ("getHashListNewRepo", [], False),
+        "getNormalizedHashListFromFileName": ("getNormalizedHashListFromFileName", ["file"], False),
+        "getDiff": ("getDiff", ["file", "hash1", "hash2"], False),
+        "getFileContents": ("getFileContents", ["hash1", "file"], False),
+    }
+
+    # Iterate flags and invoke selected functions
+    for opt, (method_name, params, use_class) in mapping.items():
+        if getattr(parsed, opt, False):
+            try:
+                # For relpath_if_within when base path should be repo root, supply that
+                if method_name == "relpath_if_within":
+                    base = repo.get_repo_root()
+                    conv = getattr(parsed, "file", None)
+                    if conv is None:
+                        raise ValueError("relpath_if_within requires --file to be set")
+                    res = GitRepo.relpath_if_within(base, conv)
+                else:
+                    # Validate parameters
+                    for p in params:
+                        if getattr(parsed, p, None) is None:
+                            raise ValueError(f"{method_name} requires --{p}")
+                    res = _invoke(repo, method_name, parsed, params, use_class=use_class)
+                print(f"== {method_name} ==")
+                _print_result(res)
+            except Exception as e:
+                print(f"error invoking {method_name}: {e}")
+
+
+if __name__ == "__main__":
+    main()
