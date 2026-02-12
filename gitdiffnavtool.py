@@ -192,7 +192,6 @@ def enable_trace_logging(enabled: bool) -> None:
         printException(e, "enable_trace_logging failed")
 
 
-
 def run_cmd_log(cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
     """Module-level wrapper for subprocess.run mirroring `AppBase._run_cmd_log`.
 
@@ -1931,7 +1930,11 @@ class FileListBase(AppBase):
                             is_dir = False
                         name = os.path.basename(full) if full else path
                         try:
-                            raw = os.path.relpath(full, repo_root_local) if full and repo_root_local else (full if is_dir else name)
+                            raw = (
+                                os.path.relpath(full, repo_root_local)
+                                if full and repo_root_local
+                                else (full if is_dir else name)
+                            )
                         except Exception as e:
                             self.printException(e, "_to_display_rows: raw relpath failed")
                             raw = full if is_dir else name
@@ -1996,8 +1999,10 @@ class FileModeFileList(FileListBase):
         filename is used as the highlight candidate.
         """
         try:
-            
-            def _prepFileModeFileList_from_git(rel_path_root: str, relpath_arg: str | None, status_map_arg: dict) -> list[dict]:
+
+            def _prepFileModeFileList_from_git(
+                rel_path_root: str, relpath_arg: str | None, status_map_arg: dict
+            ) -> list[dict]:
                 """Helper: produce file info dicts for `path` using git status map.
 
                 Returns list of dicts with keys: name, full, is_dir, raw, repo_status.
@@ -2021,7 +2026,9 @@ class FileModeFileList(FileListBase):
                                     try:
                                         rawp = os.path.relpath(fullp, repo_root_local)
                                     except Exception as e:
-                                        self.printException(e, "_prepFileModeFileList_from_git: relpath failed for entry")
+                                        self.printException(
+                                            e, "_prepFileModeFileList_from_git: relpath failed for entry"
+                                        )
                                         rawp = fullp
                                 else:
                                     rawp = fullp
@@ -2031,13 +2038,15 @@ class FileModeFileList(FileListBase):
                                 if status_map_arg:
                                     repo_status_val = status_map_arg.get(key) or status_map_arg.get(nm)
 
-                                infos.append({
-                                    "name": nm,
-                                    "full": fullp,
-                                    "is_dir": isd,
-                                    "raw": rawp,
-                                    "repo_status": repo_status_val,
-                                })
+                                infos.append(
+                                    {
+                                        "name": nm,
+                                        "full": fullp,
+                                        "is_dir": isd,
+                                        "raw": rawp,
+                                        "repo_status": repo_status_val,
+                                    }
+                                )
                             except Exception as e:
                                 self.printException(e, "_prepFileModeFileList_from_git: processing entry failed")
                                 continue
@@ -3922,7 +3931,6 @@ class GitHistoryNavTool(AppException, App):
         # index 0 -> None (no extra arg), 1 -> ignore-space-change, 2 -> patience algorithm
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
 
-
     def compose(self):
         """Yield the canonical six-column layout widgets for the app.
 
@@ -4065,7 +4073,9 @@ class GitHistoryNavTool(AppException, App):
                                 rpath = os.path.basename(rel)
 
                             try:
-                                self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=rel, prev_hash=prev, curr_hash=curr)
+                                self.repo_mode_history_list.prepRepoModeHistoryList(
+                                    repo_path=rel, prev_hash=prev, curr_hash=curr
+                                )
                             except Exception as _ex:
                                 self.printException(_ex, "on_mount: prepRepoModeHistoryList failed")
                         except Exception as e:
@@ -4922,7 +4932,9 @@ class GitHistoryNavTool(AppException, App):
                 self.printException(e, "toggle_file_history: computing repo_path failed")
                 repo_path = ""
 
-            self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=repo_path, prev_hash=self.previous_hash, curr_hash=self.current_hash)
+            self.repo_mode_history_list.prepRepoModeHistoryList(
+                repo_path=repo_path, prev_hash=self.previous_hash, curr_hash=self.current_hash
+            )
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo history failed")
         try:
