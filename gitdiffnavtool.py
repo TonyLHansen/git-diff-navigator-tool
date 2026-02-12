@@ -35,6 +35,9 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import ListView, Label, ListItem, Footer, Header
 from textual.screen import ModalScreen
 
+# Repository helpers (extracted): provide printException, AppException, GitRepo
+from gitrepo import printException, AppException, GitRepo
+
 # --- Constants -------------------------------------------------------------
 # Highlight constants (defaults)
 HIGHLIGHT_FILELIST_BG = "#f1c40f"
@@ -189,1298 +192,6 @@ def enable_trace_logging(enabled: bool) -> None:
         printException(e, "enable_trace_logging failed")
 
 
-def printException(e: Exception, msg: Optional[str] = None) -> None:
-    """Module-level helper to log unexpected exceptions when `self` isn't available.
-
-    This mirrors the widget-level `printException` helper used by widgets.
-    """
-    try:
-        short_msg = msg or ""
-        logger.warning("%s: %s", short_msg, e)
-        logger.warning(traceback.format_exc())
-    except Exception as e2:
-        printException(e2)
-        # Last-resort fallback to stderr — avoid recursive logging
-        sys.stderr.write(f"printException fallback: {e}\n")
-        sys.stderr.write(f"secondary exception: {e2}\n")
-
-
-class AppException:
-    """Mixin providing instance-level exception logging for apps and widgets.
-
-    This centralizes `printException` so multiple base classes can inherit
-    it and avoid duplicate implementations.
-    """
-
-    def printException(self, e: Exception, msg: Optional[str] = None) -> None:
-        """Log an exception with the calling class and function name.
-
-        Mirrors the module-level `printException` but includes the
-        originating class/function context when `self` is available.
-        """
-        try:
-            className = type(self).__name__
-            funcName = sys._getframe(1).f_code.co_name
-            short = msg or ""
-            logger.warning(f"{className}.{funcName}: {short} - {e}")
-            logger.warning(traceback.format_exc())
-        except Exception as e_fallback:
-            # Fall back to module-level printer
-            printException(e, msg)
-            printException(e_fallback, "AppException.printException fallback")
-
-
-class GitRepo(AppException):
-    """
-    Tools for working on a git repository.
-    There are four main functions or classes of functions.
-
-    To use the class, start by creating a:
-
-    gitRepo = GitRepo(directory/filename)
-
-    GitRepo.__init__() in turn calls resolve_repo_top() to retrieve the root of the repo that
-        contains the directory or filename. An exception is returned if there is no git repo.
-
-        (repoRoot, e) = GitRepo.resolve_repo_top(directory/filename, raise_on_missing)
-            Returns the root of a git repository
-
-            If the path is for the top of a git repository, or a directory or file within,
-            then the full path to that git repository is returned (with e set to None)..
-            If not, then
-                if raise_on_missing, throws an exception
-                if not, return (None, e), where e is the exception that would have been raised.
-
-    gitRepo.get_repo_root() will return the repoRoot.
-
-    If you have a path (relative to the current directory), you can trim it down to one
-    rooted in the repoRoot by using GitRepo.relpath_if_within().
-
-        relpath = GitRepo.relpath_if_within(repoRoot, query_path)
-            Both repoRoot and query_path to full paths based on the current directory.
-            Returns "" if the query_path and repoRoot are the same.
-            Returns a path relative to repoRoot if the file is within the repoRoot directory
-            Raises an exception otherwise
-
-    Most of the remaining functions return information about the repository from various points of view,
-    in particular file lists associated with hashes, hash lists associated with the repo or files,
-    and differences for a file with a given set of hashes.
-
-    gitRepo.getFileListBetweenNormalizedHashes(hash1, hash2)
-        Returns a list of the files that were modified between two hashes, along
-        with a status indicator and the timestamp for when that hash was committed
-        In addition to the normal hex-string hashes that git normally supports, there
-        are three pseudo-hashes that are supported:
-            GitRepo.NEWREPO -- the initial state of a repository
-            GitRepo.STAGED -- files that have been added to a repository but not yet committed
-            GitRepo.MODS -- files that have been modified since STAGED or HEAD (if nothing is staged)
-
-    gitRepo.getNormalizedHashListComplete()
-        Returns a list of the hashes, their timestamps and commit messages for the entire repository.
-    gitRepo.getNormalizedHashListFromFileName(filename)
-        Returns a list of the hashes, their timestamps and commit messages associated with the specified filename.
-        The filename is relative to the repoRoot.
-
-    gitRepo.reset_cache() will reset the cache used by GitRepo's functions. Use this if you ever wish
-    to have gitRepo restart with a fresh view of the repository.
-
-    other getFileList and getHashList functions also exist
-
-
-
-    Internally the git command is used to retrieve the information and cached.
-
-    Note: an earlier version of this class used pyGit2, but it was found to produce
-    results for getNormalizedHashListFromFileName() and gitRepo.getFileListBetweenNormalizedHashes()
-    that were sufficiently different to be troublesome. Also, various operations were actually
-    slower than forking the git command.
-    """
-
-    # Pseudo-hash tokens used across diff dispatching
-    NEWREPO = "NEWREPO"
-    STAGED = "STAGED"
-    MODS = "MODS"
-
-    NEWREPO_MESSAGE = "Newly created repository"
-    STAGED_MESSAGE = "Staged changes"
-    MODS_MESSAGE = "Unstaged modifications"
-
-    def __init__(self, repoRoot: str):
-        # One-time per-process cache for git CLI command results
-        self._cmd_cache = {}
-        # Resolve the provided path to the git repository top; allow
-        # exceptions from `resolve_repo_top(..., raise_on_missing=True)` to
-        # propagate so callers receive a clear failure immediately.
-        resolved, _ = GitRepo.resolve_repo_top(repoRoot, raise_on_missing=True)
-        self._repoRoot = resolved
-
-    def reset_cache(self) -> None:
-        """Reset the per-process command/result cache."""
-        self._cmd_cache = {}
-
-    @classmethod
-    def resolve_repo_top(cls, path: str, raise_on_missing: bool = False) -> tuple[str | None, Exception | None]:
-        """Resolve the git repository top-level directory for `path`.
-
-        `path` may be a file or directory; returns a tuple `(out, err)` where
-        `out` is the absolute path to the repository top (as reported by
-        `git rev-parse --show-toplevel`) and `err` is `None` on success. If
-        resolution fails and `raise_on_missing` is False, returns `(None, e)`
-        where `e` is the exception encountered. If `raise_on_missing` is
-        True the function raises on failure.
-
-        This is a `classmethod` so it can be used without instantiating
-        a `GitRepo` object.
-        """
-        if not path:
-            e = RuntimeError("resolve_repo_top: empty path")
-            if raise_on_missing:
-                raise e
-            return (None, e)
-        cur = os.path.abspath(path)
-        if os.path.isfile(cur):
-            cur = os.path.dirname(cur)
-        try:
-            out = check_output(["git", "rev-parse", "--show-toplevel"], cwd=cur, text=True).strip()
-            return (out, None)
-        except FileNotFoundError as _use_raise:
-            # git not installed or not on PATH
-            if raise_on_missing:
-                raise RuntimeError("git not available on PATH") from _use_raise
-            return (None, _use_raise)
-        except CalledProcessError as _use_raise:
-            # Not a git work-tree or other git error
-            if raise_on_missing:
-                raise RuntimeError(f"not a git working tree: {path}") from _use_raise
-            return (None, _use_raise)
-        except Exception as _use_raise:
-            if raise_on_missing:
-                raise RuntimeError(f"not a git working tree: {path}") from _use_raise
-            return (None, _use_raise)
-
-    @classmethod
-    def relpath_if_within(cls, base_path: str, conv_path: str) -> str | None:
-        """
-        Return `full_path` relative to `base_path` if it is inside it, else None.
-
-        If base_path is not a full path (starts with /),
-        it will be augmented with the current directory,
-        then converted to the minimal version.
-
-        If base_path is a full path (starts with /),
-        it will be converted to the minimal version.
-
-        If conv_path is not a full path, it will be treated as relative to the current directory,
-        then converted to the minimal version.
-
-        If conv_path is a full path, it will be converted to the minimal version.
-
-        If conv_path is within base_path, the relative path from base_path to conv_path is returned.
-        If conv_path is not within base_path, None is returned.
-        """
-        # Raise on invalid inputs.
-        print(f"base_path= '{base_path}'")
-        print(f"conv_path= '{conv_path}'")
-        if not base_path:
-            raise ValueError("relpath_if_within: empty base_path")
-        if not conv_path:
-            raise ValueError("relpath_if_within: empty conv_path")
-        try:
-            if base_path[0] != os.sep:
-                base_path = os.path.abspath(os.path.join(os.getcwd(), base_path))
-            base_path = os.path.abspath(os.path.normpath(base_path))
-            print(f"base_path> '{base_path}'")
-            if conv_path[0] != os.sep:
-                conv_path = os.path.abspath(os.path.join(os.getcwd(), conv_path))
-            conv_path = os.path.abspath(os.path.normpath(conv_path))
-            print(f"conv_path> '{conv_path}'")
-            if base_path == conv_path:
-                common = ""
-            else:
-                common = os.path.relpath(conv_path, base_path)
-            print(f"common> '{common}'")
-            return common
-        except Exception as _use_raise:
-            raise ValueError(f"relpath_if_within: path evaluation failed: {_use_raise}") from _use_raise
-
-    def get_repo_root(self) -> str:
-        """Return the resolved repository root path for this GitRepo instance."""
-        return self._repoRoot
-
-    def full_path_for(self, rel_dir: str | None, rel_file: str | None) -> str:
-        """Return an absolute filesystem path for a repository-relative directory/file pair.
-
-        Contract:
-        - `rel_dir` is a repository-relative directory path (relative to the repo root),
-          or an empty string / None to indicate the repo root itself.
-        - `rel_file` is a filename (possibly including subpath) relative to `rel_dir`,
-          or an empty string / None to indicate the directory itself.
-
-        The function validates that neither argument is absolute and that the
-        resulting path resides within the repository root. A normalized
-        absolute path is returned on success; a `ValueError` is raised on
-        invalid inputs or if the computed path would escape the repository.
-        """
-        if rel_dir is None:
-            rel_dir = ""
-        if rel_file is None:
-            rel_file = ""
-
-        # Reject absolute components — callers should pass repository-relative
-        if rel_dir and os.path.isabs(rel_dir):
-            raise ValueError("full_path_for: rel_dir must be repository-relative (not absolute)")
-        if rel_file and os.path.isabs(rel_file):
-            raise ValueError("full_path_for: rel_file must be repository-relative (not absolute)")
-
-        # Join and normalize
-        try:
-            full = os.path.normpath(os.path.join(self._repoRoot, rel_dir or "", rel_file or ""))
-        except Exception as e:
-            raise ValueError(f"full_path_for: failed to construct path: {e}") from e
-
-        # Ensure the resulting path is inside the repository root
-        try:
-            repo_norm = os.path.normpath(self._repoRoot)
-            common = os.path.commonpath([repo_norm, full])
-            if common != repo_norm:
-                raise ValueError("full_path_for: computed path is outside the repository root")
-        except Exception as e:
-            raise ValueError(f"full_path_for: validation failed: {e}") from e
-
-        return full
-
-    def _deltas_to_results(self, detailed: list, a_raw, b_raw) -> list[tuple[str, str]]:
-        """Simplified conversion of detailed delta dicts to `(path,status)`.
-
-        The original implementation attempted complex oid-based matching and
-        lifecycle tracing; it had become fragile and contained malformed
-        indentation. Replace it with a straightforward, robust converter that
-        extracts the most-relevant path and status from each detailed entry.
-        """
-        try:
-            if not detailed:
-                return []
-
-            results: list[tuple[str, str]] = []
-            for item in detailed:
-                try:
-                    # Prefer an explicit status if present, else fall back
-                    status = item.get("status") or "modified"
-
-                    # Prefer canonical path order: explicit 'path', then new_path, then old_path
-                    path = item.get("path") or item.get("new_path") or item.get("old_path")
-                    if not path:
-                        # Skip entries without a usable path
-                        continue
-
-                    # Normalize rename status if it encodes a target
-                    if isinstance(status, str) and status.startswith("renamed->"):
-                        # keep as-is (e.g. 'renamed->new/path')
-                        pass
-
-                    results.append((path, status))
-                except Exception as e:
-                    self.printException(e, "_deltas_to_results: processing item failed")
-                    continue
-
-            results.sort(key=lambda x: x[0])
-            return results
-        except Exception as e:
-            self.printException(e, "_deltas_to_results: unexpected failure")
-            return []
-
-    def index_mtime_iso(self) -> str:
-        """
-        Return an ISO timestamp (UTC) based on the repository index mtime.
-
-        Prefer `.git/index`, falling back to `index` at repo root, and
-        finally to the current time if not available.
-        """
-        idx_candidates = [
-            os.path.join(self._repoRoot, ".git", "index"),
-            os.path.join(self._repoRoot, "index"),
-        ]
-        idx_mtime = None
-        for p in idx_candidates:
-            try:
-                if os.path.exists(p):
-                    idx_mtime = os.path.getmtime(p)
-                    break
-            except Exception as e:
-                self.printException(e, "index_mtime_iso: checking index candidate failed")
-                continue
-        if idx_mtime is None:
-            idx_mtime = datetime.now(timezone.utc).timestamp()
-        return self._epoch_to_iso(idx_mtime)
-
-    def _epoch_to_iso(self, epoch: float) -> str:
-        """
-        Convert an epoch (seconds) to an ISO UTC timestamp string.
-
-        Centralized helper to avoid repeating the same try/except timestamp
-        formatting logic throughout the codebase.
-        """
-        try:
-            return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        except Exception as e:
-            self.printException(e, "_epoch_to_iso: formatting timestamp failed")
-            return "1970-01-01T00:00:00"
-
-    def _git_cli_decode_quoted_path(self, rel: str) -> str:
-        """Decode a git-quoted path ("...") emitted by `git ls-files`.
-
-        - If the path is quoted (surrounded by double quotes), unescape
-          backslash sequences (e.g. \\xHH, \\ooo) and interpret the resulting
-          byte values as UTF-8 when possible. If UTF-8 decoding fails,
-          fall back to latin-1 so the original byte values are preserved.
-        - If the path is not quoted, return it unchanged.
-        """
-        if not rel:
-            return rel
-        if rel.startswith('"') and rel.endswith('"'):
-            raw = rel[1:-1]
-            try:
-                tmp = codecs.decode(raw, "unicode_escape")
-                b = tmp.encode("latin-1", "surrogatepass")
-                try:
-                    return b.decode("utf-8")
-                except UnicodeDecodeError as e:
-                    self.printException(e, "_git_cli_decode_quoted_path: unicode decode failed")
-                    return b.decode("latin-1")
-            except Exception as e:
-                self.printException(e, "_git_cli_decode_quoted_path: decode failed")
-                return raw
-        return rel
-
-    def safe_mtime(self, rel: str) -> float | None:
-        """Return the mtime (float) for repository-relative `rel` or None.
-
-        Centralized helper that resolves the filesystem path under `repoRoot`,
-        handles symlinks via `lstat`, catches `FileNotFoundError` and other
-        exceptions, and logs failures via `printException`.
-        """
-        try:
-            fp = os.path.join(self._repoRoot, rel)
-            if os.path.islink(fp):
-                return os.lstat(fp).st_mtime
-            if os.path.exists(fp):
-                return os.path.getmtime(fp)
-            return None
-        except FileNotFoundError as e:
-            self.printException(e, f"safe_mtime: file not found ({rel})")
-            return None
-        except Exception as e:
-            self.printException(e, f"safe_mtime: stat failed ({rel})")
-            return None
-
-    def _make_cache_key(self, name: str, *args) -> str:
-        """Build a compact cache key from `name` and `args`.
-
-        Produces `name:HEX` where HEX is the first 16 chars of the
-        sha256 of the repr of (name,args). This avoids ad-hoc string
-        formatting throughout the codebase while keeping keys stable
-        within a process.
-        """
-        try:
-            payload = (name,) + tuple(args)
-            h = hashlib.sha256(repr(payload).encode("utf-8")).hexdigest()[:16]
-            return f"{name}:{h}"
-        except Exception as e:
-            self.printException(e, "_make_cache_key: failed to build key")
-            # Fallback to a simple name-based key
-            return f"{name}:{hashlib.sha256(name.encode()).hexdigest()[:16]}"
-
-    def _paths_mtime_iso(self, paths: list[str]) -> str:
-        """
-        Given a list of repository-relative paths, return an ISO timestamp
-        (UTC) representing the most-recent modification time among those
-        files. If no mtimes can be determined, fall back to the index mtime.
-        """
-        mtimes: list[float] = []
-        for p in paths:
-            try:
-                m = self.safe_mtime(p)
-                if m is not None:
-                    mtimes.append(m)
-            except Exception as e:
-                self.printException(e, "_paths_mtime_iso: checking path mtime failed")
-                continue
-        if mtimes:
-            return self._epoch_to_iso(max(mtimes))
-        return self.index_mtime_iso()
-
-    def _newrepo_timestamp_iso(self) -> str:
-        """
-        Compute an ISO timestamp for the pseudo-`NEWREPO` entry.
-
-        Strategy:
-        - Determine the timestamp (epoch seconds) of the first commit in the
-          repository (oldest commit). If unable to obtain it, treat as None.
-        - Walk the `.git` directory collecting file mtimes (using `lstat`
-          for symlinks) and take the oldest (minimum) mtime if any are
-          present.
-        - Return the earliest (smallest) of the first-commit ts and the
-          `.git`-files mtimes as an ISO UTC string. If neither is
-          available, fall back to `index_mtime_iso()`.
-        """
-        first_commit_ts: float | None = None
-        git_dir = os.path.join(self._repoRoot, ".git")
-        try:
-            out = self._git_run(["git", "log", "--reverse", "--pretty=format:%ct"], text=True)
-            if out:
-                for line in out.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        first_commit_ts = float(int(line))
-                        break
-                    except Exception as _no_logging:
-                        continue
-        except Exception as e:
-            self.printException(e, "_newrepo_timestamp_iso: git log failed")
-
-        git_mtimes: list[float] = []
-        try:
-            if os.path.exists(git_dir):
-                for root, dirs, files in os.walk(git_dir):
-                    for name in files:
-                        fp = os.path.join(root, name)
-                        try:
-                            if os.path.islink(fp):
-                                git_mtimes.append(os.lstat(fp).st_mtime)
-                            else:
-                                git_mtimes.append(os.path.getmtime(fp))
-                        except Exception as _no_logging:
-                            # ignore individual failures
-                            continue
-        except Exception as e:
-            self.printException(e, "_newrepo_timestamp_iso: walking .git failed")
-
-        candidates: list[float] = []
-        if first_commit_ts is not None:
-            candidates.append(first_commit_ts)
-        if git_mtimes:
-            candidates.append(min(git_mtimes))
-
-        if candidates:
-            earliest = min(candidates)
-            return self._epoch_to_iso(earliest)
-
-        # Fallback: use index mtime ISO
-        return self.index_mtime_iso()
-
-    def _parse_git_log_output(self, output: str) -> list[tuple[int, str, str]]:
-        """Parse `git log --pretty=format:%ct %H %s` style output.
-
-        Returns a list of tuples `(timestamp_int, hash, subject)`.
-        """
-        results: list[tuple[int, str, str]] = []
-        try:
-            for line in output.splitlines():
-                if not line:
-                    continue
-                parts = line.split(None, 2)
-                if len(parts) < 2:
-                    continue
-                try:
-                    ts = int(parts[0])
-                except Exception as e:
-                    self.printException(e, "_parse_git_log_output: parsing timestamp failed")
-                    ts = 0
-                h = parts[1].strip()
-                subject = parts[2].strip() if len(parts) >= 3 else ""
-                results.append((ts, h, subject))
-            return results
-        except Exception as e:
-            self.printException(e, "_parse_git_log_output: unexpected failure")
-            return []
-
-    def _git_cli_parse_name_status_output(self, output: str) -> list[tuple[str, str]]:
-        """Parse `--name-status` output (possibly many lines) into `(path,status)` pairs.
-
-        Returns a sorted list of `(path,status)` tuples.
-        """
-        try:
-            results: list[tuple[str, str]] = []
-            for line in output.splitlines():
-                if not line:
-                    continue
-                try:
-                    parts = line.split()
-                    if not parts:
-                        continue
-                    code = parts[0].strip()
-                    path = parts[1].strip() if len(parts) > 1 else ""
-
-                    # Map code to status
-                    status = "modified"
-                    if code:
-                        first = code[0]
-                        if first == "A":
-                            status = "added"
-                        elif first == "M":
-                            status = "modified"
-                        elif first == "D":
-                            status = "deleted"
-                        elif first == "R":
-                            status = "renamed"
-                        elif first == "C":
-                            status = "copied"
-
-                    # If rename/copy includes a target path, include it
-                    try:
-                        if code.startswith("R") and len(parts) > 2:
-                            newp = parts[-1].strip()
-                            if newp:
-                                status = f"renamed->{newp}"
-                    except Exception as e:
-                        self.printException(e, "_git_cli_parse_name_status_output: including rename target failed")
-
-                    if path:
-                        results.append((path, status))
-                except Exception as e:
-                    self.printException(e, "_git_cli_parse_name_status_output: line parse failed")
-                    continue
-            results.sort(key=lambda x: x[0])
-            return results
-        except Exception as e:
-            self.printException(e, "_git_cli_parse_name_status_output: unexpected failure")
-            return []
-
-    def _git_cli_name_status(self, args: list) -> list[tuple[str, str]]:
-        """Run a `git` command that emits `--name-status`-style output and parse it.
-
-        `args` should be a list suitable for `subprocess.check_output`, for
-        example `['git','diff','--name-status', 'A', 'B']` or
-        `['git','diff','--name-status','--cached']`.
-        Returns a sorted list of `(path, status)`.
-        """
-        try:
-            output = self._git_run(args, text=True) or ""
-            return self._git_cli_parse_name_status_output(output)
-        except Exception as e:
-            self.printException(e, "_git_cli_name_status: unexpected failure")
-            return []
-
-    def _git_name_status_dispatch(
-        self, prev: str | None = None, curr: str | None = None, cached: bool = False, key: str | None = None
-    ) -> list[tuple[str, str]]:
-        """Generalized dispatcher for `git diff --name-status` variants.
-
-        Builds the appropriate `git` argument list from the template and
-        delegates to the cached parser. Use `cached=True` to include
-        `--cached` in the args. If `key` is omitted a synthetic cache key
-        is derived from the parameters.
-        """
-        try:
-            args = ["git", "diff", "--name-status"]
-            if cached:
-                args.append("--cached")
-            if prev is not None and curr is not None:
-                args += [prev, curr]
-            elif prev is not None:
-                args.append(prev)
-            elif curr is not None:
-                args.append(curr)
-            cache_key = key or self._make_cache_key("git_name_status", prev, curr, "cached" if cached else "nocache")
-            return self._git_cli_getCachedFileList(cache_key, args)
-        except Exception as e:
-            self.printException(e, "_git_name_status_dispatch: unexpected failure")
-            return []
-
-    def _git_run(self, args: list, text: bool = True, cache_key: str | None = None):
-        """Run a git subprocess and return its output.
-
-        Behavior:
-        - On success returns the command output (string when text=True).
-        - On CalledProcessError: if `cache_key` is provided, store [] into
-          `self._cmd_cache[cache_key]` and return an empty string. On any
-          failure this function returns an empty string (never `None`).
-        - Caches raw command output under an internal key derived from args
-          so identical subprocess calls are cheap.
-        """
-        try:
-            internal_key = f"_git_run:{' '.join(args)}:{'text' if text else 'bytes'}"
-            if internal_key in self._cmd_cache:
-                return self._cmd_cache[internal_key]
-            try:
-                out = check_output(args, cwd=self._repoRoot, text=text)
-            except CalledProcessError as e:
-                self.printException(e, f"_git_run: git command failed: {' '.join(args)}")
-                # If caller provided a parsed-result cache_key, store an empty
-                # parsed result there so callers can return quickly next time.
-                if cache_key:
-                    self._cmd_cache[cache_key] = []
-                    # record failure for this internal invocation as empty string
-                    self._cmd_cache[internal_key] = ""
-                    return ""
-                # Otherwise, record failure sentinel as empty string and
-                # return empty string (never None)
-                self._cmd_cache[internal_key] = ""
-                return ""
-            # Success: cache raw output under internal key and return it.
-            self._cmd_cache[internal_key] = out
-            return out
-        except Exception as e:
-            self.printException(e, "_git_run: unexpected failure")
-            if cache_key:
-                self._cmd_cache[cache_key] = []
-                self._cmd_cache[internal_key] = ""
-                return ""
-            # Always return an empty string on unexpected failures
-            self._cmd_cache[internal_key] = ""
-            return ""
-
-    def _empty_tree_hash(self) -> str:
-        """
-        Return the canonical empty-tree object id for this repository's
-        object format. Uses `git rev-parse --show-object-format` to detect
-        the repository format and returns a constant for supported formats.
-
-        Returns SHA-1 empty-tree by default if detection fails.
-        """
-        # Known constants per object format
-        sha1_empty = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-        sha256_empty = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"
-
-        try:
-            cache_key = "_empty_tree_hash"
-            if cache_key in self._cmd_cache:
-                return self._cmd_cache[cache_key]
-
-            # Ask git which object format this repo uses. Example responses:
-            #   sha1
-            #   sha256
-            out = self._git_run(["git", "rev-parse", "--show-object-format"], text=True) or ""
-            fmt = out.strip().lower()
-
-            if fmt == "sha256":
-                res = sha256_empty
-            else:
-                # Default to sha1 for "sha1" or any unknown/empty response
-                res = sha1_empty
-
-            # Cache result for this process
-            self._cmd_cache[cache_key] = res
-            return res
-        except Exception as e:
-            # On unexpected failures default to sha1 canonical id
-            self.printException(e, "_empty_tree_hash: detection failed, defaulting to sha1")
-            return sha1_empty
-
-    def getFileListBetweenNormalizedHashes(self, prev_hash: str, curr_hash: str) -> list[tuple[str, str]]:
-        """Return a list of `(path, status)` for files changed between `prev_hash` and `curr_hash`.
-
-        Status values: `added`, `modified`, `deleted`, `renamed`, `copied`.
-        This function expects `prev_hash` and `curr_hash` to be commit-ish values
-        (i.e. resolvable by valid git commit refs).
-        This function MUST be a dispatch to specialized handlers for each case.
-        """
-        # Dispatch to specialized handlers for common token combinations.
-
-        # Validate tokens: disallow bare `None` — require explicit `NEWREPO` token.
-        if prev_hash is None or curr_hash is None:
-            raise ValueError(
-                "getFileListBetweenNormalizedHashes: None is not a valid token; use GitRepo.NEWREPO for initial repository"
-            )
-
-        # If identical tokens were passed, there are no changes.
-        if prev_hash == curr_hash:
-            return []
-
-        # If prev is the pseudo-NewRepo token and curr is a normal hash -> new->hash
-        if prev_hash == self.NEWREPO and curr_hash not in (self.STAGED, self.MODS):
-            return self.getFileListBetweenNewRepoAndHash(curr_hash)
-
-        # If prev is NEWREPO and curr is staged -> initial->staged
-        if prev_hash == self.NEWREPO and curr_hash == self.STAGED:
-            return self.getFileListBetweenNewRepoAndStaged()
-
-        # If prev is NEWREPO and curr is working tree (mods) -> initial->mods
-        if prev_hash == self.NEWREPO and curr_hash == self.MODS:
-            return self.getFileListBetweenNewRepoAndMods()
-
-        # If prev and curr are both normal hashes -> direct commit->commit diff
-        if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash not in (
-            self.NEWREPO,
-            self.STAGED,
-            self.MODS,
-        ):
-            return self.getFileListBetweenTwoCommits(prev_hash, curr_hash)
-
-        # Hash -> staged
-        if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash == self.STAGED:
-            return self.getFileListBetweenHashAndStaged(prev_hash)
-
-        # Hash -> working tree (mods)
-        if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash == self.MODS:
-            return self.getFileListBetweenHashAndCurrentTime(prev_hash)
-
-        # staged -> mods (working tree)
-        if prev_hash == self.STAGED and curr_hash == self.MODS:
-            return self.getFileListBetweenStagedAndMods()
-
-        # Fallback: for remaining (likely commit-ish) combos delegate to the
-        # explicit two-commit handler rather than the fully generic resolver.
-        return self.getFileListBetweenTwoCommits(prev_hash, curr_hash)
-
-    def getFileListBetweenNewRepoAndTopHash(self) -> list[str]:
-        """Return a list of `(path, status)` for files present in HEAD.
-
-        Status will be `committed` to indicate file is present in the
-        given commit (HEAD).
-        """
-        # Delegate to the new initial->commit helper to avoid duplication
-        return self.getFileListBetweenNewRepoAndHash("HEAD")
-
-    def getFileListBetweenTwoCommits(self, prev_hash: str, curr_hash: str) -> list[tuple[str, str]]:
-        """Direct commit->commit diff (both args expected to be commit-ish).
-
-        Extracted helper containing the previous logic for diffing two commits.
-        """
-        # Use generalized dispatcher for commit->commit diffs
-        key = self._make_cache_key("getFileListBetweenTwoCommits", prev_hash, curr_hash)
-        return self._git_name_status_dispatch(prev=prev_hash, curr=curr_hash, cached=False, key=key)
-
-    def getFileListBetweenNewRepoAndHash(self, curr_hash: str) -> list[tuple[str, str]]:
-        """Return a list of `(path, status)` for files changed between the beginning and `curr_hash`.
-
-        Status values are the same as other diffs (added/modified/etc.).
-        """
-        # Git-CLI implementation with a one-time per-hash cache. The
-        key = self._make_cache_key("getFileListBetweenNewRepoAndHash", curr_hash)
-        try:
-            if key in self._cmd_cache:
-                return self._cmd_cache[key]
-
-            output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key)
-
-            results: list[tuple[str, str]] = []
-            for line in output.splitlines():
-                ln = line.strip()
-                if not ln:
-                    continue
-                results.append((ln, "added"))
-            results.sort(key=lambda x: x[0])
-            self._cmd_cache[key] = results
-            return results
-        except Exception as e:
-            self.printException(e, "getFileListBetweenNewRepoAndHash: unexpected failure")
-            return []
-
-    def getFileListBetweenNewRepoAndStaged(self) -> list[tuple[str, str]]:
-        """Return file list for the initial (empty) tree -> staged index comparison.
-
-        This is the specialized handler for the `prev is None and curr == STAGED`
-        case so `getFileListBetweenNormalizedHashes` can remain a dispatcher.
-        """
-        # Git-CLI-only implementation cached once per process.
-        key = "getFileListBetweenNewRepoAndStaged"
-        return self._git_name_status_dispatch(prev=None, curr=None, cached=True, key=key)
-
-    # make git-only
-    def getFileListBetweenNewRepoAndMods(self) -> list[tuple[str, str]]:
-        """Specialized handler for initial (empty) -> working tree (mods) comparison.
-
-        This implementation is git-CLI-only and mirrors `git diff --name-status`.
-        """
-        key = "getFileListBetweenNewRepoAndMods"
-        return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
-
-    def getFileListBetweenTopHashAndCurrentTime(self) -> list[str]:
-        """Return a list of `(path, status)` for files changed between HEAD and working tree.
-
-        Status will reflect the working-tree change type (modified/added/deleted).
-        """
-        # Delegate to the general handler to avoid duplicating logic
-        return self.getFileListBetweenHashAndCurrentTime("HEAD")
-
-    def _git_cli_getCachedFileList(self, key: str, git_args: list) -> list[tuple[str, str]]:
-        """Run `git_args` (list) and cache the parsed name-status results under `key`.
-
-        Returns a sorted list of `(path,status)`. On git failure returns [].
-        """
-        try:
-            if key in self._cmd_cache:
-                return self._cmd_cache[key]
-
-            output = self._git_run(git_args, text=True, cache_key=key)
-
-            # Parse the whole output using the consolidated parser
-            results = self._git_cli_parse_name_status_output(output or "")
-            self._cmd_cache[key] = results
-            return results
-        except Exception as e:
-            self.printException(e, "_git_cli_getCachedFileList: unexpected failure")
-            return []
-
-    def getFileListBetweenHashAndCurrentTime(self, hash: str) -> list[tuple[str, str]]:
-        """Return `(path,status)` for files changed between `hash` and working tree.
-
-        Uses the git CLI plus a one-time cache via `_git_cli_getCachedFileList`.
-        """
-        key = self._make_cache_key("getFileListBetweenHashAndCurrentTime", hash)
-        return self._git_name_status_dispatch(prev=hash, curr=None, cached=False, key=key)
-
-    def getFileListBetweenTopHashAndStaged(self) -> list[tuple[str, str]]:
-        """Return a list of `(path, status)` for files changed between HEAD and staged index."""
-        # Delegate to the generalized staged-vs-hash implementation to avoid duplication
-        return self.getFileListBetweenHashAndStaged("HEAD")
-
-    def getFileListBetweenHashAndStaged(self, hash: str) -> list[tuple[str, str]]:
-        """Return `(path,status)` for files changed between `hash` and the staged index.
-
-        Generalization of getFileListBetweenTopHashAndStaged for any commit-ish.
-        """
-        key = self._make_cache_key("getFileListBetweenHashAndStaged", hash)
-        return self._git_name_status_dispatch(prev=hash, curr=None, cached=True, key=key)
-
-    # make git-only
-    def getFileListBetweenStagedAndMods(self) -> list[tuple[str, str]]:
-        """Return a list of `(path, status)` for files changed between staged index and working tree (mods)."""
-        # Use git CLI to get the list of files; cache the results once per process
-        key = self._make_cache_key("getFileListBetweenStagedAndMods")
-        return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
-
-    # make git-only
-    def getFileListUntrackedAndIgnored(self) -> list[tuple[str, str, str]]:
-        """Return a sorted list of `(path, iso_mtime, status)` for files that are
-        either untracked or ignored in the working tree.
-
-        - `status` is one of: `untracked`, `ignored`.
-        - `iso_mtime` is produced from the filesystem mtime via `_epoch_to_iso`.
-        """
-        try:
-            cache_key = self._make_cache_key("getFileListUntrackedAndIgnored")
-            if cache_key in self._cmd_cache:
-                return self._cmd_cache[cache_key]
-
-            results: list[tuple[str, str, str]] = []
-            seen: set[str] = set()
-
-            untracked_out = self._git_run(["git", "ls-files", "--others", "--exclude-standard"], text=True) or ""
-            ignored_out = self._git_run(["git", "ls-files", "--others", "-i", "--exclude-standard"], text=True) or ""
-
-            for line in untracked_out.splitlines():
-                rel = line.strip()
-                rel = self._git_cli_decode_quoted_path(rel)
-                if not rel or rel in seen:
-                    continue
-                seen.add(rel)
-                mtime = self.safe_mtime(rel)
-                iso = self._epoch_to_iso(mtime) if mtime is not None else self.index_mtime_iso()
-                results.append((rel, iso, "untracked"))
-
-            for line in ignored_out.splitlines():
-                rel = line.strip()
-                rel = self._git_cli_decode_quoted_path(rel)
-                if not rel or rel in seen:
-                    continue
-                seen.add(rel)
-                mtime = self.safe_mtime(rel)
-                iso = self._epoch_to_iso(mtime) if mtime is not None else self.index_mtime_iso()
-                results.append((rel, iso, "ignored"))
-
-            results.sort(key=lambda x: x[0])
-            self._cmd_cache[cache_key] = results
-            return results
-        except Exception as e:
-            self.printException(e, "getFileListUntrackedAndIgnored: unexpected failure")
-            return []
-
-    def getNormalizedHashListComplete(self) -> list[tuple[str, str, str]]:
-        """Return a combined list of commit hashes for staged, new, and entire repo."""
-        new = self.getHashListNewChanges()
-        staged = self.getHashListStagedChanges()
-        entire = self.getHashListEntireRepo()
-        newrepo = self.getHashListNewRepo()
-        combined = new + staged + entire + newrepo
-        return combined
-
-    # runFileListSampledExercises moved to module-level function
-
-    def getHashListEntireRepo(self) -> list[tuple[str, str, str]]:
-        """Return a list of all commit hashes in the repository."""
-        # Use git log to get commit epoch time, hash and subject for all refs
-        output = self._git_run(["git", "log", "--all", "--pretty=format:%ct %H %s"], text=True)
-        pairs = self._parse_git_log_output(output or "")
-        pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        formatted: list[tuple[str, str, str]] = []
-        for ts, h, subject in pairs:
-            iso = self._epoch_to_iso(ts)
-            formatted.append((iso, h, subject))
-        return formatted
-
-    def getHashListStagedChanges(self) -> list[tuple[str, str, str]]:
-        """Return a list of commit hashes for staged changes."""
-        # Use git CLI to detect staged files and return a STAGED pseudo-hash.
-        key = self._make_cache_key("getHashListStagedChanges", self.index_mtime_iso())
-        try:
-            if key in self._cmd_cache:
-                return self._cmd_cache[key]
-
-            names_out = self._git_run(["git", "diff", "--cached", "--name-only"], text=True, cache_key=key)
-
-            if not names_out:
-                self._cmd_cache[key] = []
-                return []
-
-            if any(ln.strip() for ln in names_out.splitlines()):
-                iso = self.index_mtime_iso()
-                res = [(iso, "STAGED", self.STAGED_MESSAGE)]
-                self._cmd_cache[key] = res
-                return res
-
-            self._cmd_cache[key] = []
-            return []
-        except Exception as e:
-            self.printException(e, "getHashListStagedChanges: failure")
-            return []
-
-    def getHashListNewChanges(self) -> list[tuple[str, str, str]]:
-        """Return a list of commit hashes for new changes."""
-        # Detect working-tree vs index differences via git CLI and return a
-        # MODS pseudo-hash when there are modified files.
-        try:
-            names_out = self._git_run(["git", "diff", "--name-only"], text=True)
-
-            if not names_out:
-                return []
-
-            paths = [ln.strip() for ln in names_out.splitlines() if ln.strip()]
-            if not paths:
-                return []
-
-            iso = self._paths_mtime_iso(paths)
-            key = self._make_cache_key("getHashListNewChanges", iso)
-            if key in self._cmd_cache:
-                return self._cmd_cache[key]
-            res = [(iso, "MODS", self.MODS_MESSAGE)]
-            self._cmd_cache[key] = res
-            return res
-        except Exception as e:
-            self.printException(e, "getHashListNewChanges: failure")
-            return []
-
-    def getHashListNewRepo(self) -> list[tuple[str, str, str]]:
-        """Return the pseudo-hash entry for a newly-created repository.
-
-        Returns a single-entry list containing `(iso_timestamp, NEWREPO, NEWREPO_MESSAGE)`.
-        The timestamp is computed from the earliest of the first commit time
-        and mtimes under the `.git` directory; falls back to index mtime.
-        """
-        try:
-            iso = self._newrepo_timestamp_iso()
-            return [(iso, self.NEWREPO, self.NEWREPO_MESSAGE)]
-        except Exception as e:
-            self.printException(e, "getHashListNewRepo: failure")
-            return [(self.index_mtime_iso(), self.NEWREPO, self.NEWREPO_MESSAGE)]
-
-    def getNormalizedHashListFromFileName(self, file_name: str) -> list[tuple[str, str, str]]:
-        """Return a list of commit hashes that modified the given file.
-
-        Uses the git CLI (`git log` + `git status`) with a one-time cache per
-        `file_name`. The previous walk/diff implementation has been
-        removed for performance consistency.
-        """
-        key = self._make_cache_key("getNormalizedHashListFromFileName", file_name)
-        try:
-            if key in self._cmd_cache:
-                return self._cmd_cache[key]
-
-            output = self._git_run(
-                ["git", "log", "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key
-            )
-
-            parsed_entries: list[tuple[str, str, str]] = []
-            parsed = self._parse_git_log_output(output or "")
-            for ts, h, subject in parsed:
-                iso = self._epoch_to_iso(ts)
-                parsed_entries.append((iso, h, subject if subject else ""))
-
-            # Inspect working-tree/index status for the file and construct
-            # explicit pseudo-entries for MODS/STAGED when present. We will
-            # then assemble the final list in newest->oldest order with a
-            # deterministic placement for these pseudo-entries so callers
-            # that reverse the list (oldest->newest) observe STAGED before
-            # MODS.
-            status_out = self._git_run(["git", "status", "--porcelain", "--", file_name], text=True) or ""
-            idx_flag = " "
-            wt_flag = " "
-            if status_out:
-                s = status_out.splitlines()[0]
-                if len(s) >= 2:
-                    idx_flag = s[0]
-                    wt_flag = s[1]
-                else:
-                    idx_flag = s[0] if s else " "
-                    wt_flag = " "
-
-            staged_entry = None
-            mods_entry = None
-            try:
-                if idx_flag != " ":
-                    iso_index = self.index_mtime_iso()
-                    staged_entry = (iso_index, "STAGED", self.STAGED_MESSAGE)
-                if wt_flag != " ":
-                    iso_mods = self._paths_mtime_iso([file_name])
-                    mods_entry = (iso_mods, "MODS", self.MODS_MESSAGE)
-            except Exception as e:
-                self.printException(e, "getNormalizedHashListFromFileName: computing pseudo-entry timestamps failed")
-
-            # Assemble final entries in newest->oldest order. Place MODS
-            # before STAGED here so that callers that reverse the list
-            # (oldest->newest) will see STAGED before MODS.
-            entries: list[tuple[str, str, str]] = []
-            if mods_entry is not None:
-                entries.append(mods_entry)
-            if staged_entry is not None:
-                entries.append(staged_entry)
-
-            # Append parsed commits newest->oldest
-            parsed_entries.sort(key=lambda x: x[0], reverse=True)
-            entries.extend(parsed_entries)
-
-            # Cache and return
-            self._cmd_cache[key] = entries
-            return entries
-        except Exception as e:
-            self.printException(e, "getNormalizedHashListFromFileName: unexpected failure")
-            return []
-
-    def getDiff(self, filename: str, hash1: str, hash2: str, variation: list[str] | None = None) -> list[str]:
-        """
-        Return the lines produced by `git diff` for `filename` between `hash1` and `hash2`.
-
-        - `filename` is repository-relative path to a file in this repo.
-        - `hash1` and `hash2` must be non-None strings and may be full/partial
-          git commit-ish hashes or the pseudo-hashes `NEWREPO`, `STAGED`, `MODS`.
-        - `variation` is an optional list of additional git-diff arguments (e.g.
-          ['--ignore-space-change', '--diff-algorithm=patience']).
-
-        Raises ValueError if `filename` is empty or either hash is None. On
-        unexpected failures the exception is logged and re-raised.
-        """
-        try:
-            if filename is None or filename == "":
-                raise ValueError("getDiff: filename must be a non-empty repository-relative path")
-            if hash1 is None or hash2 is None:
-                raise ValueError("getDiff: hash1 and hash2 must be specified (not None)")
-
-            # return empty diff if both hashes are identical
-            if hash1 == hash2:
-                return []
-
-            # Normalize variation list
-            var_args: list[str] = []
-            if variation:
-                try:
-                    for v in variation:
-                        # Accept strings or single-item tuples/lists for backwards compat
-                        if isinstance(v, (list, tuple)) and len(v) == 1:
-                            var_args.append(str(v[0]))
-                        else:
-                            var_args.append(str(v))
-                except Exception as e:
-                    self.printException(e, "getDiff: processing variation args failed")
-
-            # Validate and build git diff arguments
-            # Use the repository-format empty-tree object for NEWREPO diffs
-            EMPTY_TREE = self._empty_tree_hash()
-
-            def token_to_ref(token: str):
-                if token == self.NEWREPO:
-                    return EMPTY_TREE
-                if token == self.MODS:
-                    # working tree; represented by absence of a tree/ref
-                    return None
-                if token == self.STAGED:
-                    # staged/index is represented via --cached flag
-                    return self.STAGED
-                return token
-
-            ref1 = token_to_ref(hash1)
-            ref2 = token_to_ref(hash2)
-
-            # If both refs resolve to the special staged marker, map to cached diff
-            args: list[str] = ["git", "diff"]
-            args.extend(var_args)
-
-            # If either side is staged, use --cached and include the other ref if present
-            if ref1 == self.STAGED or ref2 == self.STAGED:
-                args.append("--cached")
-                # include the non-staged ref if it maps to a concrete ref
-                other_ref = ref2 if ref1 == self.STAGED else ref1
-                if other_ref is not None and other_ref != self.STAGED:
-                    args.append(other_ref)
-            else:
-                # Neither side staged: include concrete refs when available.
-                # `None` indicates working tree (MODS) and is omitted so git diff
-                # will compare commit<->working-tree when only one ref is present.
-                if ref1 is not None:
-                    args.append(ref1)
-                if ref2 is not None:
-                    args.append(ref2)
-
-            # Append separator and filename
-            args += ["--", filename]
-
-            out = self._git_run(args, text=True)
-            # If textual diff is empty, attempt metadata summary fallback
-            if not (out and out.strip()):
-                try:
-                    pseudo_names = (self.MODS, self.STAGED)
-                    # Determine whether metadata diff should use --cached.
-                    if hash1 in pseudo_names and hash2 in pseudo_names and {hash1, hash2} == {self.STAGED, self.MODS}:
-                        use_cached = False
-                    else:
-                        use_cached = hash1 == self.STAGED or hash2 == self.STAGED
-                    meta_cmd = ["git", "-C", self._repoRoot, "diff"]
-                    if use_cached:
-                        meta_cmd.append("--cached")
-                    meta_cmd += ["--name-status", "--summary"]
-                    # Include explicit refs when provided (avoid pseudo names)
-                    if hash1 in pseudo_names or hash2 in pseudo_names:
-                        if hash1 and hash1 not in pseudo_names and hash2 and hash2 not in pseudo_names:
-                            meta_cmd += [hash1, hash2]
-                        elif hash2 and hash2 not in pseudo_names:
-                            meta_cmd.append(hash2)
-                        elif hash1 and hash1 not in pseudo_names:
-                            meta_cmd.append(hash1)
-                    else:
-                        if hash1 and hash2:
-                            meta_cmd += [hash1, hash2]
-                        elif hash2 and not hash1:
-                            meta_cmd.append(hash2)
-                    if filename:
-                        meta_cmd += ["--", filename]
-                    meta_out = self._git_run(meta_cmd, text=True)
-                    if meta_out and meta_out.strip():
-                        out = meta_out
-                    else:
-                        out = "(no textual changes for this file)"
-                except Exception as e:
-                    self.printException(e, "getDiff: metadata diff failed")
-
-            # Return output lines (preserve empty output as empty list)
-            if not out:
-                return []
-            return out.splitlines()
-        except Exception as e:
-            # Log and re-raise so callers can handle errors explicitly
-            self.printException(e, "getDiff: failed")
-            raise
-
-    def build_diff_cmd(self, filename: str, prev: str, curr: str, variant_index: int = 0) -> list[str]:
-        """
-        Return a git diff argv list for the given filenames and commit-ish pair.
-        """
-        try:
-            repo_root = self._repoRoot
-
-            # Determine repository empty-tree object id (sha1 or sha256)
-            empty_tree = self._empty_tree_hash()
-
-            # Map special tokens to git refs/markers used below.
-            def token_to_ref(token: str):
-                if token == self.NEWREPO:
-                    return empty_tree
-                if token == self.MODS:
-                    # working tree represented by absence of a ref
-                    return None
-                if token == self.STAGED:
-                    # staged/index is represented via --cached flag
-                    return self.STAGED
-                return token
-
-            ref_prev = token_to_ref(prev) if prev is not None else None
-            ref_curr = token_to_ref(curr) if curr is not None else None
-
-            # Helper to build base diff argv
-            def base_diff(use_cached: bool = False) -> list[str]:
-                base = ["git", "-C", repo_root, "diff"]
-                if use_cached:
-                    base.append("--cached")
-                return base
-
-            # If either side refers to the staged index marker, prefer --cached
-            use_cached = (ref_prev == self.STAGED) or (ref_curr == self.STAGED)
-
-            # If both resolved refs are identical, return a diff invocation
-            # that will produce empty output (no-op) rather than attempting
-            # to build a meaningful comparison.
-            if ref_prev == ref_curr:
-                cmd = base_diff(use_cached=use_cached)
-                if ref_prev is not None:
-                    cmd.append(ref_prev)
-                    cmd.append(ref_curr)
-                if filename:
-                    cmd += ["--", filename]
-                return cmd
-
-            # Cases to consider:
-            # - working-tree side present (None) -> use diff/show semantics
-            # - both concrete refs (including empty-tree) -> normal diff
-            # - single concrete curr (prev None and prev token was NEWREPO) -> use show for commit
-            if ref_prev is None or ref_curr is None:
-                # If only curr specified and prev was the implicit working-tree
-                if prev is None and ref_curr is not None and ref_prev is None:
-                    # Show the commit's patch (git show produces patch for commit)
-                    cmd = ["git", "-C", repo_root, "show", "--pretty=format:", ref_curr]
-                else:
-                    cmd = base_diff(use_cached=use_cached)
-                    if ref_prev is not None:
-                        cmd.append(ref_prev)
-                    if ref_curr is not None:
-                        cmd.append(ref_curr)
-            else:
-                # Both sides are concrete refs (may be empty-tree hash)
-                cmd = base_diff(use_cached=use_cached)
-                cmd.append(ref_prev)
-                cmd.append(ref_curr)
-
-            if filename:
-                cmd += ["--", filename]
-
-            return cmd
-        except Exception as e:
-            self.printException(e, "GitRepo.build_diff_cmd failed")
-            return ["git", "diff"]
-
-    def getFileContents(self, hashval: str, relpath: str) -> bytes | None:
-        """Return raw bytes for the given repository-relative `relpath` at `hashval`.
-
-        - `MODS` reads the working-tree file bytes.
-        - `STAGED` reads from index via `git show :<relpath>`.
-        - commit-ish reads from `git show <hash>:<relpath>`.
-        Returns None on failure.
-        """
-        try:
-            if hashval == self.MODS:
-                try:
-                    full = os.path.join(self._repoRoot, relpath)
-                    with open(full, "rb") as f:
-                        return f.read()
-                except Exception as e:
-                    self.printException(e, "getFileContents: reading working-tree failed")
-                    return None
-
-            if hashval == self.STAGED:
-                out = self._git_run(["git", "-C", self._repoRoot, "show", f":{relpath}"], text=False)
-                return out if out else None
-
-            # commit-ish
-            out = self._git_run(["git", "-C", self._repoRoot, "show", f"{hashval}:{relpath}"], text=False)
-            return out if out else None
-        except Exception as e:
-            self.printException(e, "getFileContents failed")
-            return None
-        except Exception as e:
-            # Log and re-raise so callers can handle errors explicitly
-            self.printException(e, "getDiff: failed")
-            raise
-
 
 def run_cmd_log(cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
     """Module-level wrapper for subprocess.run mirroring `AppBase._run_cmd_log`.
@@ -1570,7 +281,7 @@ class AppBase(AppException, ListView):
             # a repo-relative normalized path; otherwise normalize as-is.
             if path and path.startswith(os.sep):
                 try:
-                    return os.path.relpath(os.path.realpath(path), repo_root)
+                    return os.path.relpath(os.path.normpath(path), repo_root)
                 except Exception as e:
                     self.printException(e, "_canonical_relpath: realpath->relpath failed")
                     return os.path.normpath(path)
@@ -1592,7 +303,8 @@ class AppBase(AppException, ListView):
                     display = f"{status} {path}"
                     item = ListItem(Label(Text(display)))
                     try:
-                        full = self._canonical_relpath(path, self.app.repo_root)
+                        repo_root_local = self.app.gitRepo.get_repo_root()
+                        full = self._canonical_relpath(path, repo_root_local)
                         item._raw_text = full
                     except Exception as e:
                         self.printException(e, "_format_pseudo_summary: resolving full path failed")
@@ -1621,7 +333,8 @@ class AppBase(AppException, ListView):
         """
         try:
             try:
-                canonical = self._canonical_relpath(full_path, self.app.repo_root) if full_path else full_path
+                repo_root_local = self.app.gitRepo.get_repo_root()
+                canonical = self._canonical_relpath(full_path, repo_root_local) if full_path else full_path
             except Exception as _ex:
                 self.printException(_ex, "_append_file_row: canonicalizing path failed")
                 canonical = full_path
@@ -1671,7 +384,8 @@ class AppBase(AppException, ListView):
             except Exception as _ex:
                 self.printException(_ex, "_append_file_row: setting _raw_text failed")
                 try:
-                    item._raw_text = os.path.relpath(full_path, self.app.repo_root) if full_path else display
+                    repo_root_local = self.app.gitRepo.get_repo_root()
+                    item._raw_text = os.path.relpath(full_path, repo_root_local) if full_path else display
                 except Exception as e:
                     self.printException(e, "_append_file_row: relpath fallback failed")
                     item._raw_text = display
@@ -2031,7 +745,8 @@ class AppBase(AppException, ListView):
                 # comparisons against `_raw_text` (which we now store as
                 # full paths for repo-mode rows) succeed.
                 try:
-                    match_full = self._canonical_relpath(match, self.app.repo_root)
+                    repo_root_local = self.app.gitRepo.get_repo_root()
+                    match_full = self._canonical_relpath(match, repo_root_local)
                 except Exception as e:
                     match_full = match
                     self.printException(e, "_highlight_match: normalizing match failed")
@@ -2042,7 +757,8 @@ class AppBase(AppException, ListView):
                         h = getattr(node, "_hash", None)
                         try:
                             if raw is not None:
-                                node_full = self._canonical_relpath(raw, self.app.repo_root)
+                                repo_root_local = self.app.gitRepo.get_repo_root()
+                                node_full = self._canonical_relpath(raw, repo_root_local)
                             else:
                                 node_full = None
                         except Exception as e:
@@ -2156,7 +872,7 @@ class AppBase(AppException, ListView):
         """Shared app-level sync used by all preparers.
 
         This function performs the conservative updates to the application
-        state (`app.current_hash`, `app.previous_hash`, `app.current_path`)
+        state (`app.current_hash`, `app.previous_hash`, `app.rel_dir`/`app.rel_file`)
         and invokes `_compute_selected_pair` when appropriate. It does not
         perform widget-specific highlighting or marking.
         """
@@ -2167,25 +883,25 @@ class AppBase(AppException, ListView):
                     self.app.previous_hash = prev_hash
                 except Exception as _ex:
                     self.printException(_ex, "_finalize_prep_common: updating app hashes failed")
-            else:
+                return
+
+            # If no explicit hashes provided, attempt to compute the selected pair.
+            if hasattr(self, "_compute_selected_pair"):
                 try:
-                    if hasattr(self, "_compute_selected_pair"):
-                        try:
-                            self._compute_selected_pair()
-                        except Exception as _ex:
-                            self.printException(_ex, "_finalize_prep_common: _compute_selected_pair failed")
-                except Exception as e:
-                    self.printException(e, "_finalize_prep_common: computing selected pair failed")
-                try:
-                    if path is not None:
-                        try:
-                            # Path values are repo-relative; normalize them.
-                            rel = os.path.normpath(path)
-                            self.app.current_path = rel
-                        except Exception as _ex:
-                            self.printException(_ex, "_finalize_prep_common: setting app.current_path failed")
+                    self._compute_selected_pair()
                 except Exception as _ex:
-                    self.printException(_ex, "_finalize_prep_common: setting app.current_path failed")
+                    self.printException(_ex, "_finalize_prep_common: _compute_selected_pair failed")
+
+            # Normalize and store repo-relative path components when provided.
+            if path is not None:
+                try:
+                    rel = os.path.normpath(path)
+                    rd, rf = os.path.split(rel)
+                    self.app.rel_dir = rd or ""
+                    self.app.rel_file = rf or ""
+                except Exception as _ex:
+                    self.printException(_ex, "_finalize_prep_common: setting app.rel_dir/rel_file failed")
+
         except Exception as e:
             self.printException(e, "_finalize_prep_common: app state sync failed")
 
@@ -2406,7 +1122,7 @@ class AppBase(AppException, ListView):
         """Common helper to prompt and save snapshot files for a visible widget.
 
         Pops a modal asking whether to save the older (previous_hash), newer
-        (current_hash), or both versions of the current `app.path`/`app.current_path`.
+        (current_hash), or both versions of the current `app.rel_dir`/`app.rel_file`.
         The modal performs the actual file extraction and writing.
         """
         try:
@@ -2425,14 +1141,21 @@ class AppBase(AppException, ListView):
                 logger.debug("key_s_helper: no app available")
                 return
 
-            # Prefer canonical current_path then fallback to app.path
-            filepath = getattr(app, "current_path", None) or getattr(app, "path", None)
+            # Build an absolute filepath from app rel_dir/rel_file when available
+            filepath = None
+            try:
+                if getattr(app, "rel_file", None):
+                    filepath = app.gitRepo.full_path_for(getattr(app, "rel_dir", "") or "", app.rel_file)
+                elif getattr(app, "rel_dir", None) is not None:
+                    filepath = app.gitRepo.full_path_for(app.rel_dir or "", None)
+            except Exception as _ex:
+                self.printException(_ex, "key_s_helper: building filepath from app.rel_dir/rel_file failed")
             prev_hash = getattr(app, "previous_hash", None)
             curr_hash = getattr(app, "current_hash", None)
 
-            # If filepath appears to be a directory, try to use app.path instead
+            # If filepath appears to be a directory, keep it as-is
             if filepath and os.path.isdir(filepath):
-                filepath = getattr(app, "path", None) or filepath
+                pass
 
             if not filepath:
                 try:
@@ -2709,7 +1432,8 @@ class FileListBase(AppBase):
             try:
                 match_full = None
                 if filename:
-                    match_full = self._canonical_relpath(filename, self.app.repo_root)
+                    repo_root_local = self.app.gitRepo.get_repo_root()
+                    match_full = self._canonical_relpath(filename, repo_root_local)
             except Exception as e:
                 match_full = filename
                 self.printException(e, "_highlight_filename: normalizing filename failed")
@@ -2721,7 +1445,8 @@ class FileListBase(AppBase):
                     raw = getattr(node, "_raw_text", None)
                     if raw is not None and match_full is not None:
                         try:
-                            node_full = self._canonical_relpath(raw, self.app.repo_root)
+                            repo_root_local = self.app.gitRepo.get_repo_root()
+                            node_full = self._canonical_relpath(raw, repo_root_local)
                         except Exception as e:
                             node_full = raw
                             self.printException(e, "_highlight_filename: computing node_full failed")
@@ -2806,7 +1531,7 @@ class FileListBase(AppBase):
     def watch_filelist_index(self, old: int | None, new: int | None, node_new) -> None:
         """File-list specific post-highlight hook.
 
-        Keeps `app.path` and `app.current_path` in sync with the newly-highlighted
+        Keeps `app.rel_dir` and `app.rel_file` in sync with the newly-highlighted
         row's `_raw_text` value where appropriate.
         """
         try:
@@ -2815,12 +1540,18 @@ class FileListBase(AppBase):
                 try:
                     # Raw values are repo-relative; normalize before storing
                     rel = os.path.normpath(raw)
-                    self.app.current_path = rel
+                    try:
+                        rd, rf = os.path.split(rel)
+                        self.app.rel_dir = rd or ""
+                        self.app.rel_file = rf or ""
+                    except Exception as _ex:
+                        self.printException(_ex, "watch_filelist_index: setting app.rel_dir/rel_file failed")
                 except Exception as _ex:
-                    self.printException(_ex, "watch_filelist_index: setting app.current_path failed")
+                    self.printException(_ex, "watch_filelist_index: setting app.rel_dir/rel_file failed")
             logger.debug(
-                "watch_filelist_index: set app.current_path=%r",
-                self.app.current_path,
+                "watch_filelist_index: set app.rel_dir/app.rel_file=%r/%r",
+                self.app.rel_dir,
+                self.app.rel_file,
             )
         except Exception as e:
             self.printException(e, "watch_filelist_index failed")
@@ -2875,14 +1606,18 @@ class FileListBase(AppBase):
             parent = os.path.dirname(path)
             logger.debug("_render_parent_entry_if_needed: path=%s parent=%s", path, parent)
             try:
-                parent_abs = os.path.realpath(parent) if parent else ""
-                path_abs = os.path.realpath(path) if path else ""
-                repo_root_abs = self.app.repo_root
+                parent_abs = os.path.normpath(parent) if parent else ""
+                path_abs = os.path.normpath(path) if path else ""
+                repo_root_abs = self.app.gitRepo.get_repo_root()
             except Exception as e:
                 self.printException(e, "_render_parent_entry_if_needed: realpath lookup failed")
                 parent_abs = parent
                 path_abs = path
-                repo_root_abs = self.app.repo_root
+                try:
+                    repo_root_abs = self.app.gitRepo.get_repo_root()
+                except Exception as e:
+                    self.printException(e, "_render_parent_entry_if_needed: getting repo_root failed")
+                    repo_root_abs = None
             if parent and parent_abs != path_abs and path_abs != repo_root_abs:
                 try:
                     parent_item = ListItem(Label(Text(f"← ..", style=STYLE_PARENT)))
@@ -2891,12 +1626,16 @@ class FileListBase(AppBase):
                         parent_item._is_dir = True
                         try:
                             # Store repo-relative raw path when possible
+                            repo_root_local = self.app.gitRepo.get_repo_root()
                             parent_item._raw_text = (
-                                os.path.relpath(parent_abs, self.app.repo_root) if parent_abs else parent
+                                os.path.relpath(parent_abs, repo_root_local) if parent_abs else parent
                             )
                         except Exception as e:
                             self.printException(e, "_render_parent_entry_if_needed: relpath failed")
                             parent_item._raw_text = parent
+                    except Exception as e:
+                        self.printException(e, "_render_parent_entry_if_needed: setting metadata failed")
+                        parent_item._raw_text = parent
                         logger.debug(
                             "_render_parent_entry_if_needed: adding parent dir item for %s", parent_item._raw_text
                         )
@@ -2956,11 +1695,21 @@ class FileListBase(AppBase):
                     # `repo_root` before highlighting.
                     if base_path is None:
                         try:
-                            bp_rel = self.app.current_path or "."
-                            bp = os.path.join(self.app.repo_root, bp_rel)
+                            rd = self.app.rel_dir
+                            rf = self.app.rel_file
+                            if rf:
+                                bp_rel = os.path.join(rd or "", rf)
+                            else:
+                                bp_rel = rd or "."
+                            try:
+                                repo_root_local = self.app.gitRepo.get_repo_root()
+                                bp = os.path.join(repo_root_local, bp_rel) if repo_root_local else bp_rel
+                            except Exception as e:
+                                self.printException(e, "_schedule_highlight_and_visibility: getting repo_root failed")
+                                bp = bp_rel
                         except Exception as e:
                             self.printException(
-                                e, "_schedule_highlight_and_visibility: reading app.current_path failed"
+                                e, "_schedule_highlight_and_visibility: reading app.rel_dir/rel_file failed"
                             )
                             bp = "."
                     else:
@@ -3065,7 +1814,8 @@ class FileListBase(AppBase):
                             item._repo_status = None
                             try:
                                 # Prefer storing repo-relative raw paths
-                                item._raw_text = os.path.relpath(full, self.app.repo_root) if full else name
+                                repo_root_local = self.app.gitRepo.get_repo_root()
+                                item._raw_text = os.path.relpath(full, repo_root_local) if full else name
                             except Exception as e:
                                 self.printException(e, "_populate_from_file_infos: relpath failed for dir")
                                 item._raw_text = name
@@ -3101,7 +1851,8 @@ class FileListBase(AppBase):
                         item._repo_status = repo_status
                         item._is_dir = False
                         try:
-                            item._raw_text = os.path.relpath(full, self.app.repo_root) if full else name
+                            repo_root_local = self.app.gitRepo.get_repo_root()
+                            item._raw_text = os.path.relpath(full, repo_root_local) if full else name
                         except Exception as e:
                             self.printException(e, "_populate_from_file_infos: relpath fallback failed")
                             item._raw_text = name
@@ -3128,7 +1879,12 @@ class FileListBase(AppBase):
         """
         rows: list[dict] = []
         try:
-            base = self.app.repo_root
+            try:
+                repo_root_local = self.app.gitRepo.get_repo_root()
+            except Exception as e:
+                self.printException(e, "_to_display_rows: getting repo_root failed")
+                repo_root_local = None
+            base = repo_root_local
             for entry in raw_filelist or []:
                 try:
                     # If already a normalized dict use it as-is (but ensure keys)
@@ -3138,7 +1894,7 @@ class FileListBase(AppBase):
                         is_dir = bool(entry.get("is_dir", False))
                         raw = entry.get("raw", name)
                         repo_status = entry.get("repo_status")
-                        # Resolve full to an absolute realpath when possible
+                        # Resolve full to a normalized path when possible
                         try:
                             if full and base:
                                 full = os.path.join(base, full)
@@ -3146,7 +1902,7 @@ class FileListBase(AppBase):
                         except Exception as e:
                             self.printException(e, "_to_display_rows: resolving full path failed")
                         try:
-                            rel_raw = os.path.relpath(full, self.app.repo_root) if full else full
+                            rel_raw = os.path.relpath(full, repo_root_local) if full and repo_root_local else full
                         except Exception as e:
                             self.printException(e, "_to_display_rows: rel_raw computation failed")
                             rel_raw = raw
@@ -3175,7 +1931,7 @@ class FileListBase(AppBase):
                             is_dir = False
                         name = os.path.basename(full) if full else path
                         try:
-                            raw = os.path.relpath(full, self.app.repo_root) if full else (full if is_dir else name)
+                            raw = os.path.relpath(full, repo_root_local) if full and repo_root_local else (full if is_dir else name)
                         except Exception as e:
                             self.printException(e, "_to_display_rows: raw relpath failed")
                             raw = full if is_dir else name
@@ -3232,7 +1988,6 @@ class FileModeFileList(FileListBase):
         self,
         rel_dir: str | None = None,
         rel_path: str | None = None,
-        highlight_filename: str | None = None,
     ) -> None:
         """Populate this widget with the file list for `path`.
 
@@ -3241,6 +1996,57 @@ class FileModeFileList(FileListBase):
         filename is used as the highlight candidate.
         """
         try:
+            
+            def _prepFileModeFileList_from_git(rel_path_root: str, relpath_arg: str | None, status_map_arg: dict) -> list[dict]:
+                """Helper: produce file info dicts for `path` using git status map.
+
+                Returns list of dicts with keys: name, full, is_dir, raw, repo_status.
+                """
+                infos: list[dict] = []
+                try:
+                    repo_root_local = None
+                    try:
+                        repo_root_local = self.app.gitRepo.get_repo_root()
+                    except Exception as e:
+                        self.printException(e, "_prepFileModeFileList_from_git: getting repo_root failed")
+                        repo_root_local = None
+
+                    try:
+                        for ent in os.scandir(rel_path_root):
+                            try:
+                                nm = ent.name
+                                fullp = ent.path
+                                isd = ent.is_dir(follow_symlinks=False)
+                                if repo_root_local:
+                                    try:
+                                        rawp = os.path.relpath(fullp, repo_root_local)
+                                    except Exception as e:
+                                        self.printException(e, "_prepFileModeFileList_from_git: relpath failed for entry")
+                                        rawp = fullp
+                                else:
+                                    rawp = fullp
+
+                                key = os.path.join(relpath_arg or "", nm) if relpath_arg else nm
+                                repo_status_val = None
+                                if status_map_arg:
+                                    repo_status_val = status_map_arg.get(key) or status_map_arg.get(nm)
+
+                                infos.append({
+                                    "name": nm,
+                                    "full": fullp,
+                                    "is_dir": isd,
+                                    "raw": rawp,
+                                    "repo_status": repo_status_val,
+                                })
+                            except Exception as e:
+                                self.printException(e, "_prepFileModeFileList_from_git: processing entry failed")
+                                continue
+                    except Exception as _ex:
+                        self.printException(_ex, "_prepFileModeFileList_from_git: scandir failed")
+                except Exception as e:
+                    self.printException(e, "_prepFileModeFileList_from_git failed")
+                return infos
+
             # Compute absolute `path` from provided repo-relative inputs.
             try:
                 repo_root = self.app.gitRepo.get_repo_root()
@@ -3252,18 +2058,13 @@ class FileModeFileList(FileListBase):
                     path = repo_root
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: computing absolute path failed")
-                path = self.app.repo_root
+                try:
+                    path = self.app.gitRepo.get_repo_root()
+                except Exception as e:
+                    self.printException(e, "prepFileModeFileList: get_repo_root fallback failed")
+                    path = "."
 
-            logger.debug(
-                "prepFileModeFileList: path=%r rel_dir=%r rel_path=%r highlight_filename=%r",
-                path,
-                rel_dir,
-                rel_path,
-                highlight_filename,
-            )
-            # Enforce explicit highlight_filename: callers must provide a value.
-            if highlight_filename is None:
-                raise ValueError("prepFileModeFileList requires highlight_filename not be None")
+            logger.debug("prepFileModeFileList: path=%r rel_dir=%r rel_path=%r", path, rel_dir, rel_path)
             # Collect normalized hash list from provided GitRepo and cache it
             try:
                 normalized_hashes = self.app.gitRepo.getNormalizedHashListComplete() or []
@@ -3278,20 +2079,17 @@ class FileModeFileList(FileListBase):
                 self._cached_normalized_hashes = []
             # Canonicalize path and allow callers to pass a file to highlight
             path = os.path.abspath(path)
-            # `highlight_filename` (if provided) takes precedence. If not
-            # provided and `path` points at a file, use that file's basename
-            # as the highlight and list its containing directory.
-            hl = highlight_filename
-            if hl is None and os.path.isfile(path):
-                hl = os.path.basename(path)
-            if os.path.isfile(path):
-                path = os.path.dirname(path) or "."
+            # Determine highlight filename from `rel_path` when provided.
+            # If `rel_path` is not provided and `path` points at a file,
+            # use that file's basename as the highlight. An empty string
+            # indicates no highlighting is requested.
+            hl = rel_path
 
             # Canonicalize the directory path so comparisons (e.g. against
             # the repo root) use real paths and avoid /tmp vs /private/tmp
             # mismatches.
             try:
-                path = os.path.realpath(path)
+                path = os.path.normpath(path)
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: realpath failed")
                 # If realpath fails for some reason, keep the original path
@@ -3302,7 +2100,8 @@ class FileModeFileList(FileListBase):
                     relpath = rel_path
                 else:
                     try:
-                        relpath = os.path.relpath(path, self.app.repo_root)
+                        repo_root_local = self.app.gitRepo.get_repo_root()
+                        relpath = os.path.relpath(path, repo_root_local) if repo_root_local else path
                     except Exception as e:
                         self.printException(e, "prepFileModeFileList: relpath computation inner failed")
                         relpath = path
@@ -3310,19 +2109,18 @@ class FileModeFileList(FileListBase):
                 self.printException(e, "prepFileModeFileList: computing relpath failed")
                 relpath = path
 
-            # Record the list's path (repo-relative) and keep application
-            # state in sync. Avoid storing absolute paths in widget/app state.
-            self.path = relpath
+            # Record the list's repo-relative path and keep application
+            # rel_dir/rel_file in sync. Avoid storing absolute paths in widget/app state.
             try:
-                self.app.current_path = relpath
+                rd, rf = os.path.split(relpath)
+                self.rel_dir = rd or ""
+                self.rel_file = rf or ""
+                self.app.rel_dir = self.rel_dir
+                self.app.rel_file = self.rel_file
             except Exception as e:
-                self.printException(e, "prepFileModeFileList: setting app.current_path failed")
-            # Also record the app-level `path` so other components (diff,
-            # toggles) can rely on the currently-visible directory.
-            try:
-                self.app.path = relpath
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList: setting app.path failed")
+                self.printException(e, "prepFileModeFileList: setting app.rel_dir/rel_file failed")
+            # App-level path is intentionally not maintained; consumers
+            # should use `app.rel_dir` and `app.rel_file` instead.
 
             logger.debug(f"prepFileModeFileList: path='{path}' relpath={relpath} rel_dir={rel_dir}")
 
@@ -3363,24 +2161,21 @@ class FileModeFileList(FileListBase):
             try:
                 file_infos: list[dict] = []
 
-                file_infos = self._prepFileModeFileList_from_git(path, relpath, status_map)
+                # Use the local helper to obtain file info entries.
+                file_infos = _prepFileModeFileList_from_git(path, relpath, status_map)
 
-                # Trim file_infos using highlight_filename when provided.
-                hl = highlight_filename
-                if hl is not None:
-                    if hl == "":
-                        # Explicit empty string -> display base directory (no trimming)
-                        visible_infos = file_infos
-                    else:
-                        visible_infos = [
-                            info
-                            for info in file_infos
-                            if info.get("name") == hl
-                            or info.get("name", "").startswith(hl)
-                            or info.get("full", "").endswith(os.path.join(path, hl))
-                        ]
-                else:
+                # Trim file_infos using `hl` when provided. Empty string
+                # indicates no trimming (show all entries).
+                if hl == "":
                     visible_infos = file_infos
+                else:
+                    visible_infos = [
+                        info
+                        for info in file_infos
+                        if info.get("name") == hl
+                        or info.get("name", "").startswith(hl)
+                        or info.get("full", "").endswith(os.path.join(path, hl))
+                    ]
 
                 for info in visible_infos:
                     try:
@@ -3400,7 +2195,8 @@ class FileModeFileList(FileListBase):
                                 item._is_dir = True
                                 item._repo_status = None
                                 try:
-                                    item._raw_text = self._canonical_relpath(full, self.app.repo_root) if full else name
+                                    repo_root_local = self.app.gitRepo.get_repo_root()
+                                    item._raw_text = self._canonical_relpath(full, repo_root_local) if full else name
                                 except Exception as e:
                                     self.printException(e, "prepFileModeFileList: relpath fallback failed for dir")
                                     item._raw_text = name
@@ -3436,7 +2232,8 @@ class FileModeFileList(FileListBase):
                             item._repo_status = repo_status
                             item._is_dir = False
                             try:
-                                item._raw_text = self._canonical_relpath(full, self.app.repo_root) if full else name
+                                repo_root_local = self.app.gitRepo.get_repo_root()
+                                item._raw_text = self._canonical_relpath(full, repo_root_local) if full else name
                             except Exception as e:
                                 self.printException(e, "prepFileModeFileList: relpath fallback failed")
                                 item._raw_text = name
@@ -3753,7 +2550,8 @@ class RepoModeFileList(FileListBase):
                                     is_dir = False
                                 name = os.path.basename(full) if full else display
                                 try:
-                                    raw_val = self._canonical_relpath(full, self.app.repo_root) if full else name
+                                    repo_root_local = self.app.gitRepo.get_repo_root()
+                                    raw_val = self._canonical_relpath(full, repo_root_local) if full else name
                                 except Exception as e:
                                     self.printException(e, "prepRepoModeFileList: canonicalizing entry failed")
                                     raw_val = name
@@ -3790,15 +2588,17 @@ class RepoModeFileList(FileListBase):
             try:
                 self.app.previous_hash = prev_hash
                 self.app.current_hash = curr_hash
-                # If caller requested a filename highlight, record it as
-                # `app.current_path` (canonical full path) so other components can rely on it.
+                # If caller requested a filename highlight, record it via
+                # `rel_dir`/`rel_file` so other components can rely on a single source of truth.
                 if highlight_filename:
                     try:
                         # Store repo-relative highlight paths; normalize input
                         rel = os.path.normpath(highlight_filename)
-                        self.app.current_path = rel
+                        rd, rf = os.path.split(rel)
+                        self.app.rel_dir = rd or ""
+                        self.app.rel_file = rf or ""
                     except Exception as _ex:
-                        self.printException(_ex, "prepRepoModeFileList: setting app.current_path failed")
+                        self.printException(_ex, "prepRepoModeFileList: setting app.rel_dir/rel_file failed")
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: recording app-level state failed")
             try:
@@ -3869,9 +2669,11 @@ class RepoModeFileList(FileListBase):
             variant_index = 0
             try:
                 rel = os.path.normpath(filename)
-                self.app.current_path = rel
+                rd, rf = os.path.split(rel)
+                self.app.rel_dir = rd or ""
+                self.app.rel_file = rf or ""
             except Exception as _ex:
-                self.printException(_ex, "RepoModeFileList.key_right: setting app.current_path failed")
+                self.printException(_ex, "RepoModeFileList.key_right: setting app.rel_dir/rel_file failed")
 
             try:
                 # When opening from the repo-file list, we want DiffList.key_left
@@ -4317,7 +3119,11 @@ class FileModeHistoryList(HistoryListBase):
             self.clear()
             # If repository available, collect pseudo-entries (MODS/STAGED)
             # and commit history via backend helpers.
-            repo_root = self.app.repo_root
+            try:
+                repo_root = self.app.gitRepo.get_repo_root()
+            except Exception as e:
+                self.printException(e, "prepFileModeHistoryList: getting repo_root failed")
+                repo_root = None
             try:
                 # Path inputs are repo-relative; normalize for helpers
                 rel_path = os.path.normpath(path)
@@ -4435,7 +3241,7 @@ class FileModeHistoryList(HistoryListBase):
 
         prev_hash, curr_hash = self._compute_selected_pair()
         try:
-            filename = self.app.current_path
+            filename = self.app.rel_file or ""
             # Ask the diff list to prepare the diff for this file and pair
             try:
                 # When opening from a file's history, ensure left returns to
@@ -4557,12 +3363,14 @@ class RepoModeHistoryList(HistoryListBase):
                 # the file list highlights the expected file.
                 # Prefer the canonical `current_path` for highlight comparisons
                 # so repo-mode file rows (which store full paths) match deterministically.
-                hf = self.app.current_path
+                rd = self.app.rel_dir
+                rf = self.app.rel_file
+                hf = os.path.join(rd or "", rf) if rf else (rd or "")
                 logger.debug(
-                    "RepoModeHistoryList.key_right: prev=%r curr=%r app.current_path=%r",
+                    "RepoModeHistoryList.key_right: prev=%r curr=%r highlight=%r",
                     prev_hash,
                     curr_hash,
-                    self.app.current_path,
+                    hf,
                 )
                 self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash, highlight_filename=hf)
                 try:
@@ -4797,8 +3605,16 @@ class DiffList(AppBase):
             try:
                 # Use the app-level path and selected commit pair when re-prepping
                 # Preserve the current go_back state when re-prepping.
+                # Build repository-relative filename from rel_dir/rel_file
+                try:
+                    rd = self.app.rel_dir
+                    rf = self.app.rel_file
+                    filename = os.path.join(rd or "", rf) if rf else (rd or "")
+                except Exception as e:
+                    self.printException(e, "DiffList.key_d: computing filename failed")
+                    filename = ""
                 self.prepDiffList(
-                    self.app.current_path,
+                    filename,
                     self.app.previous_hash,
                     self.app.current_hash,
                     new_variant,
@@ -5082,12 +3898,8 @@ class GitHistoryNavTool(AppException, App):
         if self.rel_dir == ".":
             self.rel_dir = ""
 
-        # Keep `self.path` as a repository-relative canonical path (or empty)
-        if self.rel_file:
-            self.path = os.path.join(self.rel_dir, self.rel_file) if self.rel_dir else self.rel_file
-        else:
-            # If no file provided, treat path as directory (possibly empty)
-            self.path = self.rel_dir
+        # Application state uses only `rel_dir` and `rel_file`.
+        # Do not maintain `self.path` to avoid multiple source-of-truth values.
 
         self.no_color = no_color
         self.repo_first = repo_first
@@ -5110,44 +3922,6 @@ class GitHistoryNavTool(AppException, App):
         # index 0 -> None (no extra arg), 1 -> ignore-space-change, 2 -> patience algorithm
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
 
-    @property
-    def current_path(self) -> str | None:
-        """The current working path for the app, always stored as a realpath.
-
-        External code should set `app.current_path = some_path` and the
-        property will canonicalize it via `os.path.realpath`. A None value
-        is preserved as None.
-        """
-        return self._current_path
-
-    @current_path.setter
-    def current_path(self, value: str) -> None:
-        """Setter for `current_path` which canonicalizes and stores a realpath.
-
-        Treats falsy values as `.` and logs failures while preserving the
-        original value on error.
-        """
-        try:
-            # Treat empty/false as '.' and store a repo-relative path.
-            p = value if value else "."
-            full = os.path.realpath(p)
-            try:
-                repo_root = self.repo_root
-            except Exception as e:
-                self.printException(e, "current_path setter: repo_root lookup failed")
-                repo_root = None
-            if repo_root:
-                # Store a path relative to the repository root so UI state
-                # avoids absolute paths.
-                self._current_path = os.path.relpath(full, repo_root)
-            else:
-                # Fallback: store the canonical full path if repo root
-                # isn't available yet.
-                self._current_path = full
-        except Exception as e:
-            # Fall back to storing raw value and log
-            self.printException(e, "setting current_path failed")
-            self._current_path = value
 
     def compose(self):
         """Yield the canonical six-column layout widgets for the app.
@@ -5216,20 +3990,15 @@ class GitHistoryNavTool(AppException, App):
             try:
                 if not self.repo_first:
                     try:
-                        # Compute an initial repository-relative `rel` for preparers.
-                        if self.current_path:
-                            # `current_path` should be repo-relative; if it's
-                            # absolute, try to convert it to a relpath within
-                            # the repo; otherwise treat it as already relative.
-                            if os.path.isabs(self.current_path):
-                                try:
-                                    rel = GitRepo.relpath_if_within(self.gitRepo.get_repo_root(), self.current_path)
-                                except Exception:
-                                    # Fall back to an os.relpath conversion
-                                    rel = os.path.relpath(self.current_path, self.gitRepo.get_repo_root())
+                        # Compute an initial repository-relative `rel` for preparers
+                        # using the canonical rel_dir/rel_file pair.
+                        try:
+                            if self.rel_file:
+                                rel = os.path.join(self.rel_dir or "", self.rel_file)
                             else:
-                                rel = os.path.normpath(self.current_path)
-                        else:
+                                rel = self.rel_dir or ""
+                        except Exception as e:
+                            self.printException(e, "preparer: computing rel failed")
                             rel = self.rel_dir or ""
 
                         # Resolve a full filesystem path only to test whether
@@ -5274,15 +4043,13 @@ class GitHistoryNavTool(AppException, App):
                         try:
                             # Compute repository-relative `rel` and only resolve
                             # an absolute path when needed for filesystem checks.
-                            if self.current_path:
-                                if os.path.isabs(self.current_path):
-                                    try:
-                                        rel = GitRepo.relpath_if_within(self.gitRepo.get_repo_root(), self.current_path)
-                                    except Exception:
-                                        rel = os.path.relpath(self.current_path, self.gitRepo.get_repo_root())
+                            try:
+                                if self.rel_file:
+                                    rel = os.path.join(self.rel_dir or "", self.rel_file)
                                 else:
-                                    rel = os.path.normpath(self.current_path)
-                            else:
+                                    rel = self.rel_dir or ""
+                            except Exception as e:
+                                self.printException(e, "preparer: computing rel failed")
                                 rel = self.rel_dir or ""
 
                             if rel:
@@ -5419,9 +4186,17 @@ class GitHistoryNavTool(AppException, App):
 
             # Local references to avoid repeated attribute lookups
             app = self
-            prev = getattr(app, "previous_hash", None)
-            curr = getattr(app, "current_hash", None)
-            path = getattr(app, "path", None) or getattr(app, "current_path", None) or "."
+            prev = app.previous_hash
+            curr = app.current_hash
+            # Build repo-relative path from rel_dir/rel_file; default to '.'
+            try:
+                if app.rel_file:
+                    path = os.path.join(app.rel_dir or "", app.rel_file)
+                else:
+                    path = app.rel_dir or "."
+            except Exception as e:
+                self.printException(e, "key_r: computing path failed")
+                path = "."
 
             # Helper to decide visibility (styles.display == "none" means hidden)
             def _is_visible(widget) -> bool:
@@ -5976,10 +4751,9 @@ class GitHistoryNavTool(AppException, App):
                     self._current_focus,
                 )
                 logger.trace(
-                    "app state: rel_dir=<%r> rel_file=<%r> current_path=<%r> current_hash=<%r> previous_hash=<%r>",
+                    "app state: rel_dir=<%r> rel_file=<%r> current_hash=<%r> previous_hash=<%r>",
                     self.rel_dir,
                     self.rel_file,
-                    self.current_path,
                     self.current_hash,
                     self.previous_hash,
                 )
@@ -6059,25 +4833,21 @@ class GitHistoryNavTool(AppException, App):
         # When toggling from file_fullscreen, populate the repo history
         # so the paired history_fullscreen view is ready.
         try:
-                try:
-                    # Determine a repository-relative path to request from the preparer.
-                    if self.current_path:
-                        if os.path.isabs(self.current_path):
-                            try:
-                                repo_path = GitRepo.relpath_if_within(self.gitRepo.get_repo_root(), self.current_path)
-                            except Exception:
-                                repo_path = os.path.relpath(self.current_path, self.gitRepo.get_repo_root())
-                        else:
-                            repo_path = os.path.normpath(self.current_path)
-                    else:
-                        repo_path = self.rel_dir or ""
-                except Exception as e:
-                    self.printException(e, "toggle_file_fullscreen: computing repo_path failed")
-                    repo_path = ""
-                try:
-                    self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=repo_path)
-                except Exception as e:
-                    self.printException(e, "toggle_file_fullscreen prepRepoModeHistoryList failed")
+            try:
+                # Determine a repository-relative path to request from the preparer
+                rd = self.rel_dir
+                rf = self.rel_file
+                if rf:
+                    repo_path = os.path.join(rd or "", rf)
+                else:
+                    repo_path = rd or ""
+            except Exception as e:
+                self.printException(e, "toggle_file_fullscreen: computing repo_path failed")
+                repo_path = ""
+            try:
+                self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=repo_path)
+            except Exception as e:
+                self.printException(e, "toggle_file_fullscreen prepRepoModeHistoryList failed")
         except Exception as e:
             self.printException(e, "toggle_file_fullscreen unexpected failure")
         try:
@@ -6091,15 +4861,11 @@ class GitHistoryNavTool(AppException, App):
         Prepares the file list and sets focus/footers appropriately.
         """
         try:
-            # Determine a highlight filename: prefer rel_file when present,
-            # otherwise derive from current_path. Compute init_path similarly.
-            hl = (
-                self.rel_file if self.rel_file else (os.path.basename(self.current_path) if self.current_path else None)
-            )
+            # Determine a highlight filename: prefer rel_file when present.
+            # Use empty string to indicate no highlight rather than None.
+            hl = self.rel_file or ""
             gitrepo = self.gitRepo
-            init_path = self.current_path or (
-                os.path.join(gitrepo.get_repo_root(), self.rel_dir) if self.rel_dir else gitrepo.get_repo_root()
-            )
+            init_path = os.path.join(gitrepo.get_repo_root(), self.rel_dir) if self.rel_dir else gitrepo.get_repo_root()
             try:
                 root = gitrepo.get_repo_root()
                 ip = init_path
@@ -6115,7 +4881,7 @@ class GitHistoryNavTool(AppException, App):
                 else:
                     rdir = os.path.dirname(rel) or ""
                     rpath = os.path.basename(rel)
-                self.file_mode_file_list.prepFileModeFileList(rdir, rpath, hl)
+                self.file_mode_file_list.prepFileModeFileList(rdir, rpath)
             except Exception as _ex:
                 self.printException(_ex, "toggle_history_fullscreen prepFileModeFileList failed")
         except Exception as e:
@@ -6131,8 +4897,8 @@ class GitHistoryNavTool(AppException, App):
         Reads authoritative commit hashes after preparing the repo history and
         then prepares the repo file list highlighting the canonical filename.
         """
-        # Save transient values
-        saved_path = self.current_path
+        # Save transient values (use repo-relative rel_dir/rel_file)
+        saved_path = os.path.join(self.rel_dir or "", self.rel_file) if self.rel_file else (self.rel_dir or "")
         try:
             logger.debug(
                 "toggle_file_history: before prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r saved_path=%r",
@@ -6146,16 +4912,12 @@ class GitHistoryNavTool(AppException, App):
             # preparer will update app-level state to reflect the highlighted
             # selection and we will read back the authoritative values.
             try:
-                if self.current_path:
-                    if os.path.isabs(self.current_path):
-                        try:
-                            repo_path = GitRepo.relpath_if_within(self.gitRepo.get_repo_root(), self.current_path)
-                        except Exception:
-                            repo_path = os.path.relpath(self.current_path, self.gitRepo.get_repo_root())
-                    else:
-                        repo_path = os.path.normpath(self.current_path)
+                rd = self.rel_dir
+                rf = self.rel_file
+                if rf:
+                    repo_path = os.path.join(rd or "", rf)
                 else:
-                    repo_path = self.rel_dir or ""
+                    repo_path = rd or ""
             except Exception as e:
                 self.printException(e, "toggle_file_history: computing repo_path failed")
                 repo_path = ""
@@ -6180,10 +4942,9 @@ class GitHistoryNavTool(AppException, App):
             # are repository-relative paths like 'docs/notes.txt'). Prefer a
             # normalized relative path when `saved_path` is inside the repo.
 
-            # Pass the canonical full path through as the highlight so
-            # matching is performed against absolute paths.
+            # Pass the repo-relative highlight so matching uses repository-relative rows.
             hl = saved_path
-            logger.debug("toggle_file_history: passing fullpath highlight=%r", hl)
+            logger.debug("toggle_file_history: passing highlight=%r", hl)
             self.repo_mode_file_list.prepRepoModeFileList(use_prev, use_curr, highlight_filename=hl)
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo file list failed")
@@ -6198,8 +4959,8 @@ class GitHistoryNavTool(AppException, App):
         Prepares the right file list and the file's history preparer, then
         switches the UI to the paired layout.
         """
-        # Save transient values
-        saved_path = self.current_path
+        # Save transient values (use repo-relative rel_dir/rel_file)
+        saved_path = os.path.join(self.rel_dir or "", self.rel_file) if self.rel_file else (self.rel_dir or "")
         saved_curr = self.current_hash
         saved_prev = self.previous_hash
         logger.debug(
@@ -6230,7 +4991,7 @@ class GitHistoryNavTool(AppException, App):
                 else:
                     rdir = os.path.dirname(rel) or ""
                     rpath = os.path.basename(rel)
-                self.file_mode_file_list.prepFileModeFileList(rdir, rpath, hl)
+                self.file_mode_file_list.prepFileModeFileList(rdir, rpath)
             except Exception as _ex:
                 self.printException(_ex, "toggle_history_file prepFileModeFileList failed")
         except Exception as e:
@@ -6308,7 +5069,7 @@ def discover_repo_worktree(start_path: str | None) -> str:
     topo, err = GitRepo.resolve_repo_top(start, raise_on_missing=False)
     if topo:
         try:
-            return os.path.realpath(topo)
+            return os.path.normpath(topo)
         except Exception as _ex:
             printException(_ex)
             return topo

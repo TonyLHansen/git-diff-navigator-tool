@@ -18,10 +18,8 @@ import contextlib
 import difflib
 import urllib.parse
 
-# GitRepo implementation moved into `gitdiffnavtool.py`; import it so
-# this test harness continues to exercise the exact same class and
-# methods without duplicating code.
-from gitdiffnavtool import GitRepo
+# GitRepo implementation is provided by the `gitrepo` helper module.
+from gitrepo import printException, AppException, GitRepo
 from gitdiffnavtool import FileListBase, HistoryListBase
 from types import SimpleNamespace
 
