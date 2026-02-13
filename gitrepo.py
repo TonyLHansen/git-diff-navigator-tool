@@ -20,6 +20,9 @@ import traceback
 from datetime import datetime, timezone
 from subprocess import CalledProcessError, check_output
 from typing import Optional
+import json
+import base64
+import argparse
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +249,7 @@ class GitRepo(AppException):
 
             return GitRepo.repo_rel_path_to_reldir_relfile(relpath)
         except Exception as e:
+            self.printException(e, "cwd_plus_path_to_reldir_relfile failed")
             raise ValueError(f"cwd_plus_path_to_reldir_rlfile failed: {e}") from e
 
     @classmethod
@@ -307,6 +311,7 @@ class GitRepo(AppException):
             removed_root = os.path.relpath(norm, self._repoRoot)
             return GitRepo.repo_rel_path_to_reldir_relfile(removed_root)
         except Exception as e:
+            self.printException(e, "reldir_plus_path_to_reldir_relfile failed")
             raise ValueError(f"reldir_plus_path_to_reldir_relfile failed: {e}") from e
 
     def abs_path_for(self, rel_dir: str, rel_file: str) -> str:
@@ -1081,7 +1086,8 @@ class GitRepo(AppException):
                         continue
                     seen.add(rel)
                     combined.append(entry)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "getFileListUntrackedAndIgnored: skipping entry parse failed")
                     continue
 
             combined.sort(key=lambda x: x[0])
@@ -1497,7 +1503,12 @@ class GitRepo(AppException):
 
 
 def main(argv=None):
-    import argparse
+    """CLI entrypoint for exercising `GitRepo` helpers.
+
+    Pass a filesystem `path` followed by one or more `--<method>` flags
+    to invoke the corresponding `GitRepo` helper. Use `-j/--json` to
+    request JSON output (bytes are base64-encoded when needed).
+    """
 
     parser = argparse.ArgumentParser(description="CLI helper for GitRepo internals")
     parser.add_argument("path", help="file or directory used to discover the git repo")
@@ -1542,13 +1553,17 @@ def main(argv=None):
     for f in flags:
         parser.add_argument(f"--{f}", dest=f, action="store_true", help=f"invoke GitRepo.{f}()")
 
-    parsed = parser.parse_args(argv)
+    # Optional JSON output for CLI consumers
+    parser.add_argument("-j", "--json", dest="json", action="store_true", help="output results as JSON")
+
+    args = parser.parse_args(argv)
 
     # Create GitRepo using provided path
     try:
-        repo = GitRepo(parsed.path)
+        repo = GitRepo(args.path)
     except Exception as e:
-        print(f"failed to create GitRepo for {parsed.path}: {e}")
+        printException(e, f"main: failed to create GitRepo for {args.path}")
+        print(f"failed to create GitRepo for {args.path}: {e}")
         raise
 
     # mapping: option name -> (method_name, param_names, use_class)
@@ -1606,26 +1621,44 @@ def main(argv=None):
 
     # Iterate flags and invoke selected functions
     for opt, (method_name, params, use_class) in mapping.items():
-        if getattr(parsed, opt, False):
+        if getattr(args, opt, False):
             try:
                 # Special-case handlers for methods that need argument conversion
                 if method_name == "getFileContents":
                     # Expect --file to be repository-relative path; split to reldir/relfile
-                    if getattr(parsed, "file", None) is None:
+                    if args.file is None:
                         raise ValueError("getFileContents requires --file to be set")
-                    reldir, relfile = GitRepo.repo_rel_path_to_reldir_relfile(getattr(parsed, "file"))
-                    res = repo.getFileContents(getattr(parsed, "hash1", None), reldir, relfile)
+                    reldir, relfile = GitRepo.repo_rel_path_to_reldir_relfile(args.file)
+                    res = repo.getFileContents(args.hash1, reldir, relfile)
                 else:
                     # Validate parameters
                     for p in params:
-                        if getattr(parsed, p, None) is None:
+                        if getattr(args, p, None) is None:
                             raise ValueError(f"{method_name} requires --{p}")
-                    res = _invoke(repo, method_name, parsed, params, use_class=use_class)
+                    res = _invoke(repo, method_name, args, params, use_class=use_class)
 
                 print(f"== {method_name} ==")
-                print(repr(res))
+                if args.json:
+                    try:
+                        out = res
+                        # Bytes -> try UTF-8 decode, otherwise base64-encode
+                        if isinstance(res, (bytes, bytearray)):
+                            try:
+                                out = res.decode("utf-8")
+                            except Exception as e:
+                                printException(e, "main: decoding bytes to utf-8 failed")
+                                out = {"__bytes_base64__": base64.b64encode(bytes(res)).decode("ascii")}
+
+                        print(json.dumps(out, indent=2, default=lambda o: repr(o)))
+                    except Exception as e:
+                        printException(e, "main: json serialization failed")
+                        print(f"json serialization failed: {e}")
+                        print(repr(res))
+                else:
+                    print(repr(res))
 
             except Exception as e:
+                printException(e, f"main: error invoking {method_name}")
                 print(f"error invoking {method_name}: {e}")
 
 

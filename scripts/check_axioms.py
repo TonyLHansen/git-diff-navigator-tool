@@ -502,7 +502,7 @@ def check_file(
     try:
         if check_pass:
             try:
-                errs += check_unnecessary_pass_in_except(path, text=text, tree=tree)
+                errs += check_unnecessary_pass_in_except(path, text=text, tree=tree, call_example=call_example)
             except NameError as e:
                 printException(e, f"check_unnecessary_pass_in_except not available yet for {path}")
             except Exception as e:
@@ -581,7 +581,7 @@ def check_printexception_in_try_blocks(path: Path, text: str, tree: ast.AST) -> 
     return errs
 
 
-def check_unnecessary_pass_in_except(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
+def check_unnecessary_pass_in_except(path: Path, text: str, tree: ast.AST, call_example: str) -> List[Tuple[str, int, str]]:
     """Find `pass` statements inside `except ... as var:` blocks when other statements are present.
 
     Reports each `pass` statement's line number when the except-handler body

@@ -2067,7 +2067,8 @@ class FileModeFileList(FileListBase):
                     iso = entry[1] if len(entry) > 1 else None
                     status = entry[2] if len(entry) > 2 else "untracked"
                     register_file(p, status, iso)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "prepFileModeFileList: registering untracked file failed")
                     continue
 
             # Add ignored entries: (path, iso, status)
@@ -2077,7 +2078,8 @@ class FileModeFileList(FileListBase):
                     iso = entry[1] if len(entry) > 1 else None
                     status = entry[2] if len(entry) > 2 else "ignored"
                     register_file(p, status, iso)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "prepFileModeFileList: registering ignored file failed")
                     continue
 
             # Add mods entries: (path, status) - no iso provided
@@ -2089,7 +2091,8 @@ class FileModeFileList(FileListBase):
                     else:
                         p, s = str(entry), "modified"
                     register_file(p, s, None)
-                except Exception:
+                except Exception as e:
+                    self.printException(e, "prepFileModeFileList: registering mod file failed")
                     continue
 
             # Display only the requested directory slice
@@ -2105,8 +2108,8 @@ class FileModeFileList(FileListBase):
 
             try:
                 self.append(ListItem(Label(Text(f"Directory: {rel_dir or '/'}", style=STYLE_HELP_BG))))
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: appending header failed")
 
             # Show directories first
             for dname in sorted(slice_node["dirs"]):
@@ -2130,8 +2133,8 @@ class FileModeFileList(FileListBase):
                 self._populated = True
                 nodes = self.nodes()
                 self._min_index = 1 if len(nodes) > 1 else 0
-            except Exception:
-                pass
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: finalizing population state failed")
 
         except Exception as e:
             self.printException(e, "prepFileModeFileList failed")
