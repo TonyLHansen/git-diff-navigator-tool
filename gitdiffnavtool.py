@@ -1989,8 +1989,8 @@ class FileModeFileList(FileListBase):
 
     def prepFileModeFileList(
         self,
-        rel_dir: str | None = None,
-        rel_path: str | None = None,
+        rel_dir: str,
+        rel_path: str,
     ) -> None:
         """Populate this widget with the file list for `path`.
 
@@ -1999,308 +1999,79 @@ class FileModeFileList(FileListBase):
         filename is used as the highlight candidate.
         """
         try:
-
-            def _prepFileModeFileList_from_git(
-                rel_path_root: str, relpath_arg: str | None, status_map_arg: dict
-            ) -> list[dict]:
-                """Helper: produce file info dicts for `path` using git status map.
-
-                Returns list of dicts with keys: name, full, is_dir, raw, repo_status.
-                """
-                infos: list[dict] = []
-                try:
-                    repo_root_local = None
-                    try:
-                        repo_root_local = self.app.gitRepo.get_repo_root()
-                    except Exception as e:
-                        self.printException(e, "_prepFileModeFileList_from_git: getting repo_root failed")
-                        repo_root_local = None
-
-                    try:
-                        for ent in os.scandir(rel_path_root):
-                            try:
-                                nm = ent.name
-                                fullp = ent.path
-                                isd = ent.is_dir(follow_symlinks=False)
-                                if repo_root_local:
-                                    try:
-                                        rawp = os.path.relpath(fullp, repo_root_local)
-                                    except Exception as e:
-                                        self.printException(
-                                            e, "_prepFileModeFileList_from_git: relpath failed for entry"
-                                        )
-                                        rawp = fullp
-                                else:
-                                    rawp = fullp
-
-                                key = os.path.join(relpath_arg or "", nm) if relpath_arg else nm
-                                repo_status_val = None
-                                if status_map_arg:
-                                    repo_status_val = status_map_arg.get(key) or status_map_arg.get(nm)
-
-                                infos.append(
-                                    {
-                                        "name": nm,
-                                        "full": fullp,
-                                        "is_dir": isd,
-                                        "raw": rawp,
-                                        "repo_status": repo_status_val,
-                                    }
-                                )
-                            except Exception as e:
-                                self.printException(e, "_prepFileModeFileList_from_git: processing entry failed")
-                                continue
-                    except Exception as _ex:
-                        self.printException(_ex, "_prepFileModeFileList_from_git: scandir failed")
-                except Exception as e:
-                    self.printException(e, "_prepFileModeFileList_from_git failed")
-                return infos
-
-            # Compute absolute `path` from provided repo-relative inputs.
+            # Minimal replacement: clear list, show headers, call GitRepo
+            # helpers `getFileListUntrackedAndIgnored` and
+            # `getFileListBetweenNewRepoAndMods`, and display their results.
             try:
-                repo_root = self.app.gitRepo.get_repo_root()
-                if rel_path:
-                    path = os.path.join(repo_root, rel_dir, rel_path) if rel_dir else os.path.join(repo_root, rel_path)
-                elif rel_dir:
-                    path = os.path.join(repo_root, rel_dir)
-                else:
-                    path = repo_root
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList: computing absolute path failed")
-                try:
-                    path = self.app.gitRepo.get_repo_root()
-                except Exception as e:
-                    self.printException(e, "prepFileModeFileList: get_repo_root fallback failed")
-                    path = "."
+                self.clear()
+            except Exception:
+                pass
 
-            logger.debug("prepFileModeFileList: path=%r rel_dir=%r rel_path=%r", path, rel_dir, rel_path)
-            # Collect normalized hash list from provided GitRepo and cache it
-            try:
-                normalized_hashes = self.app.gitRepo.getNormalizedHashListComplete() or []
-                # Cache a compact representation on the widget for later use
-                self._cached_normalized_hashes = [
-                    {"iso": iso, "hash": h, "subject": subj, "short": (h[:HASH_LENGTH] if h else "")}
-                    for iso, h, subj in normalized_hashes
-                ]
-            except Exception as e:
-                # Cache empty list on failure but continue preparing file list
-                self.printException(e, "prepFileModeFileList: getNormalizedHashListComplete failed")
-                self._cached_normalized_hashes = []
-            # Canonicalize path and allow callers to pass a file to highlight
-            path = os.path.abspath(path)
-            # Determine highlight filename from `rel_path` when provided.
-            # If `rel_path` is not provided and `path` points at a file,
-            # use that file's basename as the highlight. An empty string
-            # indicates no highlighting is requested.
-            hl = rel_path
-
-            # Canonicalize the directory path so comparisons (e.g. against
-            # the repo root) use real paths and avoid /tmp vs /private/tmp
-            # mismatches.
-            try:
-                path = os.path.normpath(path)
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList: realpath failed")
-                # If realpath fails for some reason, keep the original path
-
-            # Compute a repo-relative path to avoid storing absolute paths
-            try:
-                if rel_path is not None:
-                    relpath = rel_path
-                else:
-                    try:
-                        repo_root_local = self.app.gitRepo.get_repo_root()
-                        relpath = os.path.relpath(path, repo_root_local) if repo_root_local else path
-                    except Exception as e:
-                        self.printException(e, "prepFileModeFileList: relpath computation inner failed")
-                        relpath = path
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList: computing relpath failed")
-                relpath = path
-
-            # Record the list's repo-relative path and keep application
-            # rel_dir/rel_file in sync. Avoid storing absolute paths in widget/app state.
-            try:
-                rd, rf = os.path.split(relpath)
-                self.rel_dir = rd or ""
-                self.rel_file = rf or ""
-                self.app.rel_dir = self.rel_dir
-                self.app.rel_file = self.rel_file
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList: setting app.rel_dir/rel_file failed")
-            # App-level path is intentionally not maintained; consumers
-            # should use `app.rel_dir` and `app.rel_file` instead.
-
-            logger.debug(f"prepFileModeFileList: path='{path}' relpath={relpath} rel_dir={rel_dir}")
-
-            # Build a per-directory porcelain `status_map` mapping
-            # repo-relative paths -> git porcelain two-char codes (index+worktree).
-            # Examples: ' M' (worktree modified), 'A ' (staged/index added),
-            # '??' (untracked), '!!' (ignored); codes containing 'U' indicate
-            # conflicts. Use the centralized helper which respects the
-            # Use the centralized helper which builds a git-CLI porcelain status map.
-            status_map = self._build_status_map(path)
-
-            # clear and populate
-            self.clear()
-
-            # Insert the unselectable key legend header at the top
             try:
                 self._add_filelist_key_header()
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList: adding filelist key header failed")
+            except Exception:
+                # non-fatal
+                pass
 
-            # List directory contents (use helper)
+            gitrepo = self.app.gitRepo
+
+            # Gather untracked/ignored entries: list of (path, iso, status)
             try:
-                entries = self._list_directory(path)
+                untracked = gitrepo.getFileListUntrackedAndIgnored() or []
             except Exception as e:
-                self.printException(e, f"Error reading {path}")
+                self.printException(e, "prepFileModeFileList: getFileListUntrackedAndIgnored failed")
+                untracked = []
+
+            # Gather working-tree modifications (MODS): list of (path,status)
+            try:
+                mods = gitrepo.getFileListBetweenNewRepoAndMods() or []
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: getFileListBetweenNewRepoAndMods failed")
+                mods = []
+
+            # Display Untracked/Ignored
+            try:
+                self.append(ListItem(Label(Text("Untracked / Ignored:", style=STYLE_HELP_BG))))
+            except Exception:
+                pass
+
+            for entry in untracked:
                 try:
-                    self.append(ListItem(Label(Text(f"Error reading {path}: {e}", style=STYLE_ERROR))))
-                except Exception as e2:
-                    self.printException(e2)
-                return
-
-            logger.debug(f"prepFileModeFileList: entries in {path}: {entries}")
-            # Optionally add a parent entry when appropriate
-            try:
-                self._render_parent_entry_if_needed(path)
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList: adding parent directory failed")
-            try:
-                file_infos: list[dict] = []
-
-                # Use the local helper to obtain file info entries.
-                file_infos = _prepFileModeFileList_from_git(path, relpath, status_map)
-
-                # Trim file_infos using `hl` when provided. Empty string
-                # indicates no trimming (show all entries).
-                if hl == "":
-                    visible_infos = file_infos
-                else:
-                    visible_infos = [
-                        info
-                        for info in file_infos
-                        if info.get("name") == hl
-                        or info.get("name", "").startswith(hl)
-                        or info.get("full", "").endswith(os.path.join(path, hl))
-                    ]
-
-                for info in visible_infos:
-                    try:
-                        name = info.get("name")
-                        full = info.get("full")
-                        is_dir = info.get("is_dir", False)
-                        raw = info.get("raw", name)
-                        repo_status = info.get("repo_status")
-
-                        if is_dir:
-                            tag = "→"
-                            display_name = f"{name}/"
-                            display = f"{tag} {display_name}"
-                            style = STYLE_DIR
-                            item = ListItem(Label(Text(display, style=style)))
-                            try:
-                                item._is_dir = True
-                                item._repo_status = None
-                                try:
-                                    repo_root_local = self.app.gitRepo.get_repo_root()
-                                    item._raw_text = self._canonical_relpath(full, repo_root_local) if full else name
-                                except Exception as e:
-                                    self.printException(e, "prepFileModeFileList: relpath fallback failed for dir")
-                                    item._raw_text = name
-                                item._filename = name
-                                logger.debug("prepFileModeFileList: adding dir item for %s", full)
-                                self.append(item)
-                            except Exception as e:
-                                self.printException(e, "prepFileModeFileList append dir failed")
-                            continue
-
-                        marker = MARKERS.get(repo_status, " ")
-                        if repo_status == "conflicted":
-                            style = STYLE_CONFLICTED
-                        elif repo_status == "staged":
-                            style = STYLE_STAGED
-                        elif repo_status == "wt_deleted":
-                            style = STYLE_WT_DELETED
-                        elif repo_status == "ignored":
-                            style = STYLE_IGNORED
-                        elif repo_status == "modified":
-                            style = STYLE_MODIFIED
-                        elif repo_status == "untracked":
-                            style = STYLE_UNTRACKED
-                        else:
-                            style = STYLE_DEFAULT
-
-                        display = f"{marker} {name}"
-                        try:
-                            if style:
-                                item = ListItem(Label(Text(display, style=style)))
-                            else:
-                                item = ListItem(Label(display))
-                            item._repo_status = repo_status
-                            item._is_dir = False
-                            try:
-                                repo_root_local = self.app.gitRepo.get_repo_root()
-                                item._raw_text = self._canonical_relpath(full, repo_root_local) if full else name
-                            except Exception as e:
-                                self.printException(e, "prepFileModeFileList: relpath fallback failed")
-                                item._raw_text = name
-                            item._filename = name
-                            self.append(item)
-                        except Exception as e:
-                            self.printException(e, f"exception appending {name} in prepFileModeFileList")
-                            continue
-                    except Exception as e:
-                        self.printException(e, f"exception processing entry {name}")
-                        continue
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList iteration failed")
-
-            try:
-                self._populated = True
-                # Ensure navigation skips the header when rows exist
-                try:
-                    nodes = self.nodes()
-                    if len(nodes) > 1:
-                        self._min_index = 1
-                    else:
-                        self._min_index = 0
+                    # entry is (path, iso, status)
+                    path_item = entry[0] if len(entry) > 0 else str(entry)
+                    status = entry[2] if len(entry) > 2 else (entry[1] if len(entry) > 1 else "untracked")
+                    txt = f"{status} {path_item}"
+                    self.append(ListItem(Label(Text(txt))))
                 except Exception as e:
-                    self.printException(e, "prepFileModeFileList: determining min index failed")
-                if hl:
-                    try:
-                        # If `hl` looks like a filename (not an absolute path), prefer
-                        # highlighting by the canonical full path inside this list's
-                        # directory so matches against `_raw_text` succeed when rows
-                        # store absolute paths (common for file lists).
-                        # Schedule highlight and ensure visibility using helper
-                        self._schedule_highlight_and_visibility(hl, base_path=path)
-                    except Exception as e:
-                        self.printException(e, "prepFileModeFileList: scheduling highlight failed")
-                        try:
-                            self._highlight_match(hl)
-                        except Exception as e:
-                            self.printException(e, "prepFileModeFileList: immediate highlight failed")
-                else:
-                    try:
-                        self.call_after_refresh(self._highlight_top)
-                    except Exception as e:
-                        self.printException(e, "prepFileModeFileList: scheduling _highlight_top failed")
-                        try:
-                            self._highlight_top()
-                        except Exception as e2:
-                            self.printException(e2, "prepFileModeFileList: immediate _highlight_top fallback failed")
-            except Exception as e:
-                self.printException(e)
+                    self.printException(e, "prepFileModeFileList: appending untracked entry failed")
 
-            # Mark populated and run centralized finalization so callers
-            # get consistent app/hash/path synchronization.
+            # Separator
+            try:
+                self.append(ListItem(Label(Text("", style=STYLE_DEFAULT))))
+                self.append(ListItem(Label(Text("Working-tree modifications (MODS):", style=STYLE_HELP_BG))))
+            except Exception:
+                pass
+
+            for entry in mods:
+                try:
+                    # entry is (path, status)
+                    if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                        p, s = entry[0], entry[1]
+                    else:
+                        p, s = str(entry), "modified"
+                    txt = f"{s} {p}"
+                    self.append(ListItem(Label(Text(txt))))
+                except Exception as e:
+                    self.printException(e, "prepFileModeFileList: appending mods entry failed")
+
+            # Finalize minimal population state
             try:
                 self._populated = True
-                self._finalize_filelist_prep(curr_hash=None, prev_hash=None, path=path)
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList: finalize failed")
+                nodes = self.nodes()
+                self._min_index = 1 if len(nodes) > 1 else 0
+            except Exception:
+                pass
+
         except Exception as e:
             self.printException(e, "prepFileModeFileList failed")
 
@@ -5159,26 +4930,24 @@ def main(argv: Optional[list[str]] = None) -> int:
             printException(e, f"repository discovery failed for {raw_path}")
             sys.exit(f"Not a git repository: {raw_path}")
         logger.debug("Discovered repository worktree root: %s", gitrepo.get_repo_root())
-        relpath = GitRepo.relpath_if_within(gitrepo.get_repo_root(), raw_path)
 
-        # Split relpath into directory and filename parts relative to repo root.
-        # Compute a validated absolute candidate path using repo-relative
-        # components. `relpath` is repository-relative ("" when at repo root).
+        # Compute repository-relative directory/file for the provided path.
         try:
-            if relpath:
-                full_candidate = gitrepo.full_path_for(os.path.dirname(relpath), os.path.basename(relpath))
-            else:
-                full_candidate = gitrepo.get_repo_root()
+            rel_dir, rel_file = gitrepo.cwd_plus_path_to_reldir_relfile(raw_path)
         except Exception as e:
             printException(e, f"Not a git repository or invalid path: {raw_path}")
             sys.exit(f"Not a git repository: {raw_path}")
 
-        if os.path.isdir(full_candidate):
-            rel_dir = relpath or ""
-            rel_file = ""
-        else:
-            rel_dir = os.path.dirname(relpath) if relpath else ""
-            rel_file = os.path.basename(relpath) if relpath else ""
+        # Compute a validated absolute candidate path using repo-relative
+        # components. Use `abs_path_for` which validates containment.
+        try:
+            if rel_dir == "" and rel_file == "":
+                full_candidate = gitrepo.get_repo_root()
+            else:
+                full_candidate = gitrepo.abs_path_for(rel_dir, rel_file)
+        except Exception as e:
+            printException(e, f"Not a git repository or invalid path: {raw_path}")
+            sys.exit(f"Not a git repository: {raw_path}")
 
         # Sanity-check the prepared rel_dir/rel_file before passing to the app
         if rel_dir and os.path.isabs(rel_dir):
@@ -5187,10 +4956,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             sys.exit(f"internal error: rel_file must be repository-relative: {rel_file}")
 
         logger.debug(
-            "Starting GitHistoryNavTool; raw_path=%s repo_root=%s relpath=%r rel_dir=%r rel_file=%r",
+            "Starting GitHistoryNavTool; raw_path=%s repo_root=%s rel_dir=%r rel_file=%r",
             raw_path,
             gitrepo.get_repo_root(),
-            relpath,
             rel_dir,
             rel_file,
         )

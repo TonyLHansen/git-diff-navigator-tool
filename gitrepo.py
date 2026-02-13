@@ -69,70 +69,95 @@ class AppException:
 
 class GitRepo(AppException):
     """
-    Tools for working on a git repository.
-    There are four main functions or classes of functions.
+     Tools for working on a git repository.
+     There are four main functions or classes of functions.
 
-    To use the class, start by creating a:
+     To use the class, start by creating a:
 
-    gitRepo = GitRepo(directory/filename)
+     gitRepo = GitRepo(directory/filename)
 
-    GitRepo.__init__() in turn calls resolve_repo_top() to retrieve the root of the repo that
-        contains the directory or filename. An exception is returned if there is no git repo.
+     GitRepo.__init__() in turn calls resolve_repo_top() to retrieve the root of the repo that
+         contains the directory or filename. An exception is returned if there is no git repo.
 
-        (repoRoot, e) = GitRepo.resolve_repo_top(directory/filename, raise_on_missing)
-            Returns the root of a git repository
+         (repoRoot, e) = GitRepo.resolve_repo_top(directory/filename, raise_on_missing)
+             Returns the root of a git repository
 
-            If the path is for the top of a git repository, or a directory or file within,
-            then the full path to that git repository is returned (with e set to None)..
-            If not, then
-                if raise_on_missing, throws an exception
-                if not, return (None, e), where e is the exception that would have been raised.
+             If the path is for the top of a git repository, or a directory or file within,
+             then the full path to that git repository is returned (with e set to None)..
+             If not, then
+                 if raise_on_missing, throws an exception
+                 if not, return (None, e), where e is the exception that would have been raised.
 
-    gitRepo.get_repo_root() will return the repoRoot.
+     gitRepo.get_repo_root() will return the repoRoot as a full path.
 
-    If you have a path (relative to the current directory), you can trim it down to one
-    rooted in the repoRoot by using GitRepo.relpath_if_within().
 
-        relpath = GitRepo.relpath_if_within(repoRoot, query_path)
-            Both repoRoot and query_path to full paths based on the current directory.
-            Returns "" if the query_path and repoRoot are the same.
-            Returns a path relative to repoRoot if the file is within the repoRoot directory
-            Raises an exception otherwise
+    ################ path conversion routines
+
+     If you have a path (relative to the current directory), you can trim it down to one
+     rooted in the repoRoot by using GitRepo.cwd_plus_path_to_reldir_relfile().
+
+     reldir, relfile = GitRepo.repo_rel_path_to_reldir_relfile(file_path):
+        file_path is a repository-relative path (must NOT be absolute or contain ".." outside)
+        Returns (reldir,relfile) where relfile == "" for directories and
+        reldir == "" when the item is at the repository top-level.
+
+     reldir, relfile = gitRepo.cwd_plus_path_to_reldir_relfile(query_path)
+         query_path is a path relative to the current directory.
+         It is converted to a relative (reldir,relfile) based on the repoRoot.
+
+     reldir, relfile = gitRepo.reldir_plus_path_to_reldir_relfile(rel_dir, query_path)
+         query_path is a path (relative to rel_dir within the repo) to a directory or file.
+
+     abspath = gitRepo.abs_path_for(rel_dir, rel_file)
+         Return an absolute path from (reldir,relfile).
+
+
 
     Most of the remaining functions return information about the repository from various points of view,
-    in particular file lists associated with hashes, hash lists associated with the repo or files,
-    and differences for a file with a given set of hashes.
-
-    gitRepo.getFileListBetweenNormalizedHashes(hash1, hash2)
-        Returns a list of the files that were modified between two hashes, along
-        with a status indicator and the timestamp for when that hash was committed
-        In addition to the normal hex-string hashes that git normally supports, there
-        are three pseudo-hashes that are supported:
-            GitRepo.NEWREPO -- the initial state of a repository
-            GitRepo.STAGED -- files that have been added to a repository but not yet committed
-            GitRepo.MODS -- files that have been modified since STAGED or HEAD (if nothing is staged)
-
-    gitRepo.getNormalizedHashListComplete()
-        Returns a list of the hashes, their timestamps and commit messages for the entire repository.
-    gitRepo.getNormalizedHashListFromFileName(filename)
-        Returns a list of the hashes, their timestamps and commit messages associated with the specified filename.
-        The filename is relative to the repoRoot.
-
-    gitRepo.getFileListUntrackedAndIgnored()
-        Returns a list of the untracked and ignored files in the repository,
-
-    gitRepo.reset_cache() will reset the cache used by GitRepo's functions. Use this if you ever wish
-    to have gitRepo restart with a fresh view of the repository.
-
-    other getFileList and getHashList functions also exist
+     in particular:
+         * file lists for the repo,
+         * file lists associated with hashes,
+         * hash lists associated with the repo or files,
+         * and differences for a file with a given set of hashes.
 
 
-    Internally the git command is used to retrieve the information and cached.
+    ################ File Lists
 
-    Note: an earlier version of this class used pyGit2, but it was found to produce
-    results for getNormalizedHashListFromFileName() and gitRepo.getFileListBetweenNormalizedHashes()
-    that were sufficiently different to be troublesome. Also, various operations were actually
-    slower than forking the git command.
+     gitRepo.getFileListUntrackedAndIgnored()
+         Returns a list of the untracked and ignored files in the current repository view,
+
+
+     gitRepo.getFileListBetweenNormalizedHashes(hash1, hash2)
+         Returns a list of the files that were modified between two hashes, along
+         with a status indicator and the timestamp for when that hash was committed
+         In addition to the normal hex-string hashes that git normally supports, there
+         are three pseudo-hashes that are supported:
+             GitRepo.NEWREPO -- the initial state of a repository
+             GitRepo.STAGED -- files that have been added to a repository but not yet committed
+             GitRepo.MODS -- files that have been modified since STAGED or HEAD (if nothing is staged)
+
+    ################ Hash Lists
+
+     gitRepo.getNormalizedHashListComplete()
+         Returns a list of the hashes, their timestamps and commit messages for the entire repository.
+     gitRepo.getNormalizedHashListFromFileName(filename)
+         Returns a list of the hashes, their timestamps and commit messages associated with the specified filename.
+         The filename is relative to the repoRoot.
+
+    ################ Diff Lists
+
+     other getFileList and getHashList functions also exist
+
+
+     Internally the git command is used to retrieve the information and cached.
+
+     gitRepo.reset_cache() will reset the cache used by GitRepo's functions. Use this if you ever wish
+     to have gitRepo restart with a fresh view of the repository.
+
+     Note: an earlier version of this class used pyGit2, but it was found to produce
+     results for various file lists and hash lists that were sufficiently different from
+     git to be troublesome. Also, various operations were actually slower than forking
+     the git command.
     """
 
     # Pseudo-hash tokens used across diff dispatching
@@ -197,56 +222,94 @@ class GitRepo(AppException):
                 raise RuntimeError(f"not a git working tree: {path}") from _use_raise
             return (None, _use_raise)
 
-    @classmethod
-    def relpath_if_within(cls, base_path: str, conv_path: str) -> str | None:
-        """
-        Return ``conv_path`` relative to ``base_path`` if inside it.
-
-        If ``conv_path`` is not contained within ``base_path`` return ``None``.
-
-        Raises ``ValueError`` for empty inputs.
-
-        Detailed Strategy:
-        If base_path is not a full path (starts with /),
-        it will be augmented with the current directory,
-        then converted to the minimal version.
-
-        If base_path is a full path (starts with /),
-        it will be converted to the minimal version.
-
-        If conv_path is not a full path, it will be treated as relative to the current directory,
-        then converted to the minimal version.
-
-        If conv_path is a full path, it will be converted to the minimal version.
-
-        If conv_path is within base_path, the relative path from base_path to conv_path is returned.
-        If conv_path is not within base_path, None is returned.
-        """
-        # Raise on invalid inputs.
-        if not base_path:
-            raise ValueError("relpath_if_within: empty base_path")
-        if not conv_path:
-            raise ValueError("relpath_if_within: empty conv_path")
-        try:
-            if base_path[0] != os.sep:
-                base_path = os.path.abspath(os.path.join(os.getcwd(), base_path))
-            base_path = os.path.abspath(os.path.normpath(base_path))
-            if conv_path[0] != os.sep:
-                conv_path = os.path.abspath(os.path.join(os.getcwd(), conv_path))
-            conv_path = os.path.abspath(os.path.normpath(conv_path))
-            if base_path == conv_path:
-                common = ""
-            else:
-                common = os.path.relpath(conv_path, base_path)
-            return common
-        except Exception as _use_raise:
-            raise ValueError(f"relpath_if_within: path evaluation failed: {_use_raise}") from _use_raise
-
     def get_repo_root(self) -> str:
         """Return the resolved repository root path for this GitRepo instance."""
         return self._repoRoot
 
-    def full_path_for(self, rel_dir: str, rel_file: str) -> str:
+    def cwd_plus_path_to_reldir_relfile(self, query_path):
+        """
+        reldir, relfile = GitRepo.cwd_plus_path_to_reldir_relfile(query_path)
+            self._repoRoot is the full path to the root of the repository, and 
+            query_path is a path relative to the current directory.
+            Relpath is computed from repoRoot to query_path if query_path is within repoRoot, else an exception is raised.
+            Then invokes GitRepo.repo_rel_path_to_reldir_relfile() on the resulting relpath.
+            Returns ("","") if the query_path and repoRoot are the same.
+            Returns a directory,file pair relative to repoRoot if the file is within the repoRoot directory
+            Raises an exception otherwise
+        """
+        try:
+            abs_query_path = os.path.abspath(os.path.normpath(os.path.join(os.getcwd(), query_path)))
+            relpath = os.path.relpath(abs_query_path, self._repoRoot)
+
+            if relpath == ".":
+                return ("", "")
+
+            return GitRepo.repo_rel_path_to_reldir_relfile(relpath)
+        except Exception as e:
+            raise ValueError(f"cwd_plus_path_to_reldir_rlfile failed: {e}") from e
+
+    @classmethod
+    def repo_rel_path_to_reldir_relfile(cls, file_path):
+        """
+        file_path is a repository-relative path (must NOT be absolute).
+
+        Returns (reldir, relfile) where relfile == "" for directories and
+        reldir == "" when the item is at the repository top-level.
+
+        Raises ValueError for absolute inputs or any normalized ".." components.
+        """
+        if file_path is None:
+            raise ValueError("repo_rel_path_to_reldir_relfile: empty file_path")
+
+        if os.path.isabs(file_path):
+            raise ValueError("repo_rel_path_to_reldir_relfile: file_path must be repository-relative (not absolute)")
+
+        # Preserve original to detect explicit trailing-separator directory intent
+        original = file_path
+
+        # Normalize relative path (collapses redundant separators, up-levels)
+        norm = os.path.normpath(file_path)
+
+        # Reject any up-level components that could escape the repo root
+        comps = norm.split(os.sep)
+        if any(part == ".." for part in comps):
+            raise ValueError("repo_rel_path_to_reldir_relfile: file_path must not contain '..' components")
+
+        # Treat "." or empty as the repository root directory
+        if norm in ("", "."):
+            return ("", "")
+
+        # If caller explicitly ended with a separator consider it a directory
+        if original.endswith(os.sep) or original.endswith("/") or original.endswith("\\"):
+            # normalized form has no trailing sep; return as directory path
+            return (norm, "")
+
+        # Otherwise split into directory and file components
+        dirpart = os.path.dirname(norm)
+        filepart = os.path.basename(norm)
+        if dirpart in ("", "."):
+            return ("", filepart)
+        return (dirpart, filepart)
+
+
+    def reldir_plus_path_to_reldir_relfile(self, rel_dir, query_path):
+        """
+        query_path is a path (relative to rel_dir within the repo) to a directory or file.
+        join(repo_root, rel_dir, query_path)
+        normalize
+        reduce by repo_root
+        Returns a directory,file pair relative to repoRoot if the file is within the repoRoot directory
+        Raises an exception otherwise
+        """
+        try:
+            joined = os.path.join(self._repoRoot, rel_dir, query_path)
+            norm = os.path.normpath(joined)
+            removed_root = os.path.relpath(norm, self._repoRoot)
+            return GitRepo.repo_rel_path_to_reldir_relfile(removed_root)
+        except Exception as e:
+            raise ValueError(f"reldir_plus_path_to_reldir_relfile failed: {e}") from e
+
+    def abs_path_for(self, rel_dir: str, rel_file: str) -> str:
         """
         Return an absolute filesystem path for a repository-relative directory/file pair.
 
@@ -271,28 +334,32 @@ class GitRepo(AppException):
 
         # Reject absolute components — callers should pass repository-relative
         if rel_dir and os.path.isabs(rel_dir):
-            raise ValueError("full_path_for: rel_dir must be repository-relative (not absolute)")
+            raise ValueError("abs_path_for: rel_dir must be repository-relative (not absolute)")
         if rel_file and os.path.isabs(rel_file):
-            raise ValueError("full_path_for: rel_file must be repository-relative (not absolute)")
+            raise ValueError("abs_path_for: rel_file must be repository-relative (not absolute)")
 
         # Join and normalize
         try:
-            full = os.path.normpath(os.path.join(self._repoRoot, rel_dir or "", rel_file or ""))
+            full = os.path.normpath(os.path.join(self._repoRoot, rel_dir, rel_file))
         except Exception as e:
-            printException(e, "full_path_for: failed to construct path")
-            raise ValueError(f"full_path_for: failed to construct path: {e}") from e
+            printException(e, "abs_path_for: failed to construct path")
+            raise ValueError(f"abs_path_for: failed to construct path: {e}") from e
 
         # Ensure the resulting path is inside the repository root
         try:
             repo_norm = os.path.normpath(self._repoRoot)
             common = os.path.commonpath([repo_norm, full])
             if common != repo_norm:
-                raise ValueError("full_path_for: computed path is outside the repository root")
+                raise ValueError("abs_path_for: computed path is outside the repository root")
         except Exception as e:
-            printException(e, "full_path_for: validation failed")
-            raise ValueError(f"full_path_for: validation failed: {e}") from e
+            printException(e, "abs_path_for: validation failed")
+            raise ValueError(f"abs_path_for: validation failed: {e}") from e
 
         return full
+
+    ################################################################
+    # helper functions
+    ################################################################
 
     def _deltas_to_results(self, detailed: list, a_raw, b_raw) -> list[tuple[str, str]]:
         """
@@ -627,7 +694,7 @@ class GitRepo(AppException):
             self.printException(e, "_git_cli_getCachedFileList: unexpected failure")
             return []
 
-    def _git_run(self, args: list, text: bool = True, cache_key: str | None = None):
+    def _git_run(self, args: list, text: bool = True, cache_key: str | None = None) -> str:
         """
         Run a git subprocess and return its output (string or bytes).
 
@@ -757,6 +824,10 @@ class GitRepo(AppException):
             self.printException(e, "_empty_tree_hash: detection failed, defaulting to sha1")
             return sha1_empty
 
+    ################
+    # File Lists
+    ################
+
     def getFileListBetweenNormalizedHashes(self, prev_hash: str, curr_hash: str) -> list[tuple[str, str]]:
         """
         Return a list of `(path, status)` for files changed between `prev_hash` and `curr_hash`.
@@ -814,7 +885,7 @@ class GitRepo(AppException):
         # explicit two-commit handler rather than the fully generic resolver.
         return self.getFileListBetweenTwoCommits(prev_hash, curr_hash)
 
-    def getFileListBetweenNewRepoAndTopHash(self) -> list[str]:
+    def getFileListBetweenNewRepoAndTopHash(self) -> list[tuple[str, str]]:
         """
         Return a list of `(path, status)` for files present in HEAD.
 
@@ -970,6 +1041,10 @@ class GitRepo(AppException):
             self.printException(e, "getFileListUntrackedAndIgnored: unexpected failure")
             return []
 
+    ################
+    # Hash Lists
+    ################
+
     def getNormalizedHashListComplete(self) -> list[tuple[str, str, str]]:
         """Return a combined list of commit hashes for staged, new, and entire repo."""
         new = self.getHashListNewChanges()
@@ -978,8 +1053,6 @@ class GitRepo(AppException):
         newrepo = self.getHashListNewRepo()
         combined = new + staged + entire + newrepo
         return combined
-
-    # runFileListSampledExercises moved to module-level function
 
     def getHashListEntireRepo(self) -> list[tuple[str, str, str]]:
         """Return a list of all commit hashes in the repository."""
@@ -1131,6 +1204,10 @@ class GitRepo(AppException):
         except Exception as e:
             self.printException(e, "getNormalizedHashListFromFileName: unexpected failure")
             return []
+
+    ################
+    # Diff List
+    ################
 
     def getDiff(self, filename: str, hash1: str, hash2: str, variation: list[str] | None = None) -> list[str]:
         """
@@ -1331,16 +1408,18 @@ class GitRepo(AppException):
             self.printException(e, "GitRepo.build_diff_cmd failed")
             return ["git", "diff"]
 
-    def getFileContents(self, hashval: str, relpath: str) -> bytes | None:
+    def getFileContents(self, hashval: str, reldir: str, relfile: str) -> bytes | None:
         """
-        Return raw bytes for the given repository-relative `relpath` at `hashval`.
+        Return raw bytes for the given repository-relative (reldir,relfile)at `hashval`.
 
         - `MODS` reads the working-tree file bytes.
         - `STAGED` reads from index via `git show :<relpath>`.
+        - `NEWREPO` has no files, so returns b"" to indicate empty content.
         - commit-ish reads from `git show <hash>:<relpath>`.
         Returns None on failure.
         """
         try:
+            relpath = os.path.join(reldir, relfile)
             if hashval == self.MODS:
                 try:
                     full = os.path.join(self._repoRoot, relpath)
@@ -1353,49 +1432,18 @@ class GitRepo(AppException):
             if hashval == self.STAGED:
                 out = self._git_run(["git", "-C", self._repoRoot, "show", f":{relpath}"], text=False)
                 return out if out else None
+            
+            if hashval == self.NEWREPO:
+                # NEWREPO has no files, so return b"" to indicate empty content
+                return b""
 
             # commit-ish
             out = self._git_run(["git", "-C", self._repoRoot, "show", f"{hashval}:{relpath}"], text=False)
             return out if out else None
         except Exception as e:
-            self.printException(e, "getFileContents failed")
-            return None
-        except Exception as e:
             # Log and re-raise so callers can handle errors explicitly
             self.printException(e, "getDiff: failed")
             raise
-
-
-def _print_result(res):
-    print(repr(res))
-    #try:
-    #    # try to json-serialize common types, fall back to repr
-    #    import json
-    #
-    #    print(json.dumps(res, default=lambda o: repr(o), indent=2))
-    #except Exception:
-    #    print(repr(res))
-
-
-def _invoke(repo: GitRepo, name: str, args, param_names: list[str], use_class: bool = False):
-    """
-    Invoke method `name` on `repo` (or class) using parameters from `args`.
-
-    `param_names` lists attribute names on `args` to pass to the call in order.
-    If `use_class` is True the call is made on the `GitRepo` class.
-    """
-    params = []
-    for p in param_names:
-        val = getattr(args, p, None)
-        if val is None:
-            raise ValueError(f"missing required argument for {name}: {p}")
-        params.append(val)
-
-    target = GitRepo if use_class else repo
-    if not hasattr(target, name):
-        raise AttributeError(f"{target!r} has no attribute {name}")
-    fn = getattr(target, name)
-    return fn(*params)
 
 
 def main(argv=None):
@@ -1474,6 +1522,26 @@ def main(argv=None):
         "getFileContents": ("getFileContents", ["hash1", "file"], False),
     }
 
+    def _invoke(repo: GitRepo, name: str, args, param_names: list[str], use_class: bool = False):
+        """
+        Invoke method `name` on `repo` (or class) using parameters from `args`.
+
+        `param_names` lists attribute names on `args` to pass to the call in order.
+        If `use_class` is True the call is made on the `GitRepo` class.
+        """
+        params = []
+        for p in param_names:
+            val = getattr(args, p, None)
+            if val is None:
+                raise ValueError(f"missing required argument for {name}: {p}")
+            params.append(val)
+
+        target = GitRepo if use_class else repo
+        if not hasattr(target, name):
+            raise AttributeError(f"{target!r} has no attribute {name}")
+        fn = getattr(target, name)
+        return fn(*params)
+
     # Iterate flags and invoke selected functions
     for opt, (method_name, params, use_class) in mapping.items():
         if getattr(parsed, opt, False):
@@ -1492,7 +1560,8 @@ def main(argv=None):
                             raise ValueError(f"{method_name} requires --{p}")
                     res = _invoke(repo, method_name, parsed, params, use_class=use_class)
                 print(f"== {method_name} ==")
-                _print_result(res)
+                print(repr(res))
+
             except Exception as e:
                 print(f"error invoking {method_name}: {e}")
 
