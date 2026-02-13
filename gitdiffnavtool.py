@@ -2002,56 +2002,85 @@ class FileModeFileList(FileListBase):
             # Minimal replacement: clear list, show headers, call GitRepo
             # helpers `getFileListUntrackedAndIgnored` and
             # `getFileListBetweenNewRepoAndMods`, and display their results.
-            try:
-                self.clear()
-            except Exception:
-                pass
-
-            try:
-                self._add_filelist_key_header()
-            except Exception:
-                # non-fatal
-                pass
+            self.clear()
+            self._add_filelist_key_header()
 
             gitrepo = self.app.gitRepo
 
-            # Gather untracked/ignored entries: list of (path, iso, status)
+            # Gather untracked and ignored entries separately: lists of (path, iso, status)
             try:
-                untracked = gitrepo.getFileListUntrackedAndIgnored() or []
+                untracked = gitrepo.getFileListUntracked()
             except Exception as e:
-                self.printException(e, "prepFileModeFileList: getFileListUntrackedAndIgnored failed")
+                self.printException(e, "prepFileModeFileList: getFileListUntracked failed")
                 untracked = []
+
+            try:
+                ignored = gitrepo.getFileListIgnored()
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: getFileListIgnored failed")
+                ignored = []
 
             # Gather working-tree modifications (MODS): list of (path,status)
             try:
-                mods = gitrepo.getFileListBetweenNewRepoAndMods() or []
+                mods = gitrepo.getFileListBetweenNewRepoAndMods()
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: getFileListBetweenNewRepoAndMods failed")
                 mods = []
 
-            # Display Untracked/Ignored
-            try:
-                self.append(ListItem(Label(Text("Untracked / Ignored:", style=STYLE_HELP_BG))))
-            except Exception:
-                pass
+            # Build an index mapping directories -> immediate child dirs and files
+            # so we can quickly render a directory slice for `rel_dir`.
+            # Data structure:
+            # nodes_by_dir: dict[str, {'dirs': set[str], 'files': list[(name, status, iso)]}]
+            # - key is repository-relative directory path ("" for repo root)
+            # - 'dirs' contains immediate child directory names
+            # - 'files' contains tuples for immediate files in that directory
+            # Note: we intentionally omit storing absolute/full paths here to
+            # reduce memory and because most UI actions operate on repo-relative
+            # names; callers that need full paths can reconstruct them from the
+            # repo root when necessary.
+            nodes_by_dir: dict = {}
 
+            def ensure_dir_node(d: str):
+                if d not in nodes_by_dir:
+                    nodes_by_dir[d] = {"dirs": set(), "files": []}
+
+            def register_file(rel_path: str, status: str, iso: str | None):
+                parent = os.path.dirname(rel_path)
+                if parent == "":
+                    parent = ""
+                ensure_dir_node(parent)
+                name = os.path.basename(rel_path)
+                nodes_by_dir[parent]["files"].append((name, status, iso))
+
+                # register parent as a child in its parent directory
+                if parent:
+                    grand = os.path.dirname(parent)
+                    if grand == "":
+                        grand = ""
+                    ensure_dir_node(grand)
+                    nodes_by_dir[grand]["dirs"].add(os.path.basename(parent))
+
+            # Add untracked entries: (path, iso, status)
             for entry in untracked:
                 try:
-                    # entry is (path, iso, status)
-                    path_item = entry[0] if len(entry) > 0 else str(entry)
-                    status = entry[2] if len(entry) > 2 else (entry[1] if len(entry) > 1 else "untracked")
-                    txt = f"{status} {path_item}"
-                    self.append(ListItem(Label(Text(txt))))
-                except Exception as e:
-                    self.printException(e, "prepFileModeFileList: appending untracked entry failed")
+                    p = entry[0]
+                    iso = entry[1] if len(entry) > 1 else None
+                    status = entry[2] if len(entry) > 2 else "untracked"
+                    register_file(p, status, iso)
+                except Exception:
+                    continue
 
-            # Separator
-            try:
-                self.append(ListItem(Label(Text("", style=STYLE_DEFAULT))))
-                self.append(ListItem(Label(Text("Working-tree modifications (MODS):", style=STYLE_HELP_BG))))
-            except Exception:
-                pass
+            # Add ignored entries: (path, iso, status)
+            for entry in ignored:
+                try:
+                    p = entry[0]
+                    iso = entry[1] if len(entry) > 1 else None
+                    status = entry[2] if len(entry) > 2 else "ignored"
+                    register_file(p, status, iso)
+                except Exception:
+                    continue
 
+            # Add mods entries: (path, status) - no iso provided
             for entry in mods:
                 try:
                     # entry is (path, status)
@@ -2059,10 +2088,42 @@ class FileModeFileList(FileListBase):
                         p, s = entry[0], entry[1]
                     else:
                         p, s = str(entry), "modified"
-                    txt = f"{s} {p}"
+                    register_file(p, s, None)
+                except Exception:
+                    continue
+
+            # Display only the requested directory slice
+            # Normalize the requested rel_dir so callers may pass '' './' or '.'
+            norm_rel_dir = rel_dir or ""
+            if isinstance(norm_rel_dir, str) and norm_rel_dir.startswith("./"):
+                norm_rel_dir = norm_rel_dir[2:]
+            norm_rel_dir = os.path.normpath(norm_rel_dir) if norm_rel_dir else ""
+            if norm_rel_dir == ".":
+                norm_rel_dir = ""
+
+            slice_node = nodes_by_dir.get(norm_rel_dir, {"dirs": set(), "files": []})
+
+            try:
+                self.append(ListItem(Label(Text(f"Directory: {rel_dir or '/'}", style=STYLE_HELP_BG))))
+            except Exception:
+                pass
+
+            # Show directories first
+            for dname in sorted(slice_node["dirs"]):
+                try:
+                    txt = f"dir/ {dname}"
                     self.append(ListItem(Label(Text(txt))))
                 except Exception as e:
-                    self.printException(e, "prepFileModeFileList: appending mods entry failed")
+                    self.printException(e, "prepFileModeFileList: appending dir entry failed")
+
+            # Then show files
+            for name, status, iso in sorted(slice_node["files"], key=lambda x: x[0]):
+                try:
+                    ts = iso if iso is not None else ""
+                    txt = f"{status} {name} {ts}".strip()
+                    self.append(ListItem(Label(Text(txt))))
+                except Exception as e:
+                    self.printException(e, "prepFileModeFileList: appending file entry failed")
 
             # Finalize minimal population state
             try:

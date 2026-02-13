@@ -943,7 +943,6 @@ class GitRepo(AppException):
         key = "getFileListBetweenNewRepoAndStaged"
         return self._git_name_status_dispatch(prev=None, curr=None, cached=True, key=key)
 
-    # make git-only
     def getFileListBetweenNewRepoAndMods(self) -> list[tuple[str, str]]:
         """
         Specialized handler for initial (empty) -> working tree (mods) comparison.
@@ -986,7 +985,6 @@ class GitRepo(AppException):
         key = self._make_cache_key("getFileListBetweenHashAndStaged", hash)
         return self._git_name_status_dispatch(prev=hash, curr=None, cached=True, key=key)
 
-    # make git-only
     def getFileListBetweenStagedAndMods(self) -> list[tuple[str, str]]:
         """
         Return a list of `(path, status)` for files changed between staged index and working tree (mods)."""
@@ -994,17 +992,14 @@ class GitRepo(AppException):
         key = self._make_cache_key("getFileListBetweenStagedAndMods")
         return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
 
-    # make git-only
-    def getFileListUntrackedAndIgnored(self) -> list[tuple[str, str, str]]:
-        """
-        Return a sorted list of `(path, iso_mtime, status)` for files that are
-        either untracked or ignored in the working tree.
 
-        - `status` is one of: `untracked`, `ignored`.
-        - `iso_mtime` is produced from the filesystem mtime via `_epoch_to_iso`.
+    def getFileListUntracked(self) -> list[tuple[str, str, str]]:
+        """
+        Return a sorted list of `(path, iso_mtime, 'untracked')` for files that
+        are untracked in the working tree.
         """
         try:
-            cache_key = self._make_cache_key("getFileListUntrackedAndIgnored")
+            cache_key = self._make_cache_key("getFileListUntracked")
             if cache_key in self._cmd_cache:
                 return self._cmd_cache[cache_key]
 
@@ -1012,7 +1007,6 @@ class GitRepo(AppException):
             seen: set[str] = set()
 
             untracked_out = self._git_run(["git", "ls-files", "--others", "--exclude-standard"], text=True) or ""
-            ignored_out = self._git_run(["git", "ls-files", "--others", "-i", "--exclude-standard"], text=True) or ""
 
             for line in untracked_out.splitlines():
                 rel = line.strip()
@@ -1023,6 +1017,28 @@ class GitRepo(AppException):
                 mtime = self.safe_mtime(rel)
                 iso = self._epoch_to_iso(mtime) if mtime is not None else self.index_mtime_iso()
                 results.append((rel, iso, "untracked"))
+
+            results.sort(key=lambda x: x[0])
+            self._cmd_cache[cache_key] = results
+            return results
+        except Exception as e:
+            self.printException(e, "getFileListUntracked: unexpected failure")
+            return []
+
+    def getFileListIgnored(self) -> list[tuple[str, str, str]]:
+        """
+        Return a sorted list of `(path, iso_mtime, 'ignored')` for files that
+        are ignored in the working tree.
+        """
+        try:
+            cache_key = self._make_cache_key("getFileListIgnored")
+            if cache_key in self._cmd_cache:
+                return self._cmd_cache[cache_key]
+
+            results: list[tuple[str, str, str]] = []
+            seen: set[str] = set()
+
+            ignored_out = self._git_run(["git", "ls-files", "--others", "-i", "--exclude-standard"], text=True) or ""
 
             for line in ignored_out.splitlines():
                 rel = line.strip()
@@ -1037,6 +1053,40 @@ class GitRepo(AppException):
             results.sort(key=lambda x: x[0])
             self._cmd_cache[cache_key] = results
             return results
+        except Exception as e:
+            self.printException(e, "getFileListIgnored: unexpected failure")
+            return []
+
+    def getFileListUntrackedAndIgnored(self) -> list[tuple[str, str, str]]:
+        """
+        Aggregate untracked and ignored lists into a single sorted list.
+
+        Calls `getFileListUntracked()` and `getFileListIgnored()` and merges
+        them while avoiding duplicates. Results are cached per-call.
+        """
+        try:
+            cache_key = self._make_cache_key("getFileListUntrackedAndIgnored")
+            if cache_key in self._cmd_cache:
+                return self._cmd_cache[cache_key]
+
+            untracked = self.getFileListUntracked() or []
+            ignored = self.getFileListIgnored() or []
+
+            combined: list[tuple[str, str, str]] = []
+            seen: set[str] = set()
+            for entry in (untracked + ignored):
+                try:
+                    rel = entry[0] if len(entry) > 0 else None
+                    if not rel or rel in seen:
+                        continue
+                    seen.add(rel)
+                    combined.append(entry)
+                except Exception:
+                    continue
+
+            combined.sort(key=lambda x: x[0])
+            self._cmd_cache[cache_key] = combined
+            return combined
         except Exception as e:
             self.printException(e, "getFileListUntrackedAndIgnored: unexpected failure")
             return []
@@ -1459,7 +1509,10 @@ def main(argv=None):
     # Add boolean flags for many GitRepo methods (name matches method)
     flags = [
         "resolve_repo_top",
-        "relpath_if_within",
+        "cwd_plus_path_to_reldir_relfile",
+        "repo_rel_path_to_reldir_relfile",
+        "reldir_plus_path_to_reldir_relfile",
+        "abs_path_for",
         "get_repo_root",
         "index_mtime_iso",
         "safe_mtime",
@@ -1472,6 +1525,8 @@ def main(argv=None):
         "getFileListBetweenHashAndCurrentTime",
         "getFileListBetweenHashAndStaged",
         "getFileListBetweenStagedAndMods",
+        "getFileListUntracked",
+        "getFileListIgnored",
         "getFileListUntrackedAndIgnored",
         "getNormalizedHashListComplete",
         "getHashListEntireRepo",
@@ -1480,6 +1535,7 @@ def main(argv=None):
         "getHashListNewRepo",
         "getNormalizedHashListFromFileName",
         "getDiff",
+        "build_diff_cmd",
         "getFileContents",
     ]
 
@@ -1498,7 +1554,10 @@ def main(argv=None):
     # mapping: option name -> (method_name, param_names, use_class)
     mapping = {
         "resolve_repo_top": ("resolve_repo_top", ["path"], True),
-        "relpath_if_within": ("relpath_if_within", ["path", "file"], True),
+        "cwd_plus_path_to_reldir_relfile": ("cwd_plus_path_to_reldir_relfile", ["path"], False),
+        "repo_rel_path_to_reldir_relfile": ("repo_rel_path_to_reldir_relfile", ["file"], True),
+        "reldir_plus_path_to_reldir_relfile": ("reldir_plus_path_to_reldir_relfile", ["path", "file"], False),
+        "abs_path_for": ("abs_path_for", ["path", "file"], False),
         "get_repo_root": ("get_repo_root", [], False),
         "index_mtime_iso": ("index_mtime_iso", [], False),
         "safe_mtime": ("safe_mtime", ["file"], False),
@@ -1511,6 +1570,8 @@ def main(argv=None):
         "getFileListBetweenHashAndCurrentTime": ("getFileListBetweenHashAndCurrentTime", ["hash1"], False),
         "getFileListBetweenHashAndStaged": ("getFileListBetweenHashAndStaged", ["hash1"], False),
         "getFileListBetweenStagedAndMods": ("getFileListBetweenStagedAndMods", [], False),
+        "getFileListUntracked": ("getFileListUntracked", [], False),
+        "getFileListIgnored": ("getFileListIgnored", [], False),
         "getFileListUntrackedAndIgnored": ("getFileListUntrackedAndIgnored", [], False),
         "getNormalizedHashListComplete": ("getNormalizedHashListComplete", [], False),
         "getHashListEntireRepo": ("getHashListEntireRepo", [], False),
@@ -1519,6 +1580,7 @@ def main(argv=None):
         "getHashListNewRepo": ("getHashListNewRepo", [], False),
         "getNormalizedHashListFromFileName": ("getNormalizedHashListFromFileName", ["file"], False),
         "getDiff": ("getDiff", ["file", "hash1", "hash2"], False),
+        "build_diff_cmd": ("build_diff_cmd", ["file", "hash1", "hash2"], False),
         "getFileContents": ("getFileContents", ["hash1", "file"], False),
     }
 
@@ -1546,19 +1608,20 @@ def main(argv=None):
     for opt, (method_name, params, use_class) in mapping.items():
         if getattr(parsed, opt, False):
             try:
-                # For relpath_if_within when base path should be repo root, supply that
-                if method_name == "relpath_if_within":
-                    base = repo.get_repo_root()
-                    conv = getattr(parsed, "file", None)
-                    if conv is None:
-                        raise ValueError("relpath_if_within requires --file to be set")
-                    res = GitRepo.relpath_if_within(base, conv)
+                # Special-case handlers for methods that need argument conversion
+                if method_name == "getFileContents":
+                    # Expect --file to be repository-relative path; split to reldir/relfile
+                    if getattr(parsed, "file", None) is None:
+                        raise ValueError("getFileContents requires --file to be set")
+                    reldir, relfile = GitRepo.repo_rel_path_to_reldir_relfile(getattr(parsed, "file"))
+                    res = repo.getFileContents(getattr(parsed, "hash1", None), reldir, relfile)
                 else:
                     # Validate parameters
                     for p in params:
                         if getattr(parsed, p, None) is None:
                             raise ValueError(f"{method_name} requires --{p}")
                     res = _invoke(repo, method_name, parsed, params, use_class=use_class)
+
                 print(f"== {method_name} ==")
                 print(repr(res))
 
