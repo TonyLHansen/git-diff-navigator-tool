@@ -1580,8 +1580,15 @@ def main(argv=None):
 
     # Optional JSON output for CLI consumers
     parser.add_argument("-j", "--json", dest="json", action="store_true", help="output results as JSON")
+    # Convenience: set all boolean flags
+    parser.add_argument("-A", "--all", dest="all", action="store_true", help="invoke all available method flags")
 
     args = parser.parse_args(argv)
+
+    # If --all requested, enable every boolean flag defined above
+    if args.all:
+        for f in flags:
+            setattr(args, f, True)
 
     # Create GitRepo using provided path
     try:
