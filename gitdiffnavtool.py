@@ -2006,8 +2006,13 @@ class FileModeFileList(FileListBase):
             self._add_filelist_key_header()
 
             gitrepo = self.app.gitRepo
+            # Gather committed, untracked and ignored entries and working-tree mods.
+            try:
+                committed = gitrepo.getFileListAtHash("HEAD")
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: getFileListAtHash failed")
+                committed = []
 
-            # Gather untracked and ignored entries separately: lists of (path, iso, status)
             try:
                 untracked = gitrepo.getFileListUntracked()
             except Exception as e:
@@ -2022,9 +2027,9 @@ class FileModeFileList(FileListBase):
 
             # Gather working-tree modifications (MODS): list of (path,status)
             try:
-                mods = gitrepo.getFileListBetweenNewRepoAndMods()
+                mods = gitrepo.getFileListBetweenNormalizedHashes("HEAD", "MODS")
             except Exception as e:
-                self.printException(e, "prepFileModeFileList: getFileListBetweenNewRepoAndMods failed")
+                self.printException(e, "prepFileModeFileList: getFileListBetweenNormalizedHashes failed")
                 mods = []
 
             # Build an index mapping directories -> immediate child dirs and files
@@ -2045,20 +2050,32 @@ class FileModeFileList(FileListBase):
                     nodes_by_dir[d] = {"dirs": set(), "files": []}
 
             def register_file(rel_path: str, status: str, iso: str | None):
-                parent = os.path.dirname(rel_path)
-                if parent == "":
-                    parent = ""
+                parent = os.path.dirname(rel_path) or ""
                 ensure_dir_node(parent)
                 name = os.path.basename(rel_path)
-                nodes_by_dir[parent]["files"].append((name, status, iso))
+                files = nodes_by_dir[parent]["files"]
+                # If file already present in this directory, update its entry
+                for idx, (n, s, t) in enumerate(files):
+                    if n == name:
+                        files[idx] = (name, status, iso)
+                        break
+                else:
+                    files.append((name, status, iso))
 
                 # register parent as a child in its parent directory
                 if parent:
-                    grand = os.path.dirname(parent)
-                    if grand == "":
-                        grand = ""
+                    grand = os.path.dirname(parent) or ""
                     ensure_dir_node(grand)
                     nodes_by_dir[grand]["dirs"].add(os.path.basename(parent))
+
+            # First, add committed files from HEAD as tracked_clean baseline
+            for entry in committed:
+                try:
+                    p = entry[0] if isinstance(entry, (list, tuple)) and len(entry) > 0 else str(entry)
+                    register_file(p, "tracked_clean", None)
+                except Exception as e:
+                    self.printException(e, "prepFileModeFileList: registering committed file failed")
+                    continue
 
             # Add untracked entries: (path, iso, status)
             for entry in untracked:
@@ -2082,7 +2099,7 @@ class FileModeFileList(FileListBase):
                     self.printException(e, "prepFileModeFileList: registering ignored file failed")
                     continue
 
-            # Add mods entries: (path, status) - no iso provided
+            # Add mods entries: (path, status) - no iso provided; override committed
             for entry in mods:
                 try:
                     # entry is (path, status)
