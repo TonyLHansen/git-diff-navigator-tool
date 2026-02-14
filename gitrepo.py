@@ -126,6 +126,11 @@ class GitRepo(AppException):
 
     ################ File Lists
 
+     def getFileListAtHash(self, curr_hash)
+        Return a list of the committed files present in `curr_hash`.
+
+
+
      gitRepo.getFileListUntrackedAndIgnored()
          Returns a list of the untracked and ignored files in the current repository view,
 
