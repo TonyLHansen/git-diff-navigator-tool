@@ -234,7 +234,7 @@ class GitRepo(AppException):
     def cwd_plus_path_to_reldir_relfile(self, query_path: str) -> tuple[str, str]:
         """
         reldir, relfile = GitRepo.cwd_plus_path_to_reldir_relfile(query_path)
-            self._repoRoot is the full path to the root of the repository, and 
+            self._repoRoot is the full path to the root of the repository, and
             query_path is a path relative to the current directory.
             Relpath is computed from repoRoot to query_path if query_path is within repoRoot, else an exception is raised.
             Then invokes GitRepo.repo_rel_path_to_reldir_relfile() on the resulting relpath.
@@ -296,7 +296,6 @@ class GitRepo(AppException):
         if dirpart in ("", "."):
             return ("", filepart)
         return (dirpart, filepart)
-
 
     def reldir_plus_path_to_reldir_relfile(self, rel_dir: Optional[str], query_path: str) -> tuple[str, str]:
         """
@@ -705,11 +704,15 @@ class GitRepo(AppException):
             return []
 
     @overload
-    def _git_run(self, args: list, text: Literal[True], cache_key: str | None = None) -> str:  # pragma: no cover - typing only
+    def _git_run(
+        self, args: list, text: Literal[True], cache_key: str | None = None
+    ) -> str:  # pragma: no cover - typing only
         ...
 
     @overload
-    def _git_run(self, args: list, text: Literal[False], cache_key: str | None = None) -> bytes:  # pragma: no cover - typing only
+    def _git_run(
+        self, args: list, text: Literal[False], cache_key: str | None = None
+    ) -> bytes:  # pragma: no cover - typing only
         ...
 
     def _git_run(self, args: list, text: bool = True, cache_key: str | None = None) -> str | bytes:
@@ -1010,7 +1013,6 @@ class GitRepo(AppException):
         key = self._make_cache_key("getFileListBetweenStagedAndMods")
         return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
 
-
     def getFileListUntracked(self) -> list[tuple[str, str, str]]:
         """
         Return a sorted list of `(path, iso_mtime, 'untracked')` for files that
@@ -1092,7 +1094,7 @@ class GitRepo(AppException):
 
             combined: list[tuple[str, str, str]] = []
             seen: set[str] = set()
-            for entry in (untracked + ignored):
+            for entry in untracked + ignored:
                 try:
                     rel = entry[0] if len(entry) > 0 else None
                     if not rel or rel in seen:
@@ -1498,36 +1500,27 @@ class GitRepo(AppException):
                     self.printException(e, "getFileContents: reading working-tree failed")
                     return None
 
-            if hashval == self.STAGED:
-                out = self._git_run(["git", "-C", self._repoRoot, "show", f":{relpath}"], text=False)
-                # Ensure bytes are returned for staged/index content
-                if out is None:
-                    return None
-                if isinstance(out, str):
-                    try:
-                        out_b = out.encode("utf-8")
-                    except Exception:
-                        out_b = bytes(out, "utf-8", errors="surrogateescape")
-                    # Return bytes even when empty to represent empty file content
-                    return out_b
-                return out if out else None
-            
             if hashval == self.NEWREPO:
                 # NEWREPO has no files, so return b"" to indicate empty content
                 return b""
 
-            # commit-ish
-            out = self._git_run(["git", "-C", self._repoRoot, "show", f"{hashval}:{relpath}"], text=False)
+            if hashval == self.STAGED:
+                out = self._git_run(["git", "-C", self._repoRoot, "show", f":{relpath}"], text=False)
+            else:
+                # commit-ish
+                out = self._git_run(["git", "-C", self._repoRoot, "show", f"{hashval}:{relpath}"], text=False)
+
+            # Normalize subprocess output to bytes in one place so callers
+            # always receive `bytes` (or `None` on failure). Accept
+            # `bytes`/`bytearray` as-is, convert `str` via UTF-8 (with a
+            # surrogate-escape fallback) and propagate `None`.
             if out is None:
                 return None
-            if isinstance(out, str):
-                try:
-                    out_b = out.encode("utf-8")
-                except Exception:
-                    out_b = bytes(out, "utf-8", errors="surrogateescape")
-                # Return bytes even when empty to represent empty file content
-                return out_b
-            return out
+
+            if isinstance(out, (bytes, bytearray)):
+                return bytes(out)
+
+            return bytes(out, "utf-8", errors="surrogateescape")
         except Exception as e:
             # Log and re-raise so callers can handle errors explicitly
             self.printException(e, "getDiff: failed")
