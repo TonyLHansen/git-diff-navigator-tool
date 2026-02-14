@@ -62,7 +62,7 @@ MARKERS = {
     "ignored": "I",
     "modified": "M",
     "untracked": "U",
-    "tracked_clean": " ",
+    "tracked_clean": "\u00A0",
 }
 
 # Inline CSS used by the Textual App (can be edited in-place)
@@ -142,8 +142,11 @@ STYLE_DEFAULT = "white"
 
 STYLE_FILELIST_KEY = "dim"
 
+# Help background style used by help/header labels
+STYLE_HELP_BG = f"white on {HIGHLIGHT_HELP_BG}"
+
 # Header row text for file lists (unselectable)
-FILELIST_KEY_ROW_TEXT = "Key:  ' ' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
+FILELIST_KEY_ROW_TEXT = "Key:  '\u00A0' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
 
 # Number of characters to display for short hashes
 HASH_LENGTH = 12
@@ -413,6 +416,13 @@ class AppBase(AppException, ListView):
 
             try:
                 self.append(item)
+                try:
+                    # Add a parent directory entry ("..") when appropriate;
+                    # this will be a non-selectable directory row placed
+                    # immediately after the headers so users can navigate up.
+                    self._render_parent_entry_if_needed(norm_rel_dir)
+                except Exception:
+                    pass
             except Exception as _ex:
                 self.printException(_ex, "_append_file_row: append failed")
         except Exception as e:
@@ -2123,33 +2133,110 @@ class FileModeFileList(FileListBase):
 
             slice_node = nodes_by_dir.get(norm_rel_dir, {"dirs": set(), "files": []})
 
+            # Prepend header rows: the key legend is added earlier via
+            # `_add_filelist_key_header()`, so here only add the directory
+            # header. Mark it non-selectable so navigation skips it.
             try:
-                self.append(ListItem(Label(Text(f"Directory: {rel_dir or '/'}", style=STYLE_HELP_BG))))
+                item = ListItem(Label(Text(f"Directory: {rel_dir or 'Repository Root'}", style=STYLE_HELP_BG)))
+                item._dir_header = True
+                item._selectable = False
+                self.append(item)
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: appending header failed")
 
-            # Show directories first
+            # Show directories first (use right-arrow marker and include '/').
             for dname in sorted(slice_node["dirs"]):
                 try:
-                    txt = f"dir/ {dname}"
-                    self.append(ListItem(Label(Text(txt))))
+                    item = ListItem(Label(Text(f"→ {dname}/", style=STYLE_DIR)))
+                    try:
+                        item._is_dir = True
+                        item._filename = dname
+                        try:
+                            raw = os.path.join(norm_rel_dir, dname) if norm_rel_dir else dname
+                        except Exception:
+                            raw = dname
+                        item._raw_text = raw
+                    except Exception:
+                        pass
+                    self.append(item)
                 except Exception as e:
                     self.printException(e, "prepFileModeFileList: appending dir entry failed")
 
-            # Then show files
+            # Then show files (use marker key and per-status styles)
             for name, status, iso in sorted(slice_node["files"], key=lambda x: x[0]):
                 try:
                     ts = iso if iso is not None else ""
-                    txt = f"{status} {name} {ts}".strip()
-                    self.append(ListItem(Label(Text(txt))))
+                    marker = MARKERS.get(status, " ")
+                    if status == "conflicted":
+                        style = STYLE_CONFLICTED
+                    elif status == "staged":
+                        style = STYLE_STAGED
+                    elif status == "wt_deleted":
+                        style = STYLE_WT_DELETED
+                    elif status == "ignored":
+                        style = STYLE_IGNORED
+                    elif status == "modified":
+                        style = STYLE_MODIFIED
+                    elif status == "untracked":
+                        style = STYLE_UNTRACKED
+                    else:
+                        style = STYLE_DEFAULT
+
+                    # Preserve leading non-breaking space marker; avoid
+                    # stripping leading whitespace which would remove it.
+                    display_parts = [marker, name]
+                    if ts:
+                        display_parts.append(ts)
+                    display = " ".join(display_parts)
+                    # If marker is a non-breaking space, prefix a zero-width
+                    # joiner so UI trimming doesn't remove the NBSP.
+                    try:
+                        if marker == "\u00A0":
+                            display = "\u200D" + display
+                    except Exception:
+                        pass
+                    if style:
+                        item = ListItem(Label(Text(display, style=style)))
+                    else:
+                        item = ListItem(Label(Text(display)))
+                    try:
+                        item._repo_status = status
+                        item._is_dir = False
+                        # store repo-relative raw path
+                        try:
+                            raw = os.path.join(norm_rel_dir, name) if norm_rel_dir else name
+                        except Exception:
+                            raw = name
+                        item._raw_text = raw
+                        item._filename = name
+                    except Exception:
+                        pass
+                    self.append(item)
                 except Exception as e:
                     self.printException(e, "prepFileModeFileList: appending file entry failed")
 
-            # Finalize minimal population state
+            # Finalize minimal population state and ensure navigation starts
+            # on the first actual entry (after the two header rows).
             try:
                 self._populated = True
                 nodes = self.nodes()
-                self._min_index = 1 if len(nodes) > 1 else 0
+                header_count = 2
+                if len(nodes) > header_count:
+                    self._min_index = header_count
+                else:
+                    self._min_index = 0
+                # Ensure the selection cursor starts on the first non-header
+                # entry and that it's visible.
+                try:
+                    self.index = self._min_index or 0
+                    try:
+                        # best-effort to scroll headers/selection into view
+                        if hasattr(self, "_ensure_index_visible"):
+                            self._ensure_index_visible()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: finalizing population state failed")
 
