@@ -953,6 +953,34 @@ class GitRepo(AppException):
             self.printException(e, "getFileListBetweenNewRepoAndHash: unexpected failure")
             return []
 
+    def getFileListAtHash(self, curr_hash: str) -> list[tuple[str, str]]:
+        """
+        Return a list of `(path, status)` for files present in `curr_hash`.
+
+        Uses `git ls-tree -r --name-only <hash>` to list committed files for
+        the given tree/commit. Results are cached per-process.
+        Status is set to `committed` to indicate presence in the commit.
+        """
+        key = self._make_cache_key("getFileListAtHash", curr_hash)
+        try:
+            if key in self._cmd_cache:
+                return self._cmd_cache[key]
+
+            output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key)
+
+            results: list[tuple[str, str]] = []
+            for line in output.splitlines():
+                ln = line.strip()
+                if not ln:
+                    continue
+                results.append((ln, "committed"))
+            results.sort(key=lambda x: x[0])
+            self._cmd_cache[key] = results
+            return results
+        except Exception as e:
+            self.printException(e, "getFileListAtHash: unexpected failure")
+            return []
+
     def getFileListBetweenNewRepoAndStaged(self) -> list[tuple[str, str]]:
         """
         Return file list for the initial (empty) tree -> staged index comparison.
@@ -1692,6 +1720,7 @@ def main(argv=None):
             except Exception as e:
                 printException(e, f"main: error invoking {method_name}")
                 print(f"error invoking {method_name}: {e}")
+                break
 
 
 if __name__ == "__main__":
