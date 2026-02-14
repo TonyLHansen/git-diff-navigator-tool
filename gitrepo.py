@@ -19,7 +19,7 @@ import sys
 import traceback
 from datetime import datetime, timezone
 from subprocess import CalledProcessError, check_output
-from typing import Optional
+from typing import Optional, Any, Dict, List, Tuple, overload, Literal
 import json
 import base64
 import argparse
@@ -174,12 +174,14 @@ class GitRepo(AppException):
 
     def __init__(self, repoRoot: str):
         # One-time per-process cache for git CLI command results
-        self._cmd_cache = {}
+        self._cmd_cache: Dict[str, Any] = {}
         # Resolve the provided path to the git repository top; allow
         # exceptions from `resolve_repo_top(..., raise_on_missing=True)` to
         # propagate so callers receive a clear failure immediately.
         resolved, _ = GitRepo.resolve_repo_top(repoRoot, raise_on_missing=True)
-        self._repoRoot = resolved
+        # resolve_repo_top should have raised on failure; assert for typing
+        assert resolved is not None
+        self._repoRoot: str = resolved
 
     def reset_cache(self) -> None:
         """Reset the per-process command/result cache."""
@@ -229,7 +231,7 @@ class GitRepo(AppException):
         """Return the resolved repository root path for this GitRepo instance."""
         return self._repoRoot
 
-    def cwd_plus_path_to_reldir_relfile(self, query_path):
+    def cwd_plus_path_to_reldir_relfile(self, query_path: str) -> tuple[str, str]:
         """
         reldir, relfile = GitRepo.cwd_plus_path_to_reldir_relfile(query_path)
             self._repoRoot is the full path to the root of the repository, and 
@@ -253,7 +255,7 @@ class GitRepo(AppException):
             raise ValueError(f"cwd_plus_path_to_reldir_rlfile failed: {e}") from e
 
     @classmethod
-    def repo_rel_path_to_reldir_relfile(cls, file_path):
+    def repo_rel_path_to_reldir_relfile(cls, file_path: str) -> tuple[str, str]:
         """
         file_path is a repository-relative path (must NOT be absolute).
 
@@ -296,7 +298,7 @@ class GitRepo(AppException):
         return (dirpart, filepart)
 
 
-    def reldir_plus_path_to_reldir_relfile(self, rel_dir, query_path):
+    def reldir_plus_path_to_reldir_relfile(self, rel_dir: Optional[str], query_path: str) -> tuple[str, str]:
         """
         query_path is a path (relative to rel_dir within the repo) to a directory or file.
         join(repo_root, rel_dir, query_path)
@@ -306,6 +308,9 @@ class GitRepo(AppException):
         Raises an exception otherwise
         """
         try:
+            # Normalize optional rel_dir to empty string for os.path.join
+            if rel_dir is None:
+                rel_dir = ""
             joined = os.path.join(self._repoRoot, rel_dir, query_path)
             norm = os.path.normpath(joined)
             removed_root = os.path.relpath(norm, self._repoRoot)
@@ -699,7 +704,15 @@ class GitRepo(AppException):
             self.printException(e, "_git_cli_getCachedFileList: unexpected failure")
             return []
 
-    def _git_run(self, args: list, text: bool = True, cache_key: str | None = None) -> str:
+    @overload
+    def _git_run(self, args: list, text: Literal[True], cache_key: str | None = None) -> str:  # pragma: no cover - typing only
+        ...
+
+    @overload
+    def _git_run(self, args: list, text: Literal[False], cache_key: str | None = None) -> bytes:  # pragma: no cover - typing only
+        ...
+
+    def _git_run(self, args: list, text: bool = True, cache_key: str | None = None) -> str | bytes:
         """
         Run a git subprocess and return its output (string or bytes).
 
@@ -957,7 +970,7 @@ class GitRepo(AppException):
         key = "getFileListBetweenNewRepoAndMods"
         return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
 
-    def getFileListBetweenTopHashAndCurrentTime(self) -> list[str]:
+    def getFileListBetweenTopHashAndCurrentTime(self) -> list[tuple[str, str]]:
         """
         Return a list of `(path, status)` for files changed between HEAD and working tree.
 
@@ -1487,6 +1500,16 @@ class GitRepo(AppException):
 
             if hashval == self.STAGED:
                 out = self._git_run(["git", "-C", self._repoRoot, "show", f":{relpath}"], text=False)
+                # Ensure bytes are returned for staged/index content
+                if out is None:
+                    return None
+                if isinstance(out, str):
+                    try:
+                        out_b = out.encode("utf-8")
+                    except Exception:
+                        out_b = bytes(out, "utf-8", errors="surrogateescape")
+                    # Return bytes even when empty to represent empty file content
+                    return out_b
                 return out if out else None
             
             if hashval == self.NEWREPO:
@@ -1495,7 +1518,16 @@ class GitRepo(AppException):
 
             # commit-ish
             out = self._git_run(["git", "-C", self._repoRoot, "show", f"{hashval}:{relpath}"], text=False)
-            return out if out else None
+            if out is None:
+                return None
+            if isinstance(out, str):
+                try:
+                    out_b = out.encode("utf-8")
+                except Exception:
+                    out_b = bytes(out, "utf-8", errors="surrogateescape")
+                # Return bytes even when empty to represent empty file content
+                return out_b
+            return out
         except Exception as e:
             # Log and re-raise so callers can handle errors explicitly
             self.printException(e, "getDiff: failed")
