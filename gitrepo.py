@@ -751,12 +751,14 @@ class GitRepo(AppException):
     def _git_run(
         self, args: list, text: Literal[True], cache_key: str | None = None
     ) -> str:  # pragma: no cover - typing only
+        """Overload: when `text=True` this variant returns a string result."""
         ...
 
     @overload
     def _git_run(
         self, args: list, text: Literal[False], cache_key: str | None = None
     ) -> bytes:  # pragma: no cover - typing only
+        """Overload: when `text=False` this variant returns raw bytes."""
         ...
 
     def _git_run(self, args: list, text: bool = True, cache_key: str | None = None) -> str | bytes:

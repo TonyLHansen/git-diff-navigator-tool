@@ -410,7 +410,7 @@ def check_file(
             printException(e)
             no_name_linenos = []
         for lineno in no_name_linenos:
-            errs.append((str(path), lineno, f"'except [<type>]:' without 'as <var>' detected. Add the 'as <var>' and a {call_example} call (without its own try/except)."))
+            errs.append((str(path), lineno, f"bare 'except [<type>]:' without 'as <var>' detected. Add the 'as <var>' and a {call_example} call (without its own try/except)."))
 
     # Detect 'except Exception:' without 'as' and ensure except-as blocks
     # reference the exception variable in a subsequent printException call.
