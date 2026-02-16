@@ -62,7 +62,7 @@ MARKERS = {
     "ignored": "I",
     "modified": "M",
     "untracked": "U",
-    "tracked_clean": "\u00A0",
+    "tracked_clean": "\u00a0",
 }
 
 # Inline CSS used by the Textual App (can be edited in-place)
@@ -146,7 +146,7 @@ STYLE_FILELIST_KEY = "dim"
 STYLE_HELP_BG = f"white on {HIGHLIGHT_HELP_BG}"
 
 # Header row text for file lists (unselectable)
-FILELIST_KEY_ROW_TEXT = "Key:  '\u00A0' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
+FILELIST_KEY_ROW_TEXT = "Key:  '\u00a0' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
 
 # Number of characters to display for short hashes
 HASH_LENGTH = 12
@@ -264,6 +264,78 @@ class AppBase(AppException, ListView):
         except Exception as e:
             self.printException(e, f"_run_git_lines: {label or 'git'}")
             return []
+
+    def _log_visible_items(self, msg: str) -> None:
+        """Diagnostic helper: log every visible node with hidden attrs and highlighted item.
+
+        Intended for debugging navigation and focus issues. Logs one debug
+        message per visible node with its index, visible text, and any
+        underscore-prefixed attributes attached to the node. Also logs the
+        current `self.index` and the expected highlighted identifier.
+        """
+        try:
+            # Emit a concise caller/header message (do NOT inspect the call stack).
+            try:
+                header = {
+                    "widget_class": type(self).__name__,
+                    "widget_id": getattr(self, "id", None),
+                    "widget_name": getattr(self, "name", None),
+                    "index": getattr(self, "index", None),
+                }
+                if hasattr(self, "app") and self.app is not None:
+                    try:
+                        header.update(
+                            {
+                                "app_focus": getattr(self.app, "focus", None),
+                                "app_layout": getattr(self.app, "layout", None),
+                                "rel_dir": getattr(self.app, "rel_dir", None),
+                                "rel_file": getattr(self.app, "rel_file", None),
+                            }
+                        )
+                    except Exception:
+                        # Best-effort only; don't let header failures prevent diagnostics
+                        pass
+            except Exception:
+                header = {"widget_class": type(self).__name__}
+            logger.debug("_log_visible_items called_from=%s -- %s", header, msg)
+            nodes = self.nodes() or []
+            logger.debug(
+                "_log_visible_items: widget=%s node_count=%d current_index=%r",
+                type(self).__name__,
+                len(nodes),
+                getattr(self, "index", None),
+            )
+            for i, node in enumerate(nodes):
+                try:
+                    try:
+                        txt = self.text_of(node)
+                    except Exception:
+                        txt = repr(node)
+                    # Collect underscore-prefixed attributes and their reprs
+                    attrs = {}
+                    for a in dir(node):
+                        if a.startswith("_"):
+                            try:
+                                val = getattr(node, a)
+                                attrs[a] = repr(val)
+                            except Exception:
+                                attrs[a] = "<error>"
+                    logger.debug("_log_visible_items: item idx=%d text=%r attrs=%s", i, txt, attrs)
+                except Exception as _e:
+                    logger.debug("_log_visible_items: item idx=%d failed to inspect: %s", i, _e)
+            # Log currently highlighted item's identifying info if available
+            try:
+                idx = getattr(self, "index", None)
+                if idx is not None and 0 <= idx < len(nodes):
+                    node = nodes[idx]
+                    ident = getattr(node, "_filename", None) or getattr(node, "_raw_text", None) or self.text_of(node)
+                    logger.debug("_log_visible_items: highlighted index=%d ident=%r", idx, ident)
+                else:
+                    logger.debug("_log_visible_items: no valid highlighted index (index=%r)", idx)
+            except Exception as _e:
+                logger.debug("_log_visible_items: highlighted inspection failed: %s", _e)
+        except Exception as e:
+            self.printException(e, "_log_visible_items failed")
 
     def _canonical_relpath(self, path: str, repo_root: str) -> str:
         """Return a canonical realpath for `path` using `repo_root` for
@@ -733,6 +805,8 @@ class AppBase(AppException, ListView):
                 except Exception as e:
                     self.printException(e, "watch_index_helper: finding new node failed")
 
+            # Log visible items and highlight state for debugging navigation
+            self._log_visible_items("watch_index_helper after processing index change")
             return node_new
         except Exception as e:
             self.printException(e, "watch_index_helper failed")
@@ -939,6 +1013,8 @@ class AppBase(AppException, ListView):
         except Exception as e:
             self.printException(e, "key_up outer failure")
 
+        self._log_visible_items("key_up after processing index change")
+
     def key_down(self, event: events.Key | None = None) -> None:
         """Move the selection down by one item, honoring `event.stop()` if provided."""
         logger.debug("AppBase.key_down called: key=%r index=%r", getattr(event, "key", None), self.index)
@@ -956,6 +1032,8 @@ class AppBase(AppException, ListView):
             self._activate_index(new_index)
         except Exception as e:
             self.printException(e, "key_down outer failure")
+
+        self._log_visible_items("key_down after processing index change")
 
     def key_page_down(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Scroll forward by approximately one page and activate the new index.
@@ -1099,6 +1177,7 @@ class AppBase(AppException, ListView):
                     self.printException(e, "AppBase.key_left: event.stop failed")
         except Exception as e:
             self.printException(e, "AppBase.key_left failed")
+        self._log_visible_items("key_left after processing index change")
         return None
 
     def key_right(self, event: events.Key | None = None) -> None:
@@ -1112,6 +1191,7 @@ class AppBase(AppException, ListView):
                     self.printException(e, "AppBase.key_right: event.stop failed")
         except Exception as e:
             self.printException(e, "AppBase.key_right failed")
+        self._log_visible_items("key_right after processing index change")
         return None
 
     def key_enter(self, event: events.Key | None = None) -> None:
@@ -1125,6 +1205,7 @@ class AppBase(AppException, ListView):
                     self.printException(e, "AppBase.key_enter: event.stop failed")
         except Exception as e:
             self.printException(e, "AppBase.key_enter failed")
+        self._log_visible_items("key_enter after processing index change")
         return None
 
     def key_s_helper(self, event: events.Key | None = None) -> None:
@@ -1135,53 +1216,29 @@ class AppBase(AppException, ListView):
         The modal performs the actual file extraction and writing.
         """
         try:
-            try:
-                app = self.app
-            except Exception as e:
-                self.printException(e, "key_s_helper: accessing self.app failed")
-                app = None
             if event is not None:
                 try:
                     event.stop()
                 except Exception as e:
                     self.printException(e, "key_s_helper: event.stop failed")
 
-            if app is None:
-                logger.debug("key_s_helper: no app available")
-                return
-
             # Build an absolute filepath from app rel_dir/rel_file when available
-            filepath = None
-            try:
-                if getattr(app, "rel_file", None):
-                    filepath = app.gitRepo.full_path_for(getattr(app, "rel_dir", "") or "", app.rel_file)
-                elif getattr(app, "rel_dir", None) is not None:
-                    filepath = app.gitRepo.full_path_for(app.rel_dir or "", None)
-            except Exception as _ex:
-                self.printException(_ex, "key_s_helper: building filepath from app.rel_dir/rel_file failed")
-            prev_hash = getattr(app, "previous_hash", None)
-            curr_hash = getattr(app, "current_hash", None)
+            filepath = self.app.gitRepo.full_path_for(self.app.rel_dir, self.app.rel_file)
+            prev_hash = self.app.previous_hash
+            curr_hash = self.app.current_hash
 
             # If filepath appears to be a directory, keep it as-is
             if filepath and os.path.isdir(filepath):
                 pass
 
-            if not filepath:
-                try:
-                    # Inform user with a tiny modal
-                    app.push_screen(SaveSnapshotModal("Unknown filename for save"))
-                except Exception as e:
-                    self.printException(e, "key_s_helper: push modal failed")
-                return
-
             try:
                 try:
-                    repo_root_val = app.repo_root
+                    repo_root_val = self.app.repo_root
                 except Exception as e:
                     self.printException(e, "key_s_helper: reading app.repo_root failed")
                     repo_root_val = None
                 msg = f"Create {os.path.basename(filepath)}.HASH. Do you wish to save the (o)lder file, the (n)ewer file, or (b)oth? (Any other key to cancel.)"
-                app.push_screen(
+                self.app.push_screen(
                     SaveSnapshotModal(
                         msg, filepath=filepath, prev_hash=prev_hash, curr_hash=curr_hash, repo_root=repo_root_val
                     )
@@ -1666,6 +1723,9 @@ class FileListBase(AppBase):
         `_selectable=False` so navigation logic can skip it.
         """
         try:
+            # Diagnostic: record the raw incoming focus target so logs show
+            # exactly what callers pass (helps diagnose '#id' vs plain id).
+            logger.debug("change_focus: raw target=%r", target)
 
             def _short(h: str | None) -> str:
                 if not h:
@@ -1997,63 +2057,50 @@ class FileModeFileList(FileListBase):
     default `key_left`/`key_right` handlers.
     """
 
-    def prepFileModeFileList(
-        self,
-        rel_dir: str,
-        rel_path: str,
-    ) -> None:
-        """Populate this widget with the file list for `path`.
+    def _collect_filemode_nodes(self, rel_dir: str, rel_path: str) -> None:
+        """Collect git-based file lists and build nodes_by_dir mapping.
 
-        `highlight_filename` if provided will be highlighted in the list; if
-        `path` names a file the file's containing directory is listed and the
-        filename is used as the highlight candidate.
+        Stores the mapping on `self._nodes_by_dir`. Callers should pass
+        the `rel_dir` they want rendered; no normalization or string
+        return value is performed here.
+        Safe on errors; exceptions are logged and an empty mapping is stored.
         """
+        nodes_by_dir: dict = {}
+        # nodes_by_dir structure:
+        # - key: repository-relative directory path ("" for repo root)
+        # - value: dict with keys:
+        #     'dirs'  : set[str] of immediate child directory basenames
+        #     'files' : list[tuple[name:str, status:str, iso:str|None]] for
+        #               immediate files in that directory
+        # This compact mapping lets UI preparers render a single directory
+        # slice quickly without holding full absolute paths.
         try:
-            # Minimal replacement: clear list, show headers, call GitRepo
-            # helpers `getFileListUntrackedAndIgnored` and
-            # `getFileListBetweenNewRepoAndMods`, and display their results.
-            self.clear()
-            self._add_filelist_key_header()
-
             gitrepo = self.app.gitRepo
             # Gather committed, untracked and ignored entries and working-tree mods.
             try:
                 committed = gitrepo.getFileListAtHash("HEAD")
             except Exception as e:
-                self.printException(e, "prepFileModeFileList: getFileListAtHash failed")
+                self.printException(e, "_collect_filemode_nodes: getFileListAtHash failed")
                 committed = []
 
             try:
                 untracked = gitrepo.getFileListUntracked()
             except Exception as e:
-                self.printException(e, "prepFileModeFileList: getFileListUntracked failed")
+                self.printException(e, "_collect_filemode_nodes: getFileListUntracked failed")
                 untracked = []
 
             try:
                 ignored = gitrepo.getFileListIgnored()
             except Exception as e:
-                self.printException(e, "prepFileModeFileList: getFileListIgnored failed")
+                self.printException(e, "_collect_filemode_nodes: getFileListIgnored failed")
                 ignored = []
 
             # Gather working-tree modifications (MODS): list of (path,status)
             try:
                 mods = gitrepo.getFileListBetweenNormalizedHashes("HEAD", "MODS")
             except Exception as e:
-                self.printException(e, "prepFileModeFileList: getFileListBetweenNormalizedHashes failed")
+                self.printException(e, "_collect_filemode_nodes: getFileListBetweenNormalizedHashes failed")
                 mods = []
-
-            # Build an index mapping directories -> immediate child dirs and files
-            # so we can quickly render a directory slice for `rel_dir`.
-            # Data structure:
-            # nodes_by_dir: dict[str, {'dirs': set[str], 'files': list[(name, status, iso)]}]
-            # - key is repository-relative directory path ("" for repo root)
-            # - 'dirs' contains immediate child directory names
-            # - 'files' contains tuples for immediate files in that directory
-            # Note: we intentionally omit storing absolute/full paths here to
-            # reduce memory and because most UI actions operate on repo-relative
-            # names; callers that need full paths can reconstruct them from the
-            # repo root when necessary.
-            nodes_by_dir: dict = {}
 
             def ensure_dir_node(d: str):
                 if d not in nodes_by_dir:
@@ -2084,7 +2131,7 @@ class FileModeFileList(FileListBase):
                     p = entry[0] if isinstance(entry, (list, tuple)) and len(entry) > 0 else str(entry)
                     register_file(p, "tracked_clean", None)
                 except Exception as e:
-                    self.printException(e, "prepFileModeFileList: registering committed file failed")
+                    self.printException(e, "_collect_filemode_nodes: registering committed file failed")
                     continue
 
             # Add untracked entries: (path, iso, status)
@@ -2095,7 +2142,7 @@ class FileModeFileList(FileListBase):
                     status = entry[2] if len(entry) > 2 else "untracked"
                     register_file(p, status, iso)
                 except Exception as e:
-                    self.printException(e, "prepFileModeFileList: registering untracked file failed")
+                    self.printException(e, "_collect_filemode_nodes: registering untracked file failed")
                     continue
 
             # Add ignored entries: (path, iso, status)
@@ -2106,7 +2153,7 @@ class FileModeFileList(FileListBase):
                     status = entry[2] if len(entry) > 2 else "ignored"
                     register_file(p, status, iso)
                 except Exception as e:
-                    self.printException(e, "prepFileModeFileList: registering ignored file failed")
+                    self.printException(e, "_collect_filemode_nodes: registering ignored file failed")
                     continue
 
             # Add mods entries: (path, status) - no iso provided; override committed
@@ -2119,19 +2166,35 @@ class FileModeFileList(FileListBase):
                         p, s = str(entry), "modified"
                     register_file(p, s, None)
                 except Exception as e:
-                    self.printException(e, "prepFileModeFileList: registering mod file failed")
+                    self.printException(e, "_collect_filemode_nodes: registering mod file failed")
                     continue
 
-            # Display only the requested directory slice
-            # Normalize the requested rel_dir so callers may pass '' './' or '.'
-            norm_rel_dir = rel_dir or ""
-            if isinstance(norm_rel_dir, str) and norm_rel_dir.startswith("./"):
-                norm_rel_dir = norm_rel_dir[2:]
-            norm_rel_dir = os.path.normpath(norm_rel_dir) if norm_rel_dir else ""
-            if norm_rel_dir == ".":
-                norm_rel_dir = ""
+        except Exception as e:
+            self.printException(e, "_collect_filemode_nodes failed")
 
-            slice_node = nodes_by_dir.get(norm_rel_dir, {"dirs": set(), "files": []})
+        # Persist the collected nodes in the instance so callers need not
+        # hold a local copy.
+        self._nodes_by_dir = nodes_by_dir
+
+    def _render_filemode_display(self, nodes_by_dir: dict, rel_dir: str, rel_path: str) -> None:
+        """Render the file-list UI for the given `nodes_by_dir` and `rel_dir`.
+
+        Preserves existing ListItem metadata semantics so callers need not
+        change downstream logic.
+        """
+        try:
+            # Prepare the widget for fresh rendering: clear existing rows
+            # and insert the canonical key legend header.
+            try:
+                self.clear()
+            except Exception:
+                pass
+            try:
+                self._add_filelist_key_header()
+            except Exception:
+                pass
+
+            slice_node = nodes_by_dir.get(rel_dir, {"dirs": set(), "files": []})
 
             # Prepend header rows: the key legend is added earlier via
             # `_add_filelist_key_header()`, so here only add the directory
@@ -2142,7 +2205,24 @@ class FileModeFileList(FileListBase):
                 item._selectable = False
                 self.append(item)
             except Exception as e:
-                self.printException(e, "prepFileModeFileList: appending header failed")
+                self.printException(e, "_render_filemode_display: appending header failed")
+
+            # If we're not at the repo root, add a parent entry ('..')
+            # so users can navigate up the tree.
+            try:
+                if rel_dir:
+                    parent_rel = os.path.dirname(rel_dir) or ""
+                    # Display as a directory entry with '..' name
+                    try:
+                        item = ListItem(Label(Text(f"← ../", style=STYLE_DIR)))
+                        item._is_dir = True
+                        item._filename = ".."
+                        item._raw_text = parent_rel
+                        self.append(item)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
             # Show directories first (use right-arrow marker and include '/').
             for dname in sorted(slice_node["dirs"]):
@@ -2152,7 +2232,7 @@ class FileModeFileList(FileListBase):
                         item._is_dir = True
                         item._filename = dname
                         try:
-                            raw = os.path.join(norm_rel_dir, dname) if norm_rel_dir else dname
+                            raw = os.path.join(rel_dir, dname) if rel_dir else dname
                         except Exception:
                             raw = dname
                         item._raw_text = raw
@@ -2160,7 +2240,7 @@ class FileModeFileList(FileListBase):
                         pass
                     self.append(item)
                 except Exception as e:
-                    self.printException(e, "prepFileModeFileList: appending dir entry failed")
+                    self.printException(e, "_render_filemode_display: appending dir entry failed")
 
             # Then show files (use marker key and per-status styles)
             for name, status, iso in sorted(slice_node["files"], key=lambda x: x[0]):
@@ -2191,8 +2271,8 @@ class FileModeFileList(FileListBase):
                     # If marker is a non-breaking space, prefix a zero-width
                     # joiner so UI trimming doesn't remove the NBSP.
                     try:
-                        if marker == "\u00A0":
-                            display = "\u200D" + display
+                        if marker == "\u00a0":
+                            display = "\u200d" + display
                     except Exception:
                         pass
                     if style:
@@ -2204,7 +2284,7 @@ class FileModeFileList(FileListBase):
                         item._is_dir = False
                         # store repo-relative raw path
                         try:
-                            raw = os.path.join(norm_rel_dir, name) if norm_rel_dir else name
+                            raw = os.path.join(rel_dir, name) if rel_dir else name
                         except Exception:
                             raw = name
                         item._raw_text = raw
@@ -2213,7 +2293,7 @@ class FileModeFileList(FileListBase):
                         pass
                     self.append(item)
                 except Exception as e:
-                    self.printException(e, "prepFileModeFileList: appending file entry failed")
+                    self.printException(e, "_render_filemode_display: appending file entry failed")
 
             # Finalize minimal population state and ensure navigation starts
             # on the first actual entry (after the two header rows).
@@ -2238,7 +2318,38 @@ class FileModeFileList(FileListBase):
                 except Exception:
                     pass
             except Exception as e:
-                self.printException(e, "prepFileModeFileList: finalizing population state failed")
+                self.printException(e, "_render_filemode_display: finalizing population state failed")
+
+        except Exception as e:
+            self.printException(e, "_render_filemode_display failed")
+
+    def prepFileModeFileList(self) -> None:
+        """Populate this widget with the file list for `path`.
+
+        `highlight_filename` if provided will be highlighted in the list; if
+        `path` names a file the file's containing directory is listed and the
+        filename is used as the highlight candidate.
+        """
+        try:
+            # Data collection done by `_collect_filemode_nodes`; UI rendering
+            # (including clearing the list and inserting the key header) is
+            # handled by `_render_filemode_display`.
+
+            try:
+                self._collect_filemode_nodes(self.app.rel_dir, self.app.rel_file)
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: collecting file nodes failed")
+                self._nodes_by_dir = {}
+
+            # Delegate UI rendering to helper (renderer reads `self._nodes_by_dir`).
+            try:
+                self._render_filemode_display(self._nodes_by_dir, self.app.rel_dir, self.app.rel_file)
+            except Exception as e:
+                self.printException(e, "prepFileModeFileList: rendering display failed")
+
+            # Log visible items after rendering so diagnostics capture the
+            # freshly-populated list and the highlighted item.
+            self._log_visible_items("prepFileModeFileList after rendering display")
 
         except Exception as e:
             self.printException(e, "prepFileModeFileList failed")
@@ -2246,50 +2357,9 @@ class FileModeFileList(FileListBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
-
-    def _nav_dir_if(self, test_fn) -> None:
-        """If the currently-selected node is a directory and `test_fn` returns
-        True for its name, navigate into that directory.
-
-        `test_fn` is a callable that accepts the filename and returns a
-        boolean indicating whether to enter the directory. This centralizes
-        the enter-dir logic used by several key handlers.
-        """
-        try:
-            idx = self.index or 0
-            nodes = self.nodes()
-            if not (0 <= idx < len(nodes)):
-                return
-            item = nodes[idx]
-            if not getattr(item, "_is_dir", False):
-                return
-            name = getattr(item, "_filename", None)
-            raw = getattr(item, "_raw_text", None)
-            if test_fn(name) and raw:
-                try:
-                    gitrepo = self.app.gitRepo
-                    try:
-                        root = gitrepo.get_repo_root()
-                        rr = raw
-                        if rr == root:
-                            rel = ""
-                        elif rr.startswith(root + os.sep):
-                            rel = rr[len(root) + 1 :]
-                        else:
-                            rel = os.path.relpath(rr, root)
-                        if os.path.isdir(rr):
-                            rdir = rel
-                            rpath = None
-                        else:
-                            rdir = os.path.dirname(rel) or ""
-                            rpath = os.path.basename(rel)
-                        self.prepFileModeFileList(rdir, rpath)
-                    except Exception as _ex:
-                        self.printException(_ex, "FileModeFileList._nav_dir_if prep failed")
-                except Exception as e:
-                    self.printException(e, "FileModeFileList._nav_dir_if prep failed")
-        except Exception as e:
-            self.printException(e, "FileModeFileList._nav_dir_if failed")
+        # Storage for the last-collected nodes_by_dir mapping so rendering
+        # and navigation helpers may access it without needing a local copy.
+        self._nodes_by_dir: dict = {}
 
     def _activate_or_open(
         self,
@@ -2328,26 +2398,46 @@ class FileModeFileList(FileListBase):
                     if enter_dir_test_fn(name):
                         try:
                             gitrepo = self.app.gitRepo
+                            # Log inputs used to compute the new rel_dir to aid diagnosis
+                            logger.debug(
+                                "_activate_or_open: computing new rel_dir from rel_dir=%r dirname=%r",
+                                self.app.rel_dir,
+                                name,
+                            )
+                            # Compute new rel_dir by appending only the directory-name
+                            new_rdir = gitrepo.reldir_plus_dirname_to_reldir(self.app.rel_dir, name)
+                            self.app.rel_dir = new_rdir
+                            self.app.rel_file = ""
+                            # Render the already-collected nodes for the new directory
                             try:
-                                root = gitrepo.get_repo_root()
-                                rr = raw
-                                if rr == root:
-                                    rel = ""
-                                elif rr.startswith(root + os.sep):
-                                    rel = rr[len(root) + 1 :]
-                                else:
-                                    rel = os.path.relpath(rr, root)
-                                if os.path.isdir(rr):
-                                    rdir = rel
-                                    rpath = None
-                                else:
-                                    rdir = os.path.dirname(rel) or ""
-                                    rpath = os.path.basename(rel)
-                                self.prepFileModeFileList(rdir, rpath)
+                                self._render_filemode_display(self._nodes_by_dir, self.app.rel_dir, self.app.rel_file)
+                                # After entering a directory, prefer the '..' parent entry
+                                # so users can quickly navigate back up. Best-effort: locate
+                                # the first node whose filename is '..' and set selection
+                                # to that index.
+                                try:
+                                    nodes = self.nodes()
+                                    for i, it in enumerate(nodes):
+                                        try:
+                                            if getattr(it, "_filename", None) == "..":
+                                                self.index = i
+                                                try:
+                                                    if hasattr(self, "_ensure_index_visible"):
+                                                        self._ensure_index_visible()
+                                                except Exception:
+                                                    pass
+                                                break
+                                        except Exception:
+                                            continue
+                                except Exception:
+                                    pass
                             except Exception as _ex:
-                                self.printException(_ex, "_activate_or_open: prepFileModeFileList failed")
+                                self.printException(_ex, "_activate_or_open: rendering new directory failed")
                         except Exception as e:
-                            self.printException(e, "_activate_or_open: prepFileModeFileList failed")
+                            self.printException(
+                                e,
+                                f"_activate_or_open: computing new rel_dir failed rel_dir={self.app.rel_dir!r} dirname={name!r}",
+                            )
                 except Exception as e:
                     self.printException(e, "_activate_or_open: enter_dir_test_fn failed")
                 return
@@ -2387,16 +2477,19 @@ class FileModeFileList(FileListBase):
         """
         logger.debug("FileModeFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         self._activate_or_open(event, enter_dir_test_fn=lambda name: name == "..", allow_file_open=False)
+        self._log_visible_items("key_left after processing index change")
 
     def key_right(self, event: events.Key | None = None) -> None:
         """Handle Right key in a file list: enter directories or open files."""
         logger.debug("FileModeFileList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         self._activate_or_open(event, enter_dir_test_fn=lambda name: (name is not None) and name != "..")
+        self._log_visible_items("key_right after processing index change")
 
     def key_enter(self, event: events.Key | None = None) -> None:
         """Enter key: enter directories or open file history for tracked files."""
         logger.debug("FileModeFileList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         self._activate_or_open(event, enter_dir_test_fn=lambda name: True)
+        self._log_visible_items("key_enter after processing index change")
 
 
 class RepoModeFileList(FileListBase):
@@ -2590,6 +2683,7 @@ class RepoModeFileList(FileListBase):
             self.app.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
         except Exception as e:
             self.printException(e, "RepoModeFileList.key_left change_state failed")
+        self._log_visible_items("key_left after processing index change")
 
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Open diff view for the selected file and switch to the file view.
@@ -2642,6 +2736,7 @@ class RepoModeFileList(FileListBase):
                 self.printException(e, "RepoModeFileList.key_right change_state failed")
         except Exception as e:
             self.printException(e, "RepoModeFileList.key_right failed")
+        self._log_visible_items("key_right after processing index change")
 
     def key_enter(self, event: events.Key | None = None) -> None:
         """Same behavior as Right: open the diff for the selected file."""
@@ -2660,6 +2755,7 @@ class RepoModeFileList(FileListBase):
             self.key_s_helper(event)
         except Exception as e:
             self.printException(e, "RepoModeFileList.key_s: helper failed")
+        self._log_visible_items("key_s after processing index change")
 
 
 class HistoryListBase(AppBase):
@@ -3211,6 +3307,7 @@ class FileModeHistoryList(HistoryListBase):
                 self.printException(e, "FileModeHistoryList.key_right change_state failed")
         except Exception as e:
             self.printException(e, "FileModeHistoryList.key_right prep failed")
+        self._log_visible_items("key_right after processing index change")
 
     def key_enter(self, event: events.Key | None = None) -> None:
         """Enter-key handler — same behavior as Right: open the file commit-pair diff."""
@@ -3230,6 +3327,7 @@ class FileModeHistoryList(HistoryListBase):
             app.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
         except Exception as e:
             self.printException(e, "FileModeHistoryList.key_left change_state failed")
+        self._log_visible_items("key_left after processing index change")
 
 
 class RepoModeHistoryList(HistoryListBase):
@@ -3330,6 +3428,8 @@ class RepoModeHistoryList(HistoryListBase):
                 self.printException(e, "RepoModeHistoryList.key_right prep failed")
         except Exception as e:
             self.printException(e, "RepoModeHistoryList.key_right failed")
+
+        self._log_visible_items("key_right after processing index change")
 
     def key_enter(self, event: events.Key | None = None) -> None:
         """Enter-key handler — same behavior as Right: open the commit-pair file list."""
@@ -3489,6 +3589,8 @@ class DiffList(AppBase):
         except Exception as e:
             self.printException(e, "DiffList.key_right failed")
 
+        self._log_visible_items("key_right after processing index change")
+
     def key_C(self, event: events.Key | None = None) -> None:
         """Alias for `key_c` (Shift-C)."""
         logger.debug("DiffList.key_C called: key=%r", getattr(event, "key", None))
@@ -3621,6 +3723,8 @@ class DiffList(AppBase):
                 self.printException(e, "DiffList.key_left change_state failed")
         except Exception as e:
             self.printException(e, "DiffList.key_left failed")
+
+        self._log_visible_items("key_left after processing index change")
 
     def key_enter(self, event: events.Key | None = None) -> None:
         """If fullscreen, act like Left (close); otherwise act like Right.
@@ -3849,6 +3953,9 @@ class GitHistoryNavTool(AppException, App):
         # Application state uses only `rel_dir` and `rel_file`.
         # Do not maintain `self.path` to avoid multiple source-of-truth values.
 
+        # Log initial rel_dir / rel_file for debugging
+        logger.debug("GitHistoryNavTool.__init__: rel_dir=%r rel_file=%r", self.rel_dir, self.rel_file)
+
         self.no_color = no_color
         self.repo_first = repo_first
         # optional repo hash initialization (list of 1 or 2 hashes)
@@ -3932,46 +4039,21 @@ class GitHistoryNavTool(AppException, App):
                 except Exception as e:
                     self.printException(e, "on_mount: prepHelp failed")
 
+                # Also set the left column to file fullscreen when hashes
+                # were provided so the paired layout is prepared.
+                try:
+                    self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
+                except Exception as e:
+                    self.printException(e, "on_mount: change_state for file_fullscreen failed")
+
             # Populate the canonical left lists and set focus so key handlers
             # and highlight behavior work immediately in both modes.
             try:
                 if not self.repo_first:
                     try:
-                        # Compute an initial repository-relative `rel` for preparers
-                        # using the canonical rel_dir/rel_file pair.
-                        try:
-                            if self.rel_file:
-                                rel = os.path.join(self.rel_dir or "", self.rel_file)
-                            else:
-                                rel = self.rel_dir or ""
-                        except Exception as e:
-                            self.printException(e, "preparer: computing rel failed")
-                            rel = self.rel_dir or ""
-
-                        # Resolve a full filesystem path only to test whether
-                        # the repo-relative path is a directory or not.
-                        if rel:
-                            full_candidate = self.gitRepo.full_path_for(os.path.dirname(rel), os.path.basename(rel))
-                        else:
-                            full_candidate = self.gitRepo.get_repo_root()
-
-                        if os.path.isdir(full_candidate):
-                            rdir = rel
-                            rpath = None
-                        else:
-                            rdir = os.path.dirname(rel) or ""
-                            rpath = os.path.basename(rel)
-                        try:
-                            self.file_mode_file_list.prepFileModeFileList(rdir, rpath)
-                        except Exception as _ex:
-                            self.printException(_ex, "on_mount: prepFileModeFileList failed")
-                        # Centralize layout/focus/footer handling via change_state.
-                        try:
-                            self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
-                        except Exception as e:
-                            self.printException(e, "on_mount: change_state for file_fullscreen failed")
+                        self.file_mode_file_list.prepFileModeFileList()
                     except Exception as e:
-                        self.printException(e, "on_mount: prepFileModeFileList failed")
+                        self.printException(e, "on_mount: prepFileModeFileList outer failed")
                 else:
                     # If starting in repo-first mode, pre-populate the left
                     # repository-history widget so the UI shows commits immediately.
@@ -4175,7 +4257,12 @@ class GitHistoryNavTool(AppException, App):
                         else:
                             rdir = os.path.dirname(rel) or ""
                             rpath = os.path.basename(rel)
-                        app.file_mode_file_list.prepFileModeFileList(rdir, rpath)
+                        try:
+                            app.file_mode_file_list.app.rel_dir = rdir
+                            app.file_mode_file_list.app.rel_file = rpath
+                        except Exception:
+                            pass
+                        app.file_mode_file_list.prepFileModeFileList()
                     except Exception as e:
                         self.printException(e, "key_r: prepFileModeFileList failed")
             except Exception as e:
@@ -4351,6 +4438,7 @@ class GitHistoryNavTool(AppException, App):
         """
         try:
             logger.debug(f"change_state(layout={layout}, focus={focus}, footer={footer}) - applying requested changes")
+            logger.debug("change_state: focus raw=%r type=%s", focus, type(focus))
 
             if layout is not None:
                 try:
@@ -4427,6 +4515,7 @@ class GitHistoryNavTool(AppException, App):
                 # normalize selector to a bare id (without leading '#')
                 if sel.startswith("#"):
                     key = sel[1:]
+                    logger.debug("change_focus: stripped leading '#' -> %r", key)
                 else:
                     key = sel
 
@@ -4478,10 +4567,17 @@ class GitHistoryNavTool(AppException, App):
                     widget = self.help_list
                     label_name = HELP_TITLE
                 else:
+                    try:
+                        caller = inspect.stack()[1]
+                        caller_info = f"{caller.filename}:{caller.lineno} in {caller.function}()"
+                    except Exception:
+                        caller_info = "<caller-info-unavailable>"
                     logger.warning(
-                        "change_focus:%d: unknown canonical focus target %r",
+                        "change_focus:%d: unknown canonical focus target raw=%r normalized=%r caller=%s",
                         inspect.currentframe().f_lineno,
                         target,
+                        key,
+                        caller_info,
                     )
                     return
 
@@ -4830,7 +4926,12 @@ class GitHistoryNavTool(AppException, App):
                 else:
                     rdir = os.path.dirname(rel) or ""
                     rpath = os.path.basename(rel)
-                self.file_mode_file_list.prepFileModeFileList(rdir, rpath)
+                try:
+                    self.file_mode_file_list.app.rel_dir = rdir
+                    self.file_mode_file_list.app.rel_file = rpath
+                except Exception:
+                    pass
+                self.file_mode_file_list.prepFileModeFileList()
             except Exception as _ex:
                 self.printException(_ex, "toggle_history_fullscreen prepFileModeFileList failed")
         except Exception as e:
@@ -4942,7 +5043,12 @@ class GitHistoryNavTool(AppException, App):
                 else:
                     rdir = os.path.dirname(rel) or ""
                     rpath = os.path.basename(rel)
-                self.file_mode_file_list.prepFileModeFileList(rdir, rpath)
+                try:
+                    self.file_mode_file_list.app.rel_dir = rdir
+                    self.file_mode_file_list.app.rel_file = rpath
+                except Exception:
+                    pass
+                self.file_mode_file_list.prepFileModeFileList()
             except Exception as _ex:
                 self.printException(_ex, "toggle_history_file prepFileModeFileList failed")
         except Exception as e:
@@ -5077,6 +5183,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         # Enable TRACE-level logging if requested (applies to root and handlers)
         enable_trace_logging(bool(args.debug_tracing))
+
+        # When verbosity is low, silence verbose debug from markdown-it
+        if getattr(args, "verbose", 0) < 3:
+            logging.getLogger("markdown_it").setLevel(logging.WARNING)
 
         # If repo-hash provided, validate count and imply repo-first
         repo_hashes = None

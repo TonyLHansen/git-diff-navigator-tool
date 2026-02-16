@@ -126,9 +126,8 @@ class GitRepo(AppException):
 
     ################ File Lists
 
-     def getFileListAtHash(self, curr_hash)
+     gitRepo.getFileListAtHash(self, curr_hash)
         Return a list of the committed files present in `curr_hash`.
-
 
 
      gitRepo.getFileListUntrackedAndIgnored()
@@ -254,6 +253,13 @@ class GitRepo(AppException):
             if relpath == ".":
                 return ("", "")
 
+            # If the provided query path corresponds to an existing directory
+            # treat it as a directory even if the caller did not include a
+            # trailing separator. This avoids swapping rel_dir/rel_file when
+            # callers provide a directory name like 'scripts'.
+            if os.path.isdir(abs_query_path):
+                return (relpath, "")
+
             return GitRepo.repo_rel_path_to_reldir_relfile(relpath)
         except Exception as e:
             self.printException(e, "cwd_plus_path_to_reldir_relfile failed")
@@ -322,6 +328,39 @@ class GitRepo(AppException):
         except Exception as e:
             self.printException(e, "reldir_plus_path_to_reldir_relfile failed")
             raise ValueError(f"reldir_plus_path_to_reldir_relfile failed: {e}") from e
+
+    def reldir_plus_dirname_to_reldir(self, rel_dir: Optional[str], dirname: str) -> str:
+        """
+        Compute a new repository-relative directory by appending `dirname` to
+        `rel_dir` and normalizing. `rel_dir` may be None or empty to indicate
+        the repository root. `dirname` is interpreted as a single path
+        component (may be '..' to move up one level). The returned value is a
+        repository-relative directory string (empty for repo root).
+
+        Raises ValueError when the resulting directory would be outside the
+        repository root (e.g., attempting to move above the repo root).
+        """
+        try:
+            if rel_dir is None:
+                rel_dir = ""
+            # Join against repo root and normalize
+            joined = os.path.join(self._repoRoot, rel_dir, dirname)
+            norm = os.path.normpath(joined)
+            # Compute path relative to repo root
+            removed_root = os.path.relpath(norm, self._repoRoot)
+
+            # Reject any up-level components which would escape the repo
+            comps = removed_root.split(os.sep)
+            if any(part == ".." for part in comps):
+                raise ValueError("reldir_plus_dirname_to_reldir: resulting path escapes repository root")
+
+            # Normalize '.' to empty string for repo root
+            if removed_root in ("", "."):
+                return ""
+            return removed_root
+        except Exception as e:
+            self.printException(e, "reldir_plus_dirname_to_reldir failed")
+            raise
 
     def abs_path_for(self, rel_dir: str, rel_file: str) -> str:
         """
