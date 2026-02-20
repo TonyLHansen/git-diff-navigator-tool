@@ -993,6 +993,93 @@ def check_docstrings(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, in
     return errs
 
 
+def check_multiline_docstring_start(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
+    """Enforce that multiline docstrings (containing a newline) start with a newline.
+
+    For docstrings on modules, classes and functions: if the docstring value
+    contains at least one '\n', then it should begin with a leading '\n'.
+    This detects inconsistent triple-quote placement where the first
+    line of the docstring appears on the same line as the opening quotes
+    (e.g. opening quotes immediately followed by text) instead of the
+    preferred form where the first content line begins on the next line
+    after the opening quotes.
+
+    Returns list of (filepath, lineno, message).
+    """
+    errs: List[Tuple[str, int, str]] = []
+
+    def _check_docnode(node, docnode_expr):
+        # docnode_expr is ast.Expr whose value is the constant docstring
+        try:
+            val = getattr(docnode_expr, "value", None)
+            s = None
+            if isinstance(val, ast.Constant) and isinstance(getattr(val, "value", None), str):
+                s = val.value
+            elif hasattr(ast, "Str") and isinstance(val, ast.Str):
+                s = val.s
+            elif isinstance(val, ast.JoinedStr):
+                # JoinedStr (f-strings) - try to reconstruct simple literal parts
+                pieces: list[str] = []
+                for part in val.values:
+                    if isinstance(part, ast.Constant) and isinstance(getattr(part, "value", None), str):
+                        pieces.append(part.value)
+                    elif hasattr(ast, "Str") and isinstance(part, ast.Str):
+                        pieces.append(part.s)
+                    else:
+                        # non-literal part - give up
+                        pieces = []
+                        break
+                if pieces:
+                    s = "".join(pieces)
+            if s is None:
+                return
+            if "\n" in s and not s.startswith("\n"):
+                lineno = getattr(docnode_expr, "lineno", None) or getattr(node, "lineno", None) or 0
+                errs.append((str(path), lineno, "multiline docstring should start with a newline"))
+        except Exception as e:
+            printException(e, f"checking multiline docstring at {path}")
+
+    try:
+        # Module docstring: locate module-level Expr if present
+        if getattr(tree, "body", None):
+            first = tree.body[0]
+            val = getattr(first, "value", None)
+            is_doc_expr = False
+            if isinstance(first, ast.Expr):
+                if isinstance(val, ast.Constant) and isinstance(getattr(val, "value", None), str):
+                    is_doc_expr = True
+                elif hasattr(ast, "Str") and isinstance(val, ast.Str):
+                    is_doc_expr = True
+                elif hasattr(ast, "JoinedStr") and isinstance(val, ast.JoinedStr):
+                    is_doc_expr = True
+            if is_doc_expr:
+                _check_docnode(tree, first)
+
+        # Class and function docstrings
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                try:
+                    if getattr(node, "body", None):
+                        first = node.body[0]
+                        val = getattr(first, "value", None)
+                        is_doc_expr = False
+                        if isinstance(first, ast.Expr):
+                            if isinstance(val, ast.Constant) and isinstance(getattr(val, "value", None), str):
+                                is_doc_expr = True
+                            elif hasattr(ast, "Str") and isinstance(val, ast.Str):
+                                is_doc_expr = True
+                            elif hasattr(ast, "JoinedStr") and isinstance(val, ast.JoinedStr):
+                                is_doc_expr = True
+                        if is_doc_expr:
+                            _check_docnode(node, first)
+                except Exception as e:
+                    printException(e, f"checking docstring for node {getattr(node, 'name', '<anon>')} in {path}")
+    except Exception as e:
+        printException(e, f"walking AST for multiline docstring checks in {path}")
+
+    return errs
+
+
 def check_getattr_method_calls(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """Detect immediate calls of getattr(...)(...) or assignments from such calls.
 
@@ -1394,6 +1481,20 @@ def main(argv: List[str] | None = None) -> int:
         action="store_true",
         help="Disable all checks (equivalent to -B -E -D -C etc.)",
     )
+    # New paired options to control multiline-docstring-start rule
+    gx = parser.add_mutually_exclusive_group()
+    gx.add_argument("-X",
+        "--no-multiline-starts-with-newline",
+        dest="check_multiline_docstring_start",
+        action="store_false",
+        help="Skip checking that multiline docstrings start with a newline (default: check)",
+    )
+    gx.add_argument("-x",
+        "--multiline-starts-with-newline",
+        dest="enable_multiline_docstring_start",
+        action="store_true",
+        help="Enable multiline-starts-with-newline check (opposite of -X).",
+    )
     parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=0,
         help="Increase verbosity (specify multiple times for more detail)."
     )
@@ -1424,10 +1525,13 @@ def main(argv: List[str] | None = None) -> int:
         args.check_imports = False
         args.check_docstrings = False
         args.check_prefer_no_direct_hasattrs = False
+        args.check_multiline_docstring_start = False
 
     # Honor explicit small-letter re-enable flags after -N/--NONE
     if args.enable_prefer_no_direct_hasattrs:
         args.check_prefer_no_direct_hasattrs = True
+    if args.enable_multiline_docstring_start:
+        args.check_multiline_docstring_start = True
     if args.enable_bare_excepts:
         args.check_bare_excepts = True
     if args.enable_except_as_print:
@@ -1554,6 +1658,12 @@ def main(argv: List[str] | None = None) -> int:
                         errs += check_docstrings(p, text=text, tree=tree)
                     except Exception as e:
                         printException(e, f"check_docstrings failed for {p}")
+                # Enforce multiline-docstring-start rule
+                if getattr(args, "check_multiline_docstring_start", True):
+                    try:
+                        errs += check_multiline_docstring_start(p, text=text, tree=tree)
+                    except Exception as e:
+                        printException(e, f"check_multiline_docstring_start failed for {p}")
                 # Check for getattr(...)() immediate calls when requested
                 if args.check_getattr_methods:
                     try:
