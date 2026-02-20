@@ -770,10 +770,10 @@ class AppBase(AppException, ListView):
                     # up-front and written in one pass.
                     if hasattr(self, "_nodes_by_dir") and hasattr(self, "_render_filemode_display"):
                         try:
-                            rel_dir = getattr(self.app, "rel_dir", "") if hasattr(self, "app") else ""
-                            rel_file = getattr(self.app, "rel_file", "") if hasattr(self, "app") else ""
+                            rel_dir = self.app.rel_dir
+                            rel_file = self.app.rel_file
                             logger.debug("apply_index_change: calling _render_filemode_display rel_dir=%r rel_file=%r", rel_dir, rel_file)
-                            self._render_filemode_display(getattr(self, "_nodes_by_dir", {}), rel_dir, rel_file)
+                            self._render_filemode_display(self._nodes_by_dir, rel_dir, rel_file)
                             nodes_after = self.nodes()
                             return nodes_after[new] if (new is not None and 0 <= new < len(nodes_after)) else None
                         except Exception as e:
@@ -1011,7 +1011,7 @@ class AppBase(AppException, ListView):
             # Preserve zero index correctly: don't treat 0 as falsy.
             cur = self.index if getattr(self, "index", None) is not None else (self._min_index or 0)
             nodes = self.nodes()
-            logger.debug("AppBase.key_down: cur=%r nodes=%d min_index=%r", cur, len(nodes), getattr(self, "_min_index", None))
+            logger.debug("AppBase.key_down: cur=%r nodes=%d min_index=%r", cur, len(nodes), self._min_index)
             if not nodes:
                 return
             new_index = min(len(nodes) - 1, cur + 1)
@@ -1453,7 +1453,7 @@ class FileListBase(AppBase):
             except Exception as e:
                 self.printException(e, "_ensure_index_visible: re-rendering filemode display failed")
 
-            logger.debug("_activate_or_open: entry idx=%r rel_dir=%r rel_file=%r", idx, getattr(self.app, "rel_dir", None), getattr(self.app, "rel_file", None))
+            logger.debug("_activate_or_open: entry idx=%r rel_dir=%r rel_file=%r", idx, self.app.rel_dir, self.app.rel_file)
             nodes = self.nodes()
             if not nodes or idx is None:
                 return
@@ -1632,6 +1632,7 @@ class FileListBase(AppBase):
                                 if is_key_header or is_dir_header:
                                     pruned_headers_found = True
                             except Exception as e:
+                                self.printException(e, "on_prune: inspecting pruned node failed")
                                 sample.append({"idx": i, "text": "<inspect-failed>", "exc": repr(e)})
 
                         logger.debug("on_prune: pruned_sample=%r", sample)
@@ -1648,11 +1649,9 @@ class FileListBase(AppBase):
                 # Only schedule a re-render when header rows were actually
                 # pruned; unconditional re-renders can cause a render loop
                 # when Textual emits prune messages during normal virtualization.
-                if pruned_headers_found and hasattr(self, "_nodes_by_dir") and getattr(self, "_nodes_by_dir", None):
+                if pruned_headers_found and hasattr(self, "_nodes_by_dir") and self._nodes_by_dir:
                     self.call_after_refresh(
-                        lambda: self._render_filemode_display(
-                            getattr(self, "_nodes_by_dir", {}), getattr(self.app, "rel_dir", ""), getattr(self.app, "rel_file", "")
-                        )
+                        lambda: self._render_filemode_display(self._nodes_by_dir, self.app.rel_dir, self.app.rel_file)
                     )
             except Exception as e:
                 self.printException(e, "on_prune: schedule re-render failed")
@@ -1671,29 +1670,9 @@ class FileListBase(AppBase):
             self.printException(e)
             return str(node)
 
-    def _enter_directory(self, filename: str) -> None:
-        """Handle a request to enter the directory named `filename`.
-
-        Default implementation logs the request; subclasses may override to
-        change the UI mode or update the widget to display the directory.
-        """
-        logger.debug("enter directory requested and ignored: %s", filename)
-
-    def _list_directory(self, path: str) -> list[str]:
-        """Return a sorted list of entries in `path`.
-
-        Safe wrapper around `os.listdir` that logs and returns an empty
-        list on error so callers don't need try/except every time.
-        """
-        try:
-            entries = sorted(os.listdir(path))
-            return entries
-        except Exception as e:
-            self.printException(e, f"_list_directory: reading {path} failed")
-            return []
-
     def _render_parent_entry_if_needed(self, path: str) -> None:
-        """Add a parent (`..`) entry when `path` is not the repo root.
+        """
+        Add a parent (`..`) entry when `path` is not the repo root.
 
         Creates a non-selectable ListItem with metadata `_filename='..'` and
         `_is_dir=True` and appends it to the list. Safe no-op on error.
@@ -2087,7 +2066,8 @@ class FileModeFileList(FileListBase):
     """
 
     def _collect_filemode_nodes(self, rel_dir: str, rel_path: str) -> None:
-        """Collect git-based file lists and build nodes_by_dir mapping.
+        """
+        Collect git-based file lists and build nodes_by_dir mapping.
 
         Stores the mapping on `self._nodes_by_dir`. Callers should pass
         the `rel_dir` they want rendered; no normalization or string
@@ -2557,7 +2537,7 @@ class FileModeFileList(FileListBase):
                     if enter_dir_test_fn(name):
                         # Compute and set new repository-relative directory
                         try:
-                            cur_rel = getattr(self.app, "rel_dir", "") or ""
+                            cur_rel = self.app.rel_dir or ""
                             new_rel = self.app.gitRepo.reldir_plus_dirname_to_reldir(cur_rel, name)
                             self.app.rel_dir = new_rel
                             # Clear any selected file when entering a directory
