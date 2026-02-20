@@ -1004,6 +1004,16 @@ def check_multiline_docstring_start(path: Path, text: str, tree: ast.AST) -> Lis
     preferred form where the first content line begins on the next line
     after the opening quotes.
 
+    For example, the following form is preferred for multiline docstrings:
+    '''
+    This is a multiline docstring with multiple lines
+    that starts on the line after the opening quotes.
+    '''
+    instead of:
+    '''This is a multiline docstring with multiple lines
+    that starts on the same line as the opening quotes.
+    '''
+
     Returns list of (filepath, lineno, message).
     """
     errs: List[Tuple[str, int, str]] = []
