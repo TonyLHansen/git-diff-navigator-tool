@@ -315,6 +315,67 @@ def _find_getattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[in
     return results
 
 
+def _find_hasattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[int, str]]:
+    """Find usages of hasattr(self, 'attr') and return list of (lineno, attrname).
+
+    Only matches literal string attribute names. Does not attempt to resolve
+    dynamic expressions.
+    """
+
+    results: List[tuple[int, str]] = []
+
+    # Some Python versions don't expose ast.Str (strings are ast.Constant).
+    has_ast_Str = hasattr(ast, "Str")
+    str_node_types = (ast.Constant, ast.Str) if has_ast_Str else (ast.Constant,)
+
+    class Finder(ast.NodeVisitor):
+        def visit_Call(self, node: ast.Call) -> None:
+            try:
+                if isinstance(node.func, ast.Name) and node.func.id == "hasattr" and len(node.args) >= 2:
+                    first = node.args[0]
+                    second = node.args[1]
+                    # match hasattr(self, 'attr') where first arg is Name 'self'
+                    if isinstance(first, ast.Name) and first.id == "self":
+                        if has_ast_Str and isinstance(second, ast.Str):
+                            attr_name = second.s
+                        else:
+                            attr_name = getattr(second, "value", None)
+                        if isinstance(attr_name, str):
+                            lineno = getattr(node, "lineno", None)
+                            if lineno is not None:
+                                results.append((lineno, attr_name))
+            except Exception as e:
+                printException(e, f"error walking AST for hasattr detection in {path}")
+            self.generic_visit(node)
+
+    Finder().visit(tree)
+    return results
+
+
+def check_prefer_no_direct_hasattrs(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
+    """Flag redundant hasattr(self, 'attr') checks when `attr` is assigned in __init__/on_mount.
+
+    Returns list of (filepath, lineno, message).
+    """
+    errs: List[Tuple[str, int, str]] = []
+    try:
+        classes = _collect_self_assigned_attrs(path, text=text, tree=tree)
+        hasattr_uses = _find_hasattr_on_self(path, text=text, tree=tree)
+    except Exception as e:
+        printException(e, f"collecting class attrs/hasattr usages in {path}")
+        return errs
+
+    assigned_attrs = set()
+    for s in classes.values():
+        assigned_attrs.update(s)
+
+    for lineno, attr in hasattr_uses:
+        if attr in assigned_attrs:
+            errs.append((str(path), lineno, f"hasattr(self, '{attr}') used but '{attr}' is assigned in __init__/on_mount; unnecessary check"))
+
+    return errs
+
+
 def _find_parse_args_targets(path: Path, text: str, tree: ast.AST) -> set:
     """Return set of variable names assigned from a call to `*.parse_args()`.
 
@@ -813,6 +874,7 @@ def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tupl
         else:
             if attr in assigned_attrs:
                 errs.append((str(path), lineno, f"{func}(self, '{attr}', ...) used but '{attr}' is assigned in __init__/on_mount; prefer direct access"))
+    return errs
 
     # Also flag getattr usage on argparse Namespace objects returned by parse_args()
     try:
@@ -1129,7 +1191,23 @@ def main(argv: List[str] | None = None) -> int:
 
     # Paired options are represented as mutually-exclusive groups so users
     # cannot accidentally pass both the enable and disable variants.
-    # Alphabetical ordering of groups: B, C, D, E, I, L, N, P, S, T
+    # Alphabetical ordering of groups: A, B, C, D, E, I, L, N, P, S, T
+
+    # paired options to control redundant hasattr(self, 'attr') checks
+    gh = parser.add_mutually_exclusive_group()
+    gh.add_argument("-A",
+        "--no-prefer-no-direct-hasattrs",
+        dest="check_prefer_no_direct_hasattrs",
+        action="store_false",
+        help="Skip checking for redundant hasattr(self, ...) usages (default: check)",
+    )
+    gh.add_argument("-a",
+        "--prefer-no-direct-hasattrs",
+        dest="enable_prefer_no_direct_hasattrs",
+        action="store_true",
+        help="Enable prefer-no-direct-hasattrs check (opposite of -A).",
+    )
+
     gb = parser.add_mutually_exclusive_group()
     gb.add_argument("-B",
         "--no-bare-excepts",
@@ -1298,16 +1376,16 @@ def main(argv: List[str] | None = None) -> int:
 
     gu = parser.add_mutually_exclusive_group()
     gu.add_argument(
-        "--no-check_getattr_methods",
+        "--no-check-getattr-methods",
         dest="check_getattr_methods",
         action="store_false",
         help="Skip checking for getattr(...) immediate-call usages (default: check)",
     )
     gu.add_argument(
-        "--check_getattr_methods",
+        "--check-getattr-methods",
         dest="enable_check_getattr_methods",
         action="store_true",
-        help="Enable check for immediate calls of getattr(...)(...) (opposite of --no-check_getattr_methods)",
+        help="Enable check for immediate calls of getattr(...)(...) (opposite of --no-check-getattr-methods)",
     )
     
     # `--NONE` convenience flag: keep near the end of the options list
@@ -1345,10 +1423,11 @@ def main(argv: List[str] | None = None) -> int:
         args.check_printexception_in_try = False
         args.check_imports = False
         args.check_docstrings = False
-
-    # Honor explicit enable flags after -N/--NONE
+        args.check_prefer_no_direct_hasattrs = False
 
     # Honor explicit small-letter re-enable flags after -N/--NONE
+    if args.enable_prefer_no_direct_hasattrs:
+        args.check_prefer_no_direct_hasattrs = True
     if args.enable_bare_excepts:
         args.check_bare_excepts = True
     if args.enable_except_as_print:
@@ -1457,6 +1536,12 @@ def main(argv: List[str] | None = None) -> int:
                         errs += check_prefer_direct_attrs(p, text=text, tree=tree)
                     except Exception as e:
                         printException(e, f"check_prefer_direct_attrs failed for {p}")
+                # Enforce 'redundant hasattr(self, attr)' axiom
+                if getattr(args, "check_prefer_no_direct_hasattrs", True):
+                    try:
+                        errs += check_prefer_no_direct_hasattrs(p, text=text, tree=tree)
+                    except Exception as e:
+                        printException(e, f"check_prefer_no_direct_hasattrs failed for {p}")
                 # Enforce 'getattr-not-initialized' axiom
                 if args.check_getattr_not_initialized:
                     try:

@@ -745,7 +745,7 @@ class AppBase(AppException, ListView):
             logger.debug(
                     "apply_index_change enter: nodes=%d has_nodes_by_dir=%r index=%r",
                     len(nodes),
-                    hasattr(self, "_nodes_by_dir"),
+                    bool(self._nodes_by_dir),
                     getattr(self, "index", None),
                 )
             if not nodes:
@@ -768,7 +768,7 @@ class AppBase(AppException, ListView):
                     # When available, re-render the widget from authoritative
                     # `self._nodes_by_dir` data so every line's color is decided
                     # up-front and written in one pass.
-                    if hasattr(self, "_nodes_by_dir") and hasattr(self, "_render_filemode_display"):
+                    if self._nodes_by_dir and hasattr(self, "_render_filemode_display"):
                         try:
                             rel_dir = self.app.rel_dir
                             rel_file = self.app.rel_file
@@ -1649,7 +1649,7 @@ class FileListBase(AppBase):
                 # Only schedule a re-render when header rows were actually
                 # pruned; unconditional re-renders can cause a render loop
                 # when Textual emits prune messages during normal virtualization.
-                if pruned_headers_found and hasattr(self, "_nodes_by_dir") and self._nodes_by_dir:
+                if pruned_headers_found and self._nodes_by_dir:
                     self.call_after_refresh(
                         lambda: self._render_filemode_display(self._nodes_by_dir, self.app.rel_dir, self.app.rel_file)
                     )
