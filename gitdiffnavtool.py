@@ -87,9 +87,9 @@ ListView {
     padding: 0 1;
 }
 
-/* Highlight active list item */
+/* Highlight active list item - use the configured filelist highlight color */
 ListItem.active {
-    background: $accent-darken-1;
+    background: #f1c40f;
     color: white;
 }
 
@@ -294,7 +294,7 @@ class AppBase(AppException, ListView):
                     }
                 )
         except Exception as _e:
-            printException(_e)
+            self.printException(_e)
             header = {"widget_class": type(self).__name__}
         logger.debug("_log_visible_items called_from=%s -- %s", header, msg)
         try:
@@ -501,7 +501,8 @@ class AppBase(AppException, ListView):
                     # Add a parent directory entry ("..") when appropriate;
                     # this will be a non-selectable directory row placed
                     # immediately after the headers so users can navigate up.
-                    self._render_parent_entry_if_needed(norm_rel_dir)
+                    # Use the canonical repo-relative path for parent rendering
+                    self._render_parent_entry_if_needed(canonical)
                 except Exception as _e:
                     self.printException(_e, "_append_file_row: _render_parent_entry_if_needed failed")
             except Exception as _ex:
@@ -542,9 +543,21 @@ class AppBase(AppException, ListView):
     def text_of(self, node) -> str:
         """Extract visible text from a ListItem's Label or renderable."""
         try:
+            # Prefer an explicit canonical raw text when it's meaningful
+            # (non-empty). Some rows (notably the parent '..' entry) store
+            # an empty `_raw_text` value used for navigation, but the visible
+            # label contains the human-friendly text. Treat empty strings as
+            # absent so callers that want visible text receive the label
+            # contents instead of an empty string.
             raw = getattr(node, "_raw_text", None)
-            if raw is not None:
+            if raw is not None and raw != "":
                 return raw
+            # If a filename was attached (e.g. '..' for parent entries), prefer it
+            # to querying the Label child which may not be available immediately
+            # during certain mount/refresh timing windows.
+            fname = getattr(node, "_filename", None)
+            if fname:
+                return fname
             lbl = node.query_one(Label)
             if hasattr(lbl, "text") and getattr(lbl, "text"):
                 return lbl.text
@@ -658,14 +671,15 @@ class AppBase(AppException, ListView):
             n = self.children
             return n if n else []
         except Exception as e:
-            printException(e)
+            self.printException(e, "nodes failed")
             return []
 
     def _activate_index(self, new_index: int) -> None:
         """Set the active/selected index and update ListItem 'active' class.
 
         Deactivates the previously-active item, activates the new item,
-        and schedules the index change with `call_after_refresh` when possible.
+        and applies the change immediately by rebuilding the view from
+        authoritative data rather than mutating UI after the fact.
         """
         try:
             nodes = self.nodes()
@@ -674,156 +688,110 @@ class AppBase(AppException, ListView):
             old = self.index
             # per-widget highlight is provided via `self.highlight_bg_style`
 
-            # Only set the index here; actual visual activation is performed
-            # in `watch_index` which runs after Textual has processed the index
-            # change so our styles/classes won't be clobbered.
+            # Set the index immediately and synchronously apply the visual
+            # changes by invoking `apply_index_change` which will re-render
+            # the widget from `self._nodes_by_dir` when available.
             try:
                 logger.debug(
-                    "_activate_index: old=%r new=%r highlight_style=%s", old, new_index, self.highlight_bg_style
+                    "_activate_index: old=%r new=%r highlight_style=%s nodes=%d",
+                    old,
+                    new_index,
+                    self.highlight_bg_style,
+                    len(nodes),
                 )
-                # Schedule the index change after the UI refresh.
-                self.call_after_refresh(lambda: self._safe_set_index(new_index))
+                try:
+                    self.index = new_index
+                except Exception as e:
+                    self.printException(e, "_activate_index: direct index set failed")
+                    try:
+                        setattr(self, "index", new_index)
+                    except Exception as _e:
+                        self.printException(_e, "_activate_index: setattr(index) failed")
+                # Apply highlight/scroll behavior synchronously by rebuilding
+                # the current view from authoritative data rather than
+                # mutating styles after the fact.
+                try:
+                    self.apply_index_change(old, new_index)
+                except Exception as _e:
+                    self.printException(_e, "_activate_index: apply_index_change failed")
             except Exception as e:
-                self.printException(e, "_activate_index: scheduling index set failed")
-                logger.debug("_activate_index: falling back to direct index set -> %s", new_index)
-                self.index = new_index
+                self.printException(e, "_activate_index: failed to set index and apply changes")
         except Exception as e:
             self.printException(e, "_activate_index failed")
 
-    def watch_index(self, old: int | None, new: int | None) -> None:
-        """Handle an index change: perform common highlight/scroll and
-        dispatch to widget-specific hooks (`watch_filelist_index` or
-        `watch_history_index`).
-        """
-        # Delegate to a helper that performs common highlight/scroll behavior
-        try:
-            node_new = self.watch_index_helper(old, new)
-            # Dispatch to widget-specific hooks so subclass behavior is
-            # implemented in `watch_filelist_index` / `watch_history_index`
-            try:
-                if self.is_history_list:
-                    try:
-                        self.watch_history_index(old, new, node_new)
-                    except Exception as e:
-                        self.printException(e, "watch_index: watch_history_index hook failed")
-                elif self.is_file_list:
-                    try:
-                        self.watch_filelist_index(old, new, node_new)
-                    except Exception as e:
-                        self.printException(e, "watch_index: watch_filelist_index hook failed")
-                else:
-                    logger.debug("watch_index: no specific hook for widget %s", type(self).__name__)
-            except Exception as e:
-                self.printException(e, "watch_index: dispatch to hooks failed")
-        except Exception as e:
-            self.printException(e, "watch_index failed")
-
     def watch_index_helper(self, old: int | None, new: int | None):
-        """Common highlight and scroll behavior extracted from previous watch_index.
+        """Compatibility wrapper for the direct apply method.
 
-        Returns the `node_new` (or None) so callers/hooks may inspect it.
+        Historically `watch_index_helper` implemented highlight and scroll
+        behavior. To centralize imperative control, that logic now lives in
+        `apply_index_change`. This wrapper forwards for callers that still
+        reference `watch_index_helper`.
+        """
+        return self.apply_index_change(old, new)
+
+    def apply_index_change(self, old: int | None, new: int | None):
+        """Imperatively apply highlight and scrolling for index change.
+
+        This contains the previous `watch_index_helper` logic but is meant
+        to be invoked directly from key handlers or other imperative code
+        paths. It does not consult `_suppress_watch` — callers should
+        respect any higher-level suppression semantics.
         """
         try:
-            # If suppression is enabled, skip visual highlight/scroll work.
-            if getattr(self, "_suppress_watch", False):
-                logger.debug("watch_index_helper: suppressed (old=%r new=%r)", old, new)
-                return None
-
             nodes = self.nodes()
+            # Defensive debug: log node count and whether we have authoritative
+            # `_nodes_by_dir` data available so we can determine which branch
+            # the apply logic will take.
+            logger.debug(
+                    "apply_index_change enter: nodes=%d has_nodes_by_dir=%r index=%r",
+                    len(nodes),
+                    hasattr(self, "_nodes_by_dir"),
+                    getattr(self, "index", None),
+                )
             if not nodes:
                 return None
             highlight_bg = self.highlight_bg_style
             text_color = "white"
-            node_old = None
-            if old is not None and 0 <= old < len(nodes):
-                try:
-                    node_old = nodes[old]
-                except Exception as e:
-                    self.printException(e, "watch_index_helper: getting old node failed")
-                    node_old = None
+            try:
+                nodes = self.nodes()
+                if not nodes:
+                    return None
+                logger.debug("apply_index_change: old=%r new=%r nodes=%d", old, new, len(nodes))
 
-            logger.debug("watch_index_helper: old=%r new=%r nodes=%d", old, new, len(nodes))
-            logger.debug(
-                "watch_index_helper: preserved marked style for old index %s hash=%r",
-                old,
-                getattr(node_old, "_hash", None),
-            )
-
-            # Deactivate old
-            if node_old is not None:
+                # Update the stored index first so the renderer can consult it
                 try:
-                    node_old.remove_class("active")
-                except Exception as e:
-                    self.printException(e, "watch_index_helper: remove_class failed")
-                try:
-                    if getattr(node_old, "_checked", False):
-                        node_old.styles.background = "red"
-                        node_old.styles.color = "white"
-                        node_old.styles.text_style = "bold"
-                    else:
-                        node_old.styles.background = None
-                        node_old.styles.color = None
-                        node_old.styles.text_style = None
-                        logger.debug("watch_index_helper: cleared styles for old index %s", old)
-                except Exception as e:
-                    self.printException(e, "watch_index_helper: clearing old styles failed")
-
-            node_new = None
-            if new is not None and 0 <= new < len(nodes):
-                try:
-                    node_new = nodes[new]
                     try:
-                        node_new.add_class("active")
+                        self.index = new if new is not None else getattr(self, "index", None)
                     except Exception as e:
-                        self.printException(e, "watch_index_helper: add_class failed")
-                    try:
-                        node_new.styles.background = highlight_bg
-                        node_new.styles.color = text_color
-                        node_new.styles.text_style = "bold"
-                        logger.debug(
-                            "watch_index_helper: applied highlight to new index %s text=%s",
-                            new,
-                            self.text_of(node_new),
-                        )
-                    except Exception as e:
-                        self.printException(e, "watch_index_helper: applying new highlight failed")
+                        self.printException(e, "apply_index_change: setting index failed")
 
-                    try:
-                        animate = False
+                    # When available, re-render the widget from authoritative
+                    # `self._nodes_by_dir` data so every line's color is decided
+                    # up-front and written in one pass.
+                    if hasattr(self, "_nodes_by_dir") and hasattr(self, "_render_filemode_display"):
                         try:
-                            animate = bool(self._page_scroll)
+                            rel_dir = getattr(self.app, "rel_dir", "") if hasattr(self, "app") else ""
+                            rel_file = getattr(self.app, "rel_file", "") if hasattr(self, "app") else ""
+                            logger.debug("apply_index_change: calling _render_filemode_display rel_dir=%r rel_file=%r", rel_dir, rel_file)
+                            self._render_filemode_display(getattr(self, "_nodes_by_dir", {}), rel_dir, rel_file)
+                            nodes_after = self.nodes()
+                            return nodes_after[new] if (new is not None and 0 <= new < len(nodes_after)) else None
                         except Exception as e:
-                            self.printException(e, "watch_index_helper: reading _page_scroll failed")
-                            animate = False
-                        logger.debug("watch_index_helper: scroll animate=%s for index %s", animate, new)
-                        if hasattr(self, "scroll_to_widget"):
-                            try:
-                                self.call_after_refresh(lambda: self._safe_scroll_to_widget(node_new, animate=animate))
-                            except Exception as e:
-                                self.printException(e, "watch_index_helper: scroll_to_widget(animate=) failed")
-                                try:
-                                    self.call_after_refresh(lambda: self._safe_scroll_to_widget(node_new))
-                                except Exception as e2:
-                                    self.printException(
-                                        e2, "watch_index_helper: scroll_to_widget(node_new) fallback failed"
-                                    )
-                        else:
-                            try:
-                                logger.debug("watch_index_helper: scheduling node_new.scroll_visible for index %s", new)
-                                self.call_after_refresh(lambda: self._safe_node_scroll_visible(node_new, True))
-                            except Exception as e:
-                                self.printException(e, "watch_index_helper: node_new.scroll_visible failed")
-                        self._page_scroll = False
-                    except Exception as e:
-                        self.printException(e, "watch_index_helper: scrolling new node failed")
-                except Exception as e:
-                    self.printException(e, "watch_index_helper: finding new node failed")
+                            self.printException(e, "apply_index_change: re-rendering filemode display failed")
 
-            # Log visible items and highlight state for debugging navigation
-            self._log_visible_items("watch_index_helper after processing index change")
-            return node_new
+                    # Fallback: set index and ensure visibility.
+                    self.index = new
+                    if hasattr(self, "_ensure_index_visible"):
+                        self._ensure_index_visible()
+                    return nodes[new] if (new is not None and 0 <= new < len(nodes)) else None
+                except Exception as e:
+                    self.printException(e, "apply_index_change: high-level apply failed")
+                    return None
+            except Exception as e:
+                self.printException(e, "apply_index_change failed")
+                return None
         except Exception as e:
-            self.printException(e, "watch_index_helper failed")
+            self.printException(e, "apply_index_change failed")
             return None
 
     def _highlight_match(self, match: Optional[str]) -> None:
@@ -1017,12 +985,14 @@ class AppBase(AppException, ListView):
                     self.printException(e, "key_up: event.stop failed")
             min_idx = self._min_index or 0
             cur = self.index
+            logger.debug("AppBase.key_up: computed cur=%r min_idx=%r", cur, min_idx)
             if cur is None:
                 self._activate_index(min_idx)
                 return
             if cur <= min_idx:
                 return
             new_index = cur - 1
+            logger.debug("AppBase.key_up: moving from %r to %r", cur, new_index)
             self._activate_index(new_index)
         except Exception as e:
             self.printException(e, "key_up outer failure")
@@ -1038,11 +1008,14 @@ class AppBase(AppException, ListView):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "key_down: event.stop failed")
-            cur = self.index or (self._min_index or 0)
+            # Preserve zero index correctly: don't treat 0 as falsy.
+            cur = self.index if getattr(self, "index", None) is not None else (self._min_index or 0)
             nodes = self.nodes()
+            logger.debug("AppBase.key_down: cur=%r nodes=%d min_index=%r", cur, len(nodes), getattr(self, "_min_index", None))
             if not nodes:
                 return
             new_index = min(len(nodes) - 1, cur + 1)
+            logger.debug("AppBase.key_down: moving from %r to %r", cur, new_index)
             self._activate_index(new_index)
         except Exception as e:
             self.printException(e, "key_down outer failure")
@@ -1467,6 +1440,19 @@ class FileListBase(AppBase):
         """
         try:
             idx = self.index or 0
+            # If header rows were pruned by the list virtualization when
+            # scrolling, re-render the prepared filelist using the last-
+            # collected `_nodes_by_dir` so the canonical Key:/Directory
+            # header rows are present again. This keeps the visual UI
+            # consistent when users page back to the top of a long list.
+            try:
+                # GitHistoryNavTool always creates the external header Labels;
+                # assume they exist and skip the in-list header re-render path.
+                # This avoids redundant re-renders and keeps behavior deterministic.
+                pass
+            except Exception as e:
+                self.printException(e, "_ensure_index_visible: re-rendering filemode display failed")
+
             logger.debug("_activate_or_open: entry idx=%r rel_dir=%r rel_file=%r", idx, getattr(self.app, "rel_dir", None), getattr(self.app, "rel_file", None))
             nodes = self.nodes()
             if not nodes or idx is None:
@@ -1603,56 +1589,75 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, "FileListBase._finalize_filelist_prep failed")
 
-    def watch_index(self, old, new) -> None:
-        """Default index-change handler for file-list widgets.
 
-        Delegates styling updates to `AppBase.watch_index` and logs the
-        index transition. Subclasses may override for custom behavior.
+    def on_prune(self, event) -> None:
+        """Handle Textual prune events for diagnostic and recovery.
+
+        Log the event and any pruned nodes if available. If pruning
+        removed the persistent filelist headers (Key:/Directory),
+        schedule a re-render of the prepared filelist from the last
+        collected `_nodes_by_dir` so the headers are restored.
         """
         try:
-            # keep existing logging but delegate to base handler for styling
+            logger.debug("on_prune: event=%r", event)
+
+            # Track whether pruned nodes included our header rows;
+            # default to False so we only re-render when necessary.
+            pruned_headers_found = False
             try:
-                super().watch_index(old, new)
-            except Exception as e:
-                self.printException(e, "FileListBase.watch_index: base watch failed")
-            logger.debug("FileListBase index changed %r -> %r", old, new)
-        except Exception as e:
-            self.printException(e, "FileListBase.watch_index failed")
-
-    def watch_filelist_index(self, old: int | None, new: int | None, node_new) -> None:
-        """File-list specific post-highlight hook.
-
-        Keeps `app.rel_dir` and `app.rel_file` in sync with the newly-highlighted
-        row's `_raw_text` value where appropriate.
-        """
-        try:
-            raw = getattr(node_new, "_raw_text", None)
-            if raw:
-                try:
-                    # Raw values are repo-relative; normalize before storing
-                    rel = os.path.normpath(raw)
+                pruned = getattr(event, "pruned", None) or getattr(event, "nodes", None)
+                logger.debug("on_prune: pruned_attr=%r type=%s", pruned, type(event))
+                if pruned is not None:
                     try:
-                        rd, rf = os.path.split(rel)
-                        self.app.rel_dir = rd or ""
-                        self.app.rel_file = rf or ""
-                    except Exception as _ex:
-                        self.printException(_ex, "watch_filelist_index: setting app.rel_dir/rel_file failed")
-                except Exception as _ex:
-                    self.printException(_ex, "watch_filelist_index: setting app.rel_dir/rel_file failed")
-            logger.debug(
-                "watch_filelist_index: set app.rel_dir/app.rel_file=%r/%r",
-                self.app.rel_dir,
-                self.app.rel_file,
-            )
+                        count = len(pruned) if hasattr(pruned, "__len__") else "unknown"
+                        logger.debug("on_prune: pruned_count=%s", count)
+
+                        # Inspect the first few pruned nodes and record notable flags
+                        sample = []
+                        pruned_headers_found = False
+                        max_sample = 12
+                        for i, node in enumerate(pruned):
+                            if i >= max_sample:
+                                break
+                            try:
+                                is_key_header = bool(getattr(node, "_filelist_key_header", False))
+                                is_dir_header = bool(getattr(node, "_dir_header", False))
+                                text = self._child_filename(node) if hasattr(self, "_child_filename") else str(node)
+                                sample.append({
+                                    "idx": i,
+                                    "text": text,
+                                    "_filelist_key_header": is_key_header,
+                                    "_dir_header": is_dir_header,
+                                })
+                                if is_key_header or is_dir_header:
+                                    pruned_headers_found = True
+                            except Exception as e:
+                                sample.append({"idx": i, "text": "<inspect-failed>", "exc": repr(e)})
+
+                        logger.debug("on_prune: pruned_sample=%r", sample)
+                        logger.debug("on_prune: pruned_headers_found=%r", pruned_headers_found)
+                    except Exception as e:
+                        self.printException(e, "on_prune: counting pruned items failed")
+                        logger.debug("on_prune: pruned items present but count failed")
+            except Exception as e:
+                self.printException(e, "on_prune: introspection failed")
+
+            # If headers were pruned re-render the prepared filelist so
+            # the canonical Key:/Directory header rows are reinstated.
+            try:
+                # Only schedule a re-render when header rows were actually
+                # pruned; unconditional re-renders can cause a render loop
+                # when Textual emits prune messages during normal virtualization.
+                if pruned_headers_found and hasattr(self, "_nodes_by_dir") and getattr(self, "_nodes_by_dir", None):
+                    self.call_after_refresh(
+                        lambda: self._render_filemode_display(
+                            getattr(self, "_nodes_by_dir", {}), getattr(self.app, "rel_dir", ""), getattr(self.app, "rel_file", "")
+                        )
+                    )
+            except Exception as e:
+                self.printException(e, "on_prune: schedule re-render failed")
         except Exception as e:
-            self.printException(e, "watch_filelist_index failed")
-
-    def on_list_view_highlighted(self, event) -> None:
-        """Hook invoked by Textual when the list view highlight changes.
-
-        Default implementation logs the event; subclasses may override.
-        """
-        logger.debug("list view highlighted: %s", event)
+            self.printException(e, "on_prune failed")
 
     def _child_filename(self, node) -> str:
         """Return the filename or visible text for a child `node`.
@@ -1663,7 +1668,7 @@ class FileListBase(AppBase):
         try:
             return self.text_of(node)
         except Exception as e:
-            printException(e)
+            self.printException(e)
             return str(node)
 
     def _enter_directory(self, filename: str) -> None:
@@ -1748,9 +1753,8 @@ class FileListBase(AppBase):
         `_selectable=False` so navigation logic can skip it.
         """
         try:
-            # Diagnostic: record the raw incoming focus target so logs show
-            # exactly what callers pass (helps diagnose '#id' vs plain id).
-            logger.debug("change_focus: raw target=%r", target)
+            # Diagnostic: record the incoming hash values for debugging.
+            logger.debug("_render_hash_header: prev_hash=%r curr_hash=%r", prev_hash, curr_hash)
 
             def _short(h: str | None) -> str:
                 if not h:
@@ -2210,27 +2214,52 @@ class FileModeFileList(FileListBase):
         try:
             # Prepare the widget for fresh rendering: clear existing rows
             # and insert the canonical key legend header.
+            # Capture current index before clearing children; clearing the
+            # widget may reset `self.index` internally, so preserve the
+            # intended index here for use when deciding which item to
+            # highlight after we rebuild the list.
+            pre_clear_index = getattr(self, "index", None)
+
             try:
-                self.clear()
+                 children_before = len(getattr(self, "children", []))
+                 logger.debug("_render_filemode_display: clearing children count=%d", children_before)
+                 self.clear()
+                 logger.debug("_render_filemode_display: clear() completed; children now=%d", len(getattr(self, "children", [])))
             except Exception as _e:
                 self.printException(_e, "_render_filemode_display: clear() failed")
+
+            # Build the entire set of ListItem rows locally first so we can
+            # decide highlighting and inline-label styles up-front. After
+            # computing every line's desired style we will write the list to
+            # the widget in a single pass which avoids post-mutation races.
+            # Update the static header labels that live outside the ListView
+            # so they are never subject to Textual's virtualization/pruning.
             try:
-                self._add_filelist_key_header()
+                app = getattr(self, "app", None)
+                if app is not None:
+                    try:
+                        key_lbl = app.query_one("#left-file-key", Label)
+                        try:
+                            key_lbl.update(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY))
+                        except Exception as e:
+                            self.printException(e, "_render_filemode_display: updating left-file-key with style failed")
+                            key_lbl.update(FILELIST_KEY_ROW_TEXT)
+                    except Exception as _e:
+                        self.printException(_e, "_render_filemode_display: updating left-file-key failed")
+                    try:
+                        dir_lbl = app.query_one("#left-file-dir", Label)
+                        try:
+                            dir_lbl.update(Text(f"Directory: {rel_dir or 'Repository Root'}", style=STYLE_HELP_BG))
+                        except Exception as e:
+                            self.printException(e, "_render_filemode_display: updating left-file-dir with style failed")
+                            dir_lbl.update(f"Directory: {rel_dir or 'Repository Root'}")
+                    except Exception as _e:
+                        self.printException(_e, "_render_filemode_display: updating left-file-dir failed")
             except Exception as _e:
-                self.printException(_e, "_render_filemode_display: _add_filelist_key_header() failed")
+                self.printException(_e, "_render_filemode_display: updating external headers failed")
 
+            new_items: list = []
             slice_node = nodes_by_dir.get(rel_dir, {"dirs": set(), "files": []})
-
-            # Prepend header rows: the key legend is added earlier via
-            # `_add_filelist_key_header()`, so here only add the directory
-            # header. Mark it non-selectable so navigation skips it.
-            try:
-                item = ListItem(Label(Text(f"Directory: {rel_dir or 'Repository Root'}", style=STYLE_HELP_BG)))
-                item._dir_header = True
-                item._selectable = False
-                self.append(item)
-            except Exception as e:
-                self.printException(e, "_render_filemode_display: appending header failed")
 
             # If we're not at the repo root, add a parent entry ('..')
             # so users can navigate up the tree.
@@ -2239,11 +2268,11 @@ class FileModeFileList(FileListBase):
                     parent_rel = os.path.dirname(rel_dir) or ""
                     # Display as a directory entry with '..' name
                     try:
-                        item = ListItem(Label(Text(f"← ../", style=STYLE_DIR)))
-                        item._is_dir = True
-                        item._filename = ".."
-                        item._raw_text = parent_rel
-                        self.append(item)
+                        parent_item = ListItem(Label(Text(f"← ../", style=STYLE_DIR)))
+                        parent_item._is_dir = True
+                        parent_item._filename = ".."
+                        parent_item._raw_text = parent_rel
+                        new_items.append(parent_item)
                     except Exception as _e:
                         self.printException(_e, "_render_filemode_display: building parent entry failed")
             except Exception as _e:
@@ -2252,19 +2281,19 @@ class FileModeFileList(FileListBase):
             # Show directories first (use right-arrow marker and include '/').
             for dname in sorted(slice_node["dirs"]):
                 try:
-                    item = ListItem(Label(Text(f"→ {dname}/", style=STYLE_DIR)))
+                    dir_item = ListItem(Label(Text(f"→ {dname}/", style=STYLE_DIR)))
                     try:
-                        item._is_dir = True
-                        item._filename = dname
+                        dir_item._is_dir = True
+                        dir_item._filename = dname
                         try:
                             raw = os.path.join(rel_dir, dname) if rel_dir else dname
                         except Exception as _e:
                             self.printException(_e, "_render_filemode_display: os.path.join failed")
                             raw = dname
-                        item._raw_text = raw
+                        dir_item._raw_text = raw
                     except Exception as _e:
                         self.printException(_e, "_render_filemode_display: setting dir item metadata failed")
-                    self.append(item)
+                    new_items.append(dir_item)
                 except Exception as e:
                     self.printException(e, "_render_filemode_display: appending dir entry failed")
 
@@ -2274,19 +2303,19 @@ class FileModeFileList(FileListBase):
                     ts = iso if iso is not None else ""
                     marker = MARKERS.get(status, " ")
                     if status == "conflicted":
-                        style = STYLE_CONFLICTED
+                        base_style = STYLE_CONFLICTED
                     elif status == "staged":
-                        style = STYLE_STAGED
+                        base_style = STYLE_STAGED
                     elif status == "wt_deleted":
-                        style = STYLE_WT_DELETED
+                        base_style = STYLE_WT_DELETED
                     elif status == "ignored":
-                        style = STYLE_IGNORED
+                        base_style = STYLE_IGNORED
                     elif status == "modified":
-                        style = STYLE_MODIFIED
+                        base_style = STYLE_MODIFIED
                     elif status == "untracked":
-                        style = STYLE_UNTRACKED
+                        base_style = STYLE_UNTRACKED
                     else:
-                        style = STYLE_DEFAULT
+                        base_style = STYLE_DEFAULT
 
                     # Preserve leading non-breaking space marker; avoid
                     # stripping leading whitespace which would remove it.
@@ -2301,10 +2330,10 @@ class FileModeFileList(FileListBase):
                             display = "\u200d" + display
                     except Exception as _e:
                         self.printException(_e, "_render_filemode_display: NBSP handling failed")
-                    if style:
-                        item = ListItem(Label(Text(display, style=style)))
-                    else:
-                        item = ListItem(Label(Text(display)))
+
+                    # Create the label now; highlight application will be
+                    # decided later once we know the desired selected index.
+                    item = ListItem(Label(Text(display, style=base_style)))
                     try:
                         item._repo_status = status
                         item._is_dir = False
@@ -2318,63 +2347,135 @@ class FileModeFileList(FileListBase):
                         item._filename = name
                     except Exception as _e:
                         self.printException(_e, "_render_filemode_display: setting file item metadata failed")
-                    self.append(item)
+                    new_items.append(item)
                 except Exception as e:
                     self.printException(e, "_render_filemode_display: appending file entry failed")
 
             # Finalize minimal population state and ensure navigation starts
-            # on the first actual entry (after the two header rows).
+            # on the first actual entry. Header rows are now external
+            # to the ListView so the first selectable index is 0.
             try:
+                # Decide which index should be selected/highlighted before
+                # committing anything to the widget.
                 self._populated = True
-                nodes = self.nodes()
-                header_count = 2
-                if len(nodes) > header_count:
+                # Headers are rendered outside the virtualized list now.
+                header_count = 0
+                if len(new_items) > header_count:
                     self._min_index = header_count
                 else:
                     self._min_index = 0
-                # Ensure the selection cursor starts on the first non-header
-                # entry and that it's visible.
-                try:
-                    # If a caller has requested a specific filename to be
-                    # preselected (e.g. '..' during a directory-enter), honor
-                    # that now rather than forcing the default min index.
-                    desired = getattr(self, "_preselected_filename", None)
-                    if desired:
-                        try:
-                            nodes_now = self.nodes()
-                            found = False
-                            for i, n in enumerate(nodes_now):
-                                try:
-                                    if getattr(n, "_filename", None) == desired:
-                                        self.index = i
-                                        found = True
-                                        break
-                                except Exception:
-                                    continue
-                            if not found:
-                                self.index = self._min_index or 0
-                        except Exception as _e_idx:
-                            self.printException(_e_idx, "_render_filemode_display: computing desired index failed")
-                        # Clear the marker so it does not affect later renders.
-                        try:
-                            if hasattr(self, "_preselected_filename"):
-                                delattr(self, "_preselected_filename")
-                        except Exception:
-                            try:
-                                self._preselected_filename = None
-                            except Exception:
-                                pass
-                    else:
-                        self.index = self._min_index or 0
 
-                    try:
-                        # best-effort to scroll headers/selection into view
-                        if hasattr(self, "_ensure_index_visible"):
-                            self._ensure_index_visible()
-                    except Exception as _e:
-                        self.printException(_e, "_render_filemode_display: _ensure_index_visible failed")
+                # Choose desired index: prefer an explicit preselection, else
+                # preserve `self.index` when valid, otherwise fall back to the
+                # first selectable index.
+                desired = getattr(self, "_preselected_filename", None)
+                desired_index = None
+                try:
+                    if desired:
+                        for i, n in enumerate(new_items):
+                            try:
+                                if getattr(n, "_filename", None) == desired:
+                                    desired_index = i
+                                    break
+                            except Exception as e:
+                                self.printException(e, "_render_filemode_display: checking for preselection match failed")
+                                continue
+
+                        # Set the widget index to the selected index and ensure
+                        # visibility of the selection.
+                        try:
+                            self.index = desired_index
+                            try:
+                                if hasattr(self, "_ensure_index_visible"):
+                                    self._ensure_index_visible()
+                            except Exception as _e:
+                                self.printException(_e, "_render_filemode_display: _ensure_index_visible failed")
+                        except Exception as _e:
+                            self.printException(_e, "_render_filemode_display: setting index failed")
+                    if desired_index is None:
+                        # Use the index captured before we cleared the widget
+                        # so the intended selection is preserved across the
+                        # clear/append rebuild cycle.
+                        cur_idx = pre_clear_index
+                        if cur_idx is None:
+                            cur_idx = getattr(self, "index", None)
+                        if cur_idx is not None and 0 <= cur_idx < len(new_items):
+                            desired_index = cur_idx
+                        else:
+                            desired_index = self._min_index or 0
                 except Exception as _e:
-                    self.printException(_e, "_render_filemode_display: setting initial index failed")
+                    self.printException(_e, "_render_filemode_display: computing desired index failed")
+
+                # Clear the preselection marker so it does not affect later renders.
+                try:
+                    if hasattr(self, "_preselected_filename"):
+                        delattr(self, "_preselected_filename")
+                except Exception as e:
+                    self.printException(e, "_render_filemode_display: clearing _preselected_filename failed")
+                    self._preselected_filename = None
+
+                # Now commit the prepared items to the widget, applying
+                # inline highlight styles for the chosen index so the label
+                # itself renders with the intended background.
+                try:
+                    logger.debug(
+                            "_render_filemode_display: desired_index=%r header_count=%d min_index=%r total_items=%d",
+                            desired_index,
+                            header_count,
+                            self._min_index,
+                            len(new_items),
+                        )
+                    for i, it in enumerate(new_items):
+                        try:
+                            # When the index matches the desired selection,
+                            # mark the ListItem with the 'active' class so the
+                            # CSS-driven `ListItem.active` style is used for
+                            # highlighting. Avoid inline label styles which
+                            # produce inconsistent coloring across list types.
+                            if i == desired_index:
+                                try:
+                                    it.set_class(True, "active")
+                                except Exception as e:
+                                    self.printException(e, "_render_filemode_display: setting active class failed")
+                                    try:
+                                        it.add_class("active")
+                                    except Exception as e2:
+                                        self.printException(e2, "_render_filemode_display: adding active class failed")
+                            # Finally append the prepared item to the widget.
+                            self.append(it)
+                        except Exception as _e:
+                            self.printException(_e, "_render_filemode_display: append prepared item failed")
+                except Exception as _e:
+                    self.printException(_e, "_render_filemode_display: committing prepared items failed")
+
+                # Set the widget index to the selected index and ensure
+                # visibility of the selection. If the chosen index is the
+                # first selectable row then the canonical header rows may
+                # sit above it; explicitly scroll the header into view to
+                # preserve the Key:/Directory legend when paging back up.
+                self.index = desired_index
+                
+                try:
+                    if hasattr(self, "_ensure_index_visible"):
+                        try:
+                            if desired_index == self._min_index and getattr(self, "children", None):
+                                first = self.children[0]
+                                try:
+                                    self.call_after_refresh(lambda: self._safe_node_scroll_visible(first, True))
+                                except Exception as e:
+                                    self.printException(e, "_render_filemode_display: call_after_refresh failed")
+                                    # best-effort fallback
+                                    self._ensure_index_visible()
+                            else:
+                                self._ensure_index_visible()
+                        except Exception as e:
+                            self.printException(e, "_render_filemode_display: initial _ensure_index_visible failed")
+                            try:
+                                self._ensure_index_visible()
+                            except Exception as _e:
+                                self.printException(_e, "_render_filemode_display: _ensure_index_visible failed")
+                except Exception as _e:
+                    self.printException(_e, "_render_filemode_display: _ensure_index_visible failed")
             except Exception as e:
                 self.printException(e, "_render_filemode_display: finalizing population state failed")
 
@@ -2454,134 +2555,23 @@ class FileModeFileList(FileListBase):
             if is_dir:
                 try:
                     if enter_dir_test_fn(name):
+                        # Compute and set new repository-relative directory
                         try:
-                            gitrepo = self.app.gitRepo
-                            # Log inputs used to compute the new rel_dir to aid diagnosis
-                            logger.debug(
-                                "_activate_or_open: computing new rel_dir from rel_dir=%r dirname=%r",
-                                self.app.rel_dir,
-                                name,
-                            )
-                            # Compute new rel_dir by appending only the directory-name
-                            new_rdir = gitrepo.reldir_plus_dirname_to_reldir(self.app.rel_dir, name)
-                            self.app.rel_dir = new_rdir
+                            cur_rel = getattr(self.app, "rel_dir", "") or ""
+                            new_rel = self.app.gitRepo.reldir_plus_dirname_to_reldir(cur_rel, name)
+                            self.app.rel_dir = new_rel
+                            # Clear any selected file when entering a directory
                             self.app.rel_file = ""
-                            # Suppress the index watch while we update the view and
-                            # set the intended selection to the parent ('..') so
-                            # the watcher does not apply a transient highlight to
-                            # the previous item. We will re-run the watch after
-                            # the index has been set.
-                            old_idx = getattr(self, "index", None)
-                            logger.debug("_activate_or_open: setting _suppress_watch True (old_idx=%r)", old_idx)
-                            self._suppress_watch = True
-                            try:
-                                # Pre-collect nodes for the new directory so we can
-                                # compute and preselect the parent ('..') before
-                                # rendering. This avoids a window where the watch
-                                # can highlight the previous item.
-                                try:
-                                    self._collect_filemode_nodes(self.app.rel_dir, "")
-                                except Exception as _e_collect:
-                                    self.printException(_e_collect, "_activate_or_open: pre-collecting nodes failed")
+                        except Exception as _e:
+                            self.printException(_e, "_activate_or_open: computing new rel_dir failed")
 
-                                # Indicate we want '..' to be the preselected filename
-                                # during the upcoming render. `_render_filemode_display`
-                                # will honor this marker when finalizing `self.index`.
-                                try:
-                                    self._preselected_filename = ".."
-                                    logger.debug("_activate_or_open: set _preselected_filename='..'")
-                                except Exception:
-                                    self._preselected_filename = ".."
-                                    logger.debug("_activate_or_open: set _preselected_filename='..' (exception fallback)")
-
-                                self._render_filemode_display(self._nodes_by_dir, self.app.rel_dir, self.app.rel_file)
-                                # After entering a directory, prefer the '..' parent entry
-                                # so users can quickly navigate back up. Best-effort: locate
-                                # the first node whose filename is '..' and set selection
-                                # to that index.
-                                try:
-                                    nodes = self.nodes()
-                                    # Log a small summary before scanning so we can
-                                    # correlate visual highlights vs internal index.
-                                    try:
-                                        fnames = [getattr(n, "_filename", None) or getattr(n, "_raw_text", None) for n in nodes]
-                                    except Exception as e:
-                                        self.printException(e, "_activate_or_open: extracting filenames failed")
-                                        fnames = [str(n) for n in nodes]
-                                    logger.debug(
-                                        "_activate_or_open: post-render nodes_count=%d filenames=%r",
-                                        len(nodes),
-                                        fnames[:20],
-                                    )
-                                    # The renderer has been instructed to prefer the
-                                    # '..' entry via `self._preselected_filename`. For
-                                    # extra diagnostics, still scan nodes and log the
-                                    # discovered index (don't rely on this scan for
-                                    # selection since the renderer already handled it).
-                                    for i, it in enumerate(nodes):
-                                        try:
-                                            if getattr(it, "_filename", None) == "..":
-                                                logger.debug("_activate_or_open: discovered '..' at %d", i)
-                                                break
-                                        except Exception as _e:
-                                            self.printException(_e, "_activate_or_open: iterating node failed")
-                                            continue
-                                    # Log final index and its filename for diagnosis
-                                    try:
-                                        final_idx = getattr(self, "index", None)
-                                        final_fname = None
-                                        if final_idx is not None and 0 <= final_idx < len(nodes):
-                                            final_fname = getattr(nodes[final_idx], "_filename", None) or getattr(nodes[final_idx], "_raw_text", None)
-                                        logger.debug(
-                                            "_activate_or_open: final index=%r final_filename=%r",
-                                            final_idx,
-                                            final_fname,
-                                        )
-                                    except Exception as _e:
-                                        self.printException(_e, "_activate_or_open: final index logging failed")
-                                except Exception as _e:
-                                    self.printException(_e, "_activate_or_open: scanning nodes for '..' failed")
-                            except Exception as _ex:
-                                self.printException(_ex, "_activate_or_open: rendering new directory failed")
-                            finally:
-                                # Re-enable watching and invoke the watch to apply the
-                                # visual highlight and scrolling for the new index.
-                                try:
-                                    # Clear the preselection marker now that render
-                                    # has completed. It's safe to delete/clear it.
-                                    logger.debug("_activate_or_open: clearing preselection and re-enabling watch (old_idx=%r new_idx=%r)", old_idx, getattr(self, "index", None))
-                                    if hasattr(self, "_preselected_filename"):
-                                        delattr(self, "_preselected_filename")
-
-                                    self._suppress_watch = False
-                                    try:
-                                        self.watch_index(old_idx, getattr(self, "index", None))
-                                    except Exception as _e3:
-                                        self.printException(_e3, "_activate_or_open: re-invoking watch_index failed")
-                                except Exception as _e4:
-                                    self.printException(_e4, "_activate_or_open: re-enabling watch failed")
-                                    # Ensure suppress flag is cleared on any failure.
-                                    self._suppress_watch = False
+                        try:
+                            self.prepFileModeFileList()
                         except Exception as e:
-                            self.printException(
-                                e,
-                                f"_activate_or_open: computing new rel_dir failed rel_dir={self.app.rel_dir!r} dirname={name!r}",
-                            )
+                            self.printException(e, "_activate_or_open: prepFileModeFileList failed")
                 except Exception as e:
                     self.printException(e, "_activate_or_open: enter_dir_test_fn failed")
                 return
-
-            # Not a directory — possibly open file in history view
-            if not allow_file_open:
-                return
-            try:
-                if repo_status in ("untracked", "ignored"):
-                    # Opening untracked or ignored files doesn't make sense in history
-                    # view; log and ignore.
-                    logger.debug("_activate_or_open: skipping open for %s file %s", repo_status, raw)
-                    return
-            except Exception as e:
-                self.printException(e, "_activate_or_open: repo_status check failed")
 
             try:
                 # Default behavior: prepare the right-hand file-history widget
@@ -2605,7 +2595,39 @@ class FileModeFileList(FileListBase):
         This delegates to `_activate_or_open` and prevents opening files.
         """
         logger.debug("FileModeFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
+        # Capture the current index so we can imperatively apply highlighting
+        # after the directory-enter flow completes. This makes the visual
+        # highlight deterministic even if the watcher path races.
+        old_idx = getattr(self, "index", None)
+        # If we're not currently positioned on the parent entry ('..'),
+        # but the parent entry exists in the freshly-rendered list, move
+        # the selection to it first so `_activate_or_open` will reliably
+        # recognize the intent to navigate up the tree.
+        try:
+            nodes = self.nodes()
+            idx = getattr(self, "index", None)
+            cur_name = None
+            if idx is not None and 0 <= idx < len(nodes):
+                cur_name = getattr(nodes[idx], "_filename", None) or getattr(nodes[idx], "_raw_text", None)
+            if cur_name != "..":
+                for i, n in enumerate(nodes):
+                    try:
+                        if getattr(n, "_filename", None) == "..":
+                            logger.debug("FileModeFileList.key_left: pre-selecting '..' at index=%d", i)
+                            try:
+                                self.index = i
+                            except Exception as _e:
+                                self.printException(_e, "FileModeFileList.key_left: setting index to parent failed")
+                            break
+                    except Exception as e:
+                        self.printException(e, "FileModeFileList.key_left: checking for parent entry failed")
+                        continue
+        except Exception as _e:
+            self.printException(_e, "FileModeFileList.key_left preselect parent failed")
+
         self._activate_or_open(event, enter_dir_test_fn=lambda name: name == "..", allow_file_open=False)
+        self.apply_index_change(old_idx, getattr(self, "index", None))
+
         try:
             nodes = self.nodes()
             idx = getattr(self, "index", None)
@@ -2621,6 +2643,7 @@ class FileModeFileList(FileListBase):
         """Handle Right key in a file list: enter directories or open files."""
         logger.debug("FileModeFileList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
+            old_idx = getattr(self, "index", None)
             # If the current node is a directory, proactively suppress watch
             # and mark the intended preselection so the watcher cannot apply
             # a transient highlight before directory-enter flow runs.
@@ -2633,14 +2656,15 @@ class FileModeFileList(FileListBase):
                 if is_dir and name != "..":
                     logger.debug("FileModeFileList.key_right: pre-setting _suppress_watch True (idx=%r name=%r)", idx, name)
                     self._suppress_watch = True
-                    try:
-                        self._preselected_filename = ".."
-                    except Exception:
-                        self._preselected_filename = ".."
+                    self._preselected_filename = ".."
         except Exception as _e:
             self.printException(_e, "FileModeFileList.key_right: pre-suppress failed")
 
         self._activate_or_open(event, enter_dir_test_fn=lambda name: (name is not None) and name != "..")
+        try:
+            self.apply_index_change(old_idx, getattr(self, "index", None))
+        except Exception as e:
+            self.printException(e, "FileModeFileList.key_right: applying index change failed")
         self._log_visible_items("key_right after processing index change")
 
     def key_enter(self, event: events.Key | None = None) -> None:
@@ -2676,12 +2700,30 @@ class RepoModeFileList(FileListBase):
             # Insert a hash header and the unselectable key legend header at the top
             try:
                 self._render_hash_header(prev_hash, curr_hash)
-                # Then append the existing key legend row so it appears below
-                # the hashes header.
+                # Update external static key legend for the right file column
                 try:
-                    self._add_filelist_key_header()
+                    app = getattr(self, "app", None)
+                    if app is not None:
+                        try:
+                            key_lbl = app.query_one("#right-file-key", Label)
+                            try:
+                                key_lbl.update(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY))
+                            except Exception as e:
+                                self.printException(e, "prepRepoModeFileList: updating right-file-key with style failed")
+                                key_lbl.update(FILELIST_KEY_ROW_TEXT)
+                        except Exception as _e:
+                            self.printException(_e, "prepRepoModeFileList: updating right-file-key failed")
+                        try:
+                            dir_lbl = app.query_one("#right-file-dir", Label)
+                            try:
+                                dir_lbl.update(Text("", style=STYLE_HELP_BG))
+                            except Exception as e:
+                                self.printException(e, "prepRepoModeFileList: updating right-file-dir with style failed")
+                                dir_lbl.update("")
+                        except Exception as _e:
+                            self.printException(_e, "prepRepoModeFileList: updating right-file-dir failed")
                 except Exception as e:
-                    self.printException(e, "prepRepoModeFileList _add_filelist_key_header failed")
+                    self.printException(e, "prepRepoModeFileList: updating external headers failed")
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList header setup failed")
 
@@ -3078,37 +3120,26 @@ class HistoryListBase(AppBase):
                             lbl = node.query_one(Label)
                             raw = getattr(node, "_raw_text", "")
                             if getattr(node, "_checked", False):
-                                # Marked: prefix with 'M ' and apply contrasting style
+                                # Marked: prefix with 'M ' and apply contrasting
+                                # style on the label renderable. Avoid mutating
+                                # container/node inline styles here; the label's
+                                # renderable already carries the visible
+                                # highlighting.
                                 marked_txt = Text(f"M {raw}", style="bold white on red")
                                 lbl.update(marked_txt)
-                                try:
-                                    # Also apply a persistent per-node background so
-                                    # the marking remains visible even when
-                                    # the widget highlight logic runs.
-                                    node.styles.background = "red"
-                                    node.styles.color = "white"
-                                    node.styles.text_style = "bold"
-                                    logger.debug(
-                                        "toggle_check_current: applied styles idx=%d hash=%r",
-                                        i,
-                                        getattr(node, "_hash", None),
-                                    )
-                                except Exception as e:
-                                    self.printException(e, "toggle_check_current: applying node styles failed")
+                                logger.debug(
+                                    "toggle_check_current: marked idx=%d hash=%r",
+                                    i,
+                                    getattr(node, "_hash", None),
+                                )
                             else:
-                                # Unmarked: two-space prefix (already applied during add), plain style
+                                # Unmarked: two-space prefix, plain style
                                 lbl.update(Text(f"  {raw}"))
-                                try:
-                                    node.styles.background = None
-                                    node.styles.color = None
-                                    node.styles.text_style = None
-                                    logger.debug(
-                                        "toggle_check_current: cleared styles idx=%d hash=%r",
-                                        i,
-                                        getattr(node, "_hash", None),
-                                    )
-                                except Exception as e:
-                                    self.printException(e, "toggle_check_current: clearing node styles failed")
+                                logger.debug(
+                                    "toggle_check_current: unmarked idx=%d hash=%r",
+                                    i,
+                                    getattr(node, "_hash", None),
+                                )
                         except Exception as e:
                             self.printException(e, "updating label renderable failed")
                     except Exception as e:
@@ -3168,10 +3199,6 @@ class HistoryListBase(AppBase):
                 self.index = self._min_index or 0
         except Exception as e:
             self.printException(e, "HistoryListBase.on_focus")
-
-    def on_list_view_highlighted(self, event) -> None:
-        """Hook invoked when the history list highlight changes; logs the event."""
-        logger.debug("history highlighted: %s", event)
 
     def watch_history_index(self, old: int | None, new: int | None, node_new) -> None:
         """History-list specific post-highlight hook.
@@ -4076,11 +4103,11 @@ class GitHistoryNavTool(AppException, App):
 
         Parameters contract:
         - `rel_dir`: a repository-relative directory path (relative to the
-          repository root). May be an empty string or None to indicate the
+          repository root). May be an empty string to indicate the
           repository root itself. Must NOT be an absolute filesystem path.
         - `rel_file`: a filename relative to `rel_dir`. Must be a basename
-            (no path separators or subdirectories). May be an empty string or
-            None to indicate no file selection. Must NOT be an absolute
+            (no path separators or subdirectories). May be an empty string to
+            indicate no file selection. Must NOT be an absolute
             filesystem path.
 
         The application and preparers expect only repository-relative paths in
@@ -4146,6 +4173,12 @@ class GitHistoryNavTool(AppException, App):
         with Horizontal(id="main"):
             with Vertical(id="left-file-column"):
                 yield Label(Text("Files"), id=LEFT_FILE_TITLE)
+                # Key legend (static, outside the virtualized ListView so
+                # it cannot be pruned by Textual's virtualization).
+                yield Label(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY), id="left-file-key")
+                # Directory header updated by the file-list renderer when
+                # navigating between directories.
+                yield Label(Text("" , style=STYLE_HELP_BG), id="left-file-dir")
                 yield FileModeFileList(id=LEFT_FILE_LIST_ID)
             with Vertical(id="left-history-column"):
                 yield Label(Text("History"), id=LEFT_HISTORY_TITLE)
@@ -4155,6 +4188,9 @@ class GitHistoryNavTool(AppException, App):
                 yield FileModeHistoryList(id=RIGHT_HISTORY_LIST_ID)
             with Vertical(id="right-file-column"):
                 yield Label(Text("Files"), id=RIGHT_FILE_TITLE)
+                # Key legend and directory header for repo-mode file column
+                yield Label(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY), id="right-file-key")
+                yield Label(Text("", style=STYLE_HELP_BG), id="right-file-dir")
                 yield RepoModeFileList(id=RIGHT_FILE_LIST_ID)
             with Vertical(id="diff-column"):
                 yield Label(Text("Diff"), id=DIFF_TITLE)
@@ -4186,7 +4222,7 @@ class GitHistoryNavTool(AppException, App):
                 self.diff_list = self.query_one(f"#{DIFF_LIST_ID}", DiffList)
                 self.help_list = self.query_one(f"#{HELP_LIST_ID}", HelpList)
             except Exception as e:
-                printException(e)
+                self.printException(e)
                 # composition must match expected ids
                 raise RuntimeError(f"widget resolution failed in on_mount: {e}") from e
 
@@ -4293,7 +4329,7 @@ class GitHistoryNavTool(AppException, App):
             except Exception as e:
                 self.printException(e, "on_mount: initial prep failed")
         except Exception as e:
-            printException(e, "on_mount failed")
+            self.printException(e, "on_mount failed")
 
     def key_q(self, event: events.Key | None = None) -> None:
         """Quit the application on `q` keypress (synonym for ^Q)."""
@@ -4729,7 +4765,7 @@ class GitHistoryNavTool(AppException, App):
                         caller = inspect.stack()[1]
                         caller_info = f"{caller.filename}:{caller.lineno} in {caller.function}()"
                     except Exception as _e:
-                        printException(_e)
+                        self.printException(_e)
                         caller_info = "<caller-info-unavailable>"
                     logger.warning(
                         "change_focus:%d: unknown canonical focus target raw=%r normalized=%r caller=%s",
@@ -4761,7 +4797,7 @@ class GitHistoryNavTool(AppException, App):
                                     try:
                                         before = getattr(w.styles, "border", None)
                                     except Exception as _ex:
-                                        printException(_ex)
+                                        self.printException(_ex)
                                         before = "<unavailable>"
                                     logger.debug(
                                         "change_focus:%d: forcing gray border for %s (before=%r)",
@@ -4769,11 +4805,25 @@ class GitHistoryNavTool(AppException, App):
                                         cname,
                                         before,
                                     )
-                                    w.styles.border = ("solid", "gray")
+                                    try:
+                                        # Prefer applying a CSS class to represent
+                                        # unfocused/gray state so rendering decisions
+                                        # stay declarative. Fall back to directly
+                                        # mutating `styles.border` when the widget
+                                        # doesn't support `set_class`.
+                                        w.set_class(False, "focused")
+                                        w.set_class(False, "focused-white")
+                                        w.set_class(True, "focused-gray")
+                                    except Exception as e:
+                                        self.printException(e)
+                                        try:
+                                            w.styles.border = ("solid", "gray")
+                                        except Exception as _ex:
+                                            self.printException(_ex)
                                     try:
                                         readback = getattr(w.styles, "border", None)
                                     except Exception as _ex:
-                                        printException(_ex)
+                                        self.printException(_ex)
                                         readback = "<unavailable>"
                                     logger.debug(
                                         "change_focus:%d: forced gray border readback=%r for %s",
@@ -4782,9 +4832,9 @@ class GitHistoryNavTool(AppException, App):
                                         cname,
                                     )
                                 except Exception as _ex:
-                                    printException(_ex)
+                                    self.printException(_ex)
                         except Exception as _ex:
-                            printException(_ex)
+                            self.printException(_ex)
 
                         try:
                             logger.debug(
@@ -4813,7 +4863,7 @@ class GitHistoryNavTool(AppException, App):
                             try:
                                 cur_border = getattr(widget.styles, "border", None)
                             except Exception as _ex:
-                                printException(_ex)
+                                self.printException(_ex)
                                 cur_border = "<unavailable>"
                             logger.debug(
                                 "change_focus:%d: focused widget before set border=%r key=%r",
@@ -4822,16 +4872,24 @@ class GitHistoryNavTool(AppException, App):
                                 key,
                             )
                             logger.debug(
-                                "change_focus:%d: setting focused widget.styles.border -> %r for key=%r",
+                                "change_focus:%d: setting focused widget class -> focused for key=%r",
                                 inspect.currentframe().f_lineno,
-                                ("solid", "white"),
                                 key,
                             )
-                            widget.styles.border = ("solid", "white")
+                            try:
+                                widget.set_class(True, "focused")
+                                widget.set_class(False, "focused-gray")
+                                widget.set_class(True, "focused-white")
+                            except Exception as e:
+                                self.printException(e)
+                                try:
+                                    widget.styles.border = ("solid", "white")
+                                except Exception as _ex:
+                                    self.printException(_ex)
                             try:
                                 readback = getattr(widget.styles, "border", None)
                             except Exception as _ex:
-                                printException(_ex)
+                                self.printException(_ex)
                                 readback = "<unavailable>"
                             logger.debug(
                                 "change_focus:%d: focused widget.styles.border readback=%r key=%r",
@@ -4840,25 +4898,31 @@ class GitHistoryNavTool(AppException, App):
                                 key,
                             )
                         except Exception as _ex:
-                            printException(_ex)
+                            self.printException(_ex)
                             # Attempt to resolve by id and set border
                             try:
                                 w = None
                                 try:
                                     w = self.query_one(f"#{key}")
                                 except Exception as _ex:
-                                    printException(_ex)
+                                    self.printException(_ex)
                                     w = None
                                 if w is not None:
                                     logger.debug(
-                                        "change_focus:%d: setting fallback widget.styles.border -> %r for resolved id=%r",
+                                        "change_focus:%d: setting fallback widget class -> focused for resolved id=%r",
                                         inspect.currentframe().f_lineno,
-                                        ("solid", "white"),
                                         key,
                                     )
-                                    w.styles.border = ("solid", "white")
+                                    try:
+                                        w.set_class(True, "focused")
+                                    except Exception as e:
+                                        self.printException(e)
+                                        try:
+                                            w.styles.border = ("solid", "white")
+                                        except Exception as _ex:
+                                            self.printException(_ex)
                             except Exception as _ex:
-                                printException(_ex)
+                                self.printException(_ex)
 
                     # best-effort normalize index/scroll for file lists
                     try:
