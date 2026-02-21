@@ -760,103 +760,86 @@ class AppBase(AppException, ListView):
             # `_nodes_by_dir` data available so we can determine which branch
             # the apply logic will take.
             logger.debug(
-                    "apply_index_change enter: nodes=%d has_nodes_by_dir=%r index=%r",
-                    len(nodes),
-                    bool(self._nodes_by_dir),
-                    getattr(self, "index", None),
-                )
+                "apply_index_change enter: nodes=%d has_nodes_by_dir=%r index=%r",
+                len(nodes),
+                bool(getattr(self, "_nodes_by_dir", None)),
+                getattr(self, "index", None),
+            )
             if not nodes:
                 return None
-            highlight_bg = self.highlight_bg_style
-            text_color = "white"
+
+            # Update the stored index first so renderers can consult it.
             try:
-                nodes = self.nodes()
-                if not nodes:
-                    return None
-                logger.debug("apply_index_change: old=%r new=%r nodes=%d", old, new, len(nodes))
+                t_index_start = time.perf_counter()
+                self.index = new if new is not None else getattr(self, "index", None)
+                t_index_end = time.perf_counter()
+                logger.debug("apply_index_change: set index in %.3fms", (t_index_end - t_index_start) * 1000)
+            except Exception as e:
+                self.printException(e, "apply_index_change: setting index failed")
 
-                # Update the stored index first so the renderer can consult it
-                try:
-                    try:
-                        self.index = new if new is not None else getattr(self, "index", None)
-                    except Exception as e:
-                        self.printException(e, "apply_index_change: setting index failed")
-
-                    # When available, re-render the widget from authoritative
-                    # `self._nodes_by_dir` data so every line's color is decided
-                    # up-front and written in one pass.
-                    # Fast-path: if the change is a simple single-step move
-                    # (e.g. Down/Up) and the old/new nodes are present, avoid
-                    # rebuilding the entire list — just toggle the 'active'
-                    # class on the two affected ListItems and refresh them.
-                    try:
-                        if (
-                            old is not None
-                            and new is not None
-                            and abs((old or 0) - (new or 0)) == 1
-                            and hasattr(self, "nodes")
-                        ):
-                            try:
-                                t0 = time.perf_counter()
-                                nodes_local = self.nodes()
-                                old_node = nodes_local[old] if 0 <= old < len(nodes_local) else None
-                                new_node = nodes_local[new] if 0 <= new < len(nodes_local) else None
-                                if old_node:
-                                    try:
-                                        old_node.set_class(False, "active")
-                                        try:
-                                            old_node.refresh()
-                                        except Exception:
-                                            pass
-                                    except Exception:
-                                        pass
-                                if new_node:
-                                    try:
-                                        new_node.set_class(True, "active")
-                                        try:
-                                            new_node.refresh()
-                                        except Exception:
-                                            pass
-                                    except Exception:
-                                        pass
-                                self.index = new
-                                if hasattr(self, "_ensure_index_visible"):
-                                    try:
-                                        self._ensure_index_visible()
-                                    except Exception:
-                                        pass
-                                t1 = time.perf_counter()
-                                logger.debug("apply_index_change: fast-path toggle completed in %.3fms", (t1 - t0) * 1000)
-                                return new_node
-                            except Exception:
-                                # Any error in the fast-path should fall through to
-                                # the authoritative re-render below.
-                                pass
-                    except Exception:
-                        pass
-
-                    if self._nodes_by_dir and hasattr(self, "_render_filemode_display"):
-                        try:
-                            rel_dir = self.app.rel_dir
-                            rel_file = self.app.rel_file
-                            logger.debug("apply_index_change: calling _render_filemode_display rel_dir=%r rel_file=%r", rel_dir, rel_file)
-                            self._render_filemode_display(self._nodes_by_dir, rel_dir, rel_file)
-                            nodes_after = self.nodes()
-                            return nodes_after[new] if (new is not None and 0 <= new < len(nodes_after)) else None
-                        except Exception as e:
-                            self.printException(e, "apply_index_change: re-rendering filemode display failed")
-
-                    # Fallback: set index and ensure visibility.
-                    self.index = new
+            # Fast-path: adjacent single-step moves (Up/Down)
+            try:
+                if old is not None and new is not None and abs((old or 0) - (new or 0)) == 1 and hasattr(self, "nodes"):
+                    t0 = time.perf_counter()
+                    t_nodes_start = time.perf_counter()
+                    nodes_local = self.nodes()
+                    t_nodes_end = time.perf_counter()
+                    logger.debug(
+                        "apply_index_change: nodes() fast-path took %.3fms",
+                        (t_nodes_end - t_nodes_start) * 1000,
+                    )
+                    old_node = nodes_local[old] if 0 <= old < len(nodes_local) else None
+                    new_node = nodes_local[new] if 0 <= new < len(nodes_local) else None
+                    if old_node:
+                        old_node.set_class(False, "active")
+                        old_node.refresh()
+                    if new_node:
+                        new_node.set_class(True, "active")
+                        new_node.refresh()
                     if hasattr(self, "_ensure_index_visible"):
                         self._ensure_index_visible()
-                    return nodes[new] if (new is not None and 0 <= new < len(nodes)) else None
-                except Exception as e:
-                    self.printException(e, "apply_index_change: high-level apply failed")
-                    return None
+                    t1 = time.perf_counter()
+                    logger.debug("apply_index_change: fast-path toggle completed in %.3fms", (t1 - t0) * 1000)
+                    return new_node
             except Exception as e:
-                self.printException(e, "apply_index_change failed")
+                self.printException(e, "apply_index_change: fast-path toggle failed")
+
+            # Authoritative re-render when we have node data available.
+            try:
+                if getattr(self, "_nodes_by_dir", None) and hasattr(self, "_render_filemode_display"):
+                    rel_dir = getattr(self.app, "rel_dir", None)
+                    rel_file = getattr(self.app, "rel_file", None)
+                    logger.debug(
+                        "apply_index_change: calling _render_filemode_display rel_dir=%r rel_file=%r",
+                        rel_dir,
+                        rel_file,
+                    )
+                    t_rstart = time.perf_counter()
+                    self._render_filemode_display(self._nodes_by_dir, rel_dir, rel_file)
+                    t_rend = time.perf_counter()
+                    logger.debug("apply_index_change: _render_filemode_display took %.3fms", (t_rend - t_rstart) * 1000)
+                    t_nodes_after_start = time.perf_counter()
+                    nodes_after = self.nodes()
+                    t_nodes_after_end = time.perf_counter()
+                    logger.debug(
+                        "apply_index_change: nodes() after render took %.3fms",
+                        (t_nodes_after_end - t_nodes_after_start) * 1000,
+                    )
+                    return nodes_after[new] if (new is not None and 0 <= new < len(nodes_after)) else None
+            except Exception as e:
+                self.printException(e, "apply_index_change: re-rendering filemode display failed")
+
+            # Fallback: ensure index visibility and return the node if present.
+            try:
+                self.index = new
+                if hasattr(self, "_ensure_index_visible"):
+                    self._ensure_index_visible()
+                nodes_now = self.nodes()
+                return nodes_now[new] if (new is not None and 0 <= new < len(nodes_now)) else None
+            except Exception as e:
+                self.printException(e, "apply_index_change: fallback path failed")
                 return None
+
         except Exception as e:
             self.printException(e, "apply_index_change failed")
             return None
@@ -1554,7 +1537,10 @@ class FileListBase(AppBase):
                     self.printException(e, "_ensure_index_visible: scroll_to_widget failed")
             # Fallback to node.scroll_visible if provided
             try:
+                t0 = time.perf_counter()
                 self.call_after_refresh(lambda: self._safe_node_scroll_visible(node, True))
+                t1 = time.perf_counter()
+                logger.debug("_ensure_index_visible: scroll_visible scheduled in %.3fms", (t1 - t0) * 1000)
             except Exception as e:
                 self.printException(e, "_ensure_index_visible: scroll_visible failed")
         except Exception as e:
