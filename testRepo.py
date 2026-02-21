@@ -26,11 +26,11 @@ from types import SimpleNamespace
 
 def runFileListSampledExercises(test_repo: GitRepo, raw: bool, limit: int, silent: bool = False) -> int:
     """
-Module-level exerciser for `getFileListBetweenNormalizedHashes`.
+    Module-level exerciser for `getFileListBetweenNormalizedHashes`.
 
-    Calls the dispatch logic for all sampled token pairs and prints a
-    bounded sample of results. Returns the total number of exercised
-    token pairs.
+        Calls the dispatch logic for all sampled token pairs and prints a
+        bounded sample of results. Returns the total number of exercised
+        token pairs.
     """
     sample = getHashListSamplePlusEnds(test_repo)
     tokens: list = [x[1] for x in sample]
@@ -110,10 +110,10 @@ def getHashListSamplePlusEnds(repo: GitRepo) -> list[tuple[str, str, str]]:
 
 def runGetDiffTests(test_repo: GitRepo, file_name: str, raw: bool, limit: int, silent: bool = False) -> int:
     """
-Run getDiff for all older->newer pairs for `file_name`.
+    Run getDiff for all older->newer pairs for `file_name`.
 
-    Produces DIFF outputs via `printResults` so the harness can capture
-    and compare them. Returns the total number of diff invocations run.
+        Produces DIFF outputs via `printResults` so the harness can capture
+        and compare them. Returns the total number of diff invocations run.
     """
     if not file_name:
         if not silent:
@@ -159,12 +159,12 @@ Run getDiff for all older->newer pairs for `file_name`.
 
 def printResults(test_repo: GitRepo, label: str, res, raw: bool, limit: int) -> None:
     """
-Pretty-print results returned from GitRepo methods.
+    Pretty-print results returned from GitRepo methods.
 
-    - `label` is a short description printed as a header.
-    - `res` may be a list (of tuples) or another value.
-    - `raw` forces printing raw tuple/list reprs.
-    - `limit` bounds printed entries when `res` is a list.
+        - `label` is a short description printed as a header.
+        - `res` may be a list (of tuples) or another value.
+        - `raw` forces printing raw tuple/list reprs.
+        - `limit` bounds printed entries when `res` is a list.
     """
     try:
         count = len(res) if hasattr(res, "__len__") else 1
@@ -204,11 +204,11 @@ Pretty-print results returned from GitRepo methods.
 
 def test_to_display_rows(test_repo: GitRepo) -> list:
     """
-Unit-like test for `FileListBase._to_display_rows`.
+    Unit-like test for `FileListBase._to_display_rows`.
 
-    Constructs a minimal dummy `self` object with `app.repo_root` and
-    `printException` and exercises a few input shapes.
-    Returns the list of normalized rows produced.
+        Constructs a minimal dummy `self` object with `app.repo_root` and
+        `printException` and exercises a few input shapes.
+        Returns the list of normalized rows produced.
     """
     try:
         # Prepare a dummy self with required attributes
@@ -266,10 +266,10 @@ Unit-like test for `FileListBase._to_display_rows`.
 
 def test_to_history_entries(test_repo: GitRepo) -> list:
     """
-Unit-like test for `HistoryListBase._to_history_entries`.
+    Unit-like test for `HistoryListBase._to_history_entries`.
 
-    Builds a minimal dummy with `_epoch_to_iso` and exercises several
-    input shapes returning the normalized entry dicts.
+        Builds a minimal dummy with `_epoch_to_iso` and exercises several
+        input shapes returning the normalized entry dicts.
     """
     try:
 
@@ -279,10 +279,10 @@ Unit-like test for `HistoryListBase._to_history_entries`.
 
             def _epoch_to_iso(self, ts):
                 """
-Convert an epoch timestamp `ts` to ISO format (UTC).
+                Convert an epoch timestamp `ts` to ISO format (UTC).
 
-                If conversion fails, log via `printException` and return
-                the stringified input.
+                                If conversion fails, log via `printException` and return
+                                the stringified input.
                 """
                 try:
                     return datetime.fromtimestamp(int(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
@@ -637,16 +637,16 @@ def main():
 
     def run_and_capture(label: str, recorded_name: str, runner) -> tuple[bool, int]:
         """
-Helper to run a callable that prints to stdout, capture output,
-        optionally write capture files, compare against test baselines, and
-        update `stats`.
+        Helper to run a callable that prints to stdout, capture output,
+                optionally write capture files, compare against test baselines, and
+                update `stats`.
 
-        - `label`: human-readable label printed before running.
-        - `recorded_name`: base name used for capture/test filenames.
-        - `runner`: callable invoked with no args; may return an int count of
-                    exercises performed (or None/0).
+                - `label`: human-readable label printed before running.
+                - `recorded_name`: base name used for capture/test filenames.
+                - `runner`: callable invoked with no args; may return an int count of
+                            exercises performed (or None/0).
 
-        Returns (success, produced_count).
+                Returns (success, produced_count).
         """
         buf = io.StringIO()
         produced = 0

@@ -760,11 +760,11 @@ class AppBase(AppException, ListView):
             # `_nodes_by_dir` data available so we can determine which branch
             # the apply logic will take.
             logger.debug(
-                    "apply_index_change enter: nodes=%d has_nodes_by_dir=%r index=%r",
-                    len(nodes),
-                    bool(self._nodes_by_dir),
-                    getattr(self, "index", None),
-                )
+                "apply_index_change enter: nodes=%d has_nodes_by_dir=%r index=%r",
+                len(nodes),
+                bool(self._nodes_by_dir),
+                getattr(self, "index", None),
+            )
             if not nodes:
                 return None
             highlight_bg = self.highlight_bg_style
@@ -789,7 +789,11 @@ class AppBase(AppException, ListView):
                         try:
                             rel_dir = self.app.rel_dir
                             rel_file = self.app.rel_file
-                            logger.debug("apply_index_change: calling _render_filemode_display rel_dir=%r rel_file=%r", rel_dir, rel_file)
+                            logger.debug(
+                                "apply_index_change: calling _render_filemode_display rel_dir=%r rel_file=%r",
+                                rel_dir,
+                                rel_file,
+                            )
                             self._render_filemode_display(self._nodes_by_dir, rel_dir, rel_file)
                             nodes_after = self.nodes()
                             return nodes_after[new] if (new is not None and 0 <= new < len(nodes_after)) else None
@@ -1488,7 +1492,9 @@ class FileListBase(AppBase):
             except Exception as e:
                 self.printException(e, "_ensure_index_visible: re-rendering filemode display failed")
 
-            logger.debug("_activate_or_open: entry idx=%r rel_dir=%r rel_file=%r", idx, self.app.rel_dir, self.app.rel_file)
+            logger.debug(
+                "_activate_or_open: entry idx=%r rel_dir=%r rel_file=%r", idx, self.app.rel_dir, self.app.rel_file
+            )
             nodes = self.nodes()
             if not nodes or idx is None:
                 return
@@ -1625,7 +1631,6 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, "FileListBase._finalize_filelist_prep failed")
 
-
     def on_prune(self, event) -> None:
         """
         Handle Textual prune events for diagnostic and recovery.
@@ -1660,12 +1665,14 @@ class FileListBase(AppBase):
                                 is_key_header = bool(getattr(node, "_filelist_key_header", False))
                                 is_dir_header = bool(getattr(node, "_dir_header", False))
                                 text = self._child_filename(node) if hasattr(self, "_child_filename") else str(node)
-                                sample.append({
-                                    "idx": i,
-                                    "text": text,
-                                    "_filelist_key_header": is_key_header,
-                                    "_dir_header": is_dir_header,
-                                })
+                                sample.append(
+                                    {
+                                        "idx": i,
+                                        "text": text,
+                                        "_filelist_key_header": is_key_header,
+                                        "_dir_header": is_dir_header,
+                                    }
+                                )
                                 if is_key_header or is_dir_header:
                                     pruned_headers_found = True
                             except Exception as e:
@@ -2244,10 +2251,12 @@ class FileModeFileList(FileListBase):
             pre_clear_index = getattr(self, "index", None)
 
             try:
-                 children_before = len(getattr(self, "children", []))
-                 logger.debug("_render_filemode_display: clearing children count=%d", children_before)
-                 self.clear()
-                 logger.debug("_render_filemode_display: clear() completed; children now=%d", len(getattr(self, "children", [])))
+                children_before = len(getattr(self, "children", []))
+                logger.debug("_render_filemode_display: clearing children count=%d", children_before)
+                self.clear()
+                logger.debug(
+                    "_render_filemode_display: clear() completed; children now=%d", len(getattr(self, "children", []))
+                )
             except Exception as _e:
                 self.printException(_e, "_render_filemode_display: clear() failed")
 
@@ -2401,7 +2410,9 @@ class FileModeFileList(FileListBase):
                                     desired_index = i
                                     break
                             except Exception as e:
-                                self.printException(e, "_render_filemode_display: checking for preselection match failed")
+                                self.printException(
+                                    e, "_render_filemode_display: checking for preselection match failed"
+                                )
                                 continue
 
                         # Set the widget index to the selected index and ensure
@@ -2440,12 +2451,12 @@ class FileModeFileList(FileListBase):
                 # itself renders with the intended background.
                 try:
                     logger.debug(
-                            "_render_filemode_display: desired_index=%r header_count=%d min_index=%r total_items=%d",
-                            desired_index,
-                            header_count,
-                            self._min_index,
-                            len(new_items),
-                        )
+                        "_render_filemode_display: desired_index=%r header_count=%d min_index=%r total_items=%d",
+                        desired_index,
+                        header_count,
+                        self._min_index,
+                        len(new_items),
+                    )
                     for i, it in enumerate(new_items):
                         try:
                             # When the index matches the desired selection,
@@ -2475,7 +2486,7 @@ class FileModeFileList(FileListBase):
                 # sit above it; explicitly scroll the header into view to
                 # preserve the Key:/Directory legend when paging back up.
                 self.index = desired_index
-                
+
                 try:
                     if hasattr(self, "_ensure_index_visible"):
                         try:
@@ -2678,7 +2689,9 @@ class FileModeFileList(FileListBase):
                 is_dir = getattr(it, "_is_dir", False)
                 name = getattr(it, "_filename", None) or getattr(it, "_raw_text", None)
                 if is_dir and name != "..":
-                    logger.debug("FileModeFileList.key_right: pre-setting _suppress_watch True (idx=%r name=%r)", idx, name)
+                    logger.debug(
+                        "FileModeFileList.key_right: pre-setting _suppress_watch True (idx=%r name=%r)", idx, name
+                    )
                     self._suppress_watch = True
                     self._preselected_filename = ".."
         except Exception as _e:
@@ -2735,7 +2748,9 @@ class RepoModeFileList(FileListBase):
                             try:
                                 key_lbl.update(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY))
                             except Exception as e:
-                                self.printException(e, "prepRepoModeFileList: updating right-file-key with style failed")
+                                self.printException(
+                                    e, "prepRepoModeFileList: updating right-file-key with style failed"
+                                )
                                 key_lbl.update(FILELIST_KEY_ROW_TEXT)
                         except Exception as _e:
                             self.printException(_e, "prepRepoModeFileList: updating right-file-key failed")
@@ -2744,7 +2759,9 @@ class RepoModeFileList(FileListBase):
                             try:
                                 dir_lbl.update(Text("", style=STYLE_HELP_BG))
                             except Exception as e:
-                                self.printException(e, "prepRepoModeFileList: updating right-file-dir with style failed")
+                                self.printException(
+                                    e, "prepRepoModeFileList: updating right-file-dir with style failed"
+                                )
                                 dir_lbl.update("")
                         except Exception as _e:
                             self.printException(_e, "prepRepoModeFileList: updating right-file-dir failed")
@@ -4225,7 +4242,7 @@ class GitHistoryNavTool(AppException, App):
                 yield Label(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY), id="left-file-key")
                 # Directory header updated by the file-list renderer when
                 # navigating between directories.
-                yield Label(Text("" , style=STYLE_HELP_BG), id="left-file-dir")
+                yield Label(Text("", style=STYLE_HELP_BG), id="left-file-dir")
                 yield FileModeFileList(id=LEFT_FILE_LIST_ID)
             with Vertical(id="left-history-column"):
                 yield Label(Text("History"), id=LEFT_HISTORY_TITLE)
@@ -5451,7 +5468,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         metavar="HASH",
         help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
     )
-    parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=0, help="increase verbosity (repeatable)")
+    parser.add_argument(
+        "-v", "--verbose", dest="verbose", action="count", default=0, help="increase verbosity (repeatable)"
+    )
     args = parser.parse_args(argv)
 
     # Configure logging if debug file requested
