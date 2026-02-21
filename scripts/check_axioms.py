@@ -31,6 +31,7 @@ import logging
 import configparser
 from pathlib import Path
 from typing import List, Tuple, Optional
+import fnmatch
 
 
 # Default scanning root: current working directory. This makes the tool
@@ -699,7 +700,7 @@ def check_unnecessary_pass_in_except(path: Path, text: str, tree: ast.AST, call_
 
 def check_logger_in_try_blocks(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
-Detect try/except blocks where the try body contains only a single
+    Detect try/except blocks where the try body contains only a single
     `logger.<method>(...)` call. In that case the surrounding try/except is
     likely unnecessary and can be removed.
 
@@ -745,7 +746,7 @@ Detect try/except blocks where the try body contains only a single
 
 def check_redundant_nested_try(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
-Detect nested `try`/`except` where the outer `try` body is a single
+    Detect nested `try`/`except` where the outer `try` body is a single
     inner `try` (both having except handlers). This pattern is usually
     redundant (an accidental duplication of handlers) and should be merged.
 
@@ -783,7 +784,7 @@ Detect nested `try`/`except` where the outer `try` body is a single
 
 def check_imports_module_level(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
-Flag Import/ImportFrom nodes that are not at module top-level.
+    Flag Import/ImportFrom nodes that are not at module top-level.
 
     Allows imports inside `if TYPE_CHECKING:` blocks.
     """
@@ -810,7 +811,7 @@ Flag Import/ImportFrom nodes that are not at module top-level.
 
         def _is_in_non_module(self) -> bool:
             """
-Return True when the current node stack indicates non-module scope.
+            Return True when the current node stack indicates non-module scope.
 
             Treats TYPE_CHECKING `if` blocks and module top-level as module scope.
             """
@@ -864,7 +865,7 @@ Return True when the current node stack indicates non-module scope.
 
 def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
-Enforce the axiom: prefer direct attribute access when attributes are
+    Enforce the axiom: prefer direct attribute access when attributes are
     assigned in __init__ or on_mount. Finds getattr(self, 'attr', ...) uses
     where `attr` was assigned earlier in the class and reports them.
     """
@@ -920,7 +921,7 @@ Enforce the axiom: prefer direct attribute access when attributes are
 
 def check_getattr_not_initialized(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
-Flag getattr(self, 'attr', ...) usages where `attr` is not assigned in __init__/on_mount.
+    Flag getattr(self, 'attr', ...) usages where `attr` is not assigned in __init__/on_mount.
 
     This helps catch cases where code relies on implicit attributes that should
     instead be initialized in the class initializer or guarded before use.
@@ -957,7 +958,7 @@ Flag getattr(self, 'attr', ...) usages where `attr` is not assigned in __init__/
 
 def check_docstrings(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
-Ensure module-level functions and class methods have docstrings.
+    Ensure module-level functions and class methods have docstrings.
 
     Reports each function/method missing a docstring as an axiom violation.
     Skips nested functions defined inside other functions to avoid noise.
@@ -975,7 +976,7 @@ Ensure module-level functions and class methods have docstrings.
 
         def _check_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
             """
-Check a function node for a missing docstring when it's a
+            Check a function node for a missing docstring when it's a
             module-level function or a direct method of a class.
 
             Nested functions are skipped.
@@ -1020,7 +1021,7 @@ Check a function node for a missing docstring when it's a
 
 def check_multiline_docstring_start(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
-Enforce that multiline docstrings (containing a newline) start with a newline.
+    Enforce that multiline docstrings (containing a newline) start with a newline.
 
     For docstrings on modules, classes and functions: if the docstring value
     contains at least one '\n', then it should begin with a leading '\n'.
@@ -1118,7 +1119,7 @@ Enforce that multiline docstrings (containing a newline) start with a newline.
 
 def check_getattr_method_calls(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
-Detect immediate calls of getattr(...)(...) or assignments from such calls.
+    Detect immediate calls of getattr(...)(...) or assignments from such calls.
 
     Flags occurrences like `getattr(obj, 'name')(...)` or `(a,b) = getattr(...)(...)`.
     Recommend assigning the attribute to a local variable first: `fn = getattr(...); fn(...)`.
@@ -1154,7 +1155,7 @@ Detect immediate calls of getattr(...)(...) or assignments from such calls.
     class Finder(ast.NodeVisitor):
         def _get_str_value(self, node) -> Optional[str]:
             """
-Return the literal string value for ast.Str/ast.Constant nodes.
+            Return the literal string value for ast.Str/ast.Constant nodes.
 
             Returns the contained string when `node` represents a string
             literal (supports `ast.Str` for older Pythons and `ast.Constant`
@@ -1289,7 +1290,7 @@ Return the literal string value for ast.Str/ast.Constant nodes.
 
 def run_py_compile(py_files: List[Path]) -> List[Tuple[Path, str]]:
     """
-Run `py_compile` on each path in `py_files` and return failures.
+    Run `py_compile` on each path in `py_files` and return failures.
 
     Each failure is (Path, combined_output_str).
     """
@@ -1307,7 +1308,7 @@ Run `py_compile` on each path in `py_files` and return failures.
 
 def main(argv: List[str] | None = None) -> int:
     """
-Command-line entry point for the axiom checker.
+    Command-line entry point for the axiom checker.
 
     Parses flags, discovers Python files, runs AST checks and `py_compile`.
     Returns exit code 0 on success, 1 on violations.
@@ -1539,6 +1540,12 @@ Command-line entry point for the axiom checker.
         help="Increase verbosity (specify multiple times for more detail)."
     )
     parser.add_argument("files", nargs="*", help="Optional explicit files or directories to check (overrides discovery)")
+    parser.add_argument("--ignore",
+        dest="ignore",
+        action="append",
+        default=[],
+        help="Glob pattern to ignore (may be specified multiple times). In config file, provide comma-separated values or multiple 'ignore' entries.",
+    )
     # Load optional configuration from .check_axioms.ini (cwd then $HOME).
     # Config keys are the long-option names without leading dashes; e.g.
     # "prefer-no-direct-hasattrs = false" maps to `--no-prefer-no-direct-hasattrs`.
@@ -1586,7 +1593,23 @@ Command-line entry point for the axiom checker.
 
             single_map = {"print": "print_mode", "none": "none"}
 
+            # Accumulate parser defaults from config
             defaults = {}
+
+            # Collect ignore patterns from config: support 'ignore' key (comma-separated)
+            # and any keys that start with 'ignore' (e.g. ignore1=...).
+            ignored: List[str] = []
+            for k, v in src.items():
+                if not k:
+                    continue
+                if k == "ignore" or k.startswith("ignore"):
+                    if v:
+                        for part in v.split(","):
+                            s = part.strip()
+                            if s:
+                                ignored.append(s)
+            if ignored:
+                defaults["ignore"] = ignored
             for key, (enable_dest, disable_dest) in optmap.items():
                 b = _getbool(key)
                 if b is None:
@@ -1605,6 +1628,7 @@ Command-line entry point for the axiom checker.
             if defaults:
                 parser.set_defaults(**defaults)
         except Exception as e:
+            printException(e, f"failed reading config files {read_files}")
             logger.warning("failed reading config files %s: %s", read_files, e)
 
     args = parser.parse_args(argv)
@@ -1701,6 +1725,26 @@ Command-line entry point for the axiom checker.
         py_files = sorted({p for p in py_files_set})
     else:
         py_files = sorted(list_py_files(root))
+
+    # Apply ignore patterns (glob) if provided via CLI or config
+    try:
+        patterns = getattr(args, "ignore", None) or []
+        if patterns:
+            filtered: List[Path] = []
+            for p in py_files:
+                skip = False
+                for pat in patterns:
+                    try:
+                        if fnmatch.fnmatch(p.name, pat) or fnmatch.fnmatch(str(p), pat):
+                            skip = True
+                            break
+                    except Exception as e:
+                        printException(e, f"invalid ignore pattern {pat}")
+                if not skip:
+                    filtered.append(p)
+            py_files = filtered
+    except Exception as e:
+        printException(e, "applying ignore patterns")
 
     error_count = 0
 
