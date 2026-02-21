@@ -28,6 +28,7 @@ import subprocess
 import sys
 import traceback
 import logging
+import configparser
 from pathlib import Path
 from typing import List, Tuple, Optional
 
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 def printException(e: Exception, msg: Optional[str] = None) -> None:
     """
-Module-level helper to log unexpected exceptions when `self` isn't available.
+    Module-level helper to log unexpected exceptions when `self` isn't available.
 
     Mirrors the helper used in the main app so outputs are consistent.
     """
@@ -60,7 +61,7 @@ Module-level helper to log unexpected exceptions when `self` isn't available.
 
 def load_source_and_ast(path: Path) -> Tuple[str, Optional[ast.AST]]:
     """
-Read a file and return (source_text, parsed_ast) or (text, None) on failure.
+    Read a file and return (source_text, parsed_ast) or (text, None) on failure.
 
     This centralizes reading and parsing so callers can avoid repeated
     parse attempts and gracefully handle parse failures.
@@ -80,7 +81,7 @@ Read a file and return (source_text, parsed_ast) or (text, None) on failure.
 
 def list_py_files(root: Path) -> List[Path]:
     """
-Return a list of Python files under `root` (heuristic).
+    Return a list of Python files under `root` (heuristic).
 
     Includes files ending in `.py` and files with a Python shebang.
     Skips common virtualenv/site-packages and backup files.
@@ -151,7 +152,7 @@ Return a list of Python files under `root` (heuristic).
 
 def is_python_file(p: Path) -> bool:
     """
-Return True if `p` is a Python file by extension or shebang.
+    Return True if `p` is a Python file by extension or shebang.
 
     This mirrors the heuristic used by `list_py_files` so callers can
     easily decide whether to treat a supplied path as Python source.
@@ -173,7 +174,7 @@ Return True if `p` is a Python file by extension or shebang.
 
 def _find_bare_except_locations(path: Path, text: str, tree: ast.AST) -> List[tuple[int, bool]]:
     """
-Return list of (lineno, in_class) for bare `except:` handlers in AST.
+    Return list of (lineno, in_class) for bare `except:` handlers in AST.
 
     `in_class` is True when the except is inside a ClassDef (i.e., a method),
     False otherwise.
@@ -215,7 +216,7 @@ Return list of (lineno, in_class) for bare `except:` handlers in AST.
 
 def _find_except_without_name_locations(path: Path, text: str, tree: ast.AST) -> List[int]:
     """
-Return line numbers for ExceptHandler nodes that specify an
+    Return line numbers for ExceptHandler nodes that specify an
     exception type but do not bind it with `as <var>`.
     """
 
@@ -239,7 +240,7 @@ Return line numbers for ExceptHandler nodes that specify an
 
 def _collect_self_assigned_attrs(path: Path, text: str, tree: ast.AST) -> dict:
     """
-Collect attributes assigned to `self` in `__init__` or `on_mount` per class.
+    Collect attributes assigned to `self` in `__init__` or `on_mount` per class.
 
     Returns mapping class_name -> set(attribute names)
     """
@@ -273,7 +274,7 @@ Collect attributes assigned to `self` in `__init__` or `on_mount` per class.
 
 def _find_getattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[int, str, str]]:
     """
-Find usages of getattr(self, 'attr', ...) and return list of (lineno, attrname, func).
+    Find usages of getattr(self, 'attr', ...) and return list of (lineno, attrname, func).
 
     `func` is the function name used ('getattr'). Does not currently
     attempt to resolve dynamic attribute names.
@@ -326,7 +327,7 @@ Find usages of getattr(self, 'attr', ...) and return list of (lineno, attrname, 
 
 def _find_hasattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[int, str]]:
     """
-Find usages of hasattr(self, 'attr') and return list of (lineno, attrname).
+    Find usages of hasattr(self, 'attr') and return list of (lineno, attrname).
 
     Only matches literal string attribute names. Does not attempt to resolve
     dynamic expressions.
@@ -364,7 +365,7 @@ Find usages of hasattr(self, 'attr') and return list of (lineno, attrname).
 
 def check_prefer_no_direct_hasattrs(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
-Flag redundant hasattr(self, 'attr') checks when `attr` is assigned in __init__/on_mount.
+    Flag redundant hasattr(self, 'attr') checks when `attr` is assigned in __init__/on_mount.
 
     Returns list of (filepath, lineno, message).
     """
@@ -389,7 +390,7 @@ Flag redundant hasattr(self, 'attr') checks when `attr` is assigned in __init__/
 
 def _find_parse_args_targets(path: Path, text: str, tree: ast.AST) -> set:
     """
-Return set of variable names assigned from a call to `*.parse_args()`.
+    Return set of variable names assigned from a call to `*.parse_args()`.
 
     e.g. `args = parser.parse_args()` -> returns {'args'}
     """
@@ -414,7 +415,7 @@ Return set of variable names assigned from a call to `*.parse_args()`.
 
 def _find_getattr_on_vars(path: Path, varnames: set, text: str, tree: ast.AST) -> List[tuple[int, str, str, str]]:
     """
-Find usages of getattr(var, 'attr', ...) where var is in varnames.
+    Find usages of getattr(var, 'attr', ...) where var is in varnames.
 
     Returns list of (lineno, varname, attrname, func) where `func` is 'getattr'.
     """
@@ -459,7 +460,7 @@ def check_file(
     call_example: str,
 ) -> List[Tuple[str, int, str]]:
     """
-Run the core AST-based checks for bare excepts, except-as-print, and related checks.
+    Run the core AST-based checks for bare excepts, except-as-print, and related checks.
 
     Returns a list of (filepath, lineno, message) tuples for violations detected
     within this file's AST.
@@ -609,7 +610,7 @@ Run the core AST-based checks for bare excepts, except-as-print, and related che
 
 def check_printexception_in_try_blocks(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
-Detect try/except blocks where the try body contains only a single
+    Detect try/except blocks where the try body contains only a single
     `printException(...)` call. In that case the surrounding try/except is
     likely unnecessary and can be removed.
 
@@ -659,7 +660,7 @@ Detect try/except blocks where the try body contains only a single
 
 def check_unnecessary_pass_in_except(path: Path, text: str, tree: ast.AST, call_example: str) -> List[Tuple[str, int, str]]:
     """
-Find `pass` statements inside `except ... as var:` blocks when other statements are present.
+    Find `pass` statements inside `except ... as var:` blocks when other statements are present.
 
     Reports each `pass` statement's line number when the except-handler body
     contains at least one `pass` and at least one other statement.
@@ -1538,6 +1539,74 @@ Command-line entry point for the axiom checker.
         help="Increase verbosity (specify multiple times for more detail)."
     )
     parser.add_argument("files", nargs="*", help="Optional explicit files or directories to check (overrides discovery)")
+    # Load optional configuration from .check_axioms.ini (cwd then $HOME).
+    # Config keys are the long-option names without leading dashes; e.g.
+    # "prefer-no-direct-hasattrs = false" maps to `--no-prefer-no-direct-hasattrs`.
+    cfg_files = [Path.cwd() / ".check_axioms.ini", Path.home() / ".check_axioms.ini"]
+    cfg = configparser.ConfigParser()
+    read_files = [str(p) for p in cfg_files if p.exists()]
+    if read_files:
+        try:
+            cfg.read(read_files)
+            # prefer [check] section if provided; otherwise use defaults()
+            if "check" in cfg:
+                src = cfg["check"]
+            else:
+                src = cfg.defaults()
+
+            def _getbool(name: str):
+                if name in src:
+                    v = src.get(name)
+                    if v is None:
+                        return None
+                    vs = v.strip().lower()
+                    if vs in ("1", "true", "yes", "on"):
+                        return True
+                    if vs in ("0", "false", "no", "off"):
+                        return False
+                return None
+
+            # Map canonical config key -> (enable_dest, disable_dest)
+            optmap = {
+                "prefer-no-direct-hasattrs": ("enable_prefer_no_direct_hasattrs", "check_prefer_no_direct_hasattrs"),
+                "bare-excepts": ("enable_bare_excepts", "check_bare_excepts"),
+                "py-compile": ("enable_py_compile", "check_py_compile"),
+                "prefer-direct-attrs": ("enable_prefer_direct_attrs", "check_prefer_direct_attrs"),
+                "except-as-print": ("enable_except_as_print", "check_except_as_print"),
+                "check-imports": ("enable_check_imports", "check_imports"),
+                "logger-in-try": ("enable_logger_in_try", "check_logger_in_try"),
+                "printexception-in-try": ("enable_printexception_in_try", "check_printexception_in_try"),
+                "nested-try-except": ("enable_nested_try", "check_nested_try"),
+                "pass-check": ("enable_pass_check", "check_pass"),
+                "check-docstrings": ("enable_check_docstrings", "check_docstrings"),
+                "getattr-not-initialized": ("enable_getattr_not_initialized", "check_getattr_not_initialized"),
+                "check-getattr-methods": ("enable_check_getattr_methods", "check_getattr_methods"),
+                "multiline-starts-with-newline": ("enable_multiline_docstring_start", "check_multiline_docstring_start"),
+            }
+
+            single_map = {"print": "print_mode", "none": "none"}
+
+            defaults = {}
+            for key, (enable_dest, disable_dest) in optmap.items():
+                b = _getbool(key)
+                if b is None:
+                    continue
+                if b:
+                    defaults[enable_dest] = True
+                else:
+                    defaults[disable_dest] = False
+
+            for key, dest in single_map.items():
+                b = _getbool(key)
+                if b is None:
+                    continue
+                defaults[dest] = bool(b)
+
+            if defaults:
+                parser.set_defaults(**defaults)
+        except Exception as e:
+            logger.warning("failed reading config files %s: %s", read_files, e)
+
     args = parser.parse_args(argv)
 
     root = Path(args.root)
