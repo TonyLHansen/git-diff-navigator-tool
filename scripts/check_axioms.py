@@ -897,8 +897,6 @@ def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tupl
         else:
             if attr in assigned_attrs:
                 errs.append((str(path), lineno, f"{func}(self, '{attr}', ...) used but '{attr}' is assigned in __init__/on_mount; prefer direct access"))
-    return errs
-
     # Also flag getattr usage on argparse Namespace objects returned by parse_args()
     try:
         parse_args_vars = _find_parse_args_targets(path, text=text, tree=tree)
