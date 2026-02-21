@@ -897,6 +897,7 @@ def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tupl
         else:
             if attr in assigned_attrs:
                 errs.append((str(path), lineno, f"{func}(self, '{attr}', ...) used but '{attr}' is assigned in __init__/on_mount; prefer direct access"))
+
     # Also flag getattr usage on argparse Namespace objects returned by parse_args()
     try:
         parse_args_vars = _find_parse_args_targets(path, text=text, tree=tree)
@@ -1726,7 +1727,7 @@ def main(argv: List[str] | None = None) -> int:
 
     # Apply ignore patterns (glob) if provided via CLI or config
     try:
-        patterns = getattr(args, "ignore", None) or []
+        patterns = args.ignore or []
         if patterns:
             filtered: List[Path] = []
             for p in py_files:
@@ -1791,7 +1792,7 @@ def main(argv: List[str] | None = None) -> int:
                     except Exception as e:
                         printException(e, f"check_prefer_direct_attrs failed for {p}")
                 # Enforce 'redundant hasattr(self, attr)' axiom
-                if getattr(args, "check_prefer_no_direct_hasattrs", True):
+                if args.check_prefer_no_direct_hasattrs:
                     try:
                         errs += check_prefer_no_direct_hasattrs(p, text=text, tree=tree)
                     except Exception as e:
@@ -1809,7 +1810,7 @@ def main(argv: List[str] | None = None) -> int:
                     except Exception as e:
                         printException(e, f"check_docstrings failed for {p}")
                 # Enforce multiline-docstring-start rule
-                if getattr(args, "check_multiline_docstring_start", True):
+                if args.check_multiline_docstring_start:
                     try:
                         errs += check_multiline_docstring_start(p, text=text, tree=tree)
                     except Exception as e:
