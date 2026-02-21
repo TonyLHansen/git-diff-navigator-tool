@@ -25,7 +25,8 @@ from types import SimpleNamespace
 
 
 def runFileListSampledExercises(test_repo: GitRepo, raw: bool, limit: int, silent: bool = False) -> int:
-    """Module-level exerciser for `getFileListBetweenNormalizedHashes`.
+    """
+Module-level exerciser for `getFileListBetweenNormalizedHashes`.
 
     Calls the dispatch logic for all sampled token pairs and prints a
     bounded sample of results. Returns the total number of exercised
@@ -108,7 +109,8 @@ def getHashListSamplePlusEnds(repo: GitRepo) -> list[tuple[str, str, str]]:
 
 
 def runGetDiffTests(test_repo: GitRepo, file_name: str, raw: bool, limit: int, silent: bool = False) -> int:
-    """Run getDiff for all older->newer pairs for `file_name`.
+    """
+Run getDiff for all older->newer pairs for `file_name`.
 
     Produces DIFF outputs via `printResults` so the harness can capture
     and compare them. Returns the total number of diff invocations run.
@@ -156,7 +158,8 @@ def runGetDiffTests(test_repo: GitRepo, file_name: str, raw: bool, limit: int, s
 
 
 def printResults(test_repo: GitRepo, label: str, res, raw: bool, limit: int) -> None:
-    """Pretty-print results returned from GitRepo methods.
+    """
+Pretty-print results returned from GitRepo methods.
 
     - `label` is a short description printed as a header.
     - `res` may be a list (of tuples) or another value.
@@ -200,7 +203,8 @@ def printResults(test_repo: GitRepo, label: str, res, raw: bool, limit: int) -> 
 
 
 def test_to_display_rows(test_repo: GitRepo) -> list:
-    """Unit-like test for `FileListBase._to_display_rows`.
+    """
+Unit-like test for `FileListBase._to_display_rows`.
 
     Constructs a minimal dummy `self` object with `app.repo_root` and
     `printException` and exercises a few input shapes.
@@ -261,7 +265,8 @@ def test_to_display_rows(test_repo: GitRepo) -> list:
 
 
 def test_to_history_entries(test_repo: GitRepo) -> list:
-    """Unit-like test for `HistoryListBase._to_history_entries`.
+    """
+Unit-like test for `HistoryListBase._to_history_entries`.
 
     Builds a minimal dummy with `_epoch_to_iso` and exercises several
     input shapes returning the normalized entry dicts.
@@ -273,7 +278,8 @@ def test_to_history_entries(test_repo: GitRepo) -> list:
                 pass
 
             def _epoch_to_iso(self, ts):
-                """Convert an epoch timestamp `ts` to ISO format (UTC).
+                """
+Convert an epoch timestamp `ts` to ISO format (UTC).
 
                 If conversion fails, log via `printException` and return
                 the stringified input.
@@ -630,7 +636,8 @@ def main():
         return success
 
     def run_and_capture(label: str, recorded_name: str, runner) -> tuple[bool, int]:
-        """Helper to run a callable that prints to stdout, capture output,
+        """
+Helper to run a callable that prints to stdout, capture output,
         optionally write capture files, compare against test baselines, and
         update `stats`.
 

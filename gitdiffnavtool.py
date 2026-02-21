@@ -164,7 +164,8 @@ logging.addLevelName(TRACE, "TRACE")
 
 
 def _logger_trace(self, msg, *args, **kwargs):
-    """Logger method implementing TRACE-level logging.
+    """
+    Logger method implementing TRACE-level logging.
 
     Attached to `logging.Logger` as `trace`; emits the message at the
     numeric TRACE level when enabled.
@@ -177,7 +178,8 @@ setattr(logging.Logger, "trace", _logger_trace)
 
 
 def enable_trace_logging(enabled: bool) -> None:
-    """Enable or disable TRACE-level logging across the root logger and handlers.
+    """
+    Enable or disable TRACE-level logging across the root logger and handlers.
 
     When enabled this sets the root logger and all its handlers to the numeric
     TRACE level so `logger.trace(...)` messages are emitted. When disabled this
@@ -196,7 +198,8 @@ def enable_trace_logging(enabled: bool) -> None:
 
 
 def run_cmd_log(cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
-    """Module-level wrapper for subprocess.run mirroring `AppBase._run_cmd_log`.
+    """
+    Module-level wrapper for subprocess.run mirroring `AppBase._run_cmd_log`.
 
     Useful for top-level functions that don't have access to a widget `self`.
     Returns a CompletedProcess-like result; on exception returns a non-zero
@@ -211,7 +214,8 @@ def run_cmd_log(cmd: list[str], label: str | None = None, text: bool = True, cap
 
 
 class AppBase(AppException, ListView):
-    """Base widget class for list-like components providing shared helpers.
+    """
+    Base widget class for list-like components providing shared helpers.
 
     This is a minimal, safe implementation intended for Step 2 of the regen
     plan. It implements defensive defaults, exception logging, text
@@ -242,7 +246,8 @@ class AppBase(AppException, ListView):
         self.highlight_bg_style = HIGHLIGHT_DEFAULT_BG
 
     def _run_cmd_log(self, cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
-        """Run subprocess command, log stderr as warning and stdout at TRACE.
+        """
+        Run subprocess command, log stderr as warning and stdout at TRACE.
 
         Returns the CompletedProcess instance. Defensive: on exception returns
         a CompletedProcess with non-zero return code and the exception string
@@ -256,7 +261,8 @@ class AppBase(AppException, ListView):
         return proc
 
     def _run_git_lines(self, cmd: list[str], label: str | None = None) -> list[str]:
-        """Run a git command and return non-empty output lines.
+        """
+        Run a git command and return non-empty output lines.
 
         Uses `_run_cmd_log` for consistent logging; returns an empty list
         on error and logs the exception via `printException`.
@@ -270,7 +276,8 @@ class AppBase(AppException, ListView):
             return []
 
     def _log_visible_items(self, msg: str) -> None:
-        """Diagnostic helper: log every visible node with hidden attrs and highlighted item.
+        """
+        Diagnostic helper: log every visible node with hidden attrs and highlighted item.
 
         Intended for debugging navigation and focus issues. Logs one debug
         message per visible node with its index, visible text, and any
@@ -347,7 +354,8 @@ class AppBase(AppException, ListView):
             self.printException(e, "_log_visible_items failed")
 
     def _canonical_relpath(self, path: str, repo_root: str) -> str:
-        """Return a canonical realpath for `path` using `repo_root` for
+        """
+        Return a canonical realpath for `path` using `repo_root` for
         repository-relative paths.
 
         Return a canonical repository-relative path.
@@ -375,7 +383,8 @@ class AppBase(AppException, ListView):
             return path
 
     def _format_pseudo_summary(self, pseudo_entries: list[tuple[str, str]]) -> None:
-        """Append pseudo-summary rows (e.g. MODS/STAGED/UNTRACKED) to this list.
+        """
+        Append pseudo-summary rows (e.g. MODS/STAGED/UNTRACKED) to this list.
 
         Centralized helper used by file- and repo-mode preparers to ensure
         consistent display formatting and metadata attachment.
@@ -400,7 +409,8 @@ class AppBase(AppException, ListView):
             self.printException(e, "_format_pseudo_summary failed")
 
     def _append_file_row(self, display: str, full_path: str, is_dir: bool = False, status: str | None = None) -> None:
-        """Append a file-list row with consistent marker and status styling.
+        """
+        Append a file-list row with consistent marker and status styling.
 
         This centralizes file-row display so repo- and file-mode preparers
         use identical formatting. The left-most marker is chosen from
@@ -511,7 +521,8 @@ class AppBase(AppException, ListView):
             self.printException(e, "_append_file_row failed")
 
     def _parse_git_log_lines(self, lines: list[str]) -> list[tuple[datetime, str, str]]:
-        """Parse lines produced by `git log --pretty=format:%H\t%aI\t%s`.
+        """
+        Parse lines produced by `git log --pretty=format:%H\t%aI\t%s`.
 
         Returns a list of tuples (datetime, hash, subject). On parse errors
         datetimes default to `datetime.min` so sorting remains robust.
@@ -587,7 +598,8 @@ class AppBase(AppException, ListView):
             return str(lbl)
 
     def _date_key(self, t: tuple[str, str, str]):
-        """Convert a (hash, date, msg) tuple's ISO date to a datetime for sorting.
+        """
+        Convert a (hash, date, msg) tuple's ISO date to a datetime for sorting.
 
         Returns `datetime.min` when the date is missing or unparsable so
         sorting remains robust.
@@ -615,7 +627,8 @@ class AppBase(AppException, ListView):
             return (datetime.min, "")
 
     def _compute_pseudo_timestamps(self, repo_root: str, mods: list[str], single_path: str) -> tuple[str, str]:
-        """Compute timestamps for pseudo-summary rows.
+        """
+        Compute timestamps for pseudo-summary rows.
 
         Returns (mods_ts, staged_ts) where each is an ISO-like timestamp
         string (no leading space) or empty string when unavailable.
@@ -661,7 +674,8 @@ class AppBase(AppException, ListView):
         return (mods_ts, staged_ts)
 
     def nodes(self):
-        """Return the underlying nodes list or an empty list if unset.
+        """
+        Return the underlying nodes list or an empty list if unset.
 
         Uses getattr to tolerate Textual internals not being present yet.
         """
@@ -675,7 +689,8 @@ class AppBase(AppException, ListView):
             return []
 
     def _activate_index(self, new_index: int) -> None:
-        """Set the active/selected index and update ListItem 'active' class.
+        """
+        Set the active/selected index and update ListItem 'active' class.
 
         Deactivates the previously-active item, activates the new item,
         and applies the change immediately by rebuilding the view from
@@ -720,7 +735,8 @@ class AppBase(AppException, ListView):
             self.printException(e, "_activate_index failed")
 
     def watch_index_helper(self, old: int | None, new: int | None):
-        """Compatibility wrapper for the direct apply method.
+        """
+        Compatibility wrapper for the direct apply method.
 
         Historically `watch_index_helper` implemented highlight and scroll
         behavior. To centralize imperative control, that logic now lives in
@@ -730,7 +746,8 @@ class AppBase(AppException, ListView):
         return self.apply_index_change(old, new)
 
     def apply_index_change(self, old: int | None, new: int | None):
-        """Imperatively apply highlight and scrolling for index change.
+        """
+        Imperatively apply highlight and scrolling for index change.
 
         This contains the previous `watch_index_helper` logic but is meant
         to be invoked directly from key handlers or other imperative code
@@ -795,7 +812,8 @@ class AppBase(AppException, ListView):
             return None
 
     def _highlight_match(self, match: Optional[str]) -> None:
-        """Highlight the first node whose raw text or _hash matches `match`.
+        """
+        Highlight the first node whose raw text or _hash matches `match`.
 
         If `match` is None or no matching node is found, highlight the top item.
         Matching rules: exact match against `_raw_text`, exact match against
@@ -855,7 +873,8 @@ class AppBase(AppException, ListView):
             self.printException(e, "_highlight_match failed")
 
     def _highlight_top(self) -> None:
-        """Schedule highlighting of the logical top item for this widget.
+        """
+        Schedule highlighting of the logical top item for this widget.
 
         Centralized implementation so subclasses don't need to duplicate
         the call_after_refresh/fallback pattern. Uses `self._min_index`
@@ -877,7 +896,8 @@ class AppBase(AppException, ListView):
     # `call_after_refresh` remain small and identical behavior isn't
     # duplicated across the codebase.
     def _safe_set_index(self, new_index: int) -> None:
-        """Safely set the widget `index` attribute.
+        """
+        Safely set the widget `index` attribute.
 
         Wraps the assignment in a try/except and forwards exceptions to
         `printException` so callers can schedule this to run after UI
@@ -889,7 +909,8 @@ class AppBase(AppException, ListView):
             self.printException(e, "_safe_set_index failed")
 
     def _safe_activate_index(self, idx: int) -> None:
-        """Invoke `_activate_index` and handle any exceptions.
+        """
+        Invoke `_activate_index` and handle any exceptions.
 
         Intended to be called from lambdas passed to `call_after_refresh`.
         """
@@ -899,7 +920,8 @@ class AppBase(AppException, ListView):
             self.printException(e, "_safe_activate_index failed")
 
     def _safe_scroll_to_widget(self, node, animate: bool = False) -> None:
-        """Scroll the given `node` into view (safe wrapper).
+        """
+        Scroll the given `node` into view (safe wrapper).
 
         Uses the framework `scroll_to_widget` API when available and logs
         exceptions instead of raising so UI callbacks remain stable.
@@ -911,7 +933,8 @@ class AppBase(AppException, ListView):
             self.printException(e, "_safe_scroll_to_widget failed")
 
     def _safe_node_scroll_visible(self, node, visible: bool = True) -> None:
-        """Call a node's `scroll_visible` method safely.
+        """
+        Call a node's `scroll_visible` method safely.
 
         This is a non-fatal fallback used when the widget-level
         `scroll_to_widget` API is not available.
@@ -922,7 +945,8 @@ class AppBase(AppException, ListView):
             self.printException(e, "_safe_node_scroll_visible failed")
 
     def _safe_highlight_match(self, match: Optional[str]) -> None:
-        """Safe wrapper around `_highlight_match` that logs failures.
+        """
+        Safe wrapper around `_highlight_match` that logs failures.
 
         Useful for scheduling highlight operations after UI refresh.
         """
@@ -934,7 +958,8 @@ class AppBase(AppException, ListView):
     def _finalize_prep_common(
         self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None
     ) -> None:
-        """Shared app-level sync used by all preparers.
+        """
+        Shared app-level sync used by all preparers.
 
         This function performs the conservative updates to the application
         state (`app.current_hash`, `app.previous_hash`, `app.rel_dir`/`app.rel_file`)
@@ -1033,7 +1058,8 @@ class AppBase(AppException, ListView):
         self._log_visible_items("key_down after processing index change")
 
     def key_page_down(self, event: events.Key | None = None, recursive: bool = False) -> None:
-        """Scroll forward by approximately one page and activate the new index.
+        """
+        Scroll forward by approximately one page and activate the new index.
 
         When `recursive` is true this is an alias invocation and logging is
         suppressed to avoid duplicate messages.
@@ -1083,7 +1109,8 @@ class AppBase(AppException, ListView):
         return self.key_page_down(event, recursive=True)
 
     def key_page_up(self, event: events.Key | None = None, recursive: bool = False) -> None:
-        """Scroll backward by approximately one page and activate the new index.
+        """
+        Scroll backward by approximately one page and activate the new index.
 
         When `recursive` is true this is an alias invocation and logging is
         suppressed to avoid duplicate messages.
@@ -1206,7 +1233,8 @@ class AppBase(AppException, ListView):
         return None
 
     def key_s_helper(self, event: events.Key | None = None) -> None:
-        """Common helper to prompt and save snapshot files for a visible widget.
+        """
+        Common helper to prompt and save snapshot files for a visible widget.
 
         Pops a modal asking whether to save the older (previous_hash), newer
         (current_hash), or both versions of the current `app.rel_dir`/`app.rel_file`.
@@ -1247,7 +1275,8 @@ class AppBase(AppException, ListView):
 
 
 class SaveSnapshotModal(AppException, ModalScreen):
-    """Modal that prompts the user to save older/newer versions of a file.
+    """
+    Modal that prompts the user to save older/newer versions of a file.
 
     The modal handles the key press and writes the requested snapshots
     to files named '<filepath>.<hash>'. Supported keys: o/O (older),
@@ -1381,7 +1410,8 @@ class SaveSnapshotModal(AppException, ModalScreen):
 
 # Top-level modal so callers can push it via `self.app.push_screen(_TBDModal(...))`
 class MessageModal(ModalScreen):
-    """Simple modal that shows a message (default "") and closes on any key.
+    """
+    Simple modal that shows a message (default "") and closes on any key.
 
     Mirrors the helper from `gitdiffnavtool-old.py`.
     """
@@ -1413,7 +1443,8 @@ class MessageModal(ModalScreen):
 
 
 class FileListBase(AppBase):
-    """Base for file list widgets.
+    """
+    Base for file list widgets.
 
     Provides safe focus handling, highlighting helpers, and small default
     implementations that concrete subclasses can override.
@@ -1434,7 +1465,8 @@ class FileListBase(AppBase):
         self.is_file_list = 1
 
     def _ensure_index_visible(self) -> None:
-        """Ensure the current `index` node is scrolled into view.
+        """
+        Ensure the current `index` node is scrolled into view.
 
         Safe no-op when scrolling APIs are unavailable.
         """
@@ -1476,7 +1508,8 @@ class FileListBase(AppBase):
             self.printException(e, "_ensure_index_visible failed")
 
     def _add_filelist_key_header(self) -> None:
-        """Insert an unselectable key legend row at the top of the file list.
+        """
+        Insert an unselectable key legend row at the top of the file list.
 
         This places the header at index 0 and sets `_min_index` to 1 so
         navigation skips the header.
@@ -1591,7 +1624,8 @@ class FileListBase(AppBase):
 
 
     def on_prune(self, event) -> None:
-        """Handle Textual prune events for diagnostic and recovery.
+        """
+        Handle Textual prune events for diagnostic and recovery.
 
         Log the event and any pruned nodes if available. If pruning
         removed the persistent filelist headers (Key:/Directory),
@@ -1659,7 +1693,8 @@ class FileListBase(AppBase):
             self.printException(e, "on_prune failed")
 
     def _child_filename(self, node) -> str:
-        """Return the filename or visible text for a child `node`.
+        """
+        Return the filename or visible text for a child `node`.
 
         Safe wrapper around `text_of` that falls back to stringifying the
         node when extraction fails.
@@ -1726,7 +1761,8 @@ class FileListBase(AppBase):
             self.printException(e, "_render_parent_entry_if_needed failed")
 
     def _render_hash_header(self, prev_hash: str | None, curr_hash: str | None) -> None:
-        """Render the non-selectable hash header row for repo-mode file lists.
+        """
+        Render the non-selectable hash header row for repo-mode file lists.
 
         The header is appended as a `ListItem` with `_hash_header=True` and
         `_selectable=False` so navigation logic can skip it.
@@ -1755,7 +1791,8 @@ class FileListBase(AppBase):
             self.printException(e, "_render_hash_header failed")
 
     def _schedule_highlight_and_visibility(self, highlight: str | None, base_path: str | None = None) -> None:
-        """Schedule highlighting and ensure the selected node is visible.
+        """
+        Schedule highlighting and ensure the selected node is visible.
 
         If `highlight` is provided, resolve it to an absolute candidate inside
         `base_path` (or this widget's `self.path`) when it's not already
@@ -1826,7 +1863,8 @@ class FileListBase(AppBase):
             self.printException(e, "_schedule_highlight_and_visibility failed")
 
     def _build_status_map(self, path: str) -> dict | None:
-        """Build and return a porcelain `status_map` for `path` or None.
+        """
+        Build and return a porcelain `status_map` for `path` or None.
 
         Always prefer the git CLI based status map. Return None only on
         unexpected failures so callers may fall back if necessary.
@@ -1866,7 +1904,8 @@ class FileListBase(AppBase):
             return None
 
     def _populate_from_file_infos(self, file_infos: list[dict]) -> None:
-        """Append ListItems for each dict in `file_infos`.
+        """
+        Append ListItems for each dict in `file_infos`.
 
         Each dict is expected to have keys: `name`, `full`, `is_dir`, `raw`, `repo_status`.
         This centralizes the row-creation logic used by file-list preparers.
@@ -2186,7 +2225,8 @@ class FileModeFileList(FileListBase):
         self._nodes_by_dir = nodes_by_dir
 
     def _render_filemode_display(self, nodes_by_dir: dict, rel_dir: str, rel_path: str) -> None:
-        """Render the file-list UI for the given `nodes_by_dir` and `rel_dir`.
+        """
+        Render the file-list UI for the given `nodes_by_dir` and `rel_dir`.
 
         Preserves existing ListItem metadata semantics so callers need not
         change downstream logic.
@@ -2463,7 +2503,8 @@ class FileModeFileList(FileListBase):
             self.printException(e, "_render_filemode_display failed")
 
     def prepFileModeFileList(self) -> None:
-        """Populate this widget with the file list for `path`.
+        """
+        Populate this widget with the file list for `path`.
 
         `highlight_filename` if provided will be highlighted in the list; if
         `path` names a file the file's containing directory is listed and the
@@ -2506,7 +2547,8 @@ class FileModeFileList(FileListBase):
         enter_dir_test_fn=lambda name: True,
         allow_file_open: bool = True,
     ) -> None:
-        """Activate the selected node or open its history if it's a file.
+        """
+        Activate the selected node or open its history if it's a file.
 
         - If the selected node is a directory and `enter_dir_test_fn(name)`
           returns True, navigate into it.
@@ -2570,7 +2612,8 @@ class FileModeFileList(FileListBase):
             self.printException(e, "FileModeFileList._activate_or_open failed")
 
     def key_left(self, event: events.Key | None = None) -> None:
-        """Handle Left key in a file list: enter parent directory when selected.
+        """
+        Handle Left key in a file list: enter parent directory when selected.
 
         This delegates to `_activate_or_open` and prevents opening files.
         """
@@ -2655,7 +2698,8 @@ class FileModeFileList(FileListBase):
 
 
 class RepoModeFileList(FileListBase):
-    """Repo-mode file list: shows files changed between commits.
+    """
+    Repo-mode file list: shows files changed between commits.
 
     Provides a `prepRepoModeFileList` stub and navigation handlers.
     """
@@ -2663,7 +2707,8 @@ class RepoModeFileList(FileListBase):
     def prepRepoModeFileList(
         self, prev_hash: str | None, curr_hash: str | None, highlight_filename: str | None = None
     ) -> None:
-        """Populate this widget with files changed between `prev_hash` and `curr_hash`.
+        """
+        Populate this widget with files changed between `prev_hash` and `curr_hash`.
 
         If either hash is a pseudo-name (e.g. 'MODS' or 'STAGED') the
         corresponding pseudo-entries are collected and rendered instead of
@@ -2847,7 +2892,8 @@ class RepoModeFileList(FileListBase):
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
 
     def key_left(self, event: events.Key | None = None) -> None:
-        """Handle Left key in repo-mode file list: switch to history fullscreen.
+        """
+        Handle Left key in repo-mode file list: switch to history fullscreen.
 
         Typically moves focus back to the left history column or toggles
         the paired layout; defensive with event.stop() handling.
@@ -2866,7 +2912,8 @@ class RepoModeFileList(FileListBase):
         self._log_visible_items("key_left after processing index change")
 
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
-        """Open diff view for the selected file and switch to the file view.
+        """
+        Open diff view for the selected file and switch to the file view.
 
         Delegates to `DiffList` to prepare the diff and records the
         app-level `path` for downstream helpers. Honors `recursive` when
@@ -2939,7 +2986,8 @@ class RepoModeFileList(FileListBase):
 
 
 class HistoryListBase(AppBase):
-    """Base for history (commit) lists.
+    """
+    Base for history (commit) lists.
 
     Provides helpers to attach metadata to rows and compute commit-pair hashes.
     """
@@ -2969,7 +3017,8 @@ class HistoryListBase(AppBase):
             self.printException(e, "HistoryListBase._add_row failed")
 
     def _format_commit_row(self, ts, h: str | None, msg: str) -> str:
-        """Return a formatted commit row string for display.
+        """
+        Return a formatted commit row string for display.
 
         Centralized so formatting is consistent across preparers.
         """
@@ -2989,7 +3038,8 @@ class HistoryListBase(AppBase):
             return f"{h or ''} {msg}".strip()
 
     def _to_history_entries(self, raw_list: list) -> list[dict]:
-        """Normalize various backend hash-list formats into HistoryEntry dicts.
+        """
+        Normalize various backend hash-list formats into HistoryEntry dicts.
 
         Accepts items produced by GitRepo helpers (tuples like
         `(iso, hash, subject)`) or raw strings/tuples and returns a list of
@@ -3062,7 +3112,8 @@ class HistoryListBase(AppBase):
         return out
 
     def toggle_check_current(self, idx: int | None = None) -> None:
-        """Toggle a single-mark (checked) state on the selected history row.
+        """
+        Toggle a single-mark (checked) state on the selected history row.
 
         Enforces single-mark semantics: marking one row unmarks others.
         """
@@ -3152,7 +3203,8 @@ class HistoryListBase(AppBase):
         return self.key_m(event, recursive=True)
 
     def compute_commit_pair_hashes(self, idx: int | None = None) -> tuple[str | None, str | None]:
-        """Compute (prev_hash, curr_hash) pair from the history list selection.
+        """
+        Compute (prev_hash, curr_hash) pair from the history list selection.
 
         Returns (prev, curr) where `prev` is the older commit and `curr` is the
         currently-selected commit when available.
@@ -3181,7 +3233,8 @@ class HistoryListBase(AppBase):
             self.printException(e, "HistoryListBase.on_focus")
 
     def watch_history_index(self, old: int | None, new: int | None, node_new) -> None:
-        """History-list specific post-highlight hook.
+        """
+        History-list specific post-highlight hook.
 
         Compute the selected commit pair and publish `app.current_hash` and
         `app.previous_hash` so other components (file preparers, diffs)
@@ -3201,7 +3254,8 @@ class HistoryListBase(AppBase):
             self.printException(e, "watch_history_index failed")
 
     def _compute_selected_pair(self) -> tuple[str | None, str | None]:
-        """Return (prev_hash, curr_hash) where prev is older and curr is newer.
+        """
+        Return (prev_hash, curr_hash) where prev is older and curr is newer.
 
         If a row is marked (single-mark semantics) use the marked row and the
         currently-selected row as the pair. Otherwise compute the pair as the
@@ -3253,7 +3307,8 @@ class HistoryListBase(AppBase):
     def _finalize_historylist_prep(
         self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None
     ) -> None:
-        """History-specific finalization then call shared common sync.
+        """
+        History-specific finalization then call shared common sync.
 
         This implements history-only behavior (e.g. marking a previously
         checked commit via `toggle_check_current`) and defers app-level
@@ -3318,7 +3373,8 @@ class FileModeHistoryList(HistoryListBase):
     """History list for a single file's history. Stubbed prep method."""
 
     def prepFileModeHistoryList(self, path: str, prev_hash: str | None = None, curr_hash: str | None = None) -> None:
-        """Prepare the commit history listing for a single file at `path`.
+        """
+        Prepare the commit history listing for a single file at `path`.
 
         `prev_hash` and `curr_hash` may be provided to restrict the commit
         range; when omitted the full history is used.
@@ -3431,7 +3487,8 @@ class FileModeHistoryList(HistoryListBase):
             self.printException(e, "FileModeHistoryList.key_s: helper failed")
 
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
-        """Open the diff for the selected file commit-pair.
+        """
+        Open the diff for the selected file commit-pair.
 
         Compute the current and previous hashes (using marked rows if present),
         determine the filename from the app-level `path`, call
@@ -3504,7 +3561,8 @@ class RepoModeHistoryList(HistoryListBase):
         prev_hash: str | None = None,
         curr_hash: str | None = None,
     ) -> None:
-        """Prepare the repository-wide commit history view.
+        """
+        Prepare the repository-wide commit history view.
 
         `repo_path` may narrow the view to a subpath; `prev_hash` and
         `curr_hash` may be used to constrain the commit range.
@@ -3553,7 +3611,8 @@ class RepoModeHistoryList(HistoryListBase):
             self.printException(e, "prepRepoModeHistoryList failed")
 
     def key_right(self, event: events.Key | None = None) -> None:
-        """Open the selected/marked commit-pair in the repo file list preparer.
+        """
+        Open the selected/marked commit-pair in the repo file list preparer.
 
         This method lives on the repo-mode history widget because the action
         it performs (populate the repo file list and switch to the files
@@ -3603,7 +3662,8 @@ class RepoModeHistoryList(HistoryListBase):
 
 
 class DiffList(AppBase):
-    """List view for showing diffs.
+    """
+    List view for showing diffs.
 
     `prepDiffList` is a stub here; later steps will call `git diff` and
     colorize output. Key handlers toggle colorization and expose actions.
@@ -3626,7 +3686,8 @@ class DiffList(AppBase):
         self._saved_layout: str | None = None
 
     def prepDiffList(self, filename: str, prev: str, curr: str, variant_index: int, go_back: tuple) -> None:
-        """Prepare and display a diff for `filename` between `prev` and `curr`.
+        """
+        Prepare and display a diff for `filename` between `prev` and `curr`.
 
         This builds a diff command via `app.build_diff_cmd`, falls back to
         a metadata summary when no textual diff is present, and renders the
@@ -3731,7 +3792,8 @@ class DiffList(AppBase):
             self.printException(e, "DiffList.key_c failed")
 
     def key_right(self, event: events.Key | None = None) -> None:
-        """When in a history-file diff layout, promote the diff to fullscreen.
+        """
+        When in a history-file diff layout, promote the diff to fullscreen.
 
         If the current app layout is one of the file-history diff layouts,
         save it and switch to the `diff_fullscreen` layout. Otherwise noop.
@@ -3892,7 +3954,8 @@ class DiffList(AppBase):
         self._log_visible_items("key_left after processing index change")
 
     def key_enter(self, event: events.Key | None = None) -> None:
-        """If fullscreen, act like Left (close); otherwise act like Right.
+        """
+        If fullscreen, act like Left (close); otherwise act like Right.
 
         This mirrors the behavior of using Enter to toggle fullscreen/back.
         """
@@ -4002,7 +4065,8 @@ class HelpList(AppBase):
         self.highlight_bg_style = HIGHLIGHT_HELP_BG
 
     def prepHelp(self) -> None:
-        """Populate the help list with rendered Markdown blocks.
+        """
+        Populate the help list with rendered Markdown blocks.
 
         Splits the help text into paragraph blocks and appends each as a
         separate `ListItem` so the ListView can provide natural scrolling.
@@ -4060,7 +4124,8 @@ class HelpList(AppBase):
 
 
 class GitHistoryNavTool(AppException, App):
-    """Main Textual application wiring the lists together.
+    """
+    Main Textual application wiring the lists together.
 
     It composes the previously defined widgets, mounts a header/footer,
     and provides simple state save/restore stubs.
@@ -4143,7 +4208,8 @@ class GitHistoryNavTool(AppException, App):
         self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
 
     def compose(self):
-        """Yield the canonical six-column layout widgets for the app.
+        """
+        Yield the canonical six-column layout widgets for the app.
 
         The method composes header, six content columns (files/history/diff/help),
         and the footer label used by `change_footer`.
@@ -4185,7 +4251,8 @@ class GitHistoryNavTool(AppException, App):
         yield Label(Text(""), id="footer")
 
     async def on_mount(self) -> None:
-        """Resolve widget references and perform initial preparatory actions.
+        """
+        Resolve widget references and perform initial preparatory actions.
 
         This should not perform repository discovery; `main()` handles that
         and passes `repo_root` into the app constructor.
@@ -4337,7 +4404,8 @@ class GitHistoryNavTool(AppException, App):
         return self.key_q(event, recursive=True)
 
     def key_h(self, event: events.Key | None = None) -> None:
-        """Show help: save state, prepare help, then display help fullscreen.
+        """
+        Show help: save state, prepare help, then display help fullscreen.
 
         This records the single-slot state, ensures help content is prepared,
         and switches layout/focus/footer to the help configuration.
@@ -4375,7 +4443,8 @@ class GitHistoryNavTool(AppException, App):
         return self.key_h(event, recursive=True)
 
     def key_r(self, event: events.Key | None = None, recursive: bool = False) -> None:
-        """Global revert: re-run preparers for visible HistoryList and FileList widgets.
+        """
+        Global revert: re-run preparers for visible HistoryList and FileList widgets.
 
         This re-executes the prep methods for visible file/history widgets using
         the current app state (hashes and path) to restore highlights. It does
@@ -4491,7 +4560,8 @@ class GitHistoryNavTool(AppException, App):
         diff_w: int,
         help_w: int,
     ) -> None:
-        """Set column widths and visibility for the six canonical columns.
+        """
+        Set column widths and visibility for the six canonical columns.
 
         If a width is zero the column is hidden (styles.display set to "none").
         Otherwise `styles.width` is set to "{width}%" and `styles.display` is cleared.
@@ -4566,7 +4636,8 @@ class GitHistoryNavTool(AppException, App):
             self.printException(e, "error applying column layout")
 
     def build_diff_cmd(self, filename: str, prev: str, curr: str, variant_index: int = 0) -> list[str]:
-        """Delegate to the app-level `GitRepo` to construct a git diff argv list.
+        """
+        Delegate to the app-level `GitRepo` to construct a git diff argv list.
 
         Keeping `git` command construction inside `GitRepo` ensures all
         direct `git` invocations remain within that class.
@@ -4605,7 +4676,8 @@ class GitHistoryNavTool(AppException, App):
     def change_state(
         self, layout: Optional[str] = None, focus: Optional[str] = None, footer: Optional[Text | str] = None
     ) -> None:
-        """Change to the provided layout/focus/footer immediately.
+        """
+        Change to the provided layout/focus/footer immediately.
 
         This applies the requested layout, focus, and footer using existing
         helpers and records the current values for save/restore semantics.
@@ -4637,7 +4709,8 @@ class GitHistoryNavTool(AppException, App):
             self.printException(e, "change_state outer failure")
 
     def save_state(self) -> None:
-        """Save the current single-value state (layout, focus, footer).
+        """
+        Save the current single-value state (layout, focus, footer).
 
         This is a single-slot save; calling multiple times overwrites the slot.
         """
@@ -4652,7 +4725,8 @@ class GitHistoryNavTool(AppException, App):
             self.printException(e, "save_state failed")
 
     def restore_state(self) -> None:
-        """Restore the state saved by `save_state`.
+        """
+        Restore the state saved by `save_state`.
 
         Raises RuntimeError if no saved state exists.
         """
@@ -4678,7 +4752,8 @@ class GitHistoryNavTool(AppException, App):
             self.printException(e, "restore_state failed")
 
     def change_focus(self, target: str) -> None:
-        """Change focus to the given widget id (safely).
+        """
+        Change focus to the given widget id (safely).
 
         Records the desired focus id for save/restore semantics.
         """
@@ -4980,7 +5055,8 @@ class GitHistoryNavTool(AppException, App):
 
     # Layout toggle helpers -------------------------------------------------
     def toggle(self, layout: str, event: events.Key | None = None) -> None:
-        """Dispatch to a per-layout toggle_* handler for `layout`.
+        """
+        Dispatch to a per-layout toggle_* handler for `layout`.
 
         If the layout is `help_fullscreen` this is a no-op. Otherwise stop
         the event (if provided) and call the corresponding `toggle_<layout>`
@@ -5074,7 +5150,8 @@ class GitHistoryNavTool(AppException, App):
     # Per-layout toggle implementations. These prepare lists and switch
     # layouts in pairs so the `s` key toggles between related views.
     def toggle_file_fullscreen(self) -> None:
-        """Toggle between file fullscreen and the paired history fullscreen view.
+        """
+        Toggle between file fullscreen and the paired history fullscreen view.
 
         Prepares the paired view content so the transition feels immediate.
         """
@@ -5104,7 +5181,8 @@ class GitHistoryNavTool(AppException, App):
             self.printException(e, "toggle_file_fullscreen change_state failed")
 
     def toggle_history_fullscreen(self) -> None:
-        """Toggle between history fullscreen and the paired file fullscreen view.
+        """
+        Toggle between history fullscreen and the paired file fullscreen view.
 
         Prepares the file list and sets focus/footers appropriately.
         """
@@ -5145,7 +5223,8 @@ class GitHistoryNavTool(AppException, App):
             self.printException(e, "toggle_history_fullscreen change_state failed")
 
     def toggle_file_history(self) -> None:
-        """Switch to a history view for the current file and prepare paired file list.
+        """
+        Switch to a history view for the current file and prepare paired file list.
 
         Reads authoritative commit hashes after preparing the repo history and
         then prepares the repo file list highlighting the canonical filename.
@@ -5209,7 +5288,8 @@ class GitHistoryNavTool(AppException, App):
             self.printException(e, "toggle_file_history change_state failed")
 
     def toggle_history_file(self) -> None:
-        """Switch to file-history layout for the current file and prepare lists.
+        """
+        Switch to file-history layout for the current file and prepare lists.
 
         Prepares the right file list and the file's history preparer, then
         switches the UI to the paired layout.
@@ -5270,7 +5350,8 @@ class GitHistoryNavTool(AppException, App):
             self.printException(e, "toggle_history_file change_state failed")
 
     def toggle_file_history_diff(self) -> None:
-        """Toggle to a file-history diff in the right diff column.
+        """
+        Toggle to a file-history diff in the right diff column.
 
         Prepares file-history state then shows the diff and updates `diff_list.go_back`.
         """
@@ -5317,7 +5398,8 @@ class GitHistoryNavTool(AppException, App):
 
 
 def discover_repo_worktree(start_path: str | None) -> str:
-    """Discover the repository worktree root starting at `start_path`.
+    """
+    Discover the repository worktree root starting at `start_path`.
     Discover the repository worktree root by deferring to `GitRepo.resolve_repo_top`.
     Exits the program with an error message if no repository is found.
     """
@@ -5337,7 +5419,8 @@ def discover_repo_worktree(start_path: str | None) -> str:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """Command-line entry point for gitdiffnavtool.
+    """
+    Command-line entry point for gitdiffnavtool.
 
     Parses CLI arguments, locates the repository worktree, configures
     logging, and launches the `GitHistoryNavTool` Textual application.

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Quick CLI to exercise FileModeFileList preparers and compare backends.
+"""
+Quick CLI to exercise FileModeFileList preparers and compare backends.
 
 Usage:
   python scripts/test_prep_backends.py /path/to/repo
@@ -47,7 +48,8 @@ LOGPATH = os.path.join(ROOT, "tmp", "debug-prep-test.log")
 
 
 def make_dummy(repo_root: str, pyg_repo=None):
-    """Create a lightweight object providing attributes/methods used by the
+    """
+Create a lightweight object providing attributes/methods used by the
     FileModeFileList preparer methods when bound as unbound functions.
     """
     class Dummy:
@@ -116,7 +118,8 @@ def make_dummy(repo_root: str, pyg_repo=None):
 
 
 def compare_lists(git_list, pyg_list, context: str) -> list[str]:
-    """Return a unified diff (as list of lines) comparing `git_list` and `pyg_list`.
+    """
+Return a unified diff (as list of lines) comparing `git_list` and `pyg_list`.
 
     An empty list is returned when the lists are identical.
     """
@@ -128,7 +131,8 @@ def compare_lists(git_list, pyg_list, context: str) -> list[str]:
 
 
 def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
-    """Walk `root` exercising FileModeFileList preparers and compare outputs.
+    """
+Walk `root` exercising FileModeFileList preparers and compare outputs.
 
     Returns a tuple of (dirs_seen, diffs_found).
     """
@@ -267,7 +271,8 @@ def run(root: str, max_dirs: int | None = None) -> tuple[int, int]:
 
 
 def run_repo_history_tests(root: str, prev_hash: str | None = None, curr_hash: str | None = None) -> tuple[int, int]:
-    """Run repository-wide history preparers and compare git vs pygit2 outputs.
+    """
+Run repository-wide history preparers and compare git vs pygit2 outputs.
 
     Returns (pseudo_diffs, commit_diffs) counts.
     """
@@ -333,7 +338,8 @@ def run_repo_history_tests(root: str, prev_hash: str | None = None, curr_hash: s
 
 
 def run_repo_file_tests(root: str, prev_hash: str | None = None, curr_hash: str | None = None) -> int:
-    """Run repository-wide file-list preparers and compare git vs pygit2 outputs.
+    """
+Run repository-wide file-list preparers and compare git vs pygit2 outputs.
 
     Returns count of diffs found (0 or 1).
     """
@@ -385,7 +391,8 @@ def run_repo_file_tests(root: str, prev_hash: str | None = None, curr_hash: str 
 
 
 def main(argv=None):
-    """Command-line entry point for `test_prep_backends`.
+    """
+Command-line entry point for `test_prep_backends`.
 
     Parses CLI arguments, runs preparer tests and writes a summary log.
     Returns exit code 0 on success (no diffs), non-zero otherwise.

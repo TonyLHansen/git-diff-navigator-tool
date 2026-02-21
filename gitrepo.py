@@ -1602,7 +1602,8 @@ class GitRepo(AppException):
 
 
 def main(argv=None):
-    """CLI entrypoint for exercising `GitRepo` helpers.
+    """
+CLI entrypoint for exercising `GitRepo` helpers.
 
     Pass a filesystem `path` followed by one or more `--<method>` flags
     to invoke the corresponding `GitRepo` helper. Use `-j/--json` to

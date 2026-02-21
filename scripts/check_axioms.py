@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""check_axioms.py
+"""
+check_axioms.py
 
 Lightweight checker that enforces a few project-specific axioms listed
 in `axioms.md`.
@@ -43,7 +44,8 @@ EXCEPT_LOOKAHEAD = 8
 logger = logging.getLogger(__name__)
 
 def printException(e: Exception, msg: Optional[str] = None) -> None:
-    """Module-level helper to log unexpected exceptions when `self` isn't available.
+    """
+Module-level helper to log unexpected exceptions when `self` isn't available.
 
     Mirrors the helper used in the main app so outputs are consistent.
     """
@@ -57,7 +59,8 @@ def printException(e: Exception, msg: Optional[str] = None) -> None:
 
 
 def load_source_and_ast(path: Path) -> Tuple[str, Optional[ast.AST]]:
-    """Read a file and return (source_text, parsed_ast) or (text, None) on failure.
+    """
+Read a file and return (source_text, parsed_ast) or (text, None) on failure.
 
     This centralizes reading and parsing so callers can avoid repeated
     parse attempts and gracefully handle parse failures.
@@ -76,7 +79,8 @@ def load_source_and_ast(path: Path) -> Tuple[str, Optional[ast.AST]]:
 
 
 def list_py_files(root: Path) -> List[Path]:
-    """Return a list of Python files under `root` (heuristic).
+    """
+Return a list of Python files under `root` (heuristic).
 
     Includes files ending in `.py` and files with a Python shebang.
     Skips common virtualenv/site-packages and backup files.
@@ -146,7 +150,8 @@ def list_py_files(root: Path) -> List[Path]:
 
 
 def is_python_file(p: Path) -> bool:
-    """Return True if `p` is a Python file by extension or shebang.
+    """
+Return True if `p` is a Python file by extension or shebang.
 
     This mirrors the heuristic used by `list_py_files` so callers can
     easily decide whether to treat a supplied path as Python source.
@@ -167,7 +172,8 @@ def is_python_file(p: Path) -> bool:
 
 
 def _find_bare_except_locations(path: Path, text: str, tree: ast.AST) -> List[tuple[int, bool]]:
-    """Return list of (lineno, in_class) for bare `except:` handlers in AST.
+    """
+Return list of (lineno, in_class) for bare `except:` handlers in AST.
 
     `in_class` is True when the except is inside a ClassDef (i.e., a method),
     False otherwise.
@@ -208,7 +214,8 @@ def _find_bare_except_locations(path: Path, text: str, tree: ast.AST) -> List[tu
 
 
 def _find_except_without_name_locations(path: Path, text: str, tree: ast.AST) -> List[int]:
-    """Return line numbers for ExceptHandler nodes that specify an
+    """
+Return line numbers for ExceptHandler nodes that specify an
     exception type but do not bind it with `as <var>`.
     """
 
@@ -231,7 +238,8 @@ def _find_except_without_name_locations(path: Path, text: str, tree: ast.AST) ->
 
 
 def _collect_self_assigned_attrs(path: Path, text: str, tree: ast.AST) -> dict:
-    """Collect attributes assigned to `self` in `__init__` or `on_mount` per class.
+    """
+Collect attributes assigned to `self` in `__init__` or `on_mount` per class.
 
     Returns mapping class_name -> set(attribute names)
     """
@@ -264,7 +272,8 @@ def _collect_self_assigned_attrs(path: Path, text: str, tree: ast.AST) -> dict:
 
 
 def _find_getattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[int, str, str]]:
-    """Find usages of getattr(self, 'attr', ...) and return list of (lineno, attrname, func).
+    """
+Find usages of getattr(self, 'attr', ...) and return list of (lineno, attrname, func).
 
     `func` is the function name used ('getattr'). Does not currently
     attempt to resolve dynamic attribute names.
@@ -316,7 +325,8 @@ def _find_getattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[in
 
 
 def _find_hasattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[int, str]]:
-    """Find usages of hasattr(self, 'attr') and return list of (lineno, attrname).
+    """
+Find usages of hasattr(self, 'attr') and return list of (lineno, attrname).
 
     Only matches literal string attribute names. Does not attempt to resolve
     dynamic expressions.
@@ -353,7 +363,8 @@ def _find_hasattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[in
 
 
 def check_prefer_no_direct_hasattrs(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
-    """Flag redundant hasattr(self, 'attr') checks when `attr` is assigned in __init__/on_mount.
+    """
+Flag redundant hasattr(self, 'attr') checks when `attr` is assigned in __init__/on_mount.
 
     Returns list of (filepath, lineno, message).
     """
@@ -377,7 +388,8 @@ def check_prefer_no_direct_hasattrs(path: Path, text: str, tree: ast.AST) -> Lis
 
 
 def _find_parse_args_targets(path: Path, text: str, tree: ast.AST) -> set:
-    """Return set of variable names assigned from a call to `*.parse_args()`.
+    """
+Return set of variable names assigned from a call to `*.parse_args()`.
 
     e.g. `args = parser.parse_args()` -> returns {'args'}
     """
@@ -401,7 +413,8 @@ def _find_parse_args_targets(path: Path, text: str, tree: ast.AST) -> set:
 
 
 def _find_getattr_on_vars(path: Path, varnames: set, text: str, tree: ast.AST) -> List[tuple[int, str, str, str]]:
-    """Find usages of getattr(var, 'attr', ...) where var is in varnames.
+    """
+Find usages of getattr(var, 'attr', ...) where var is in varnames.
 
     Returns list of (lineno, varname, attrname, func) where `func` is 'getattr'.
     """
@@ -445,7 +458,8 @@ def check_file(
     check_printexception_in_try: bool,
     call_example: str,
 ) -> List[Tuple[str, int, str]]:
-    """Run the core AST-based checks for bare excepts, except-as-print, and related checks.
+    """
+Run the core AST-based checks for bare excepts, except-as-print, and related checks.
 
     Returns a list of (filepath, lineno, message) tuples for violations detected
     within this file's AST.
@@ -594,7 +608,8 @@ def check_file(
 
 
 def check_printexception_in_try_blocks(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
-    """Detect try/except blocks where the try body contains only a single
+    """
+Detect try/except blocks where the try body contains only a single
     `printException(...)` call. In that case the surrounding try/except is
     likely unnecessary and can be removed.
 
@@ -643,7 +658,8 @@ def check_printexception_in_try_blocks(path: Path, text: str, tree: ast.AST) -> 
 
 
 def check_unnecessary_pass_in_except(path: Path, text: str, tree: ast.AST, call_example: str) -> List[Tuple[str, int, str]]:
-    """Find `pass` statements inside `except ... as var:` blocks when other statements are present.
+    """
+Find `pass` statements inside `except ... as var:` blocks when other statements are present.
 
     Reports each `pass` statement's line number when the except-handler body
     contains at least one `pass` and at least one other statement.
@@ -681,7 +697,8 @@ def check_unnecessary_pass_in_except(path: Path, text: str, tree: ast.AST, call_
 
 
 def check_logger_in_try_blocks(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
-    """Detect try/except blocks where the try body contains only a single
+    """
+Detect try/except blocks where the try body contains only a single
     `logger.<method>(...)` call. In that case the surrounding try/except is
     likely unnecessary and can be removed.
 
@@ -726,7 +743,8 @@ def check_logger_in_try_blocks(path: Path, text: str, tree: ast.AST) -> List[Tup
 
 
 def check_redundant_nested_try(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
-    """Detect nested `try`/`except` where the outer `try` body is a single
+    """
+Detect nested `try`/`except` where the outer `try` body is a single
     inner `try` (both having except handlers). This pattern is usually
     redundant (an accidental duplication of handlers) and should be merged.
 
@@ -763,7 +781,8 @@ def check_redundant_nested_try(path: Path, text: str, tree: ast.AST) -> List[Tup
 
 
 def check_imports_module_level(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
-    """Flag Import/ImportFrom nodes that are not at module top-level.
+    """
+Flag Import/ImportFrom nodes that are not at module top-level.
 
     Allows imports inside `if TYPE_CHECKING:` blocks.
     """
@@ -789,7 +808,8 @@ def check_imports_module_level(path: Path, text: str, tree: ast.AST) -> List[Tup
             self.stack.pop()
 
         def _is_in_non_module(self) -> bool:
-            """Return True when the current node stack indicates non-module scope.
+            """
+Return True when the current node stack indicates non-module scope.
 
             Treats TYPE_CHECKING `if` blocks and module top-level as module scope.
             """
@@ -842,7 +862,8 @@ def check_imports_module_level(path: Path, text: str, tree: ast.AST) -> List[Tup
 
 
 def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
-    """Enforce the axiom: prefer direct attribute access when attributes are
+    """
+Enforce the axiom: prefer direct attribute access when attributes are
     assigned in __init__ or on_mount. Finds getattr(self, 'attr', ...) uses
     where `attr` was assigned earlier in the class and reports them.
     """
@@ -897,7 +918,8 @@ def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tupl
 
 
 def check_getattr_not_initialized(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
-    """Flag getattr(self, 'attr', ...) usages where `attr` is not assigned in __init__/on_mount.
+    """
+Flag getattr(self, 'attr', ...) usages where `attr` is not assigned in __init__/on_mount.
 
     This helps catch cases where code relies on implicit attributes that should
     instead be initialized in the class initializer or guarded before use.
@@ -933,7 +955,8 @@ def check_getattr_not_initialized(path: Path, text: str, tree: ast.AST) -> List[
 
 
 def check_docstrings(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
-    """Ensure module-level functions and class methods have docstrings.
+    """
+Ensure module-level functions and class methods have docstrings.
 
     Reports each function/method missing a docstring as an axiom violation.
     Skips nested functions defined inside other functions to avoid noise.
@@ -950,7 +973,8 @@ def check_docstrings(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, in
             self.stack.pop()
 
         def _check_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-            """Check a function node for a missing docstring when it's a
+            """
+Check a function node for a missing docstring when it's a
             module-level function or a direct method of a class.
 
             Nested functions are skipped.
@@ -994,7 +1018,8 @@ def check_docstrings(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, in
 
 
 def check_multiline_docstring_start(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
-    """Enforce that multiline docstrings (containing a newline) start with a newline.
+    """
+Enforce that multiline docstrings (containing a newline) start with a newline.
 
     For docstrings on modules, classes and functions: if the docstring value
     contains at least one '\n', then it should begin with a leading '\n'.
@@ -1091,7 +1116,8 @@ def check_multiline_docstring_start(path: Path, text: str, tree: ast.AST) -> Lis
 
 
 def check_getattr_method_calls(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
-    """Detect immediate calls of getattr(...)(...) or assignments from such calls.
+    """
+Detect immediate calls of getattr(...)(...) or assignments from such calls.
 
     Flags occurrences like `getattr(obj, 'name')(...)` or `(a,b) = getattr(...)(...)`.
     Recommend assigning the attribute to a local variable first: `fn = getattr(...); fn(...)`.
@@ -1126,7 +1152,8 @@ def check_getattr_method_calls(path: Path, text: str, tree: ast.AST) -> List[Tup
 
     class Finder(ast.NodeVisitor):
         def _get_str_value(self, node) -> Optional[str]:
-            """Return the literal string value for ast.Str/ast.Constant nodes.
+            """
+Return the literal string value for ast.Str/ast.Constant nodes.
 
             Returns the contained string when `node` represents a string
             literal (supports `ast.Str` for older Pythons and `ast.Constant`
@@ -1260,7 +1287,8 @@ def check_getattr_method_calls(path: Path, text: str, tree: ast.AST) -> List[Tup
 
 
 def run_py_compile(py_files: List[Path]) -> List[Tuple[Path, str]]:
-    """Run `py_compile` on each path in `py_files` and return failures.
+    """
+Run `py_compile` on each path in `py_files` and return failures.
 
     Each failure is (Path, combined_output_str).
     """
@@ -1277,7 +1305,8 @@ def run_py_compile(py_files: List[Path]) -> List[Tuple[Path, str]]:
 
 
 def main(argv: List[str] | None = None) -> int:
-    """Command-line entry point for the axiom checker.
+    """
+Command-line entry point for the axiom checker.
 
     Parses flags, discovers Python files, runs AST checks and `py_compile`.
     Returns exit code 0 on success, 1 on violations.
