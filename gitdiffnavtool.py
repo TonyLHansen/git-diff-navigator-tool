@@ -2255,7 +2255,7 @@ class FileModeFileList(FileListBase):
             # Update the static header labels that live outside the ListView
             # so they are never subject to Textual's virtualization/pruning.
             try:
-                app = getattr(self, "app", None)
+                app = self.app
                 if app is not None:
                     try:
                         key_lbl = app.query_one("#left-file-key", Label)
@@ -2727,7 +2727,7 @@ class RepoModeFileList(FileListBase):
                 self._render_hash_header(prev_hash, curr_hash)
                 # Update external static key legend for the right file column
                 try:
-                    app = getattr(self, "app", None)
+                    app = self.app
                     if app is not None:
                         try:
                             key_lbl = app.query_one("#right-file-key", Label)
