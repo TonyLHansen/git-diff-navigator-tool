@@ -1463,6 +1463,9 @@ class FileListBase(AppBase):
         # Mark this base as a file-list so AppBase.watch_index can act
         # conservatively based on widget type flags instead of isinstance.
         self.is_file_list = 1
+        # Program-managed preselection marker used by render/keypress flow.
+        # Initialize here so static checks know the attribute exists.
+        self._preselected_filename = None
 
     def _ensure_index_visible(self) -> None:
         """
@@ -2388,7 +2391,7 @@ class FileModeFileList(FileListBase):
                 # Choose desired index: prefer an explicit preselection, else
                 # preserve `self.index` when valid, otherwise fall back to the
                 # first selectable index.
-                desired = getattr(self, "_preselected_filename", None)
+                desired = self._preselected_filename
                 desired_index = None
                 try:
                     if desired:
@@ -2428,11 +2431,9 @@ class FileModeFileList(FileListBase):
 
                 # Clear the preselection marker so it does not affect later renders.
                 try:
-                    if hasattr(self, "_preselected_filename"):
-                        delattr(self, "_preselected_filename")
+                    self._preselected_filename = None
                 except Exception as e:
                     self.printException(e, "_render_filemode_display: clearing _preselected_filename failed")
-                    self._preselected_filename = None
 
                 # Now commit the prepared items to the widget, applying
                 # inline highlight styles for the chosen index so the label

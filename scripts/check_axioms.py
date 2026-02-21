@@ -239,13 +239,35 @@ def _find_except_without_name_locations(path: Path, text: str, tree: ast.AST) ->
     return results
 
 
-def _collect_self_assigned_attrs(path: Path, text: str, tree: ast.AST) -> dict:
+def _collect_self_assigned_attrs(path: Path, text: str, tree: ast.AST) -> tuple:
     """
-    Collect attributes assigned to `self` in `__init__` or `on_mount` per class.
+    Collect attributes assigned to `self` in `__init__` or `on_mount` per class
+    and also collect each class's base class names.
 
-    Returns mapping class_name -> set(attribute names)
+    Returns a tuple (classes, class_bases) where:
+      - classes: mapping class_name -> set(attribute names)
+      - class_bases: mapping class_name -> list(base name strings)
     """
     classes: dict = {}
+    class_bases: dict = {}
+
+    def _base_name(n: ast.expr) -> str | None:
+        # extract a readable base name from ast.Name or ast.Attribute
+        try:
+            if isinstance(n, ast.Name):
+                return n.id
+            if isinstance(n, ast.Attribute):
+                parts: list[str] = []
+                cur = n
+                while isinstance(cur, ast.Attribute):
+                    parts.append(cur.attr)
+                    cur = cur.value
+                if isinstance(cur, ast.Name):
+                    parts.append(cur.id)
+                return ".".join(reversed(parts))
+        except Exception as e:
+            printException(e, f"_base_name failed for node {n!r} in {path}")
+        return None
 
     class Collector(ast.NodeVisitor):
         def __init__(self):
@@ -254,6 +276,14 @@ def _collect_self_assigned_attrs(path: Path, text: str, tree: ast.AST) -> dict:
         def visit_ClassDef(self, node: ast.ClassDef) -> None:
             self.current_class = node.name
             classes.setdefault(node.name, set())
+            # collect base names for this class
+            bases: list[str] = []
+            for b in node.bases:
+                bn = _base_name(b)
+                if bn:
+                    bases.append(bn)
+            class_bases[node.name] = bases
+
             # scan __init__ and on_mount in this class
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name in ("__init__", "on_mount"):
@@ -270,10 +300,97 @@ def _collect_self_assigned_attrs(path: Path, text: str, tree: ast.AST) -> dict:
             self.current_class = None
 
     Collector().visit(tree)
-    return classes
+    return (classes, class_bases)
 
 
-def _find_getattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[int, str, str]]:
+# Default mapping of well-known base-class names to attributes they
+# typically provide. These defaults may be overridden by a
+# `[base_class_attrs]` section in `.check_axioms.ini` (key = base
+# class name, value = comma-separated attribute names). Loading is
+# done at import/runtime so users can customize to their project's
+# base classes.
+# No hardwired defaults: users must supply base-class attributes via
+# `.check_axioms.ini` under a `[base_class_attrs]` section. The loader
+# will return an empty mapping when no config is present.
+DEFAULT_BASE_CLASS_ATTRS: dict = {}
+
+def _load_base_class_attrs_from_ini() -> dict:
+    """
+    Load BASE_CLASS_ATTRS from .check_axioms.ini when present.
+
+    Looks for a `[base_class_attrs]` section where each option is a
+    base class name and its value is a comma-or-space-separated list of
+    attribute names. Merges the provided values with the defaults where
+    unspecified keys remain as in `DEFAULT_BASE_CLASS_ATTRS`.
+    """
+    try:
+        cfg = configparser.ConfigParser()
+        ini_path = Path(".check_axioms.ini")
+        project_ini = ROOT / ".check_axioms.ini"
+        if not ini_path.exists() and project_ini.exists():
+            ini_path = project_ini
+        if ini_path.exists():
+            try:
+                cfg.read(ini_path)
+                if cfg.has_section("base_class_attrs"):
+                    loaded = {}
+                    for k, v in cfg.items("base_class_attrs"):
+                        # split on commas or whitespace
+                        parts = [p.strip() for p in re.split(r"[,\s]+", v) if p.strip()]
+                        # normalize keys to lowercase for case-insensitive matching
+                        loaded[k.lower()] = set(parts)
+                    merged = {k.lower(): set(v) for k, v in DEFAULT_BASE_CLASS_ATTRS.items()}
+                    for k, v in loaded.items():
+                        merged[k] = set(v)
+                    return merged
+            except Exception as e:
+                printException(e, f"reading base_class_attrs from {ini_path}")
+    except Exception as _e:
+        # If something went wrong reading the INI, log and fall back to defaults.
+        printException(_e, "loading base_class_attrs")
+    return {k: set(v) for k, v in DEFAULT_BASE_CLASS_ATTRS.items()}
+
+# BASE_CLASS_ATTRS is populated from defaults or from `.check_axioms.ini`.
+BASE_CLASS_ATTRS: dict = _load_base_class_attrs_from_ini()
+
+
+def _attr_provided_by_bases(enclosing_class: str | None, attr: str, class_bases: dict) -> bool:
+    """
+    Return True if any base class of `enclosing_class` is known to provide `attr`.
+
+    `class_bases` is the mapping returned by `_collect_self_assigned_attrs`.
+    """
+    if not enclosing_class:
+        return False
+    # Walk the base-class graph transitively (BFS/stack) to account for
+    # indirect bases: e.g., class A(BaseX): class B(A): then B should
+    # inherit attributes provided by BaseX. Normalize keys to lowercase
+    # for case-insensitive matching.
+    seen: set[str] = set()
+    stack: list[str] = list(class_bases.get(enclosing_class, []) or [])
+    while stack:
+        b = stack.pop()
+        # consider simple name (last dotted component) and normalize
+        simple = b.split(".")[-1]
+        key = simple.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        provided = BASE_CLASS_ATTRS.get(key)
+        if provided and attr in provided:
+            return True
+        # If this base is a class defined in the same module (present in
+        # class_bases), enqueue its own bases to continue the traversal.
+        # Try both the original and the simple name when looking up.
+        child_bases = class_bases.get(b) or class_bases.get(simple)
+        if child_bases:
+            for nb in child_bases:
+                if nb is not None:
+                    stack.append(nb)
+    return False
+
+
+def _find_getattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[int, str, str, str]]:
     """
     Find usages of getattr(self, 'attr', ...) and return list of (lineno, attrname, func).
 
@@ -281,13 +398,28 @@ def _find_getattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[in
     attempt to resolve dynamic attribute names.
     """
 
-    results: List[tuple[int, str]] = []
+    results: List[tuple[int, str, str, str]] = []
 
     # Some Python versions don't expose ast.Str (strings are ast.Constant).
     has_ast_Str = hasattr(ast, "Str")
     str_node_types = (ast.Constant, ast.Str) if has_ast_Str else (ast.Constant,)
 
     class Finder(ast.NodeVisitor):
+        def __init__(self):
+            self.stack: List[ast.AST] = []
+
+        def generic_visit(self, node: ast.AST) -> None:
+            self.stack.append(node)
+            super().generic_visit(node)
+            self.stack.pop()
+
+        def _enclosing_class(self) -> str | None:
+            """Return the name of the enclosing ClassDef or None."""
+            for anc in reversed(self.stack):
+                if isinstance(anc, ast.ClassDef):
+                    return anc.name
+            return None
+
         def visit_Call(self, node: ast.Call) -> None:
             # match getattr(self, 'attr', ...)
             try:
@@ -303,7 +435,7 @@ def _find_getattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[in
                         if isinstance(attr_name, str):
                             lineno = getattr(node, "lineno", None)
                             if lineno is not None:
-                                results.append((lineno, attr_name, node.func.id))
+                                results.append((lineno, attr_name, node.func.id, self._enclosing_class()))
                 # also match getattr(self.attr, 'name', ...) when first arg is Attribute like self.app
                 if isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) >= 2:
                     first = node.args[0]
@@ -317,7 +449,7 @@ def _find_getattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[in
                         if isinstance(attr_name, str):
                             lineno = getattr(node, "lineno", None)
                             if lineno is not None:
-                                results.append((lineno, f"{first.attr}.{attr_name}", node.func.id))
+                                results.append((lineno, f"{first.attr}.{attr_name}", node.func.id, self._enclosing_class()))
             except Exception as e:
                 printException(e, f"error walking AST for getattr detection in {path}")
             self.generic_visit(node)
@@ -372,7 +504,7 @@ def check_prefer_no_direct_hasattrs(path: Path, text: str, tree: ast.AST) -> Lis
     """
     errs: List[Tuple[str, int, str]] = []
     try:
-        classes = _collect_self_assigned_attrs(path, text=text, tree=tree)
+        classes, class_bases = _collect_self_assigned_attrs(path, text=text, tree=tree)
         hasattr_uses = _find_hasattr_on_self(path, text=text, tree=tree)
     except Exception as e:
         printException(e, f"collecting class attrs/hasattr usages in {path}")
@@ -871,7 +1003,7 @@ def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tupl
     """
     errs: List[Tuple[str, int, str]] = []
     try:
-        classes = _collect_self_assigned_attrs(path, text=text, tree=tree)
+        classes, class_bases = _collect_self_assigned_attrs(path, text=text, tree=tree)
         getattr_uses = _find_getattr_on_self(path, text=text, tree=tree)
     except Exception as e:
         printException(e, f"collecting class attrs/getattr usages in {path}")
@@ -887,13 +1019,15 @@ def check_prefer_direct_attrs(path: Path, text: str, tree: ast.AST) -> List[Tupl
     for s in classes.values():
         assigned_attrs.update(s)
 
-    for lineno, attr, func in getattr_uses:
+    for lineno, attr, func, encl in getattr_uses:
         # attr may be "app.current_path" style when getattr called on self.app
         if "." in attr:
             # treat 'app.current_path' -> attribute name 'current_path'
             right = attr.split(".", 1)[1]
             if right in assigned_attrs:
                 errs.append((str(path), lineno, f"{func} used for guaranteed attribute '{attr}' (prefer direct access)"))
+            # otherwise do not flag here; missing initialization is handled by
+            # the separate check_getattr_not_initialized check.
         else:
             if attr in assigned_attrs:
                 errs.append((str(path), lineno, f"{func}(self, '{attr}', ...) used but '{attr}' is assigned in __init__/on_mount; prefer direct access"))
@@ -927,7 +1061,7 @@ def check_getattr_not_initialized(path: Path, text: str, tree: ast.AST) -> List[
     """
     errs: List[Tuple[str, int, str]] = []
     try:
-        classes = _collect_self_assigned_attrs(path, text=text, tree=tree)
+        classes, class_bases = _collect_self_assigned_attrs(path, text=text, tree=tree)
         getattr_uses = _find_getattr_on_self(path, text=text, tree=tree)
     except Exception as e:
         printException(e, f"collecting class attrs/getattr usages in {path}")
@@ -938,18 +1072,34 @@ def check_getattr_not_initialized(path: Path, text: str, tree: ast.AST) -> List[
     for s in classes.values():
         assigned_attrs.update(s)
 
-    for lineno, attr, func in getattr_uses:
+    for lineno, attr, func, encl in getattr_uses:
         # attr may be 'app.current_path' style when getattr called on self.app
         if "." in attr:
             right = attr.split(".", 1)[1]
             if right not in assigned_attrs:
+                # If a base class is known to provide the attribute, skip
+                # reporting to avoid false positives.
+                if _attr_provided_by_bases(encl, right, class_bases):
+                    continue
                 errs.append(
-                    (str(path), lineno, f"{func} used for attribute '{attr}' but '{right}' is not initialized in __init__/on_mount")
+                    (
+                        str(path),
+                        lineno,
+                        f"{func} used for attribute '{attr}' but '{right}' is not initialized in __init__/on_mount; hint: initialize '{right}' in __init__ or on_mount or add them to config file",
+                    )
                 )
         else:
             if attr not in assigned_attrs:
+                # If a base class is known to provide the attribute, skip
+                # reporting to avoid false positives.
+                if _attr_provided_by_bases(encl, attr, class_bases):
+                    continue
                 errs.append(
-                    (str(path), lineno, f"{func}(self, '{attr}', ...) used but '{attr}' is not initialized in __init__/on_mount")
+                    (
+                        str(path),
+                        lineno,
+                        f"{func}(self, '{attr}', ...) used but '{attr}' is not initialized in __init__/on_mount; hint: initialize '{attr}' in __init__ or on_mount or add them to config file",
+                    )
                 )
 
     return errs
@@ -1727,7 +1877,7 @@ def main(argv: List[str] | None = None) -> int:
 
     # Apply ignore patterns (glob) if provided via CLI or config
     try:
-        patterns = args.ignore or []
+        patterns = args.ignore
         if patterns:
             filtered: List[Path] = []
             for p in py_files:
