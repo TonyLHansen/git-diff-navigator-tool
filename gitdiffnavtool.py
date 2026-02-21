@@ -284,6 +284,10 @@ class AppBase(AppException, ListView):
         underscore-prefixed attributes attached to the node. Also logs the
         current `self.index` and the expected highlighted identifier.
         """
+        # Only emit the expensive per-node debug when verbosity is high.
+        if self.app.verbose <= 2:
+            return
+
         try:
             header = {
                 "widget_class": type(self).__name__,
@@ -762,7 +766,7 @@ class AppBase(AppException, ListView):
             logger.debug(
                 "apply_index_change enter: nodes=%d has_nodes_by_dir=%r index=%r",
                 len(nodes),
-                bool(getattr(self, "_nodes_by_dir", None)),
+                bool(self._nodes_by_dir),
                 getattr(self, "index", None),
             )
             if not nodes:
@@ -806,9 +810,9 @@ class AppBase(AppException, ListView):
 
             # Authoritative re-render when we have node data available.
             try:
-                if getattr(self, "_nodes_by_dir", None) and hasattr(self, "_render_filemode_display"):
-                    rel_dir = getattr(self.app, "rel_dir", None)
-                    rel_file = getattr(self.app, "rel_file", None)
+                if self._nodes_by_dir and hasattr(self, "_render_filemode_display"):
+                    rel_dir = self.app.rel_dir
+                    rel_file = self.app.rel_file
                     logger.debug(
                         "apply_index_change: calling _render_filemode_display rel_dir=%r rel_file=%r",
                         rel_dir,
@@ -4205,6 +4209,7 @@ class GitHistoryNavTool(AppException, App):
         repo_first: bool,
         repo_hashes: list,
         no_color: bool,
+        verbose: int,
         **kwargs,
     ):
         """
@@ -4249,6 +4254,9 @@ class GitHistoryNavTool(AppException, App):
 
         # Log initial rel_dir / rel_file for debugging
         logger.debug("GitHistoryNavTool.__init__: rel_dir=%r rel_file=%r", self.rel_dir, self.rel_file)
+
+        # Preserve verbosity for diagnostic controls
+        self.verbose = verbose
 
         self.no_color = no_color
         self.repo_first = repo_first
@@ -5598,6 +5606,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             repo_first=args.repo_first,
             repo_hashes=repo_hashes,
             no_color=args.no_color,
+            verbose=args.verbose,
         )
         # Run the textual app (blocks until exit)
         app.run()
