@@ -228,52 +228,7 @@ class AppBase(AppException, ListView):
         # Rely on ListView to provide `children`, `_nodes`, `index`, and `app`.
         # Per-widget highlight background; subclasses override with specific backgrounds
         self.highlight_bg_style = HIGHLIGHT_DEFAULT_BG
-
-    def _run_cmd_log(self, cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
-        """
-        Run subprocess command, log stderr as warning and stdout at TRACE.
-
-        Returns the CompletedProcess instance. Defensive: on exception returns
-        a CompletedProcess with non-zero return code and the exception string
-        in `stderr` so callers can continue to inspect `stdout`/`stderr` safely.
-        """
-        proc = subprocess.run(cmd, text=text, capture_output=capture_output)
-        lab = label or "cmd"
-        if proc.stderr:
-            logger.warning("%s stderr (cmd=%s):\n%s", lab, " ".join(cmd), proc.stderr.strip())
-        logger.trace("%s stdout (cmd=%s):\n%s", lab, " ".join(cmd), proc.stdout or "")
-        return proc
-
-    def _run_git_lines(self, cmd: list[str], label: str | None = None) -> list[str]:
-        """
-        Run a git command and return non-empty output lines.
-
-        Uses `_run_cmd_log` for consistent logging; returns an empty list
-        on error and logs the exception via `printException`.
-        """
-        try:
-            # If the app was started with a non-root rel_dir, prepopulate
-            # the highlight stack so parent navigation can restore the
-            # previously-highlighted child entries.
-            try:
-                rel_dir_val = self.app.rel_dir or ""
-                if rel_dir_val and (not self._highlight_stack):
-                    try:
-                        parts = [p for p in rel_dir_val.split(os.sep) if p]
-                        self._highlight_stack = []
-                        for p in parts:
-                            self._highlight_stack.append(p)
-                    except Exception as _e:
-                        self.printException(_e, "prepFileModeFileList: prepopulating _highlight_stack failed")
-            except Exception as _e:
-                self.printException(_e, "prepFileModeFileList: reading app.rel_dir failed")
-            proc = self._run_cmd_log(cmd, label=label)
-            out = proc.stdout or ""
-            return [ln for ln in out.splitlines() if ln.strip()]
-        except Exception as e:
-            self.printException(e, f"_run_git_lines: {label or 'git'}")
-            return []
-
+        
     def _log_visible_items(self, msg: str) -> None:
         """
         Diagnostic helper: log every visible node with hidden attrs and highlighted item.

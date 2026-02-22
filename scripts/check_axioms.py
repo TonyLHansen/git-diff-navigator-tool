@@ -1587,6 +1587,7 @@ def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Pa
             text, tree = load_source_and_ast(t)
             if tree is None:
                 continue
+            # collect class bases info for inheritance checks
             try:
                 classes, class_bases = _collect_self_assigned_attrs(t, text=text, tree=tree)
             except Exception as e:
@@ -1599,6 +1600,9 @@ def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Pa
                 # skip dunder constructors and common special names
                 if name.startswith('__') and name.endswith('__') and name != '__init__':
                     continue
+                # If this is a method and it matches any implicit-method pattern
+                # for a base class that this class inherits from, treat it as
+                # implicitly used and do not include it in the analysis.
                 implicit = False
                 if kind == 'method' and cls:
                     for base_lower, patterns in BASE_CLASS_METHOD_PATTERNS.items():
@@ -1611,6 +1615,7 @@ def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Pa
                                             break
                                     except Exception as e:
                                         printException(e, f"invalid implicit method pattern {pat} for base {base_lower}")
+                                        # skip invalid pattern but continue checking other patterns
                                         continue
                             if implicit:
                                 break
@@ -1618,6 +1623,7 @@ def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Pa
                             printException(e, f"error checking inheritance for class {cls} and base {base_lower}")
                             continue
                 if implicit:
+                    # don't add implicit methods to defs/target_names
                     continue
                 local_defs.append({'path': t, 'kind': kind, 'name': name, 'class': cls, 'lineno': lineno})
                 local_names.add(name)
