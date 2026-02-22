@@ -197,22 +197,6 @@ def enable_trace_logging(enabled: bool) -> None:
         printException(e, "enable_trace_logging failed")
 
 
-def run_cmd_log(cmd: list[str], label: str | None = None, text: bool = True, capture_output: bool = True):
-    """
-    Module-level wrapper for subprocess.run mirroring `AppBase._run_cmd_log`.
-
-    Useful for top-level functions that don't have access to a widget `self`.
-    Returns a CompletedProcess-like result; on exception returns a non-zero
-    CompletedProcess with the exception text in `stderr`.
-    """
-    proc = subprocess.run(cmd, text=text, capture_output=capture_output)
-    lab = label or "cmd"
-    if proc.stderr:
-        logger.warning("%s stderr (cmd=%s):\n%s", lab, " ".join(cmd), proc.stderr.strip())
-    logger.trace("%s stdout (cmd=%s):\n%s", lab, " ".join(cmd), proc.stdout or "")
-    return proc
-
-
 class AppBase(AppException, ListView):
     """
     Base widget class for list-like components providing shared helpers.
@@ -5515,27 +5499,6 @@ class GitHistoryNavTool(AppException, App):
                     self.printException(e, "toggle_diff_fullscreen dispatch failed")
         except Exception as e:
             self.printException(e, "toggle_diff_fullscreen retrieving saved layout failed")
-
-
-def discover_repo_worktree(start_path: str | None) -> str:
-    """
-    Discover the repository worktree root starting at `start_path`.
-    Discover the repository worktree root by deferring to `GitRepo.resolve_repo_top`.
-    Exits the program with an error message if no repository is found.
-    """
-    try:
-        start = os.path.abspath(start_path or os.getcwd())
-    except Exception as _ex:
-        printException(_ex)
-        start = os.getcwd()
-    topo, err = GitRepo.resolve_repo_top(start, raise_on_missing=False)
-    if topo:
-        try:
-            return os.path.normpath(topo)
-        except Exception as _ex:
-            printException(_ex)
-            return topo
-    sys.exit(f"Not a git repository starting at {start}")
 
 
 def main(argv: Optional[list[str]] = None) -> int:

@@ -354,6 +354,69 @@ def _load_base_class_attrs_from_ini() -> dict:
 BASE_CLASS_ATTRS: dict = _load_base_class_attrs_from_ini()
 
 
+def _load_implicit_method_patterns_from_ini() -> dict:
+    """
+    Load implicit method name patterns from .check_axioms.ini.
+
+    Looks for a `[implicit_methods]` section where each option is a
+    base class name and its value is a comma-or-space-separated list of
+    glob-style name patterns (e.g. `key_*`). Returns a mapping of
+    lowercase base-class-name -> set(patterns).
+    """
+    try:
+        cfg = configparser.ConfigParser()
+        ini_path = Path(".check_axioms.ini")
+        project_ini = ROOT / ".check_axioms.ini"
+        if not ini_path.exists() and project_ini.exists():
+            ini_path = project_ini
+        if ini_path.exists():
+            try:
+                cfg.read(ini_path)
+                if cfg.has_section("implicit_methods"):
+                    loaded = {}
+                    for k, v in cfg.items("implicit_methods"):
+                        parts = [p.strip() for p in re.split(r"[,\s]+", v) if p.strip()]
+                        loaded[k.lower()] = set(parts)
+                    return loaded
+            except Exception as e:
+                printException(e, f"reading implicit_methods from {ini_path}")
+    except Exception as _e:
+        printException(_e, "loading implicit_method patterns")
+    return {}
+
+
+# IMPLICIT_METHOD_PATTERNS maps base-class-name (lowercased) -> set of glob patterns
+IMPLICIT_METHOD_PATTERNS: dict = _load_implicit_method_patterns_from_ini()
+
+
+def _class_inherits_from(enclosing_class: str | None, target_base_lower: str, class_bases: dict) -> bool:
+    """
+    Return True if `enclosing_class` (transitively) inherits from `target_base_lower`.
+
+    `class_bases` is expected to be the mapping returned by
+    `_collect_self_assigned_attrs` (class_name -> list of base-name strings).
+    """
+    if not enclosing_class:
+        return False
+    seen: set[str] = set()
+    stack: list[str] = list(class_bases.get(enclosing_class, []) or [])
+    while stack:
+        b = stack.pop()
+        simple = b.split(".")[-1]
+        key = simple.lower()
+        if key in seen:
+            continue
+        if key == target_base_lower:
+            return True
+        seen.add(key)
+        child_bases = class_bases.get(b) or class_bases.get(simple)
+        if child_bases:
+            for nb in child_bases:
+                if nb is not None:
+                    stack.append(nb)
+    return False
+
+
 def _attr_provided_by_bases(enclosing_class: str | None, attr: str, class_bases: dict) -> bool:
     """
     Return True if any base class of `enclosing_class` is known to provide `attr`.
@@ -1437,6 +1500,163 @@ def check_getattr_method_calls(path: Path, text: str, tree: ast.AST) -> List[Tup
     return errs
 
 
+def _collect_defs_for_unused(path: Path, tree: ast.AST) -> List[Tuple[str, str, Optional[str], int]]:
+    """
+    Collect definitions in `tree` for unused analysis.
+
+    Returns list of tuples: (kind, name, class_name_or_None, lineno)
+    where kind is 'function' or 'method'.
+    """
+    defs: List[Tuple[str, str, Optional[str], int]] = []
+    try:
+        # Iterate top-level module body to collect module-level functions and
+        # direct methods of classes (skip nested functions).
+        if getattr(tree, 'body', None):
+            for item in tree.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    defs.append(('function', item.name, None, getattr(item, 'lineno', 0)))
+                elif isinstance(item, ast.ClassDef):
+                    for m in item.body:
+                        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            defs.append(('method', m.name, item.name, getattr(m, 'lineno', 0)))
+    except Exception as e:
+        printException(e, f"collecting defs for unused analysis in {path}")
+    return defs
+
+
+def _find_usages_in_tree(tree: ast.AST, target_names: set) -> List[Tuple[str, int]]:
+    """Return list of (name, lineno) occurrences for Name or Attribute matches."""
+    occ: List[Tuple[str, int]] = []
+
+    class Finder(ast.NodeVisitor):
+        def visit_Name(self, node: ast.Name) -> None:
+            try:
+                if node.id in target_names:
+                    lineno = getattr(node, 'lineno', None)
+                    if lineno is not None:
+                        occ.append((node.id, lineno))
+            except Exception as e:
+                printException(e, "error visiting Name node")
+            self.generic_visit(node)
+
+        def visit_Attribute(self, node: ast.Attribute) -> None:
+            try:
+                attr = getattr(node, 'attr', None)
+                if attr in target_names:
+                    lineno = getattr(node, 'lineno', None)
+                    if lineno is not None:
+                        occ.append((attr, lineno))
+            except Exception as e:
+                printException(e, "error visiting Attribute node")
+            self.generic_visit(node)
+
+    try:
+        Finder().visit(tree)
+    except Exception as e:
+        printException(e, "walking AST for usage finding")
+    return occ
+
+
+def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Path) -> List[Tuple[str, int, str]]:
+    """
+    Analyze files matching `patterns` for definitions with no references in `all_py_files`.
+
+    Returns list of error tuples (file, lineno, message).
+    """
+    errs: List[Tuple[str, int, str]] = []
+    try:
+        if not patterns:
+            return errs
+        # Resolve target files from patterns against all_py_files
+        targets: List[Path] = []
+        for p in all_py_files:
+            for pat in patterns:
+                try:
+                    if fnmatch.fnmatch(p.name, pat) or fnmatch.fnmatch(str(p), pat):
+                        targets.append(p)
+                        break
+                except Exception as e:
+                    printException(e, f"invalid check-unused pattern {pat}")
+        targets = sorted(set(targets))
+        if not targets:
+            return errs
+
+        # Collect definitions from target files
+        defs: List[dict] = []
+        target_names: set = set()
+        for t in targets:
+            text, tree = load_source_and_ast(t)
+            if tree is None:
+                continue
+            # collect class bases info for inheritance checks
+            try:
+                classes, class_bases = _collect_self_assigned_attrs(t, text=text, tree=tree)
+            except Exception:
+                classes, class_bases = {}, {}
+            for kind, name, cls, lineno in _collect_defs_for_unused(t, tree):
+                # skip dunder constructors and common special names
+                if name.startswith('__') and name.endswith('__') and name != '__init__':
+                    continue
+                # If this is a method and it matches any implicit-method pattern
+                # for a base class that this class inherits from, treat it as
+                # implicitly used and do not include it in the analysis.
+                implicit = False
+                if kind == 'method' and cls:
+                    for base_lower, patterns in IMPLICIT_METHOD_PATTERNS.items():
+                        try:
+                            if _class_inherits_from(cls, base_lower, class_bases):
+                                for pat in patterns:
+                                    try:
+                                        if fnmatch.fnmatch(name, pat):
+                                            implicit = True
+                                            break
+                                    except Exception:
+                                        continue
+                            if implicit:
+                                break
+                        except Exception:
+                            continue
+                if implicit:
+                    # don't add implicit methods to defs/target_names
+                    continue
+                defs.append({'path': t, 'kind': kind, 'name': name, 'class': cls, 'lineno': lineno})
+                target_names.add(name)
+
+        if not defs:
+            return errs
+
+        # Scan all files for usages of any target_names
+        usage_map: dict = {d['name']: [] for d in defs}
+        for p in all_py_files:
+            try:
+                text, tree = load_source_and_ast(p)
+                if tree is None:
+                    continue
+                occ = _find_usages_in_tree(tree, target_names)
+                for name, lineno in occ:
+                    usage_map.setdefault(name, []).append((p, lineno))
+            except Exception as e:
+                printException(e, f"checking usages in {p}")
+
+        # For each definition, check if there are usages outside the defining line/file
+        for d in defs:
+            name = d['name']
+            p = d['path']
+            def_lineno = d['lineno']
+            uses = usage_map.get(name, [])
+            # Filter out the definition occurrence if present (same file and same lineno)
+            filtered = [u for u in uses if not (u[0] == p and u[1] == def_lineno)]
+            if not filtered:
+                if d.get('kind') == 'method':
+                    cls_name = d.get('class') or '<unknown>'
+                    errs.append((str(p), def_lineno, f"unused method '{cls_name}.{name}' (no references found)"))
+                else:
+                    errs.append((str(p), def_lineno, f"unused function '{name}' (no references found)"))
+    except Exception as e:
+        printException(e, "check_unused_symbols failed")
+    return errs
+
+
 def run_py_compile(py_files: List[Path]) -> List[Tuple[Path, str]]:
     """
     Run `py_compile` on each path in `py_files` and return failures.
@@ -1695,6 +1915,13 @@ def main(argv: List[str] | None = None) -> int:
         default=[],
         help="Glob pattern to ignore (may be specified multiple times). In config file, provide comma-separated values or multiple 'ignore' entries.",
     )
+    parser.add_argument(
+        "--check-unused",
+        dest="check_unused",
+        action="append",
+        default=[],
+        help="Glob pattern to analyze for unused module-level functions and class methods (may be specified multiple times). In config file, provide comma-separated values or multiple 'check-unused' entries.",
+    )
     # Load optional configuration from .check_axioms.ini (cwd then $HOME).
     # Config keys are the long-option names without leading dashes; e.g.
     # "prefer-no-direct-hasattrs = false" maps to `--no-prefer-no-direct-hasattrs`.
@@ -1757,8 +1984,24 @@ def main(argv: List[str] | None = None) -> int:
                             s = part.strip()
                             if s:
                                 ignored.append(s)
+
+            # Collect check-unused patterns similarly (support comma-separated and multiple entries)
+            check_unused_patterns: List[str] = []
+            for k, v in src.items():
+                if not k:
+                    continue
+                if k == "check-unused" or k.startswith("check-unused"):
+                    if v:
+                        for part in v.split(","):
+                            s = part.strip()
+                            if s:
+                                check_unused_patterns.append(s)
+
             if ignored:
                 defaults["ignore"] = ignored
+            if check_unused_patterns:
+                defaults["check_unused"] = check_unused_patterns
+
             for key, (enable_dest, disable_dest) in optmap.items():
                 b = _getbool(key)
                 if b is None:
@@ -1996,6 +2239,21 @@ def main(argv: List[str] | None = None) -> int:
             for fpath, lineno, msg in all_errs:
                 print(f"{fpath}:{lineno}: {msg}")
             print()
+
+        # Optionally run unused-symbol analysis for configured patterns
+        if args.check_unused:
+            try:
+                unused_errs = check_unused_symbols(args.check_unused, py_files, root)
+                if unused_errs:
+                    # extend and report immediately
+                    unused_errs.sort(key=lambda t: (t[0], t[1]))
+                    print("Unused symbol(s) detected:")
+                    for fpath, lineno, msg in unused_errs:
+                        print(f"{fpath}:{lineno}: {msg}")
+                    print()
+                    error_count += len(unused_errs)
+            except Exception as e:
+                printException(e, "check_unused analysis failed")
 
     # Always run py_compile as a final gate
     failures = []
