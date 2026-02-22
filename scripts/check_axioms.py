@@ -1591,7 +1591,8 @@ def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Pa
             # collect class bases info for inheritance checks
             try:
                 classes, class_bases = _collect_self_assigned_attrs(t, text=text, tree=tree)
-            except Exception:
+            except Exception as e:
+                printException(e, f"error collecting self-assigned attrs in {t}")
                 classes, class_bases = {}, {}
             for kind, name, cls, lineno in _collect_defs_for_unused(t, tree):
                 # skip dunder constructors and common special names
@@ -1610,11 +1611,14 @@ def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Pa
                                         if fnmatch.fnmatch(name, pat):
                                             implicit = True
                                             break
-                                    except Exception:
+                                    except Exception as e:
+                                        printException(e, f"invalid implicit method pattern {pat} for base {base_lower}")
+                                        # skip invalid pattern but continue checking other patterns
                                         continue
                             if implicit:
                                 break
-                        except Exception:
+                        except Exception as e:
+                            printException(e, f"error checking inheritance for class {cls} and base {base_lower}")
                             continue
                 if implicit:
                     # don't add implicit methods to defs/target_names
