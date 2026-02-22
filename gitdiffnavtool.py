@@ -268,6 +268,21 @@ class AppBase(AppException, ListView):
         on error and logs the exception via `printException`.
         """
         try:
+            # If the app was started with a non-root rel_dir, prepopulate
+            # the highlight stack so parent navigation can restore the
+            # previously-highlighted child entries.
+            try:
+                rel_dir_val = self.app.rel_dir or ""
+                if rel_dir_val and (not self._highlight_stack):
+                    try:
+                        parts = [p for p in rel_dir_val.split(os.sep) if p]
+                        self._highlight_stack = []
+                        for p in parts:
+                            self._highlight_stack.append(p)
+                    except Exception as _e:
+                        self.printException(_e, "prepFileModeFileList: prepopulating _highlight_stack failed")
+            except Exception as _e:
+                self.printException(_e, "prepFileModeFileList: reading app.rel_dir failed")
             proc = self._run_cmd_log(cmd, label=label)
             out = proc.stdout or ""
             return [ln for ln in out.splitlines() if ln.strip()]
@@ -2267,6 +2282,12 @@ class FileModeFileList(FileListBase):
         # hold a local copy.
         self._nodes_by_dir = nodes_by_dir
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Stack of directory basenames visited while navigating down.
+        # Used to restore the child highlight when navigating up.
+        self._highlight_stack: list[str] = []
+
     def _render_filemode_display(self, nodes_by_dir: dict, rel_dir: str, rel_path: str) -> None:
         """
         Render the file-list UI for the given `nodes_by_dir` and `rel_dir`.
@@ -2605,6 +2626,8 @@ class FileModeFileList(FileListBase):
         # Storage for the last-collected nodes_by_dir mapping so rendering
         # and navigation helpers may access it without needing a local copy.
         self._nodes_by_dir: dict = {}
+        # Ensure highlight stack exists so callers need not check hasattr.
+        self._highlight_stack: list[str] = []
 
     def _activate_or_open(
         self,
@@ -2642,6 +2665,31 @@ class FileModeFileList(FileListBase):
             if is_dir:
                 try:
                     if enter_dir_test_fn(name):
+                        # Maintain a highlight stack so when we return to a
+                        # parent directory we can re-highlight the child we
+                        # just came from. For downward navigation push the
+                        # dirname; for upward navigation (parent '..') pop
+                        # the last child and use it as the preselection.
+                        try:
+                            if name == "..":
+                                # Moving up: try to restore the child we came from
+                                try:
+                                    last_child = None
+                                    if self._highlight_stack:
+                                        last_child = self._highlight_stack.pop()
+                                        self._preselected_filename = last_child
+                                except Exception as _e:
+                                    self.printException(_e, "_activate_or_open: popping _highlight_stack failed")
+                            else:
+                                # Moving down: record the directory name so
+                                # its entry can be re-highlighted when coming back.
+                                try:
+                                    self._highlight_stack.append(name)
+                                except Exception as _e:
+                                    self.printException(_e, "_activate_or_open: pushing to _highlight_stack failed")
+                        except Exception as _e:
+                            self.printException(_e, "_activate_or_open: highlight stack update failed")
+
                         # Compute and set new repository-relative directory
                         try:
                             cur_rel = self.app.rel_dir or ""
