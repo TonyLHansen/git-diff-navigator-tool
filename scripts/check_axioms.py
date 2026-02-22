@@ -354,11 +354,11 @@ def _load_base_class_attrs_from_ini() -> dict:
 BASE_CLASS_ATTRS: dict = _load_base_class_attrs_from_ini()
 
 
-def _load_implicit_method_patterns_from_ini() -> dict:
+def _load_base_class_method_patterns_from_ini() -> dict:
     """
-    Load implicit method name patterns from .check_axioms.ini.
+    Load base-class method name patterns from .check_axioms.ini.
 
-    Looks for a `[implicit_methods]` section where each option is a
+    Looks for a `[base_class_methods]` section where each option is a
     base class name and its value is a comma-or-space-separated list of
     glob-style name patterns (e.g. `key_*`). Returns a mapping of
     lowercase base-class-name -> set(patterns).
@@ -372,21 +372,21 @@ def _load_implicit_method_patterns_from_ini() -> dict:
         if ini_path.exists():
             try:
                 cfg.read(ini_path)
-                if cfg.has_section("implicit_methods"):
+                if cfg.has_section("base_class_methods"):
                     loaded = {}
-                    for k, v in cfg.items("implicit_methods"):
+                    for k, v in cfg.items("base_class_methods"):
                         parts = [p.strip() for p in re.split(r"[,\s]+", v) if p.strip()]
                         loaded[k.lower()] = set(parts)
                     return loaded
             except Exception as e:
-                printException(e, f"reading implicit_methods from {ini_path}")
+                printException(e, f"reading base_class_methods from {ini_path}")
     except Exception as _e:
-        printException(_e, "loading implicit_method patterns")
+        printException(_e, "loading base_class_method patterns")
     return {}
 
 
-# IMPLICIT_METHOD_PATTERNS maps base-class-name (lowercased) -> set of glob patterns
-IMPLICIT_METHOD_PATTERNS: dict = _load_implicit_method_patterns_from_ini()
+# BASE_CLASS_METHOD_PATTERNS maps base-class-name (lowercased) -> set of glob patterns
+BASE_CLASS_METHOD_PATTERNS: dict = _load_base_class_method_patterns_from_ini()
 
 
 def _class_inherits_from(enclosing_class: str | None, target_base_lower: str, class_bases: dict) -> bool:
@@ -1567,6 +1567,7 @@ def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Pa
     try:
         if not patterns:
             return errs
+
         # Resolve target files from patterns against all_py_files
         targets: List[Path] = []
         for p in all_py_files:
@@ -1581,29 +1582,26 @@ def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Pa
         if not targets:
             return errs
 
-        # Collect definitions from target files
-        defs: List[dict] = []
-        target_names: set = set()
+        # For each target file, collect defs and only scan that file for usages.
         for t in targets:
             text, tree = load_source_and_ast(t)
             if tree is None:
                 continue
-            # collect class bases info for inheritance checks
             try:
                 classes, class_bases = _collect_self_assigned_attrs(t, text=text, tree=tree)
             except Exception as e:
                 printException(e, f"error collecting self-assigned attrs in {t}")
                 classes, class_bases = {}, {}
+
+            local_defs: List[dict] = []
+            local_names: set = set()
             for kind, name, cls, lineno in _collect_defs_for_unused(t, tree):
                 # skip dunder constructors and common special names
                 if name.startswith('__') and name.endswith('__') and name != '__init__':
                     continue
-                # If this is a method and it matches any implicit-method pattern
-                # for a base class that this class inherits from, treat it as
-                # implicitly used and do not include it in the analysis.
                 implicit = False
                 if kind == 'method' and cls:
-                    for base_lower, patterns in IMPLICIT_METHOD_PATTERNS.items():
+                    for base_lower, patterns in BASE_CLASS_METHOD_PATTERNS.items():
                         try:
                             if _class_inherits_from(cls, base_lower, class_bases):
                                 for pat in patterns:
@@ -1613,7 +1611,6 @@ def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Pa
                                             break
                                     except Exception as e:
                                         printException(e, f"invalid implicit method pattern {pat} for base {base_lower}")
-                                        # skip invalid pattern but continue checking other patterns
                                         continue
                             if implicit:
                                 break
@@ -1621,41 +1618,34 @@ def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Pa
                             printException(e, f"error checking inheritance for class {cls} and base {base_lower}")
                             continue
                 if implicit:
-                    # don't add implicit methods to defs/target_names
                     continue
-                defs.append({'path': t, 'kind': kind, 'name': name, 'class': cls, 'lineno': lineno})
-                target_names.add(name)
+                local_defs.append({'path': t, 'kind': kind, 'name': name, 'class': cls, 'lineno': lineno})
+                local_names.add(name)
 
-        if not defs:
-            return errs
+            if not local_defs:
+                continue
 
-        # Scan all files for usages of any target_names
-        usage_map: dict = {d['name']: [] for d in defs}
-        for p in all_py_files:
+            # Find usages only within this file's AST
+            usage_map: dict = {d['name']: [] for d in local_defs}
             try:
-                text, tree = load_source_and_ast(p)
-                if tree is None:
-                    continue
-                occ = _find_usages_in_tree(tree, target_names)
+                occ = _find_usages_in_tree(tree, local_names)
                 for name, lineno in occ:
-                    usage_map.setdefault(name, []).append((p, lineno))
+                    usage_map.setdefault(name, []).append((t, lineno))
             except Exception as e:
-                printException(e, f"checking usages in {p}")
+                printException(e, f"finding usages in {t}")
 
-        # For each definition, check if there are usages outside the defining line/file
-        for d in defs:
-            name = d['name']
-            p = d['path']
-            def_lineno = d['lineno']
-            uses = usage_map.get(name, [])
-            # Filter out the definition occurrence if present (same file and same lineno)
-            filtered = [u for u in uses if not (u[0] == p and u[1] == def_lineno)]
-            if not filtered:
-                if d.get('kind') == 'method':
-                    cls_name = d.get('class') or '<unknown>'
-                    errs.append((str(p), def_lineno, f"unused method '{cls_name}.{name}' (no references found)"))
-                else:
-                    errs.append((str(p), def_lineno, f"unused function '{name}' (no references found)"))
+            # Report defs that have no usages besides their own definition
+            for d in local_defs:
+                name = d['name']
+                def_lineno = d['lineno']
+                uses = usage_map.get(name, [])
+                filtered = [u for u in uses if not (u[0] == t and u[1] == def_lineno)]
+                if not filtered:
+                    if d.get('kind') == 'method':
+                        cls_name = d.get('class') or '<unknown>'
+                        errs.append((str(t), def_lineno, f"unused method '{cls_name}.{name}' (no references found in file)"))
+                    else:
+                        errs.append((str(t), def_lineno, f"unused function '{name}' (no references found in file)"))
     except Exception as e:
         printException(e, "check_unused_symbols failed")
     return errs
