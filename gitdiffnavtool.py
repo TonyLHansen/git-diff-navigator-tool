@@ -720,7 +720,7 @@ class AppBase(AppException, ListView):
             logger.debug(
                 "apply_index_change enter: nodes=%d has_nodes_by_dir=%r index=%r",
                 len(nodes),
-                bool(self._nodes_by_dir),
+                (bool(self._nodes_by_dir) if hasattr(self, "_nodes_by_dir") else False),
                 getattr(self, "index", None),
             )
             if not nodes:
@@ -764,7 +764,7 @@ class AppBase(AppException, ListView):
 
             # Authoritative re-render when we have node data available.
             try:
-                if self._nodes_by_dir and hasattr(self, "_render_filemode_display"):
+                if hasattr(self, "_nodes_by_dir") and self._nodes_by_dir and hasattr(self, "_render_filemode_display"):
                     rel_dir = self.app.rel_dir
                     rel_file = self.app.rel_file
                     logger.debug(
@@ -1441,14 +1441,6 @@ class FileListBase(AppBase):
     implementations that concrete subclasses can override.
     """
 
-    def on_focus(self) -> None:
-        """Ensure the widget has a valid `index` when it receives focus."""
-        try:
-            if self.index is None:
-                self.index = self._min_index or 0
-        except Exception as e:
-            self.printException(e, "FileListBase.on_focus")
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Mark this base as a file-list so AppBase.watch_index can act
@@ -1457,6 +1449,14 @@ class FileListBase(AppBase):
         # Program-managed preselection marker used by render/keypress flow.
         # Initialize here so static checks know the attribute exists.
         self._preselected_filename = None
+
+    def on_focus(self) -> None:
+        """Ensure the widget has a valid `index` when it receives focus."""
+        try:
+            if self.index is None:
+                self.index = self._min_index or 0
+        except Exception as e:
+            self.printException(e, "FileListBase.on_focus")
 
     def _ensure_index_visible(self) -> None:
         """
@@ -2101,6 +2101,19 @@ class FileModeFileList(FileListBase):
     default `key_left`/`key_right` handlers.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # History of directory basenames visited (left-to-right) and the
+        # current position within that history. Maintained so left/right
+        # navigation can restore child highlights when moving up/down.
+        self._highlight_history: list[str] = []
+        self._highlight_pos: int = -1
+        # Map from repo-relative directory -> last-selected child filename
+        # This lets us restore a child's highlight when re-entering a dir.
+        self._last_child_by_dir: dict[str, str] = {}
+        # Per-widget highlight background style.
+        self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
+
     def _collect_filemode_nodes(self, rel_dir: str, rel_path: str) -> None:
         """
         Collect git-based file lists and build nodes_by_dir mapping.
@@ -2220,17 +2233,6 @@ class FileModeFileList(FileListBase):
         # Persist the collected nodes in the instance so callers need not
         # hold a local copy.
         self._nodes_by_dir = nodes_by_dir
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # History of directory basenames visited (left-to-right) and the
-        # current position within that history. Maintained so left/right
-        # navigation can restore child highlights when moving up/down.
-        self._highlight_history: list[str] = []
-        self._highlight_pos: int = -1
-        # Map from repo-relative directory -> last-selected child filename
-        # This lets us restore a child's highlight when re-entering a dir.
-        self._last_child_by_dir: dict[str, str] = {}
 
     def _render_filemode_display(self, nodes_by_dir: dict, rel_dir: str, rel_path: str) -> None:
         """
@@ -2614,17 +2616,6 @@ class FileModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "prepFileModeFileList failed")
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
-        # Storage for the last-collected nodes_by_dir mapping so rendering
-        # and navigation helpers may access it without needing a local copy.
-        self._nodes_by_dir: dict = {}
-        # Ensure highlight history exists so callers need not check hasattr.
-        self._highlight_history: list[str] = []
-        self._highlight_pos: int = -1
-        # Map from repo-relative directory -> last-selected child filename
-        self._last_child_by_dir: dict[str, str] = {}
 
     def _activate_or_open(
         self,
@@ -2919,6 +2910,10 @@ class RepoModeFileList(FileListBase):
     Provides a `prepRepoModeFileList` stub and navigation handlers.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
+
     def prepRepoModeFileList(
         self, prev_hash: str | None, curr_hash: str | None, highlight_filename: str | None = None
     ) -> None:
@@ -3102,10 +3097,6 @@ class RepoModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "prepRepoModeFileList failed")
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
-
     def key_left(self, event: events.Key | None = None) -> None:
         """
         Handle Left key in repo-mode file list: switch to history fullscreen.
@@ -3213,10 +3204,6 @@ class HistoryListBase(AppBase):
         self.highlight_bg_style = HIGHLIGHT_REPOLIST_BG
         # Mark as history list for flag-based checks in AppBase.watch_index
         self.is_history_list = 1
-        # Nodes-by-dir mapping is used by apply_index_change; ensure it
-        # exists on history list instances to avoid AttributeError when
-        # focused after being populated.
-        self._nodes_by_dir: dict = {}
 
     def _add_row(self, text: str, commit_hash: str | None) -> None:
         """Append a commit-row with `text` and attach `commit_hash` metadata."""
@@ -4229,9 +4216,6 @@ class HelpList(AppBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.highlight_bg_style = HIGHLIGHT_HELP_BG
-        # Ensure `_nodes_by_dir` exists so shared index-apply helpers
-        # that test `self._nodes_by_dir` do not raise AttributeError.
-        self._nodes_by_dir: dict = {}
 
     def prepHelp(self) -> None:
         """
