@@ -2838,9 +2838,9 @@ class FileModeFileList(FileListBase):
                             # ignored/untracked files so the user gets visible
                             # feedback instead of a silent no-op.
                             self.error_message(
-                                f"Cannot open history for {sel_name}: file is ignored"
+                                f"No history for ignored file: {sel_name}"
                                 if status in ("I", "ignored")
-                                else f"Cannot open history for {sel_name}: file is untracked"
+                                else f"No history for untracked file: {sel_name}"
                             )
                             return
                     except Exception as _e:
