@@ -3213,6 +3213,10 @@ class HistoryListBase(AppBase):
         self.highlight_bg_style = HIGHLIGHT_REPOLIST_BG
         # Mark as history list for flag-based checks in AppBase.watch_index
         self.is_history_list = 1
+        # Nodes-by-dir mapping is used by apply_index_change; ensure it
+        # exists on history list instances to avoid AttributeError when
+        # focused after being populated.
+        self._nodes_by_dir: dict = {}
 
     def _add_row(self, text: str, commit_hash: str | None) -> None:
         """Append a commit-row with `text` and attach `commit_hash` metadata."""
