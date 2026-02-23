@@ -29,6 +29,7 @@ from subprocess import check_output, CalledProcessError
 # Third-party UI and rendering imports
 from rich.text import Text
 from rich.markdown import Markdown
+from rich.panel import Panel
 from textual import events
 from textual.app import App
 from textual.containers import Horizontal, Vertical
@@ -91,6 +92,26 @@ ListView {
 ListItem.active {
     background: #f1c40f;
     color: white;
+}
+
+/* Centered message modal styling */
+#msg-modal-wrapper {
+    align: center middle;
+    height: 100%;
+    width: 100%;
+}
+
+#msg-modal {
+    content-align: center middle;
+}
+
+#msg-modal-row {
+    align: center middle;
+}
+
+#msg-modal-prompt {
+    align: center middle;
+    padding-top: 1;
 }
 
 """
@@ -1425,9 +1446,22 @@ class MessageModal(ModalScreen):
         self.message = message or ""
 
     def compose(self):
-        """Compose the modal contents (a single Label with bold text)."""
+        """Compose the modal contents: boxed message and static prompt.
+
+        The main message is shown inside a Rich `Panel` to provide a
+        visible box; a dim prompt label is shown below instructing the
+        user to press any key to continue.
+        """
         try:
-            yield Label(Text(self.message, style="bold"), id="msg-modal")
+            # Main boxed message (Panel handles the box drawing)
+            boxed = Panel(Text(self.message, style="bold"), expand=False)
+            # Wrap the boxed message in centering containers so it appears
+            # in the middle of the screen.
+            yield Vertical(
+                Horizontal(Label(boxed, id="msg-modal"), id="msg-modal-row"),
+                Label(Text("Press any key to continue", style="dim"), id="msg-modal-prompt"),
+                id="msg-modal-wrapper",
+            )
         except Exception as e:
             printException(e, "MessageModal.compose failed")
 
@@ -2804,9 +2838,9 @@ class FileModeFileList(FileListBase):
                             # ignored/untracked files so the user gets visible
                             # feedback instead of a silent no-op.
                             self.error_message(
-                                "Cannot open history: file is ignored"
+                                f"Cannot open history for {sel_name}: file is ignored"
                                 if status in ("I", "ignored")
-                                else "Cannot open history: file is untracked"
+                                else f"Cannot open history for {sel_name}: file is untracked"
                             )
                             return
                     except Exception as _e:
