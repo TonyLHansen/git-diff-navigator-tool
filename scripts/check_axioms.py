@@ -1231,6 +1231,81 @@ def check_docstrings(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, in
     return errs
 
 
+def check_repeated_defs(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
+    """
+    Detect repeated function/method definitions.
+
+    - Module-level functions with the same name declared multiple times.
+    - Methods within the same class that share the same name.
+
+    Reports each repeated definition (beyond the first) with its line number.
+    """
+    errs: List[Tuple[str, int, str]] = []
+    try:
+        # Module-level functions
+        seen_funcs: dict[str, int] = {}
+        if getattr(tree, 'body', None):
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    name = getattr(node, 'name', None)
+                    lineno = getattr(node, 'lineno', 0)
+                    if name in seen_funcs:
+                        prev = seen_funcs[name]
+                        errs.append((str(path), lineno, f"repeated module-level function '{name}' (previous at line {prev})"))
+                    else:
+                        seen_funcs[name] = lineno
+
+                # Class-level methods: check each ClassDef's direct body
+                elif isinstance(node, ast.ClassDef):
+                    mseen: dict[str, int] = {}
+                    for item in node.body:
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            mname = getattr(item, 'name', None)
+                            mlineno = getattr(item, 'lineno', 0)
+                            if mname in mseen:
+                                prev = mseen[mname]
+                                errs.append((str(path), mlineno, f"repeated method '{node.name}.{mname}' in class '{node.name}' (previous at line {prev})"))
+                            else:
+                                mseen[mname] = mlineno
+    except Exception as e:
+        printException(e, f"checking repeated defs in {path}")
+    return errs
+
+
+def check_init_first(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
+    """
+    Ensure that if a class defines an `__init__` method, it is the first
+    method (FunctionDef/AsyncFunctionDef) defined within the class body.
+
+    Ignores module/class docstrings or assignments that may precede methods.
+    Reports the `__init__` line when it's not the first method.
+    """
+    errs: List[Tuple[str, int, str]] = []
+    try:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            # collect direct methods in order
+            methods: list[tuple[str, int]] = []
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    methods.append((getattr(item, 'name', None), getattr(item, 'lineno', 0)))
+            if not methods:
+                continue
+            # find __init__ if present
+            init_positions = [i for i, (n, _) in enumerate(methods) if n == '__init__']
+            if not init_positions:
+                continue
+            init_pos = init_positions[0]
+            if init_pos != 0:
+                init_lineno = methods[init_pos][1]
+                first_name, first_lineno = methods[0]
+                errs.append((str(path), init_lineno, f"__init__ in class '{node.name}' is not the first method defined (first method '{first_name}' at line {first_lineno}); move __init__ to be the first method."))
+    except Exception as e:
+        printException(e, f"checking __init__ first in {path}")
+    return errs
+
+
 def check_multiline_docstring_start(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
     Enforce that multiline docstrings (containing a newline) start with a newline.
@@ -1903,18 +1978,39 @@ def main(argv: List[str] | None = None) -> int:
         "--multiline-starts-with-newline",
         dest="enable_multiline_docstring_start",
         action="store_true",
-        help="Enable multiline-starts-with-newline check (opposite of -X).",
+        help="Enable multiline-docstring-start check (opposite of -X).",
     )
-    parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=0,
-        help="Increase verbosity (specify multiple times for more detail)."
+
+    # Repeated-definitions check (enable/disable)
+    gr = parser.add_mutually_exclusive_group()
+    gr.add_argument("-Y",
+        "--no-check-repeat",
+        dest="check_repeat",
+        action="store_false",
+        help="Skip checking for repeated function/method definitions (default: check)",
     )
-    parser.add_argument("files", nargs="*", help="Optional explicit files or directories to check (overrides discovery)")
-    parser.add_argument("--ignore",
-        dest="ignore",
-        action="append",
-        default=[],
-        help="Glob pattern to ignore (may be specified multiple times). In config file, provide comma-separated values or multiple 'ignore' entries.",
+    gr.add_argument("-y",
+        "--check-repeat",
+        dest="enable_check_repeat",
+        action="store_true",
+        help="Enable repeated-definitions check (opposite of -Y).",
     )
+
+    # __init__-first check (enable/disable)
+    gj = parser.add_mutually_exclusive_group()
+    gj.add_argument("-J",
+        "--no-check-init-first",
+        dest="check_init_first",
+        action="store_false",
+        help="Skip enforcing __init__ as the first method in a class (default: check)",
+    )
+    gj.add_argument("-j",
+        "--check-init-first",
+        dest="enable_check_init_first",
+        action="store_true",
+        help="Require __init__ to be the first method defined within the class (opposite of -J)",
+    )
+
     parser.add_argument(
         "--check-unused",
         dest="check_unused",
@@ -1922,6 +2018,18 @@ def main(argv: List[str] | None = None) -> int:
         default=[],
         help="Glob pattern to analyze for unused module-level functions and class methods (may be specified multiple times). In config file, provide comma-separated values or multiple 'check-unused' entries.",
     )
+
+    parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=0,
+        help="Increase verbosity (specify multiple times for more detail)."
+    )
+    parser.add_argument("--ignore",
+        dest="ignore",
+        action="append",
+        default=[],
+        help="Glob pattern to ignore (may be specified multiple times). In config file, provide comma-separated values or multiple 'ignore' entries.",
+    )
+    parser.add_argument("files", nargs="*", help="Optional explicit files or directories to check (overrides discovery)")
+
     # Load optional configuration from .check_axioms.ini (cwd then $HOME).
     # Config keys are the long-option names without leading dashes; e.g.
     # "prefer-no-direct-hasattrs = false" maps to `--no-prefer-no-direct-hasattrs`.
@@ -2050,6 +2158,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_docstrings = False
         args.check_prefer_no_direct_hasattrs = False
         args.check_multiline_docstring_start = False
+        args.check_repeat = False
+        args.check_init_first = False
 
     # Honor explicit small-letter re-enable flags after -N/--NONE
     if args.enable_prefer_no_direct_hasattrs:
@@ -2080,6 +2190,10 @@ def main(argv: List[str] | None = None) -> int:
         args.check_nested_try = True
     if args.enable_check_docstrings:
         args.check_docstrings = True
+    if args.enable_check_repeat:
+        args.check_repeat = True
+    if args.enable_check_init_first:
+        args.check_init_first = True
 
     logger.info("cwd: %s", Path.cwd())
     # Single computed display token for suggested calls: either 'print' or 'printException'
@@ -2226,6 +2340,18 @@ def main(argv: List[str] | None = None) -> int:
                         errs += check_redundant_nested_try(p, text=text, tree=tree)
                     except Exception as e:
                         printException(e, f"check_redundant_nested_try failed for {p}")
+                # Detect repeated definitions (module functions and class methods)
+                if args.check_repeat:
+                    try:
+                        errs += check_repeated_defs(p, text=text, tree=tree)
+                    except Exception as e:
+                        printException(e, f"check_repeated_defs failed for {p}")
+                # Enforce __init__ first rule when requested
+                if args.check_init_first:
+                    try:
+                        errs += check_init_first(p, text=text, tree=tree)
+                    except Exception as e:
+                        printException(e, f"check_init_first failed for {p}")
             except Exception as e:
                 printException(e, f"error checking {p}")
             if errs:
