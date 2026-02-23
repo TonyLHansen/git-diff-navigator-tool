@@ -946,6 +946,19 @@ class AppBase(AppException, ListView):
         except Exception as e:
             self.printException(e, "_safe_highlight_match failed")
 
+    def error_message(self, message: str) -> None:
+        """
+        Show a simple MessageModal with `message` pushed to the app.
+
+        Centralizing this ensures callers don't need to reference
+        `self.app.push_screen(...)` and provides a single exception
+        handling site for message display.
+        """
+        try:
+            self.app.push_screen(MessageModal(message))
+        except Exception as e:
+            self.printException(e, "AppBase.error_message failed")
+
     def _finalize_prep_common(
         self, curr_hash: str | None = None, prev_hash: str | None = None, path: str | None = None
     ) -> None:
@@ -2784,7 +2797,16 @@ class FileModeFileList(FileListBase):
                         status = repo_status
                         if not is_dir and status in ("I", "U", "ignored", "untracked"):
                             logger.debug(
-                                "_activate_or_open: skipping history prep for ignored/untracked file status=%r", status
+                                "_activate_or_open: skipping history prep for ignored/untracked file status=%r",
+                                status,
+                            )
+                            # Show a modal explaining why Right does nothing for
+                            # ignored/untracked files so the user gets visible
+                            # feedback instead of a silent no-op.
+                            self.error_message(
+                                "Cannot open history: file is ignored"
+                                if status in ("I", "ignored")
+                                else "Cannot open history: file is untracked"
                             )
                             return
                     except Exception as _e:
