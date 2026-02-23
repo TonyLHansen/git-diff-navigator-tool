@@ -2400,7 +2400,7 @@ class FileModeFileList(FileListBase):
                 desired_index = None
                 try:
                     if desired:
-                        logger.debug("_render_filemode_display: preselected candidate=%r history=%r pos=%r", desired, getattr(self, "_highlight_history", None), getattr(self, "_highlight_pos", None))
+                        logger.debug("_render_filemode_display: preselected candidate=%r history=%r pos=%r", desired, self._highlight_history, self._highlight_pos)
                         # Diagnostic: log a short sample of the prepared items
                         try:
                             sample = []
@@ -2411,7 +2411,8 @@ class FileModeFileList(FileListBase):
                                     sf = getattr(sn, "_filename", None)
                                     sr = getattr(sn, "_raw_text", None)
                                     sample.append((si, sf, sr))
-                                except Exception:
+                                except Exception as _e:
+                                    self.printException(_e, "_render_filemode_display: sample extraction failed")
                                     sample.append((si, "<extract-failed>", None))
                             logger.debug("_render_filemode_display: new_items sample=%r", sample)
                         except Exception as _e:
@@ -2419,8 +2420,6 @@ class FileModeFileList(FileListBase):
 
                         # Try a robust matching strategy: match `_filename` first,
                         # then fall back to basename of `_raw_text` when available.
-                        import os as _os
-
                         for i, n in enumerate(new_items):
                             try:
                                 node_fname = getattr(n, "_filename", None)
@@ -2430,7 +2429,7 @@ class FileModeFileList(FileListBase):
                                     logger.debug("_render_filemode_display: matched by _filename idx=%d node_raw=%r", i, node_raw)
                                     break
                                 try:
-                                    if node_raw and _os.path.basename(node_raw) == desired:
+                                    if node_raw and os.path.basename(node_raw) == desired:
                                         desired_index = i
                                         logger.debug("_render_filemode_display: matched by basename(_raw_text) idx=%d node_raw=%r", i, node_raw)
                                         break
@@ -2582,8 +2581,8 @@ class FileModeFileList(FileListBase):
                 # down into each component so upward navigation can
                 # restore the previously-highlighted child entry.
                 try:
-                    if getattr(self, "_highlight_history", None) is not None:
-                        if not self._highlight_history and getattr(self.app, "rel_dir", ""):
+                    if self._highlight_history is not None:
+                        if not self._highlight_history and self.app.rel_dir:
                             comps = [p for p in (self.app.rel_dir or "").split(os.sep) if p]
                             # Populate history left-to-right and set position to
                             # the current (deepest) directory so upward navigation
@@ -2670,10 +2669,6 @@ class FileModeFileList(FileListBase):
                         # left in the history and restore the child as
                         # preselection.
                         try:
-                            # Ensure history structures exist
-                            if getattr(self, "_highlight_history", None) is None:
-                                self._highlight_history = []
-                                self._highlight_pos = -1
 
                             if name == "..":
                                 # Moving up: restore the child at the current
@@ -2736,9 +2731,9 @@ class FileModeFileList(FileListBase):
                                 self.printException(e, "_activate_or_open: normalizing new_rel failed")
                                 norm_new_rel = new_rel
                             last_child = None
-                            if getattr(self, "_last_child_by_dir", None) is not None:
+                            if self._last_child_by_dir is not None:
                                 last_child = self._last_child_by_dir.get(norm_new_rel)
-                            logger.debug("_activate_or_open: new_rel=%r last_child=%r history=%r pos=%r", norm_new_rel, last_child, getattr(self, "_highlight_history", None), getattr(self, "_highlight_pos", None))
+                            logger.debug("_activate_or_open: new_rel=%r last_child=%r history=%r pos=%r", norm_new_rel, last_child, self._highlight_history, self._highlight_pos)
                             if last_child:
                                 self._preselected_filename = last_child
                         except Exception as e:
