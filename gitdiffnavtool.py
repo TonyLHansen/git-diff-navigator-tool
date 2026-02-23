@@ -1446,7 +1446,8 @@ class MessageModal(ModalScreen):
         self.message = message or ""
 
     def compose(self):
-        """Compose the modal contents: boxed message and static prompt.
+        """
+        Compose the modal contents: boxed message and static prompt.
 
         The main message is shown inside a Rich `Panel` to provide a
         visible box; a dim prompt label is shown below instructing the
@@ -2629,7 +2630,7 @@ class FileModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "_render_filemode_display failed")
 
-    def prepFileModeFileList(self) -> None:
+    def prepFileModeFileList(self, highlight: str | None = None) -> None:
         """
         Populate this widget with the file list for `path`.
 
@@ -2648,6 +2649,17 @@ class FileModeFileList(FileListBase):
                 # down into each component so upward navigation can
                 # restore the previously-highlighted child entry.
                 try:
+                    # If caller provided a basename `highlight` and no file is
+                    # currently selected, use it as the preselected filename
+                    # which helps initialize the highlight history display.
+                    try:
+                        if highlight and (self.app.rel_file or "") == "":
+                            # Only accept basenames here; defensive check
+                            if os.path.basename(highlight) == highlight:
+                                self._preselected_filename = highlight
+                    except Exception as _e:
+                        self.printException(_e, "prepFileModeFileList: applying highlight failed")
+
                     if self._highlight_history is not None:
                         if not self._highlight_history and self.app.rel_dir:
                             comps = [p for p in (self.app.rel_dir or "").split(os.sep) if p]
@@ -4387,6 +4399,7 @@ class GitHistoryNavTool(AppException, App):
         repo_hashes: list,
         no_color: bool,
         verbose: int,
+        highlight: str | None,
         **kwargs,
     ):
         """
@@ -4434,6 +4447,9 @@ class GitHistoryNavTool(AppException, App):
 
         # Preserve verbosity for diagnostic controls
         self.verbose = verbose
+
+        # Optional initial filename basename to highlight when listing a dir
+        self.highlight = highlight
 
         self.no_color = no_color
         self.repo_first = repo_first
@@ -4541,7 +4557,7 @@ class GitHistoryNavTool(AppException, App):
             try:
                 if not self.repo_first:
                     try:
-                        self.file_mode_file_list.prepFileModeFileList()
+                        self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
                     except Exception as e:
                         self.printException(e, "on_mount: prepFileModeFileList outer failed")
                 else:
@@ -4754,7 +4770,7 @@ class GitHistoryNavTool(AppException, App):
                             app.file_mode_file_list.app.rel_file = rpath
                         except Exception as _e:
                             self.printException(_e, "_activate_or_open: scanning nodes for '..' failed")
-                        app.file_mode_file_list.prepFileModeFileList()
+                        app.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
                     except Exception as e:
                         self.printException(e, "key_r: prepFileModeFileList failed")
             except Exception as e:
@@ -5461,7 +5477,7 @@ class GitHistoryNavTool(AppException, App):
                     self.file_mode_file_list.app.rel_file = rpath
                 except Exception as _e:
                     self.printException(_e, "toggle_history_fullscreen: setting file_mode app rels failed")
-                self.file_mode_file_list.prepFileModeFileList()
+                self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
             except Exception as _ex:
                 self.printException(_ex, "toggle_history_fullscreen prepFileModeFileList failed")
         except Exception as e:
@@ -5580,7 +5596,7 @@ class GitHistoryNavTool(AppException, App):
                     self.file_mode_file_list.app.rel_file = rpath
                 except Exception as _e:
                     self.printException(_e, "toggle_history_file: setting file_mode app rels failed")
-                self.file_mode_file_list.prepFileModeFileList()
+                self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
             except Exception as _ex:
                 self.printException(_ex, "toggle_history_file prepFileModeFileList failed")
         except Exception as e:
@@ -5681,7 +5697,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "-v", "--verbose", dest="verbose", action="count", default=0, help="increase verbosity (repeatable)"
     )
+    parser.add_argument(
+        "--highlight",
+        dest="highlight",
+        metavar="BASENAME",
+        help="basename of a file to pre-highlight (must be a basename, no path elements)",
+    )
     args = parser.parse_args(argv)
+
+    # Validate --highlight is a bare basename (no path elements)
+    try:
+        if args.highlight:
+            hl = args.highlight
+            if os.path.isabs(hl) or os.path.basename(hl) != hl:
+                printException(ValueError("--highlight must be a basename (no path elements)"), "argument error")
+                return 2
+    except Exception as e:
+        printException(e, "argument parsing/validation failed")
+        return 2
 
     # Configure logging if debug file requested
     try:
@@ -5765,6 +5798,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             repo_hashes=repo_hashes,
             no_color=args.no_color,
             verbose=args.verbose,
+            highlight=args.highlight,
         )
         # Run the textual app (blocks until exit)
         app.run()
