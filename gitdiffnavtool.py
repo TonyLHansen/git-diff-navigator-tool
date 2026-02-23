@@ -2779,6 +2779,11 @@ class FileModeFileList(FileListBase):
         This delegates to `_activate_or_open` and prevents opening files.
         """
         logger.debug("FileModeFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
+        # If we're at the repository root, Left should be a no-op.
+        if self.app.rel_dir == "":
+            logger.debug("FileModeFileList.key_left: at repo root, no-op")
+            return
+
         # Capture the current index so we can imperatively apply highlighting
         # after the directory-enter flow completes. This makes the visual
         # highlight deterministic even if the watcher path races.
