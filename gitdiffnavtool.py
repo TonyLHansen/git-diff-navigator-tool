@@ -2223,9 +2223,14 @@ class FileModeFileList(FileListBase):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Stack of directory basenames visited while navigating down.
-        # Used to restore the child highlight when navigating up.
-        self._highlight_stack: list[str] = []
+        # History of directory basenames visited (left-to-right) and the
+        # current position within that history. Maintained so left/right
+        # navigation can restore child highlights when moving up/down.
+        self._highlight_history: list[str] = []
+        self._highlight_pos: int = -1
+        # Map from repo-relative directory -> last-selected child filename
+        # This lets us restore a child's highlight when re-entering a dir.
+        self._last_child_by_dir: dict[str, str] = {}
 
     def _render_filemode_display(self, nodes_by_dir: dict, rel_dir: str, rel_path: str) -> None:
         """
@@ -2395,11 +2400,42 @@ class FileModeFileList(FileListBase):
                 desired_index = None
                 try:
                     if desired:
+                        logger.debug("_render_filemode_display: preselected candidate=%r history=%r pos=%r", desired, getattr(self, "_highlight_history", None), getattr(self, "_highlight_pos", None))
+                        # Diagnostic: log a short sample of the prepared items
+                        try:
+                            sample = []
+                            for si, sn in enumerate(new_items):
+                                if si >= 80:
+                                    break
+                                try:
+                                    sf = getattr(sn, "_filename", None)
+                                    sr = getattr(sn, "_raw_text", None)
+                                    sample.append((si, sf, sr))
+                                except Exception:
+                                    sample.append((si, "<extract-failed>", None))
+                            logger.debug("_render_filemode_display: new_items sample=%r", sample)
+                        except Exception as _e:
+                            self.printException(_e, "_render_filemode_display: logging new_items failed")
+
+                        # Try a robust matching strategy: match `_filename` first,
+                        # then fall back to basename of `_raw_text` when available.
+                        import os as _os
+
                         for i, n in enumerate(new_items):
                             try:
-                                if getattr(n, "_filename", None) == desired:
+                                node_fname = getattr(n, "_filename", None)
+                                node_raw = getattr(n, "_raw_text", None)
+                                if node_fname == desired:
                                     desired_index = i
+                                    logger.debug("_render_filemode_display: matched by _filename idx=%d node_raw=%r", i, node_raw)
                                     break
+                                try:
+                                    if node_raw and _os.path.basename(node_raw) == desired:
+                                        desired_index = i
+                                        logger.debug("_render_filemode_display: matched by basename(_raw_text) idx=%d node_raw=%r", i, node_raw)
+                                        break
+                                except Exception as _e:
+                                    self.printException(_e, "_render_filemode_display: basename match failed")
                             except Exception as e:
                                 self.printException(e, "_render_filemode_display: checking for preselection match failed")
                                 continue
@@ -2541,6 +2577,26 @@ class FileModeFileList(FileListBase):
             # handled by `_render_filemode_display`.
 
             try:
+                # If the application started with a non-root `rel_dir`,
+                # prepopulate the highlight stack as if we'd navigated
+                # down into each component so upward navigation can
+                # restore the previously-highlighted child entry.
+                try:
+                    if getattr(self, "_highlight_history", None) is not None:
+                        if not self._highlight_history and getattr(self.app, "rel_dir", ""):
+                            comps = [p for p in (self.app.rel_dir or "").split(os.sep) if p]
+                            # Populate history left-to-right and set position to
+                            # the current (deepest) directory so upward navigation
+                            # can restore the most-recent child.
+                            try:
+                                for c in comps:
+                                    self._highlight_history.append(c)
+                                self._highlight_pos = len(self._highlight_history) - 1 if self._highlight_history else -1
+                            except Exception as _e:
+                                self.printException(_e, "prepFileModeFileList: prepopulate _highlight_history failed")
+                except Exception as _e:
+                    self.printException(_e, "prepFileModeFileList: prepopulate _highlight_history failed")
+
                 self._collect_filemode_nodes(self.app.rel_dir, self.app.rel_file)
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: collecting file nodes failed")
@@ -2565,8 +2621,11 @@ class FileModeFileList(FileListBase):
         # Storage for the last-collected nodes_by_dir mapping so rendering
         # and navigation helpers may access it without needing a local copy.
         self._nodes_by_dir: dict = {}
-        # Ensure highlight stack exists so callers need not check hasattr.
-        self._highlight_stack: list[str] = []
+        # Ensure highlight history exists so callers need not check hasattr.
+        self._highlight_history: list[str] = []
+        self._highlight_pos: int = -1
+        # Map from repo-relative directory -> last-selected child filename
+        self._last_child_by_dir: dict[str, str] = {}
 
     def _activate_or_open(
         self,
@@ -2604,30 +2663,57 @@ class FileModeFileList(FileListBase):
             if is_dir:
                 try:
                     if enter_dir_test_fn(name):
-                        # Maintain a highlight stack so when we return to a
+                        # Maintain a highlight history so when we return to a
                         # parent directory we can re-highlight the child we
-                        # just came from. For downward navigation push the
-                        # dirname; for upward navigation (parent '..') pop
-                        # the last child and use it as the preselection.
+                        # just came from. For downward navigation append the
+                        # dirname; for upward navigation (parent '..') move
+                        # left in the history and restore the child as
+                        # preselection.
                         try:
+                            # Ensure history structures exist
+                            if getattr(self, "_highlight_history", None) is None:
+                                self._highlight_history = []
+                                self._highlight_pos = -1
+
                             if name == "..":
-                                # Moving up: try to restore the child we came from
-                                try:
-                                    last_child = None
-                                    if self._highlight_stack:
-                                        last_child = self._highlight_stack.pop()
-                                        self._preselected_filename = last_child
-                                except Exception as _e:
-                                    self.printException(_e, "_activate_or_open: popping _highlight_stack failed")
+                                # Moving up: restore the child at the current
+                                # history position and move the position left.
+                                if 0 <= self._highlight_pos < len(self._highlight_history):
+                                    child = self._highlight_history[self._highlight_pos]
+                                    self._preselected_filename = child
+                                    self._highlight_pos = max(self._highlight_pos - 1, -1)
+                                elif self._highlight_history:
+                                    # Fallback: pop last entry
+                                    child = self._highlight_history.pop()
+                                    self._preselected_filename = child
+                                    self._highlight_pos = len(self._highlight_history) - 1
                             else:
-                                # Moving down: record the directory name so
-                                # its entry can be re-highlighted when coming back.
+                                # Moving down: if this name matches the next
+                                # forward history entry, advance the position
+                                # so right-navigation restores the previous
+                                # child highlight. Otherwise truncate any
+                                # forward history and append the new directory.
                                 try:
-                                    self._highlight_stack.append(name)
+                                    next_pos = self._highlight_pos + 1
+                                    if next_pos < len(self._highlight_history) and self._highlight_history[next_pos] == name:
+                                        # Advance position along existing history
+                                        self._highlight_pos = next_pos
+                                        # Preselect the child (one step forward) if present
+                                        child_pos = self._highlight_pos + 1
+                                        if child_pos < len(self._highlight_history):
+                                            self._preselected_filename = self._highlight_history[child_pos]
+                                        else:
+                                            self._preselected_filename = None
+                                    else:
+                                        if self._highlight_pos < len(self._highlight_history) - 1:
+                                            del self._highlight_history[self._highlight_pos + 1 :]
+                                        self._highlight_history.append(name)
+                                        self._highlight_pos = len(self._highlight_history) - 1
+                                        self._preselected_filename = None
                                 except Exception as _e:
-                                    self.printException(_e, "_activate_or_open: pushing to _highlight_stack failed")
+                                    self.printException(_e, "_activate_or_open: pushing to _highlight_history failed")
                         except Exception as _e:
-                            self.printException(_e, "_activate_or_open: highlight stack update failed")
+                            self.printException(_e, "_activate_or_open: highlight history update failed")
 
                         # Compute and set new repository-relative directory
                         try:
@@ -2639,18 +2725,46 @@ class FileModeFileList(FileListBase):
                         except Exception as _e:
                             self.printException(_e, "_activate_or_open: computing new rel_dir failed")
 
+                        # Prefer restoring a previously-recorded child for
+                        # this directory if available. Keys in
+                        # `_last_child_by_dir` are normalized repo-relative
+                        # paths (see `key_left`), so normalize here too.
+                        try:
+                            try:
+                                norm_new_rel = os.path.normpath(new_rel)
+                            except Exception as e:
+                                self.printException(e, "_activate_or_open: normalizing new_rel failed")
+                                norm_new_rel = new_rel
+                            last_child = None
+                            if getattr(self, "_last_child_by_dir", None) is not None:
+                                last_child = self._last_child_by_dir.get(norm_new_rel)
+                            logger.debug("_activate_or_open: new_rel=%r last_child=%r history=%r pos=%r", norm_new_rel, last_child, getattr(self, "_highlight_history", None), getattr(self, "_highlight_pos", None))
+                            if last_child:
+                                self._preselected_filename = last_child
+                        except Exception as e:
+                            self.printException(e, "_activate_or_open: restoring last child preselection failed")
+
                         try:
                             self.prepFileModeFileList()
                         except Exception as e:
                             self.printException(e, "_activate_or_open: prepFileModeFileList failed")
+                        return
                 except Exception as e:
                     self.printException(e, "_activate_or_open: enter_dir_test_fn failed")
-                return
 
             try:
                 # Default behavior: prepare the right-hand file-history widget
                 # (the app composes a FileModeHistoryList on the right) and
                 # invoke its preparer so the UI shows the file's history.
+                # Record this selection as the last child for the current dir
+                try:
+                    cur_rel = self.app.rel_dir or ""
+                    sel_name = getattr(item, "_filename", None) or getattr(item, "_raw_text", None)
+                    if sel_name:
+                        self._last_child_by_dir[cur_rel] = sel_name
+                except Exception as _e:
+                    self.printException(_e, "_activate_or_open: recording last child failed")
+
                 self.app.file_mode_history_list.prepFileModeHistoryList(raw)
             except Exception as e:
                 self.printException(e, "_activate_or_open: prepFileModeHistoryList failed")
@@ -2675,9 +2789,9 @@ class FileModeFileList(FileListBase):
         # highlight deterministic even if the watcher path races.
         old_idx = getattr(self, "index", None)
         # If we're not currently positioned on the parent entry ('..'),
-        # but the parent entry exists in the freshly-rendered list, move
-        # the selection to it first so `_activate_or_open` will reliably
-        # recognize the intent to navigate up the tree.
+        # record the current child selection for this directory so we can
+        # restore it when re-entering. Then move the selection to the
+        # parent entry if present so `_activate_or_open` will navigate up.
         try:
             nodes = self.nodes()
             idx = getattr(self, "index", None)
@@ -2685,6 +2799,20 @@ class FileModeFileList(FileListBase):
             if idx is not None and 0 <= idx < len(nodes):
                 cur_name = getattr(nodes[idx], "_filename", None) or getattr(nodes[idx], "_raw_text", None)
             if cur_name != "..":
+                try:
+                    # Record the currently-selected child for the current
+                    # directory so re-entering that directory can restore
+                    # the same child highlight.
+                    cur_rel = self.app.rel_dir or ""
+                    try:
+                        cur_rel = os.path.normpath(cur_rel)
+                    except Exception as e:
+                        self.printException(e, "FileModeFileList.key_left: normalizing path failed")
+                    if cur_name:
+                        self._last_child_by_dir[cur_rel] = cur_name
+                        logger.debug("FileModeFileList.key_left: recorded last_child_by_dir[%r]=%r", cur_rel, cur_name)
+                except Exception as _e:
+                    self.printException(_e, "FileModeFileList.key_left: recording last child failed")
                 for i, n in enumerate(nodes):
                     try:
                         if getattr(n, "_filename", None) == "..":
@@ -2731,7 +2859,11 @@ class FileModeFileList(FileListBase):
                 if is_dir and name != "..":
                     logger.debug("FileModeFileList.key_right: pre-setting _suppress_watch True (idx=%r name=%r)", idx, name)
                     self._suppress_watch = True
-                    self._preselected_filename = ".."
+                    # Do not force preselection of the parent ('..') here;
+                    # allow `_activate_or_open` to set `self._preselected_filename`
+                    # based on the highlight history so the child highlight
+                    # is preserved when navigating right.
+                    self._preselected_filename = None
         except Exception as _e:
             self.printException(_e, "FileModeFileList.key_right: pre-suppress failed")
 
