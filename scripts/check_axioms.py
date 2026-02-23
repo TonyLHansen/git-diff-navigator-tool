@@ -1241,34 +1241,64 @@ def check_repeated_defs(path: Path, text: str, tree: ast.AST) -> List[Tuple[str,
     Reports each repeated definition (beyond the first) with its line number.
     """
     errs: List[Tuple[str, int, str]] = []
-    try:
-        # Module-level functions
-        seen_funcs: dict[str, int] = {}
-        if getattr(tree, 'body', None):
-            for node in tree.body:
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    name = getattr(node, 'name', None)
-                    lineno = getattr(node, 'lineno', 0)
-                    if name in seen_funcs:
-                        prev = seen_funcs[name]
-                        errs.append((str(path), lineno, f"repeated module-level function '{name}' (previous at line {prev})"))
-                    else:
-                        seen_funcs[name] = lineno
 
-                # Class-level methods: check each ClassDef's direct body
+    def _is_overload_decorator(d: ast.AST) -> bool:
+        try:
+            if isinstance(d, ast.Name):
+                return d.id == "overload"
+            if isinstance(d, ast.Attribute):
+                return getattr(d, "attr", "") == "overload"
+        except Exception as _e:
+            printException(_e, f"inspecting decorator for overload detection in {path}")
+        return False
+
+    try:
+        # Collect defs: key = (class_name_or_None, name) -> list of (lineno, is_overload)
+        defs: Dict[Tuple[Optional[str], str], List[Tuple[int, bool]]] = {}
+
+        if getattr(tree, "body", None):
+            for node in tree.body:
+                # Module-level functions
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    name = node.name
+                    is_ov = any(_is_overload_decorator(d) for d in node.decorator_list or [])
+                    defs.setdefault((None, name), []).append((node.lineno, is_ov))
+                # Classes: collect direct methods only (skip nested classes/functions)
                 elif isinstance(node, ast.ClassDef):
-                    mseen: dict[str, int] = {}
-                    for item in node.body:
-                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                            mname = getattr(item, 'name', None)
-                            mlineno = getattr(item, 'lineno', 0)
-                            if mname in mseen:
-                                prev = mseen[mname]
-                                errs.append((str(path), mlineno, f"repeated method '{node.name}.{mname}' in class '{node.name}' (previous at line {prev})"))
-                            else:
-                                mseen[mname] = mlineno
+                    class_name = node.name
+                    for member in getattr(node, "body", []):
+                        if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            name = member.name
+                            is_ov = any(_is_overload_decorator(d) for d in member.decorator_list or [])
+                            defs.setdefault((class_name, name), []).append((member.lineno, is_ov))
     except Exception as e:
-        printException(e, f"checking repeated defs in {path}")
+        printException(e, f"collecting definitions for repeated-definitions check in {path}")
+        return errs
+
+    # Analyze collected defs
+    for (class_name, name), entries in defs.items():
+        if len(entries) <= 1:
+            continue
+        total = len(entries)
+        non_overloads = [ln for ln, is_ov in entries if not is_ov]
+        overloads = [ln for ln, is_ov in entries if is_ov]
+
+        # Case: only overload signatures, no implementation -> report
+        if len(non_overloads) == 0 and overloads:
+            lineno = overloads[0]
+            target = f"class {class_name}" if class_name else "module"
+            errs.append((str(path), lineno, f"multiple @overload signatures for {target} '{name}' with no implementation"))
+            continue
+
+        # Case: multiple real implementations -> flag extras
+        if len(non_overloads) > 1:
+            # Keep first implementation, report subsequent ones
+            first = sorted(non_overloads)[0]
+            extras = [ln for ln in sorted(non_overloads) if ln != first]
+            for ln in extras:
+                target = f"class {class_name}" if class_name else "module"
+                errs.append((str(path), ln, f"redefined {target} '{name}'; multiple non-@overload definitions"))
+
     return errs
 
 
@@ -2073,9 +2103,11 @@ def main(argv: List[str] | None = None) -> int:
                 "getattr-not-initialized": ("enable_getattr_not_initialized", "check_getattr_not_initialized"),
                 "check-getattr-methods": ("enable_check_getattr_methods", "check_getattr_methods"),
                 "multiline-starts-with-newline": ("enable_multiline_docstring_start", "check_multiline_docstring_start"),
+                "check-repeat": ("enable_check_repeat", "check_repeat"),
+                "check-init-first": ("enable_check_init_first", "check_init_first"),
             }
 
-            single_map = {"print": "print_mode", "none": "none"}
+            single_map = {"print": "print_mode", "none": "none", "verbose": "verbose"}
 
             # Accumulate parser defaults from config
             defaults = {}
