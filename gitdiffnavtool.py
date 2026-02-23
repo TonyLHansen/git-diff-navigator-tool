@@ -2757,10 +2757,41 @@ class FileModeFileList(FileListBase):
                     sel_name = getattr(item, "_filename", None) or getattr(item, "_raw_text", None)
                     if sel_name:
                         self._last_child_by_dir[cur_rel] = sel_name
+
+                    # If this is a file and it's ignored or untracked, do
+                    # not attempt to prepare its history — treated as a no-op
+                    # for Right key.
+                    try:
+                        status = repo_status
+                        if not is_dir and status in ("I", "U", "ignored", "untracked"):
+                            logger.debug("_activate_or_open: skipping history prep for ignored/untracked file status=%r", status)
+                            return
+                    except Exception as _e:
+                        self.printException(_e, "_activate_or_open: checking repo_status failed")
+                    # Ensure `app.rel_dir`/`app.rel_file` reflect the
+                    # currently-selected file so history preparers can
+                    # rely on a single source of truth.
+                    try:
+                        raw_rel = getattr(item, "_raw_text", None) or sel_name or ""
+                        raw_rel = os.path.normpath(raw_rel)
+                        rd, rf = os.path.split(raw_rel)
+                        self.app.rel_dir = rd or ""
+                        self.app.rel_file = rf or ""
+                    except Exception as _e:
+                        self.printException(_e, "_activate_or_open: setting app.rel_dir/rel_file failed")
                 except Exception as _e:
                     self.printException(_e, "_activate_or_open: recording last child failed")
 
-                self.app.file_mode_history_list.prepFileModeHistoryList(raw)
+                # Invoke the file-history preparer using canonical app-level
+                # `rel_dir`/`rel_file` so it can compute the hash list from
+                # the correct file path.
+                try:
+                    file_path = os.path.join(self.app.rel_dir, self.app.rel_file)
+                    file_path = os.path.normpath(file_path)
+                except Exception as _e:
+                    self.printException(_e, "_activate_or_open: normalizing file_path failed")
+                    file_path = raw
+                self.app.file_mode_history_list.prepFileModeHistoryList(file_path)
             except Exception as e:
                 self.printException(e, "_activate_or_open: prepFileModeHistoryList failed")
 
@@ -3566,94 +3597,41 @@ class FileModeHistoryList(HistoryListBase):
         try:
             logger.debug("prepFileModeHistoryList: path=%r prev_hash=%r curr_hash=%r", path, prev_hash, curr_hash)
             self.clear()
-            # If repository available, collect pseudo-entries (MODS/STAGED)
-            # and commit history via backend helpers.
+
+            # Determine the repo-relative path to the file from the app-level
+            # rel_dir/rel_file pair. This is the canonical input to the
+            # GitRepo helper used to obtain a normalized list of hashes.
             try:
-                repo_root = self.app.gitRepo.get_repo_root()
-            except Exception as e:
-                self.printException(e, "prepFileModeHistoryList: getting repo_root failed")
-                repo_root = None
+                rel_dir = self.app.rel_dir or ""
+                rel_file = self.app.rel_file or ""
+                rel_path = os.path.normpath(os.path.join(rel_dir, rel_file))
+            except Exception as _e:
+                self.printException(_e, "prepFileModeHistoryList: computing rel_path failed")
+                rel_path = path or ""
+
+            # Ask GitRepo for the normalized list of hashes touching this file.
             try:
-                # Path inputs are repo-relative; normalize for helpers
-                rel_path = os.path.normpath(path)
-            except Exception as e:
-                self.printException(e, "prepFileModeHistoryList: computing rel_path failed")
-                rel_path = path
+                entries = self.app.gitRepo.getNormalizedHashListFromFileName(rel_path) or []
+            except Exception as _e:
+                self.printException(_e, "prepFileModeHistoryList: gitRepo.getNormalizedHashListFromFileName failed")
+                entries = []
 
-            pseudo_entries: list[tuple[str, str]] = []
-            entries: list[tuple[str, str, str]] = []
-            if repo_root:
-
-                pseudo_entries, entries = self._prepFileModeHistoryList_for_git(repo_root, rel_path)
-
-                # render pseudo entries first
-                try:
-                    # Attach timestamps for MODS/STAGED using centralized helper
+            # Render returned entries. Expect tuples like (iso, hash, subject).
+            try:
+                for ts_iso, h, subject in entries:
                     try:
-                        if repo_root and pseudo_entries:
-                            full_path = os.path.join(repo_root or "", path)
-                            mods_ts, staged_ts = self._compute_pseudo_timestamps(
-                                repo_root, mods=[], single_path=full_path
-                            )
-
-                            # rewrite pseudo_entries in-place with date prefixes when appropriate
-                            new_pseudo: list[tuple[str, str]] = []
-                            for status, desc in pseudo_entries:
-                                try:
-                                    if status == "MODS":
-                                        date_part = mods_ts or ""
-                                        status_short = "MODS"
-                                        raw = desc or "(modified, unstaged)"
-                                        # Avoid duplicating the status word if desc already contains it
-                                        if raw.upper().startswith(status):
-                                            msg = raw[len(status) :].strip()
-                                        else:
-                                            msg = raw
-                                        display = f"{date_part} {status_short[:HASH_LENGTH]} {msg}".strip()
-                                        new_pseudo.append((status, display))
-                                    elif status == "STAGED":
-                                        date_part = staged_ts or ""
-                                        status_short = "STAGED"
-                                        raw = desc or "(staged, uncommitted)"
-                                        if raw.upper().startswith(status):
-                                            msg = raw[len(status) :].strip()
-                                        else:
-                                            msg = raw
-                                        display = f"{date_part} {status_short[:HASH_LENGTH]} {msg}".strip()
-                                        new_pseudo.append((status, display))
-                                    else:
-                                        new_pseudo.append((status, desc))
-                                except Exception as _ex:
-                                    self.printException(_ex, "prepFileModeHistoryList rewriting pseudo entry failed")
-                            pseudo_entries = new_pseudo
-                    except Exception as _ex:
-                        self.printException(_ex, "prepFileModeHistoryList preparing pseudo timestamps failed")
-
-                    for status, desc in pseudo_entries:
-                        try:
-                            self._add_row(desc, status)
-                        except Exception as e:
-                            self.printException(e, "prepFileModeHistoryList adding pseudo-row failed")
-                except Exception as e:
-                    self.printException(e, "prepFileModeHistoryList rendering pseudo entries failed")
-
-                # then render real commit entries
-                try:
-                    for ts, h, msg in entries:
-                        try:
-                            # Use centralized formatter for commit rows
-                            text = self._format_commit_row(ts, h, msg)
-                            self._add_row(text, h)
-                        except Exception as e:
-                            self.printException(e, "prepFileModeHistoryList parse failed")
-                except Exception as e:
-                    self.printException(e, "prepFileModeHistoryList rendering commits failed")
+                        text = self._format_commit_row(ts_iso, h, subject)
+                        self._add_row(text, h)
+                    except Exception as _e:
+                        self.printException(_e, "prepFileModeHistoryList: rendering entry failed")
+            except Exception as _e:
+                self.printException(_e, "prepFileModeHistoryList: iterating entries failed")
 
             self._populated = True
             try:
-                self._finalize_historylist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=path)
-            except Exception as e:
-                self.printException(e, "prepFileModeHistoryList: finalize failed")
+                self._finalize_historylist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=rel_path)
+            except Exception as _e:
+                self.printException(_e, "prepFileModeHistoryList: finalize failed")
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
 
