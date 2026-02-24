@@ -1139,7 +1139,42 @@ class AppBase(AppException, ListView):
                     self._page_scroll = True
                 except Exception as e:
                     self.printException(e, "key_page_down: setting _page_scroll failed")
-                self._activate_index(new_index)
+
+                # Immediate visual toggle: deactivate old node and activate
+                # the new node before scheduling the authoritative update.
+                try:
+                    nodes_local = self.nodes()
+                    old_node = nodes_local[current_index] if 0 <= current_index < len(nodes_local) else None
+                    new_node = nodes_local[new_index] if 0 <= new_index < len(nodes_local) else None
+                    if old_node:
+                        try:
+                            old_node.set_class(False, "active")
+                            old_node.refresh()
+                        except Exception as e:
+                            self.printException(e, "key_page_down: clearing old_node active failed")
+                    if new_node:
+                        try:
+                            new_node.set_class(True, "active")
+                            new_node.refresh()
+                        except Exception as e:
+                            self.printException(e, "key_page_down: setting new_node active failed")
+                    try:
+                        self.index = new_index
+                    except Exception as e:
+                        self.printException(e, "key_page_down: setting index failed")
+                    if hasattr(self, "_ensure_index_visible"):
+                        try:
+                            self._ensure_index_visible()
+                        except Exception as e:
+                            self.printException(e, "key_page_down: ensure index visible failed")
+                except Exception as e:
+                    self.printException(e, "key_page_down: immediate toggle failed")
+
+                # Authoritative activation to keep internal state consistent.
+                try:
+                    self._activate_index(new_index)
+                except Exception as e:
+                    self.printException(e, "key_page_down: activate failed")
             except Exception as e:
                 self.printException(e, "key_page_down: activate failed")
         except Exception as e:
@@ -1191,8 +1226,42 @@ class AppBase(AppException, ListView):
                 try:
                     self._page_scroll = True
                 except Exception as e:
-                    self.printException(e)
-                self._activate_index(new_index)
+                    self.printException(e, "key_page_up: setting _page_scroll failed")
+
+                # Immediate visual toggle for page-up: deactivate old and
+                # activate new node to avoid accent fallback during paging.
+                try:
+                    nodes_local = self.nodes()
+                    old_node = nodes_local[current_index] if 0 <= current_index < len(nodes_local) else None
+                    new_node = nodes_local[new_index] if 0 <= new_index < len(nodes_local) else None
+                    if old_node:
+                        try:
+                            old_node.set_class(False, "active")
+                            old_node.refresh()
+                        except Exception as e:
+                            self.printException(e, "key_page_up: clearing old_node active failed")
+                    if new_node:
+                        try:
+                            new_node.set_class(True, "active")
+                            new_node.refresh()
+                        except Exception as e:
+                            self.printException(e, "key_page_up: setting new_node active failed")
+                    try:
+                        self.index = new_index
+                    except Exception as e:
+                        self.printException(e, "key_page_up: setting index failed")
+                    if hasattr(self, "_ensure_index_visible"):
+                        try:
+                            self._ensure_index_visible()
+                        except Exception as e:
+                            self.printException(e, "key_page_up: ensure index visible failed")
+                except Exception as e:
+                    self.printException(e, "key_page_up: immediate toggle failed")
+
+                try:
+                    self._activate_index(new_index)
+                except Exception as e:
+                    self.printException(e, "key_page_up: activate failed")
             except Exception as e:
                 self.printException(e, "key_page_up: activate failed")
         except Exception as e:
@@ -3056,7 +3125,15 @@ class RepoModeFileList(FileListBase):
                 curr_hash,
                 highlight_filename,
             )
-            self.clear()
+            # Defensive: clear any stray active classes left by virtualization
+            try:
+                self._clear_active_classes()
+            except Exception as e:
+                self.printException(e, "prepRepoModeFileList: clearing active classes failed")
+            try:
+                self.clear()
+            except Exception as e:
+                self.printException(e, "prepFileModeHistoryList: clear failed")
             # Insert a hash header and the unselectable key legend header at the top
             try:
                 self._render_hash_header(prev_hash, curr_hash)
@@ -3344,6 +3421,26 @@ class HistoryListBase(AppBase):
         self.highlight_bg_style = HIGHLIGHT_REPOLIST_BG
         # Mark as history list for flag-based checks in AppBase.watch_index
         self.is_history_list = 1
+
+    def _clear_active_classes(self) -> None:
+        """
+        Defensive helper: clear any stray `active` class on visible nodes.
+
+        Called by preparers before repopulating so a leftover active class
+        cannot persist across virtualized mounts or rapid page navigation.
+        """
+        try:
+            for n in self.nodes() or []:
+                try:
+                    n.set_class(False, "active")
+                except Exception as e:
+                    self.printException(e, "HistoryListBase._clear_active_classes: set_class failed")
+                    try:
+                        n.remove_class("active")
+                    except Exception as e2:
+                        self.printException(e2, "HistoryListBase._clear_active_classes: remove_class failed")
+        except Exception as e:
+            self.printException(e, "HistoryListBase._clear_active_classes failed")
 
     def _add_row(self, text: str, commit_hash: str | None, mark_active: bool = False) -> None:
         """
@@ -3907,7 +4004,12 @@ class RepoModeHistoryList(HistoryListBase):
                 curr_hash,
             )
 
-            # Clear any existing rows before populating.
+            # Clear any stray active classes (defensive) and existing rows
+            try:
+                self._clear_active_classes()
+            except Exception as e:
+                self.printException(e, "prepRepoModeHistoryList: clearing active classes failed")
+
             try:
                 self.clear()
             except Exception as e:
