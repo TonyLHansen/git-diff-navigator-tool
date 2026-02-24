@@ -296,15 +296,14 @@ class AppBase(AppException, ListView):
                 "widget_name": getattr(self, "name", None),
                 "index": getattr(self, "index", None),
             }
-            if hasattr(self, "app") and self.app is not None:
-                header.update(
-                    {
-                        "app_focus": self.app._current_focus,
-                        "app_layout": self.app._current_layout,
-                        "rel_dir": self.app.rel_dir,
-                        "rel_file": self.app.rel_file,
-                    }
-                )
+            header.update(
+                {
+                    "app_focus": self.app._current_focus,
+                    "app_layout": self.app._current_layout,
+                    "rel_dir": self.app.rel_dir,
+                    "rel_file": self.app.rel_file,
+                }
+            )
         except Exception as _e:
             self.printException(_e)
             header = {"widget_class": type(self).__name__}
@@ -3282,14 +3281,25 @@ class RepoModeFileList(FileListBase):
 
             try:
                 # When opening from the repo-file list, we want DiffList.key_left
-                # to return to the repo file list view.
-                self.app.diff_list.prepDiffList(
-                    filename,
-                    self.app.previous_hash,
-                    self.app.current_hash,
-                    variant_index,
-                    ("history_file", RIGHT_FILE_LIST_ID, RIGHT_FILE_FOOTER),
-                )
+                # to return to the repo file list view. If there is no previous
+                # hash (e.g. selecting the bottom-most/top-most row) use the
+                # canonical NEWREPO sentinel from the app's gitRepo.
+                if self.app.previous_hash is not None:
+                    prev = self.app.previous_hash
+                else:
+                    prev = self.app.gitRepo.NEWREPO
+
+                diff_list = self.app.diff_list
+                curr = self.app.current_hash
+
+                if diff_list is not None:
+                    diff_list.prepDiffList(
+                        filename,
+                        prev,
+                        curr,
+                        variant_index,
+                        ("history_file", RIGHT_FILE_LIST_ID, RIGHT_FILE_FOOTER),
+                    )
             except Exception as e:
                 self.printException(e, "RepoModeFileList.key_right: prepDiffList failed")
 
@@ -3336,7 +3346,8 @@ class HistoryListBase(AppBase):
         self.is_history_list = 1
 
     def _add_row(self, text: str, commit_hash: str | None, mark_active: bool = False) -> None:
-        """Append a commit-row with `text` and attach `commit_hash` metadata.
+        """
+        Append a commit-row with `text` and attach `commit_hash` metadata.
 
         If `mark_active` is True the newly-appended row is immediately
         marked with the `active` class and the widget `index` updated so
@@ -3830,10 +3841,12 @@ class FileModeHistoryList(HistoryListBase):
             # Ask the diff list to prepare the diff for this file and pair
             try:
                 # When opening from a file's history, ensure left returns to
-                # the file-history view on the right history column.
+                # the file-history view on the right history column. Use the
+                # repository's canonical NEWREPO sentinel when available.
+                p = prev_hash if prev_hash is not None else self.app.gitRepo.NEWREPO
                 self.app.diff_list.prepDiffList(
                     filename,
-                    prev_hash,
+                    p,
                     curr_hash,
                     0,
                     ("file_history", RIGHT_HISTORY_LIST_ID, RIGHT_HISTORY_FOOTER),
@@ -4027,9 +4040,8 @@ class DiffList(AppBase):
                 gitrepo = self.app.gitRepo
                 variant_arg = None
                 try:
-                    app = self.app
-                    if app and hasattr(app, "diff_variants") and 0 <= variant_index < len(app.diff_variants):
-                        variant_arg = app.diff_variants[variant_index]
+                    if 0 <= variant_index < len(self.app.diff_variants):
+                        variant_arg = self.app.diff_variants[variant_index]
                 except Exception as _ex:
                     self.printException(_ex, "prepDiffList: retrieving app.diff_variants failed")
                     variant_arg = None
@@ -4048,9 +4060,8 @@ class DiffList(AppBase):
                 try:
                     variant_arg = None
                     try:
-                        app = self.app
-                        if app and hasattr(app, "diff_variants") and 0 <= variant_index < len(app.diff_variants):
-                            variant_arg = app.diff_variants[variant_index]
+                        if 0 <= variant_index < len(self.app.diff_variants):
+                            variant_arg = self.app.diff_variants[variant_index]
                     except Exception as e:
                         self.printException(e, "prepDiffList: retrieving app.diff_variants failed")
                         variant_arg = None
@@ -4209,10 +4220,17 @@ class DiffList(AppBase):
                 except Exception as e:
                     self.printException(e, "DiffList.key_d: computing filename failed")
                     filename = ""
+                if self.app.previous_hash is not None:
+                    prev = self.app.previous_hash
+                else:
+                    prev = self.app.gitRepo.NEWREPO
+
+                curr = self.app.current_hash
+
                 self.prepDiffList(
                     filename,
-                    self.app.previous_hash,
-                    self.app.current_hash,
+                    prev,
+                    curr,
                     new_variant,
                     self.go_back,
                 )
