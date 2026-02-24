@@ -3287,7 +3287,7 @@ class RepoModeFileList(FileListBase):
                 if self.app.previous_hash is not None:
                     prev = self.app.previous_hash
                 else:
-                    prev = self.app.gitRepo.NEWREPO
+                    prev = GitRepo.NEWREPO
 
                 diff_list = self.app.diff_list
                 curr = self.app.current_hash
@@ -3843,7 +3843,7 @@ class FileModeHistoryList(HistoryListBase):
                 # When opening from a file's history, ensure left returns to
                 # the file-history view on the right history column. Use the
                 # repository's canonical NEWREPO sentinel when available.
-                p = prev_hash if prev_hash is not None else self.app.gitRepo.NEWREPO
+                p = prev_hash if prev_hash is not None else GitRepo.NEWREPO
                 self.app.diff_list.prepDiffList(
                     filename,
                     p,
@@ -3906,7 +3906,12 @@ class RepoModeHistoryList(HistoryListBase):
                 prev_hash,
                 curr_hash,
             )
-            self.clear()
+
+            # Clear any existing rows before populating.
+            try:
+                self.clear()
+            except Exception as e:
+                self.printException(e, "prepRepoModeHistoryList: clear failed")
 
             # Use GitRepo to obtain a normalized list of hashes (including
             # pseudo-entries like MODS/STAGED). GitRepo centralizes git CLI
@@ -3919,10 +3924,14 @@ class RepoModeHistoryList(HistoryListBase):
 
             try:
                 # Entries are tuples (iso, hash, subject). Render each as a row.
+                first = True
                 for ts_iso, h, subject in entries:
                     try:
                         text = f"{ts_iso} {h[:HASH_LENGTH]} {subject or ''}".strip()
-                        self._add_row(text, h)
+                        # Mark the first appended row active so the top line is
+                        # highlighted immediately and doesn't rely on post-refresh scheduling.
+                        self._add_row(text, h, mark_active=first)
+                        first = False
                     except Exception as e:
                         self.printException(e, "prepRepoModeHistoryList: adding commit row failed")
                         continue
@@ -4223,7 +4232,7 @@ class DiffList(AppBase):
                 if self.app.previous_hash is not None:
                     prev = self.app.previous_hash
                 else:
-                    prev = self.app.gitRepo.NEWREPO
+                    prev = GitRepo.NEWREPO
 
                 curr = self.app.current_hash
 
