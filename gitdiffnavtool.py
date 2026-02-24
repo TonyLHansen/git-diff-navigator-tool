@@ -67,7 +67,8 @@ MARKERS = {
 }
 
 # Inline CSS used by the Textual App (can be edited in-place)
-INLINE_CSS = """
+INLINE_CSS = (
+    """
 /* gitdiffnavtool inline CSS */
 
 /* Title labels */
@@ -88,9 +89,30 @@ ListView {
     padding: 0 1;
 }
 
-/* Highlight active list item - use the configured filelist highlight color */
-ListItem.active {
-    background: #f1c40f;
+/* Highlight active list item per widget so colors are deterministic. */
+/* File lists */
+#left-file-list ListItem.active,
+#right-file-list ListItem.active {
+    background: [[HIGHLIGHT_FILELIST_BG]];
+    color: white;
+}
+
+/* History (repo) lists */
+#left-history-list ListItem.active,
+#right-history-list ListItem.active {
+    background: [[HIGHLIGHT_REPOLIST_BG]];
+    color: white;
+}
+
+/* Diff list */
+#diff-list ListItem.active {
+    background: [[HIGHLIGHT_DIFF_BG]];
+    color: white;
+}
+
+/* Help list */
+#help-list ListItem.active {
+    background: [[HIGHLIGHT_HELP_BG]];
     color: white;
 }
 
@@ -114,7 +136,11 @@ ListItem.active {
     padding-top: 1;
 }
 
-"""
+""".replace("[[HIGHLIGHT_FILELIST_BG]]", HIGHLIGHT_FILELIST_BG)
+    .replace("[[HIGHLIGHT_REPOLIST_BG]]", HIGHLIGHT_REPOLIST_BG)
+    .replace("[[HIGHLIGHT_DIFF_BG]]", HIGHLIGHT_DIFF_BG)
+    .replace("[[HIGHLIGHT_HELP_BG]]", HIGHLIGHT_HELP_BG)
+)
 
 
 # Canonical widget and label IDs (six canonical widgets)
@@ -3309,8 +3335,13 @@ class HistoryListBase(AppBase):
         # Mark as history list for flag-based checks in AppBase.watch_index
         self.is_history_list = 1
 
-    def _add_row(self, text: str, commit_hash: str | None) -> None:
-        """Append a commit-row with `text` and attach `commit_hash` metadata."""
+    def _add_row(self, text: str, commit_hash: str | None, mark_active: bool = False) -> None:
+        """Append a commit-row with `text` and attach `commit_hash` metadata.
+
+        If `mark_active` is True the newly-appended row is immediately
+        marked with the `active` class and the widget `index` updated so
+        it appears highlighted without waiting for post-refresh scheduling.
+        """
         try:
             # Visible rows are prefixed with two spaces for alignment; keep
             # `_raw_text` as the original value for metadata and matching.
@@ -3321,6 +3352,33 @@ class HistoryListBase(AppBase):
             setattr(item, "_raw_text", text)
             try:
                 self.append(item)
+                # If requested, mark this newly-appended item active so the
+                # highlight is visible immediately (avoids accent fallback).
+                if mark_active:
+                    try:
+                        item.set_class(True, "active")
+                    except Exception as e:
+                        self.printException(e, "HistoryListBase._add_row setting active class failed")
+                        try:
+                            item.add_class("active")
+                        except Exception as e:
+                            self.printException(e, "HistoryListBase._add_row adding active class failed")
+                    try:
+                        # Update the widget index to point at the newly
+                        # appended row so other logic observes the selection.
+                        nodes = self.nodes()
+                        new_idx = len(nodes) - 1 if nodes else None
+                        if new_idx is not None:
+                            try:
+                                self.index = new_idx
+                            except Exception as e:
+                                self.printException(e, "HistoryListBase._add_row setting index failed")
+                                try:
+                                    setattr(self, "index", new_idx)
+                                except Exception as e:
+                                    self.printException(e, "HistoryListBase._add_row setattr index failed")
+                    except Exception as e:
+                        self.printException(e, "HistoryListBase._add_row updating index failed")
             except Exception as e:
                 self.printException(e, "HistoryListBase._add_row append failed")
         except Exception as e:
@@ -3713,10 +3771,14 @@ class FileModeHistoryList(HistoryListBase):
 
             # Render returned entries. Expect tuples like (iso, hash, subject).
             try:
+                first = True
                 for ts_iso, h, subject in entries:
                     try:
                         text = self._format_commit_row(ts_iso, h, subject)
-                        self._add_row(text, h)
+                        # Mark the first appended history row active immediately
+                        # so the highlight is present without waiting for refresh.
+                        self._add_row(text, h, mark_active=first)
+                        first = False
                     except Exception as _e:
                         self.printException(_e, "prepFileModeHistoryList: rendering entry failed")
             except Exception as _e:
