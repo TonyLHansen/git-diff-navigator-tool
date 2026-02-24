@@ -3168,89 +3168,81 @@ class RepoModeFileList(FileListBase):
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList header setup failed")
 
-            # If caller passed pseudo-hashes (MODS/STAGED) treat them
-            # specially rather than passing them through to `git diff`.
-            # Collect file lists for the pseudo refs and render them.
-            pseudo_names = ("MODS", "STAGED")
-            pseudo_entries = []
+            # Use GitRepo as the single authority for file lists between
+            # normalized tokens. `getFileListBetweenNormalizedHashes` will
+            # handle pseudo-hashes like NEWREPO/STAGED/MODS and commit hashes.
             try:
-                # Collect pseudo-entries (working-tree/index) using the git CLI
-                if prev_hash in pseudo_names:
-                    pseudo_entries.extend(self._prepRepoModePseudo_from_git(prev_hash))
-                if curr_hash in pseudo_names:
-                    pseudo_entries.extend(self._prepRepoModePseudo_from_git(curr_hash))
-                # If both prev and curr were pseudo names their collected
-                # entries may overlap (a file can be both STAGED and MODS).
-                # Prefer entries from `curr_hash` when duplicates appear by
-                # removing earlier duplicates and keeping the last occurrence.
                 try:
-                    seen = set()
-                    dedup = []
-                    for status, path in reversed(pseudo_entries):
-                        if path in seen:
-                            continue
-                        seen.add(path)
-                        dedup.append((status, path))
-                    dedup.reverse()
-                    pseudo_entries = dedup
+                    repo = self.app.gitRepo
                 except Exception as e:
-                    self.printException(e, "prepRepoModeFileList deduplicating pseudo_entries failed")
+                    self.printException(e, "prepRepoModeFileList: retrieving gitRepo failed")
+                    repo = None
 
-                logger.debug(
-                    "prepRepoModeFileList: prev_hash=%r curr_hash=%r pseudo_entries=%r",
-                    prev_hash,
-                    curr_hash,
-                    pseudo_entries,
-                )
-            except Exception as e:
-                self.printException(e, "prepRepoModeFileList collecting pseudo entries failed")
+                # Map possible None tokens to canonical pseudo-hashes so the
+                # GitRepo helper never receives None (it requires explicit tokens).
+                use_prev = prev_hash if prev_hash is not None else GitRepo.NEWREPO
+                use_curr = curr_hash if curr_hash is not None else GitRepo.MODS
 
-            if pseudo_entries:
-                # Render collected pseudo entries and skip the git-diff-with-refs path
-                try:
-                    self._format_pseudo_summary(pseudo_entries)
-                except Exception as e:
-                    self.printException(e, "prepRepoModeFileList rendering pseudo entries failed")
-            else:
-                # Delegate diff collection to helpers; each helper returns
-                # a list of dicts with keys: display, full, is_dir.
-                try:
-                    entries = self._prepRepoModeFileList_from_git(prev_hash, curr_hash)
-
-                    # Normalize entries and delegate row creation to shared helper
+                entries: list[tuple[str, str]] = []
+                if repo is not None:
                     try:
-                        file_infos: list[dict] = []
-                        for entry in entries:
-                            try:
-                                if isinstance(entry, dict):
-                                    display = entry.get("display")
-                                    full = entry.get("full", display)
-                                    is_dir = entry.get("is_dir", False)
-                                else:
-                                    display = str(entry)
-                                    full = display
-                                    is_dir = False
-                                name = os.path.basename(full) if full else display
-                                try:
-                                    repo_root_local = self.app.gitRepo.get_repo_root()
-                                    raw_val = self._canonical_relpath(full, repo_root_local) if full else name
-                                except Exception as e:
-                                    self.printException(e, "prepRepoModeFileList: canonicalizing entry failed")
-                                    raw_val = name
-                                file_infos.append(
-                                    {"name": name, "full": full, "is_dir": is_dir, "raw": raw_val, "repo_status": None}
-                                )
-                            except Exception as _ex:
-                                self.printException(_ex, "prepRepoModeFileList: normalizing entry failed")
-                                continue
-                        try:
-                            self._populate_from_file_infos(file_infos)
-                        except Exception as _ex:
-                            self.printException(_ex, "prepRepoModeFileList: populating entries failed")
+                        entries = repo.getFileListBetweenNormalizedHashes(use_prev, use_curr) or []
                     except Exception as e:
-                        self.printException(e, "prepRepoModeFileList processing entries failed")
+                        self.printException(e, "prepRepoModeFileList git diff failed")
+                        entries = []
+                else:
+                    # No repo available -> nothing to show
+                    entries = []
+
+                # Normalize entries and delegate row creation to shared helper
+                try:
+                    file_infos: list[dict] = []
+                    try:
+                        repo_root_local = self.app.gitRepo.get_repo_root() if hasattr(self.app, "gitRepo") else None
+                    except Exception as e:
+                        self.printException(e, "prepRepoModeFileList: getting repo_root failed")
+                        repo_root_local = None
+
+                    for ent in entries:
+                        try:
+                            # Expect (path, status) tuples from GitRepo
+                            if isinstance(ent, (list, tuple)) and len(ent) >= 1:
+                                full = ent[0]
+                                status = ent[1] if len(ent) > 1 else None
+                                display = os.path.basename(full) if full else ""
+                                is_dir = False
+                            else:
+                                full = str(ent)
+                                status = None
+                                display = os.path.basename(full) if full else ""
+                                is_dir = False
+
+                            name = display
+                            try:
+                                raw_val = self._canonical_relpath(full, repo_root_local) if full and repo_root_local else (full or name)
+                            except Exception as e:
+                                self.printException(e, "prepRepoModeFileList: canonicalizing entry failed")
+                                raw_val = full or name
+
+                            file_infos.append({
+                                "name": name,
+                                "full": full,
+                                "is_dir": is_dir,
+                                "raw": raw_val,
+                                "repo_status": status,
+                            })
+                        except Exception as _ex:
+                            self.printException(_ex, "prepRepoModeFileList: normalizing entry failed")
+                            continue
+
+                    try:
+                        self._populate_from_file_infos(file_infos)
+                    except Exception as _ex:
+                        self.printException(_ex, "prepRepoModeFileList: populating entries failed")
                 except Exception as e:
-                    self.printException(e, "prepRepoModeFileList git diff failed")
+                    self.printException(e, "prepRepoModeFileList processing entries failed")
+            except Exception as e:
+                self.printException(e, "prepRepoModeFileList failed while querying GitRepo")
 
             self._populated = True
             # Highlight based on provided hashes (prefer curr_hash) or
