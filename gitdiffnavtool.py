@@ -357,6 +357,26 @@ class AppBase(AppException, ListView):
         except Exception as e:
             self.printException(e, "_log_visible_items failed")
 
+    def _clear_active_classes(self) -> None:
+        """
+        Defensive helper: clear any stray `active` class on visible nodes.
+
+        Implemented on `AppBase` so all list-like subclasses can call
+        this uniformly to avoid duplicating the same defensive logic.
+        """
+        try:
+            for n in self.nodes() or []:
+                try:
+                    n.set_class(False, "active")
+                except Exception as e:
+                    self.printException(e, "AppBase._clear_active_classes: set_class failed")
+                    try:
+                        n.remove_class("active")
+                    except Exception as e2:
+                        self.printException(e2, "AppBase._clear_active_classes: remove_class failed")
+        except Exception as e:
+            self.printException(e, "AppBase._clear_active_classes failed")
+
     def _canonical_relpath(self, path: str, repo_root: str) -> str:
         """
         Return a canonical realpath for `path` using `repo_root` for
@@ -3239,6 +3259,51 @@ class RepoModeFileList(FileListBase):
                         self._populate_from_file_infos(file_infos)
                     except Exception as _ex:
                         self.printException(_ex, "prepRepoModeFileList: populating entries failed")
+                    # Immediately mark the first selectable row active so the
+                    # intended widget `active` style is applied synchronously
+                    # (avoids showing the system accent before our style).
+                    try:
+                        try:
+                            nodes_now = self.nodes() or []
+                        except Exception as e:
+                            self.printException(e, "prepRepoModeFileList: getting nodes_now failed")
+                            nodes_now = []
+                        # Single in-list header (hash header) is at index 0;
+                        # first selectable data row is at index 1.
+                        first_data_idx = 1
+                        if len(nodes_now) > first_data_idx:
+                            try:
+                                # Clear any previously-active node
+                                old_idx = getattr(self, "index", None)
+                                if old_idx is not None and 0 <= old_idx < len(nodes_now):
+                                    try:
+                                        nodes_now[old_idx].set_class(False, "active")
+                                    except Exception as e:
+                                        self.printException(e, "prepRepoModeFileList: clearing old active failed")
+                            except Exception as e:
+                                self.printException(e, "prepRepoModeFileList: computing old_idx failed")
+                            try:
+                                node = nodes_now[first_data_idx]
+                                try:
+                                    node.set_class(True, "active")
+                                except Exception as e:
+                                    self.printException(e, "prepRepoModeFileList: setting active class failed")
+                                    try:
+                                        node.add_class("active")
+                                    except Exception as e2:
+                                        self.printException(e2, "prepRepoModeFileList: adding active class failed")
+                                try:
+                                    self.index = first_data_idx
+                                except Exception as e:
+                                    self.printException(e, "prepRepoModeFileList: setting index failed")
+                                    try:
+                                        setattr(self, "index", first_data_idx)
+                                    except Exception as e2:
+                                        self.printException(e2, "prepRepoModeFileList: setattr index failed")
+                            except Exception as e:
+                                self.printException(e, "prepRepoModeFileList: immediate activation failed")
+                    except Exception as e:
+                        self.printException(e, "prepRepoModeFileList: immediate activation wrapper failed")
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList processing entries failed")
             except Exception as e:
@@ -3250,7 +3315,10 @@ class RepoModeFileList(FileListBase):
             # navigation skips the header when rows exist
             try:
                 nodes = self.nodes()
-                header_count = 2
+                # We only append the hash header in-list; the key legend is
+                # rendered as an external Label. Set header_count to 1 so
+                # navigation skips the single header row correctly.
+                header_count = 1
                 if len(nodes) > header_count:
                     self._min_index = header_count
                 else:
@@ -3413,26 +3481,6 @@ class HistoryListBase(AppBase):
         self.highlight_bg_style = HIGHLIGHT_REPOLIST_BG
         # Mark as history list for flag-based checks in AppBase.watch_index
         self.is_history_list = 1
-
-    def _clear_active_classes(self) -> None:
-        """
-        Defensive helper: clear any stray `active` class on visible nodes.
-
-        Called by preparers before repopulating so a leftover active class
-        cannot persist across virtualized mounts or rapid page navigation.
-        """
-        try:
-            for n in self.nodes() or []:
-                try:
-                    n.set_class(False, "active")
-                except Exception as e:
-                    self.printException(e, "HistoryListBase._clear_active_classes: set_class failed")
-                    try:
-                        n.remove_class("active")
-                    except Exception as e2:
-                        self.printException(e2, "HistoryListBase._clear_active_classes: remove_class failed")
-        except Exception as e:
-            self.printException(e, "HistoryListBase._clear_active_classes failed")
 
     def _add_row(self, text: str, commit_hash: str | None, mark_active: bool = False) -> None:
         """
