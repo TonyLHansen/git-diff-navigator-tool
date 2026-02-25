@@ -4029,6 +4029,7 @@ class RepoModeHistoryList(HistoryListBase):
         repo_path: str | None = None,
         prev_hash: str | None = None,
         curr_hash: str | None = None,
+        highlight: str | None = None,
     ) -> None:
         """
         Prepare the repository-wide commit history view.
@@ -4066,13 +4067,26 @@ class RepoModeHistoryList(HistoryListBase):
 
             try:
                 # Entries are tuples (iso, hash, subject). Render each as a row.
+                # If a `highlight` was provided, prefer marking the matching
+                # commit row active (allow prefix matches). Otherwise fall back
+                # to marking the first row active for immediate focus.
                 first = True
+                highlight_applied = False
+                matched_highlight_hash: str | None = None
                 for ts_iso, h, subject in entries:
                     try:
                         text = f"{ts_iso} {h[:HASH_LENGTH]} {subject or ''}".strip()
-                        # Mark the first appended row active so the top line is
-                        # highlighted immediately and doesn't rely on post-refresh scheduling.
-                        self._add_row(text, h, mark_active=first)
+                        is_active = False
+                        if highlight and not highlight_applied:
+                            if h == highlight or h.startswith(highlight):
+                                is_active = True
+                                highlight_applied = True
+                                matched_highlight_hash = h
+
+                        if not highlight and first:
+                            is_active = True
+
+                        self._add_row(text, h, mark_active=is_active)
                         first = False
                     except Exception as e:
                         self.printException(e, "prepRepoModeHistoryList: adding commit row failed")
@@ -4084,8 +4098,12 @@ class RepoModeHistoryList(HistoryListBase):
             # to the centralized finalizer which will honor provided hashes.
             try:
                 self._populated = True
+                # Decide which commit to treat as the active/current selection.
+                # Preference: explicit `curr_hash` if provided; otherwise use a
+                # matched `highlight` row (if any).
+                effective_curr = curr_hash or matched_highlight_hash
                 try:
-                    self._finalize_historylist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=repo_path)
+                    self._finalize_historylist_prep(curr_hash=effective_curr, prev_hash=prev_hash, path=repo_path)
                 except Exception as e:
                     self.printException(e, "prepRepoModeHistoryList: finalize failed")
             except Exception as e:
@@ -4832,7 +4850,7 @@ class GitHistoryNavTool(AppException, App):
 
                             try:
                                 self.repo_mode_history_list.prepRepoModeHistoryList(
-                                    repo_path=rel, prev_hash=prev, curr_hash=curr
+                                    repo_path=rel, prev_hash=prev, curr_hash=curr, highlight=self.highlight
                                 )
                             except Exception as _ex:
                                 self.printException(_ex, "on_mount: prepRepoModeHistoryList failed")
