@@ -367,7 +367,7 @@ class AppBase(AppException, ListView):
         try:
             for n in self.nodes() or []:
                 try:
-                    n.set_class(False, "active")
+                        n.set_class(False, "active")
                 except Exception as e:
                     self.printException(e, "AppBase._clear_active_classes: set_class failed")
                     try:
@@ -822,6 +822,24 @@ class AppBase(AppException, ListView):
                         new_node.refresh()
                     if hasattr(self, "_ensure_index_visible"):
                         self._ensure_index_visible()
+                    try:
+                        # Post-toggle debug: log visible node texts and active state
+                        debug_nodes = []
+                        for i, n in enumerate(self.nodes()):
+                            try:
+                                txt = self.text_of(n)
+                            except Exception as _e:
+                                self.printException(_e, "apply_index_change: fast-path extracting text failed")
+                                txt = "<text-error>"
+                            try:
+                                state = n.has_class("active") if hasattr(n, "has_class") else ("active" in getattr(n, "classes", []))
+                            except Exception as _e:
+                                self.printException(_e, "apply_index_change: fast-path checking class failed")
+                                state = False
+                            debug_nodes.append(f"{i}:{txt}:{'A' if state else '_'}")
+                        logger.debug("apply_index_change: fast-path post-toggle nodes=%s", debug_nodes)
+                    except Exception as _e:
+                        self.printException(_e, "apply_index_change: fast-path post-toggle logging failed")
                     t1 = time.perf_counter()
                     logger.debug("apply_index_change: fast-path toggle completed in %.3fms", (t1 - t0) * 1000)
                     return new_node
@@ -849,7 +867,47 @@ class AppBase(AppException, ListView):
                         "apply_index_change: nodes() after render took %.3fms",
                         (t_nodes_after_end - t_nodes_after_start) * 1000,
                     )
-                    return nodes_after[new] if (new is not None and 0 <= new < len(nodes_after)) else None
+                    # Ensure the newly-rendered node has the active class set so
+                    # visual highlighting is deterministic after an authoritative
+                    # re-render (some render paths don't apply classes).
+                    try:
+                        if nodes_after and (new is not None and 0 <= new < len(nodes_after)):
+                            for i, node in enumerate(nodes_after):
+                                try:
+                                    node.set_class(i == new, "active")
+                                except Exception as _e:
+                                    self.printException(_e, "apply_index_change: node.set_class failed in authoritative branch")
+                                try:
+                                    node.refresh()
+                                except Exception as _e:
+                                    self.printException(_e, "apply_index_change: node.refresh failed in authoritative branch")
+                            try:
+                                # Post-render debug: log visible node texts and active state
+                                debug_nodes = []
+                                for i, n in enumerate(nodes_after):
+                                    try:
+                                        txt = self.text_of(n)
+                                    except Exception as _e:
+                                        self.printException(_e, "apply_index_change: authoritative extracting text failed")
+                                        txt = "<text-error>"
+                                    try:
+                                        state = n.has_class("active") if hasattr(n, "has_class") else ("active" in getattr(n, "classes", []))
+                                    except Exception as _e:
+                                        self.printException(_e, "apply_index_change: authoritative checking class failed")
+                                        state = False
+                                    debug_nodes.append(f"{i}:{txt}:{'A' if state else '_'}")
+                                logger.debug("apply_index_change: authoritative post-render nodes=%s", debug_nodes)
+                            except Exception as _e:
+                                self.printException(_e, "apply_index_change: authoritative post-render logging failed")
+                            if hasattr(self, "_ensure_index_visible"):
+                                try:
+                                    self._ensure_index_visible()
+                                except Exception as _e:
+                                    self.printException(_e, "apply_index_change: _ensure_index_visible failed after render")
+                            return nodes_after[new]
+                    except Exception as _e:
+                        self.printException(_e, "apply_index_change: applying active class after render failed")
+                    return None
             except Exception as e:
                 self.printException(e, "apply_index_change: re-rendering filemode display failed")
 
@@ -871,6 +929,24 @@ class AppBase(AppException, ListView):
                                 node.refresh()
                             except Exception as e:
                                 self.printException(e, "apply_index_change: node.refresh failed in fallback")
+                        try:
+                            # Post-fallback debug: log visible node texts and active state
+                            debug_nodes = []
+                            for i, n in enumerate(nodes_now):
+                                try:
+                                    txt = self.text_of(n)
+                                except Exception as _e:
+                                    self.printException(_e, "apply_index_change: fallback extracting text failed")
+                                    txt = "<text-error>"
+                                try:
+                                    state = n.has_class("active") if hasattr(n, "has_class") else ("active" in getattr(n, "classes", []))
+                                except Exception as _e:
+                                    self.printException(_e, "apply_index_change: fallback checking class failed")
+                                    state = False
+                                debug_nodes.append(f"{i}:{txt}:{'A' if state else '_'}")
+                            logger.debug("apply_index_change: fallback post-activation nodes=%s", debug_nodes)
+                        except Exception as _e:
+                            self.printException(_e, "apply_index_change: fallback post-activation logging failed")
                     except Exception as _e:
                         self.printException(_e, "apply_index_change: applying active class in fallback failed")
                     return nodes_now[new]
@@ -1944,26 +2020,40 @@ class FileListBase(AppBase):
         The header is appended as a `ListItem` with `_hash_header=True` and
         `_selectable=False` so navigation logic can skip it.
         """
+        # Build the header text and attempt to update the external
+        # `#right-file-hash` Label. If that label is not present fall
+        # back to appending an in-list non-selectable header for
+        # compatibility with older layouts.
         try:
-            # Diagnostic: record the incoming hash values for debugging.
             logger.debug("_render_hash_header: prev_hash=%r curr_hash=%r", prev_hash, curr_hash)
-
             def _short(h: str | None) -> str:
                 if not h:
                     return "None"
                 return h[:HASH_LENGTH] if len(h) > HASH_LENGTH else h
 
             hash_text = f"Hashes: prev={_short(prev_hash)}  curr={_short(curr_hash)}"
+
+            # Try updating external label first
+            try:
+                app = self.app
+                if app is not None:
+                    hash_lbl = app.query_one("#right-file-hash", Label)
+                    hash_lbl.update(Text(hash_text, style=STYLE_FILELIST_KEY))
+                    return
+            except Exception as e:
+                # External label not present or update failed; fall back
+                # to appending an in-list header so the caller still sees
+                # the header when no external label exists.
+                self.printException(e, "_render_hash_header: external label update failed or not present; falling back")
+
+            # Fallback: append a non-selectable ListItem header (legacy)
             try:
                 hash_item = ListItem(Label(Text(hash_text, style=STYLE_FILELIST_KEY)))
-                try:
-                    hash_item._hash_header = True
-                    hash_item._selectable = False
-                    self.append(hash_item)
-                except Exception as e:
-                    self.printException(e, "_render_hash_header: appending hash header failed")
+                hash_item._hash_header = True
+                hash_item._selectable = False
+                self.append(hash_item)
             except Exception as e:
-                self.printException(e, "_render_hash_header: creating hash header failed")
+                self.printException(e, "_render_hash_header: creating/appending in-list header failed")
         except Exception as e:
             self.printException(e, "_render_hash_header failed")
 
@@ -2080,7 +2170,7 @@ class FileListBase(AppBase):
             self.printException(e, "_build_status_map failed")
             return None
 
-    def _populate_from_file_infos(self, file_infos: list[dict]) -> None:
+    def _populate_from_file_infos(self, file_infos: list[dict], active_raw: str | None = None, active_index: int | None = None) -> None:
         """
         Append ListItems for each dict in `file_infos`.
 
@@ -2115,6 +2205,33 @@ class FileListBase(AppBase):
                             item._filename = name
                             logger.debug("_populate_from_file_infos: adding dir item for %s", full)
                             self.append(item)
+                            # If this row should be active during creation, apply now
+                            try:
+                                cur_idx = len(self.nodes()) - 1
+                                should_activate = False
+                                if active_index is not None and cur_idx == active_index:
+                                    should_activate = True
+                                if active_raw is not None and item._raw_text == active_raw:
+                                    should_activate = True
+                                if should_activate:
+                                    try:
+                                        item.set_class(True, "active")
+                                    except Exception as e:
+                                        self.printException(e, "_populate_from_file_infos: set_class failed for dir; trying add_class")
+                                        try:
+                                            item.add_class("active")
+                                        except Exception as e2:
+                                            self.printException(e2, "_populate_from_file_infos: add_class failed for dir")
+                                    try:
+                                        self.index = cur_idx
+                                    except Exception as e:
+                                        self.printException(e, "_populate_from_file_infos: setting index attribute failed for dir; trying setattr")
+                                        try:
+                                            setattr(self, "index", cur_idx)
+                                        except Exception as e2:
+                                            self.printException(e2, "_populate_from_file_infos: setattr for index failed for dir")
+                            except Exception as _e:
+                                self.printException(_e, "_populate_from_file_infos: post-append activation failed for dir")
                         except Exception as e:
                             self.printException(e, "_populate_from_file_infos append dir failed")
                         continue
@@ -2151,6 +2268,33 @@ class FileListBase(AppBase):
                             item._raw_text = name
                         item._filename = name
                         self.append(item)
+                        # Apply active class during creation to avoid render races
+                        try:
+                            cur_idx = len(self.nodes()) - 1
+                            should_activate = False
+                            if active_index is not None and cur_idx == active_index:
+                                should_activate = True
+                            if active_raw is not None and item._raw_text == active_raw:
+                                should_activate = True
+                            if should_activate:
+                                try:
+                                    item.set_class(True, "active")
+                                except Exception as e:
+                                    self.printException(e, f"_populate_from_file_infos: set_class failed for {name}; trying add_class")
+                                    try:
+                                        item.add_class("active")
+                                    except Exception as e2:
+                                        self.printException(e2, f"_populate_from_file_infos: add_class failed for {name}")
+                                try:
+                                    self.index = cur_idx
+                                except Exception as e:
+                                    self.printException(e, f"_populate_from_file_infos: setting index attribute failed for {name}; trying setattr")
+                                    try:
+                                        setattr(self, "index", cur_idx)
+                                    except Exception as e2:
+                                        self.printException(e2, f"_populate_from_file_infos: setattr for index failed for {name}")
+                        except Exception as _e:
+                            self.printException(_e, f"_populate_from_file_infos: post-append activation failed for {name}")
                     except Exception as e:
                         self.printException(e, f"_populate_from_file_infos appending {name} failed")
                         continue
@@ -3187,17 +3331,6 @@ class RepoModeFileList(FileListBase):
                                 key_lbl.update(FILELIST_KEY_ROW_TEXT)
                         except Exception as _e:
                             self.printException(_e, "prepRepoModeFileList: updating right-file-key failed")
-                        try:
-                            dir_lbl = app.query_one("#right-file-dir", Label)
-                            try:
-                                dir_lbl.update(Text("", style=STYLE_HELP_BG))
-                            except Exception as e:
-                                self.printException(
-                                    e, "prepRepoModeFileList: updating right-file-dir with style failed"
-                                )
-                                dir_lbl.update("")
-                        except Exception as _e:
-                            self.printException(_e, "prepRepoModeFileList: updating right-file-dir failed")
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList: updating external headers failed")
             except Exception as e:
@@ -3270,55 +3403,27 @@ class RepoModeFileList(FileListBase):
                             self.printException(_ex, "prepRepoModeFileList: normalizing entry failed")
                             continue
 
-                    try:
-                        self._populate_from_file_infos(file_infos)
-                    except Exception as _ex:
-                        self.printException(_ex, "prepRepoModeFileList: populating entries failed")
-                    # Immediately mark the first selectable row active so the
-                    # intended widget `active` style is applied synchronously
-                    # (avoids showing the system accent before our style).
-                    try:
+                        # Determine active target: prefer a requested filename
+                        # highlight (normalize to repo-relative raw form) and
+                        # otherwise default to selecting the top data row.
+                        active_raw = None
+                        active_idx = 0
+                        if highlight_filename:
+                            try:
+                                repo_root_local = self.app.gitRepo.get_repo_root() if hasattr(self.app, "gitRepo") else None
+                            except Exception as e:
+                                self.printException(e, "prepRepoModeFileList: get_repo_root fallback")
+                                repo_root_local = None
+                            try:
+                                active_raw = self._canonical_relpath(highlight_filename, repo_root_local) if highlight_filename and repo_root_local else (os.path.normpath(highlight_filename) if highlight_filename else None)
+                            except Exception as e:
+                                self.printException(e, "prepRepoModeFileList: _canonical_relpath fallback")
+                                active_raw = os.path.normpath(highlight_filename) if highlight_filename else None
+
                         try:
-                            nodes_now = self.nodes() or []
-                        except Exception as e:
-                            self.printException(e, "prepRepoModeFileList: getting nodes_now failed")
-                            nodes_now = []
-                        # Single in-list header (hash header) is at index 0;
-                        # first selectable data row is at index 1.
-                        first_data_idx = 1
-                        if len(nodes_now) > first_data_idx:
-                            try:
-                                # Clear any previously-active node
-                                old_idx = getattr(self, "index", None)
-                                if old_idx is not None and 0 <= old_idx < len(nodes_now):
-                                    try:
-                                        nodes_now[old_idx].set_class(False, "active")
-                                    except Exception as e:
-                                        self.printException(e, "prepRepoModeFileList: clearing old active failed")
-                            except Exception as e:
-                                self.printException(e, "prepRepoModeFileList: computing old_idx failed")
-                            try:
-                                node = nodes_now[first_data_idx]
-                                try:
-                                    node.set_class(True, "active")
-                                except Exception as e:
-                                    self.printException(e, "prepRepoModeFileList: setting active class failed")
-                                    try:
-                                        node.add_class("active")
-                                    except Exception as e2:
-                                        self.printException(e2, "prepRepoModeFileList: adding active class failed")
-                                try:
-                                    self.index = first_data_idx
-                                except Exception as e:
-                                    self.printException(e, "prepRepoModeFileList: setting index failed")
-                                    try:
-                                        setattr(self, "index", first_data_idx)
-                                    except Exception as e2:
-                                        self.printException(e2, "prepRepoModeFileList: setattr index failed")
-                            except Exception as e:
-                                self.printException(e, "prepRepoModeFileList: immediate activation failed")
-                    except Exception as e:
-                        self.printException(e, "prepRepoModeFileList: immediate activation wrapper failed")
+                            self._populate_from_file_infos(file_infos, active_raw=active_raw, active_index=(None if active_raw else active_idx))
+                        except Exception as _ex:
+                            self.printException(_ex, "prepRepoModeFileList: populating entries failed")
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList processing entries failed")
             except Exception as e:
@@ -3330,14 +3435,10 @@ class RepoModeFileList(FileListBase):
             # navigation skips the header when rows exist
             try:
                 nodes = self.nodes()
-                # We only append the hash header in-list; the key legend is
-                # rendered as an external Label. Set header_count to 1 so
-                # navigation skips the single header row correctly.
-                header_count = 1
-                if len(nodes) > header_count:
-                    self._min_index = header_count
-                else:
-                    self._min_index = 0
+                # The hash header is external so there is no in-list header
+                # to skip. Set `_min_index` to 0 so navigation includes the
+                # top-most data row.
+                self._min_index = 0
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: setting _min_index failed")
             # Immediately record the repo-level commit pair so other
@@ -4763,9 +4864,10 @@ class GitHistoryNavTool(AppException, App):
                 yield FileModeHistoryList(id=RIGHT_HISTORY_LIST_ID)
             with Vertical(id="right-file-column"):
                 yield Label(Text("Files"), id=RIGHT_FILE_TITLE)
-                # Key legend and directory header for repo-mode file column
+                # Hash header (external, outside the virtualized ListView)
+                yield Label(Text("", style=STYLE_FILELIST_KEY), id="right-file-hash")
+                # Key legend for repo-mode file column
                 yield Label(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY), id="right-file-key")
-                yield Label(Text("", style=STYLE_HELP_BG), id="right-file-dir")
                 yield RepoModeFileList(id=RIGHT_FILE_LIST_ID)
             with Vertical(id="diff-column"):
                 yield Label(Text("Diff"), id=DIFF_TITLE)
@@ -5483,7 +5585,57 @@ class GitHistoryNavTool(AppException, App):
                             )
                         except Exception as _ex:
                             self.printException(_ex)
-                            # Attempt to resolve by id and set border
+                        # Best-effort: some terminals and render paths can race
+                        # focus changes and style application. Try to apply the
+                        # index highlight synchronously first to avoid visible
+                        # delay; fall back to a post-refresh scheduled call if
+                        # the immediate attempt doesn't take effect.
+                        try:
+                            if widget is not None and hasattr(widget, "apply_index_change"):
+                                try:
+                                    logger.debug(
+                                        "change_focus:%d: attempting immediate apply_index_change for key=%r",
+                                        inspect.currentframe().f_lineno,
+                                        key,
+                                    )
+                                    applied = None
+                                    try:
+                                        applied = widget.apply_index_change(None, getattr(widget, "index", None))
+                                    except Exception as _ex:
+                                        self.printException(_ex, "change_focus: immediate apply_index_change failed")
+                                        applied = None
+                                    # If immediate application returned None or seemed ineffective,
+                                    # schedule a post-refresh fallback to ensure the UI eventually
+                                    # receives the active-class update.
+                                    if applied is None:
+                                        try:
+                                            widget_name = type(widget).__name__ if widget is not None else "<unknown>"
+                                            # Historical note: scheduled highlights did not
+                                            # reliably work for `FileModeHistoryList` and
+                                            # were intentionally avoided. Preserve that
+                                            # behavior by skipping the scheduled fallback
+                                            # for that widget type and only attempt the
+                                            # immediate apply above.
+                                            if widget_name == "FileModeHistoryList":
+                                                logger.debug(
+                                                    "change_focus:%d: skipping scheduled fallback for %s",
+                                                    inspect.currentframe().f_lineno,
+                                                    widget_name,
+                                                )
+                                            else:
+                                                logger.debug(
+                                                    "change_focus:%d: scheduling post-refresh apply_index_change for key=%r",
+                                                    inspect.currentframe().f_lineno,
+                                                    key,
+                                                )
+                                                self.call_after_refresh(lambda: widget.apply_index_change(None, getattr(widget, "index", None)))
+                                        except Exception as _ex:
+                                            self.printException(_ex, "change_focus: scheduling post-refresh apply_index_change failed")
+                                except Exception as _ex:
+                                    self.printException(_ex)
+                        except Exception as _ex:
+                            self.printException(_ex)
+                        # Attempt to resolve by id and set border
                             try:
                                 w = None
                                 try:
