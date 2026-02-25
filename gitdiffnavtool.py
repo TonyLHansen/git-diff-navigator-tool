@@ -853,13 +853,28 @@ class AppBase(AppException, ListView):
             except Exception as e:
                 self.printException(e, "apply_index_change: re-rendering filemode display failed")
 
-            # Fallback: ensure index visibility and return the node if present.
+            # Fallback: ensure index visibility, apply active class, and
+            # return the node if present. Some preparers don't trigger a
+            # full authoritative re-render path, so ensure visual active
+            # state here as a last-resort.
             try:
                 self.index = new
                 if hasattr(self, "_ensure_index_visible"):
                     self._ensure_index_visible()
                 nodes_now = self.nodes()
-                return nodes_now[new] if (new is not None and 0 <= new < len(nodes_now)) else None
+                if nodes_now and (new is not None and 0 <= new < len(nodes_now)):
+                    try:
+                        # Clear/Set active class deterministically across nodes
+                        for i, node in enumerate(nodes_now):
+                            node.set_class(i == new, "active")
+                            try:
+                                node.refresh()
+                            except Exception as e:
+                                self.printException(e, "apply_index_change: node.refresh failed in fallback")
+                    except Exception as _e:
+                        self.printException(_e, "apply_index_change: applying active class in fallback failed")
+                    return nodes_now[new]
+                return None
             except Exception as e:
                 self.printException(e, "apply_index_change: fallback path failed")
                 return None
