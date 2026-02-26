@@ -3360,6 +3360,38 @@ class FileModeFileList(FileListBase):
         self._activate_or_open(event, enter_dir_test_fn=lambda name: True)
         self._log_visible_items("key_enter after processing index change")
 
+    def key_i(self, event: events.Key | None = None) -> None:
+        """Toggle ignored-file visibility and refresh the file-mode list."""
+        logger.debug("FileModeFileList.key_i called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "FileModeFileList.key_i: event.stop failed")
+            self.app.no_ignored = not bool(self.app.no_ignored)
+            logger.debug("FileModeFileList.key_i: no_ignored=%r", self.app.no_ignored)
+            self.prepFileModeFileList()
+        except Exception as e:
+            self.printException(e, "FileModeFileList.key_i failed")
+        self._log_visible_items("key_i after processing index change")
+
+    def key_u(self, event: events.Key | None = None) -> None:
+        """Toggle untracked-file visibility and refresh the file-mode list."""
+        logger.debug("FileModeFileList.key_u called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "FileModeFileList.key_u: event.stop failed")
+            self.app.no_untracked = not bool(self.app.no_untracked)
+            logger.debug("FileModeFileList.key_u: no_untracked=%r", self.app.no_untracked)
+            self.prepFileModeFileList()
+        except Exception as e:
+            self.printException(e, "FileModeFileList.key_u failed")
+        self._log_visible_items("key_u after processing index change")
+
 
 class RepoModeFileList(FileListBase):
     """
