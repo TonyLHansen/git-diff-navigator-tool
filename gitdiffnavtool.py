@@ -3455,9 +3455,7 @@ class RepoModeFileList(FileListBase):
                     active_raw = None
                     active_idx = 0
                     selected_rel = (
-                        os.path.join(self.app.rel_dir or "", self.app.rel_file)
-                        if self.app.rel_file
-                        else None
+                        os.path.join(self.app.rel_dir or "", self.app.rel_file) if self.app.rel_file else None
                     )
                     if selected_rel:
                         active_raw = os.path.normpath(selected_rel)
@@ -3487,11 +3485,7 @@ class RepoModeFileList(FileListBase):
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: recording app-level state failed")
             try:
-                selected_rel = (
-                    os.path.join(self.app.rel_dir or "", self.app.rel_file)
-                    if self.app.rel_file
-                    else None
-                )
+                selected_rel = os.path.join(self.app.rel_dir or "", self.app.rel_file) if self.app.rel_file else None
                 if selected_rel:
                     self._highlight_filename(selected_rel)
                 else:
@@ -3501,11 +3495,7 @@ class RepoModeFileList(FileListBase):
 
             # Run centralized finalization so UI/app state is kept consistent
             try:
-                selected_rel = (
-                    os.path.join(self.app.rel_dir or "", self.app.rel_file)
-                    if self.app.rel_file
-                    else None
-                )
+                selected_rel = os.path.join(self.app.rel_dir or "", self.app.rel_file) if self.app.rel_file else None
                 self._finalize_filelist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=selected_rel)
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: finalize failed")
@@ -3981,22 +3971,35 @@ class HistoryListBase(AppBase):
         """
         try:
             try:
+                marked_applied = False
                 if curr_hash:
                     try:
                         self._highlight_match(curr_hash)
                     except Exception as e:
                         self.printException(e, "HistoryListBase._finalize_historylist_prep: _highlight_match failed")
-                elif prev_hash:
+                elif not prev_hash:
+                    try:
+                        self._highlight_top()
+                    except Exception as e:
+                        self.printException(e, "HistoryListBase._finalize_historylist_prep: _highlight_top failed")
+
+                if prev_hash:
                     try:
                         if hasattr(self, "toggle_check_current"):
                             for i, node in enumerate(self.nodes()):
                                 try:
-                                    if getattr(node, "_hash", None) == prev_hash:
+                                    node_hash = getattr(node, "_hash", None)
+                                    if node_hash and (
+                                        node_hash == prev_hash
+                                        or node_hash.startswith(prev_hash)
+                                        or prev_hash.startswith(node_hash)
+                                    ):
                                         try:
                                             logger.debug(
-                                                "prepRepoModeHistoryList: invoking toggle_check_current at index=%d for prev_hash=%r",
+                                                "prepRepoModeHistoryList: invoking toggle_check_current at index=%d for prev_hash=%r node_hash=%r",
                                                 i,
                                                 prev_hash,
+                                                node_hash,
                                             )
                                             self.toggle_check_current(i)
                                         except Exception as e:
@@ -4004,12 +4007,25 @@ class HistoryListBase(AppBase):
                                                 e,
                                                 "HistoryListBase._finalize_historylist_prep: toggle_check_current failed",
                                             )
+                                        marked_applied = True
                                         break
                                 except Exception as e:
                                     self.printException(
                                         e, "HistoryListBase._finalize_historylist_prep: checking node failed"
                                     )
+                            logger.debug(
+                                "HistoryListBase._finalize_historylist_prep: prev_hash=%r mark_applied=%r",
+                                prev_hash,
+                                marked_applied,
+                            )
                         else:
+                            try:
+                                self._highlight_top()
+                            except Exception as e:
+                                self.printException(
+                                    e, "HistoryListBase._finalize_historylist_prep: _highlight_top failed"
+                                )
+                        if not marked_applied and not curr_hash:
                             try:
                                 self._highlight_top()
                             except Exception as e:
@@ -4018,11 +4034,6 @@ class HistoryListBase(AppBase):
                                 )
                     except Exception as e:
                         self.printException(e, "HistoryListBase._finalize_historylist_prep: locating prev_hash failed")
-                else:
-                    try:
-                        self._highlight_top()
-                    except Exception as e:
-                        self.printException(e, "HistoryListBase._finalize_historylist_prep: _highlight_top failed")
             except Exception as e:
                 self.printException(e, "HistoryListBase._finalize_historylist_prep: highlight step failed")
 
@@ -4933,12 +4944,16 @@ class GitHistoryNavTool(AppException, App):
                             curr = rh[0]
                             if len(rh) > 1:
                                 prev = rh[1]
+                        logger.debug(
+                            "on_mount repo-first: repo_hashes=%r -> curr_hash=%r marked_prev_hash=%r",
+                            rh,
+                            curr,
+                            prev,
+                        )
 
                         # Call preparer once with any provided hashes so it may
                         # highlight/mark the requested commits during prep.
-                        self.repo_mode_history_list.prepRepoModeHistoryList(
-                            prev_hash=prev, curr_hash=curr
-                        )
+                        self.repo_mode_history_list.prepRepoModeHistoryList(prev_hash=prev, curr_hash=curr)
                         self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
 
                         # If in repo-first mode, check to see if there is a filename:
@@ -4946,10 +4961,10 @@ class GitHistoryNavTool(AppException, App):
                         #          and change  state to the file list
                         # .    else, there is no repo mode file list at this time
                         #           and change  state to the history list only
-                        #if self.rel_file:
+                        # if self.rel_file:
                         #    self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
                         #    self.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
-                        #else:
+                        # else:
                         #    self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
 
                     except Exception as e:
