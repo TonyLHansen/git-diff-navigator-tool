@@ -6294,7 +6294,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         metavar="BASENAME",
         help="basename of a file to pre-highlight (must be a basename, no path elements)",
     )
-    parser.add_argument("path", nargs="+", help="one or more directories or files to open")
+    parser.add_argument("path", nargs="?", default=".", help="directory or file to open (default: current directory)")
 
     # Load optional configuration from .gitdiffnavtool.ini (cwd then $HOME).
     # Keys in the [gitdiffnavtool] section:
@@ -6403,24 +6403,23 @@ def main(argv: Optional[list[str]] = None) -> int:
         # Allocate the shared `GitRepo` instance here and compute the
         # repository-relative `relpath` for the provided path. The app will
         # receive the `gitRepo` instance so helpers can call into it.
-        raw_path = args.path[0] if args.path else "."
         try:
-            gitrepo = GitRepo(raw_path)
+            gitrepo = GitRepo(args.path)
         except Exception as e:
-            printException(e, f"repository discovery failed for {raw_path}")
-            sys.exit(f"Not a git repository: {raw_path}")
+            printException(e, f"repository discovery failed for {args.path}")
+            sys.exit(f"Not a git repository: {args.path}")
         logger.debug("Discovered repository worktree root: %s", gitrepo.get_repo_root())
 
         # Compute repository-relative directory/file for the provided path.
         try:
-            rel_dir, rel_file = gitrepo.cwd_plus_path_to_reldir_relfile(raw_path)
+            rel_dir, rel_file = gitrepo.cwd_plus_path_to_reldir_relfile(args.path)
         except Exception as e:
-            printException(e, f"Not a git repository or invalid path: {raw_path}")
-            sys.exit(f"Not a git repository: {raw_path}")
+            printException(e, f"Not a git repository or invalid path: {args.path}")
+            sys.exit(f"Not a git repository: {args.path}")
 
         logger.debug(
-            "Starting GitHistoryNavTool; raw_path=%s repo_root=%s rel_dir=%r rel_file=%r",
-            raw_path,
+            "Starting GitHistoryNavTool; args.path=%s repo_root=%s rel_dir=%r rel_file=%r",
+            args.path,
             gitrepo.get_repo_root(),
             rel_dir,
             rel_file,
