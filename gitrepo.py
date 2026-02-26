@@ -1204,6 +1204,86 @@ class GitRepo(AppException):
             self.printException(e, "getFileListUntrackedAndIgnored: unexpected failure")
             return []
 
+    def _entry_rel_path(self, entry: Any) -> str | None:
+        """
+        Extract and normalize repository-relative path from a file-list entry.
+
+        Supports tuple/list entries where path is first element and dict
+        entries with `raw`, `full`, `path`, or `name` keys.
+        """
+        try:
+            rel: str | None = None
+            if isinstance(entry, (list, tuple)):
+                rel = str(entry[0]) if len(entry) > 0 and entry[0] is not None else None
+            elif isinstance(entry, dict):
+                for key in ("raw", "full", "path", "name"):
+                    if key in entry and entry[key] is not None:
+                        rel = str(entry[key])
+                        break
+            elif isinstance(entry, str):
+                rel = entry
+
+            if not rel:
+                return None
+            return os.path.normpath(rel)
+        except Exception as e:
+            self.printException(e, "_entry_rel_path failed")
+            return None
+
+    def remove_ignored_files(self, file_list: list[Any] | None) -> list[Any]:
+        """
+        Return `file_list` with entries removed when their path is ignored.
+
+        Preserves original entry objects and ordering.
+        """
+        try:
+            if not file_list:
+                return []
+
+            ignored = self.getFileListIgnored() or []
+            ignored_paths = {
+                os.path.normpath(str(ent[0])) for ent in ignored if isinstance(ent, (list, tuple)) and len(ent) > 0
+            }
+
+            out: list[Any] = []
+            for entry in file_list:
+                rel = self._entry_rel_path(entry)
+                if rel and rel in ignored_paths:
+                    continue
+                out.append(entry)
+            return out
+        except Exception as e:
+            self.printException(e, "remove_ignored_files failed")
+            return list(file_list or [])
+
+    def remove_untracked_files(self, file_list: list[Any] | None) -> list[Any]:
+        """
+        Return `file_list` with entries removed when their path is untracked.
+
+        Preserves original entry objects and ordering.
+        """
+        try:
+            if not file_list:
+                return []
+
+            untracked = self.getFileListUntracked() or []
+            untracked_paths = {
+                os.path.normpath(str(ent[0]))
+                for ent in untracked
+                if isinstance(ent, (list, tuple)) and len(ent) > 0
+            }
+
+            out: list[Any] = []
+            for entry in file_list:
+                rel = self._entry_rel_path(entry)
+                if rel and rel in untracked_paths:
+                    continue
+                out.append(entry)
+            return out
+        except Exception as e:
+            self.printException(e, "remove_untracked_files failed")
+            return list(file_list or [])
+
     ################
     # Hash Lists
     ################
