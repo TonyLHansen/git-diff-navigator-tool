@@ -3368,9 +3368,7 @@ class RepoModeFileList(FileListBase):
         super().__init__(*args, **kwargs)
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
 
-    def prepRepoModeFileList(
-        self, prev_hash: str | None, curr_hash: str | None, highlight: str | None = None
-    ) -> None:
+    def prepRepoModeFileList(self, prev_hash: str | None, curr_hash: str | None) -> None:
         """
         Populate this widget with files changed between `prev_hash` and `curr_hash`.
 
@@ -3383,35 +3381,27 @@ class RepoModeFileList(FileListBase):
                 raise ValueError("prepRepoModeFileList: prev_hash and curr_hash must not be None")
 
             logger.debug(
-                "prepRepoModeFileList: prev_hash=%r curr_hash=%r highlight=%r",
+                "prepRepoModeFileList: prev_hash=%r curr_hash=%r",
                 prev_hash,
                 curr_hash,
-                highlight,
             )
             # Defensive: clear any stray active classes left by virtualization
             try:
                 self._clear_active_classes()
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: clearing active classes failed")
+
             try:
                 self.clear()
             except Exception as e:
                 self.printException(e, "prepFileModeHistoryList: clear failed")
+
             # Insert a hash header and the unselectable key legend header at the top
             try:
                 self._render_hash_header(prev_hash, curr_hash)
                 # Update external static key legend for the right file column
-                try:
-                    key_lbl = self.app.query_one("#right-file-key", Label)
-                    try:
-                        key_lbl.update(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY))
-                    except Exception as e:
-                        self.printException(
-                            e, "prepRepoModeFileList: updating right-file-key with style failed"
-                        )
-                        key_lbl.update(FILELIST_KEY_ROW_TEXT)
-                except Exception as e:
-                    self.printException(e, "prepRepoModeFileList: updating external headers failed")
+                key_lbl = self.app.query_one("#right-file-key", Label)
+                key_lbl.update(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY))
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList header setup failed")
 
@@ -3425,11 +3415,6 @@ class RepoModeFileList(FileListBase):
                 # Normalize entries and delegate row creation to shared helper
                 try:
                     file_infos: list[dict] = []
-                    try:
-                        repo_root_local = self.app.gitRepo.get_repo_root()
-                    except Exception as e:
-                        self.printException(e, "prepRepoModeFileList: getting repo_root failed")
-                        repo_root_local = None
 
                     for ent in entries:
                         try:
@@ -3447,11 +3432,7 @@ class RepoModeFileList(FileListBase):
 
                             name = display
                             try:
-                                raw_val = (
-                                    self._canonical_relpath(full, repo_root_local)
-                                    if full and repo_root_local
-                                    else (full or name)
-                                )
+                                raw_val = os.path.normpath(full) if full else (name or "")
                             except Exception as e:
                                 self.printException(e, "prepRepoModeFileList: canonicalizing entry failed")
                                 raw_val = full or name
@@ -3469,18 +3450,17 @@ class RepoModeFileList(FileListBase):
                             self.printException(_ex, "prepRepoModeFileList: normalizing entry failed")
                             continue
 
-                    # Determine active target: prefer a requested filename
-                    # highlight (normalize to repo-relative raw form) and
-                    # otherwise default to selecting the top data row.
+                    # Determine active target from the current app selection
+                    # (rel_dir/rel_file) and otherwise default to top row.
                     active_raw = None
                     active_idx = 0
-                    if highlight:
-                        repo_root_local = self.app.gitRepo.get_repo_root()
-                        active_raw = (
-                            self._canonical_relpath(highlight, repo_root_local)
-                            if highlight and repo_root_local
-                            else (os.path.normpath(highlight) if highlight else None)
-                        )
+                    selected_rel = (
+                        os.path.join(self.app.rel_dir or "", self.app.rel_file)
+                        if self.app.rel_file
+                        else None
+                    )
+                    if selected_rel:
+                        active_raw = os.path.normpath(selected_rel)
                     self._populate_from_file_infos(
                         file_infos, active_raw=active_raw, active_index=(None if active_raw else active_idx)
                     )
@@ -3490,9 +3470,7 @@ class RepoModeFileList(FileListBase):
                 self.printException(e, "prepRepoModeFileList failed while querying GitRepo")
 
             self._populated = True
-            # Highlight based on provided hashes (prefer curr_hash) or
-            # by filename when `highlight` is provided. Ensure
-            # navigation skips the header when rows exist
+            # Highlight from current app rel_dir/rel_file selection.
             try:
                 nodes = self.nodes()
                 # The hash header is external so there is no in-list header
@@ -3506,24 +3484,16 @@ class RepoModeFileList(FileListBase):
             try:
                 self.app.previous_hash = prev_hash
                 self.app.current_hash = curr_hash
-                # If caller requested a filename highlight, record it via
-                # `rel_dir`/`rel_file` so other components can rely on a single source of truth.
-                if highlight:
-                    try:
-                        # Store repo-relative highlight paths; normalize input
-                        rel = os.path.normpath(highlight)
-                        rd, rf = os.path.split(rel)
-                        self.app.rel_dir = rd or ""
-                        self.app.rel_file = rf or ""
-                    except Exception as _ex:
-                        self.printException(_ex, "prepRepoModeFileList: setting app.rel_dir/rel_file failed")
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: recording app-level state failed")
             try:
-                # If a filename highlight was requested prefer it over
-                # commit-based highlighting.
-                if highlight:
-                    self._highlight_filename(highlight)
+                selected_rel = (
+                    os.path.join(self.app.rel_dir or "", self.app.rel_file)
+                    if self.app.rel_file
+                    else None
+                )
+                if selected_rel:
+                    self._highlight_filename(selected_rel)
                 else:
                     self._highlight_top()
             except Exception as e:
@@ -3531,9 +3501,12 @@ class RepoModeFileList(FileListBase):
 
             # Run centralized finalization so UI/app state is kept consistent
             try:
-                self._finalize_filelist_prep(
-                    curr_hash=curr_hash, prev_hash=prev_hash, path=highlight if highlight else None
+                selected_rel = (
+                    os.path.join(self.app.rel_dir or "", self.app.rel_file)
+                    if self.app.rel_file
+                    else None
                 )
+                self._finalize_filelist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=selected_rel)
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: finalize failed")
         except Exception as e:
@@ -4204,7 +4177,6 @@ class RepoModeHistoryList(HistoryListBase):
         self,
         prev_hash: str | None = None,
         curr_hash: str | None = None,
-        highlight: str | None = None,
     ) -> None:
         """
         Prepare the repository-wide commit history view.
@@ -4239,25 +4211,13 @@ class RepoModeHistoryList(HistoryListBase):
                 entries = []
 
             try:
-                # Entries are tuples (iso, hash, subject). Render each as a row.
-                # If a `highlight` was provided, prefer marking the matching
-                # commit row active (allow prefix matches). Otherwise fall back
-                # to marking the first row active for immediate focus.
+                # Entries are tuples (iso, hash, subject). Render each as a row
+                # and mark the first row active for immediate focus.
                 first = True
-                highlight_applied = False
-                matched_highlight_hash: str | None = None
                 for ts_iso, h, subject in entries:
                     try:
                         text = f"{ts_iso} {h[:HASH_LENGTH]} {subject or ''}".strip()
-                        is_active = False
-                        if highlight and not highlight_applied:
-                            if h == highlight or h.startswith(highlight):
-                                is_active = True
-                                highlight_applied = True
-                                matched_highlight_hash = h
-
-                        if not highlight and first:
-                            is_active = True
+                        is_active = first
 
                         self._add_row(text, h, mark_active=is_active)
                         first = False
@@ -4271,12 +4231,8 @@ class RepoModeHistoryList(HistoryListBase):
             # to the centralized finalizer which will honor provided hashes.
             try:
                 self._populated = True
-                # Decide which commit to treat as the active/current selection.
-                # Preference: explicit `curr_hash` if provided; otherwise use a
-                # matched `highlight` row (if any).
-                effective_curr = curr_hash or matched_highlight_hash
                 try:
-                    self._finalize_historylist_prep(curr_hash=effective_curr, prev_hash=prev_hash)
+                    self._finalize_historylist_prep(curr_hash=curr_hash, prev_hash=prev_hash)
                 except Exception as e:
                     self.printException(e, "prepRepoModeHistoryList: finalize failed")
             except Exception as e:
@@ -4302,21 +4258,14 @@ class RepoModeHistoryList(HistoryListBase):
             prev_hash, curr_hash = self._compute_selected_pair()
             try:
                 # Delegate to the repo-mode file list preparer. The preparer
-                # understands pseudo-hashes like MODS/STAGED. Pass the
-                # currently-selected filename (app.path) as a highlight so
-                # the file list highlights the expected file.
-                # Prefer the canonical `current_path` for highlight comparisons
-                # so repo-mode file rows (which store full paths) match deterministically.
-                rd = self.app.rel_dir
-                rf = self.app.rel_file
-                hf = os.path.join(rd or "", rf) if rf else (rd or "")
+                # understands pseudo-hashes like MODS/STAGED and uses the app's
+                # current rel_dir/rel_file selection for file highlighting.
                 logger.debug(
-                    "RepoModeHistoryList.key_right: prev=%r curr=%r highlight=%r",
+                    "RepoModeHistoryList.key_right: prev=%r curr=%r",
                     prev_hash,
                     curr_hash,
-                    hf,
                 )
-                self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash, highlight=hf)
+                self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash)
                 try:
                     # Switch to the right-file list view and update footer
                     self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
@@ -4988,7 +4937,7 @@ class GitHistoryNavTool(AppException, App):
                         # Call preparer once with any provided hashes so it may
                         # highlight/mark the requested commits during prep.
                         self.repo_mode_history_list.prepRepoModeHistoryList(
-                            prev_hash=prev, curr_hash=curr, highlight=self.highlight
+                            prev_hash=prev, curr_hash=curr
                         )
                         self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
 
@@ -4998,7 +4947,7 @@ class GitHistoryNavTool(AppException, App):
                         # .    else, there is no repo mode file list at this time
                         #           and change  state to the history list only
                         #if self.rel_file:
-                        #    self.repo_mode_file_list.prepRepoModeFileList(prev, curr, highlight=self.rel_file)
+                        #    self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
                         #    self.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
                         #else:
                         #    self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
@@ -6045,9 +5994,8 @@ class GitHistoryNavTool(AppException, App):
             # normalized relative path when `saved_path` is inside the repo.
 
             # Pass the repo-relative highlight so matching uses repository-relative rows.
-            hl = saved_path
-            logger.debug("toggle_file_history: passing highlight=%r", hl)
-            self.repo_mode_file_list.prepRepoModeFileList(use_prev, use_curr, highlight=hl)
+            logger.debug("toggle_file_history: using rel_dir=%r rel_file=%r", self.rel_dir, self.rel_file)
+            self.repo_mode_file_list.prepRepoModeFileList(use_prev, use_curr)
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo file list failed")
         try:
