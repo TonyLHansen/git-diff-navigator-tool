@@ -2521,13 +2521,11 @@ class FileModeFileList(FileListBase):
         # Per-widget highlight background style.
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
 
-    def _collect_filemode_nodes(self, rel_dir: str, rel_path: str) -> None:
+    def _collect_filemode_nodes(self) -> None:
         """
         Collect git-based file lists and build nodes_by_dir mapping.
 
-        Stores the mapping on `self._nodes_by_dir`. Callers should pass
-        the `rel_dir` they want rendered; no normalization or string
-        return value is performed here.
+        Stores the mapping on `self._nodes_by_dir`.
         Safe on errors; exceptions are logged and an empty mapping is stored.
         """
         nodes_by_dir: dict = {}
@@ -2548,16 +2546,22 @@ class FileModeFileList(FileListBase):
                 self.printException(e, "_collect_filemode_nodes: getFileListAtHash failed")
                 committed = []
 
-            try:
-                untracked = gitrepo.getFileListUntracked()
-            except Exception as e:
-                self.printException(e, "_collect_filemode_nodes: getFileListUntracked failed")
+            if not self.app.no_untracked:
+                try:
+                    untracked = gitrepo.getFileListUntracked()
+                except Exception as e:
+                    self.printException(e, "_collect_filemode_nodes: getFileListUntracked failed")
+                    untracked = []
+            else:
                 untracked = []
 
-            try:
-                ignored = gitrepo.getFileListIgnored()
-            except Exception as e:
-                self.printException(e, "_collect_filemode_nodes: getFileListIgnored failed")
+            if not self.app.no_ignored:
+                try:
+                    ignored = gitrepo.getFileListIgnored()
+                except Exception as e:
+                    self.printException(e, "_collect_filemode_nodes: getFileListIgnored failed")
+                    ignored = []
+            else:
                 ignored = []
 
             # Gather working-tree modifications (MODS): list of (path,status)
@@ -3033,7 +3037,7 @@ class FileModeFileList(FileListBase):
                 except Exception as _e:
                     self.printException(_e, "prepFileModeFileList: prepopulate _highlight_history failed")
 
-                self._collect_filemode_nodes(self.app.rel_dir, self.app.rel_file)
+                self._collect_filemode_nodes()
             except Exception as e:
                 self.printException(e, "prepFileModeFileList: collecting file nodes failed")
                 self._nodes_by_dir = {}
@@ -4779,6 +4783,8 @@ class GitHistoryNavTool(AppException, App):
         rel_file: str | None,
         repo_first: bool,
         repo_hashes: list,
+        no_ignored: bool,
+        no_untracked: bool,
         no_color: bool,
         verbose: int,
         highlight: str | None,
@@ -4834,6 +4840,8 @@ class GitHistoryNavTool(AppException, App):
         self.highlight = highlight
 
         self.no_color = no_color
+        self.no_ignored = no_ignored
+        self.no_untracked = no_untracked
         self.repo_first = repo_first
         # optional repo hash initialization (list of 1 or 2 hashes)
         # Normalize repo_hashes to a list (avoid mutable default)
@@ -6161,6 +6169,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
     )
     parser.add_argument(
+        "-I",
+        "--no-ignored",
+        dest="no_ignored",
+        action="store_true",
+        help="exclude ignored files from file-mode listings",
+    )
+    parser.add_argument(
+        "-U",
+        "--no-untracked",
+        dest="no_untracked",
+        action="store_true",
+        help="exclude untracked files from file-mode listings",
+    )
+    parser.add_argument(
         "-v", "--verbose", dest="verbose", action="count", default=0, help="increase verbosity (repeatable)"
     )
     parser.add_argument(
@@ -6245,6 +6267,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             rel_file=rel_file,
             repo_first=args.repo_first,
             repo_hashes=repo_hashes,
+            no_ignored=args.no_ignored,
+            no_untracked=args.no_untracked,
             no_color=args.no_color,
             verbose=args.verbose,
             highlight=args.highlight,
