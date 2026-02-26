@@ -3379,6 +3379,9 @@ class RepoModeFileList(FileListBase):
         delegating to `git diff`.
         """
         try:
+            if prev_hash is None or curr_hash is None:
+                raise ValueError("prepRepoModeFileList: prev_hash and curr_hash must not be None")
+
             logger.debug(
                 "prepRepoModeFileList: prev_hash=%r curr_hash=%r highlight=%r",
                 prev_hash,
@@ -3399,19 +3402,14 @@ class RepoModeFileList(FileListBase):
                 self._render_hash_header(prev_hash, curr_hash)
                 # Update external static key legend for the right file column
                 try:
-                    app = self.app
-                    if app is not None:
-                        try:
-                            key_lbl = app.query_one("#right-file-key", Label)
-                            try:
-                                key_lbl.update(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY))
-                            except Exception as e:
-                                self.printException(
-                                    e, "prepRepoModeFileList: updating right-file-key with style failed"
-                                )
-                                key_lbl.update(FILELIST_KEY_ROW_TEXT)
-                        except Exception as _e:
-                            self.printException(_e, "prepRepoModeFileList: updating right-file-key failed")
+                    key_lbl = self.app.query_one("#right-file-key", Label)
+                    try:
+                        key_lbl.update(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY))
+                    except Exception as e:
+                        self.printException(
+                            e, "prepRepoModeFileList: updating right-file-key with style failed"
+                        )
+                        key_lbl.update(FILELIST_KEY_ROW_TEXT)
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList: updating external headers failed")
             except Exception as e:
@@ -3421,33 +3419,14 @@ class RepoModeFileList(FileListBase):
             # normalized tokens. `getFileListBetweenNormalizedHashes` will
             # handle pseudo-hashes like NEWREPO/STAGED/MODS and commit hashes.
             try:
-                try:
-                    repo = self.app.gitRepo
-                except Exception as e:
-                    self.printException(e, "prepRepoModeFileList: retrieving gitRepo failed")
-                    repo = None
-
-                # Map possible None tokens to canonical pseudo-hashes so the
-                # GitRepo helper never receives None (it requires explicit tokens).
-                use_prev = prev_hash if prev_hash is not None else GitRepo.NEWREPO
-                use_curr = curr_hash if curr_hash is not None else GitRepo.MODS
-
                 entries: list[tuple[str, str]] = []
-                if repo is not None:
-                    try:
-                        entries = repo.getFileListBetweenNormalizedHashes(use_prev, use_curr) or []
-                    except Exception as e:
-                        self.printException(e, "prepRepoModeFileList git diff failed")
-                        entries = []
-                else:
-                    # No repo available -> nothing to show
-                    entries = []
+                entries = self.app.gitRepo.getFileListBetweenNormalizedHashes(prev_hash, curr_hash) or []
 
                 # Normalize entries and delegate row creation to shared helper
                 try:
                     file_infos: list[dict] = []
                     try:
-                        repo_root_local = self.app.gitRepo.get_repo_root() if hasattr(self.app, "gitRepo") else None
+                        repo_root_local = self.app.gitRepo.get_repo_root()
                     except Exception as e:
                         self.printException(e, "prepRepoModeFileList: getting repo_root failed")
                         repo_root_local = None
@@ -3490,35 +3469,21 @@ class RepoModeFileList(FileListBase):
                             self.printException(_ex, "prepRepoModeFileList: normalizing entry failed")
                             continue
 
-                        # Determine active target: prefer a requested filename
-                        # highlight (normalize to repo-relative raw form) and
-                        # otherwise default to selecting the top data row.
-                        active_raw = None
-                        active_idx = 0
-                        if highlight:
-                            try:
-                                repo_root_local = (
-                                    self.app.gitRepo.get_repo_root() if hasattr(self.app, "gitRepo") else None
-                                )
-                            except Exception as e:
-                                self.printException(e, "prepRepoModeFileList: get_repo_root fallback")
-                                repo_root_local = None
-                            try:
-                                active_raw = (
-                                    self._canonical_relpath(highlight, repo_root_local)
-                                    if highlight and repo_root_local
-                                    else (os.path.normpath(highlight) if highlight else None)
-                                )
-                            except Exception as e:
-                                self.printException(e, "prepRepoModeFileList: _canonical_relpath fallback")
-                                active_raw = os.path.normpath(highlight) if highlight else None
-
-                        try:
-                            self._populate_from_file_infos(
-                                file_infos, active_raw=active_raw, active_index=(None if active_raw else active_idx)
-                            )
-                        except Exception as _ex:
-                            self.printException(_ex, "prepRepoModeFileList: populating entries failed")
+                    # Determine active target: prefer a requested filename
+                    # highlight (normalize to repo-relative raw form) and
+                    # otherwise default to selecting the top data row.
+                    active_raw = None
+                    active_idx = 0
+                    if highlight:
+                        repo_root_local = self.app.gitRepo.get_repo_root()
+                        active_raw = (
+                            self._canonical_relpath(highlight, repo_root_local)
+                            if highlight and repo_root_local
+                            else (os.path.normpath(highlight) if highlight else None)
+                        )
+                    self._populate_from_file_infos(
+                        file_infos, active_raw=active_raw, active_index=(None if active_raw else active_idx)
+                    )
                 except Exception as e:
                     self.printException(e, "prepRepoModeFileList processing entries failed")
             except Exception as e:
