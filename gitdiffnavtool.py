@@ -6294,7 +6294,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         metavar="BASENAME",
         help="basename of a file to pre-highlight (must be a basename, no path elements)",
     )
-    parser.add_argument("path", nargs="1", help="one or more directories or files to open")
+    parser.add_argument("path", nargs="+", help="one or more directories or files to open")
 
     # Load optional configuration from .gitdiffnavtool.ini (cwd then $HOME).
     # Keys in the [gitdiffnavtool] section:
