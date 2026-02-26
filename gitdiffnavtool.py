@@ -367,7 +367,7 @@ class AppBase(AppException, ListView):
         try:
             for n in self.nodes() or []:
                 try:
-                        n.set_class(False, "active")
+                    n.set_class(False, "active")
                 except Exception as e:
                     self.printException(e, "AppBase._clear_active_classes: set_class failed")
                     try:
@@ -832,7 +832,11 @@ class AppBase(AppException, ListView):
                                 self.printException(_e, "apply_index_change: fast-path extracting text failed")
                                 txt = "<text-error>"
                             try:
-                                state = n.has_class("active") if hasattr(n, "has_class") else ("active" in getattr(n, "classes", []))
+                                state = (
+                                    n.has_class("active")
+                                    if hasattr(n, "has_class")
+                                    else ("active" in getattr(n, "classes", []))
+                                )
                             except Exception as _e:
                                 self.printException(_e, "apply_index_change: fast-path checking class failed")
                                 state = False
@@ -876,11 +880,15 @@ class AppBase(AppException, ListView):
                                 try:
                                     node.set_class(i == new, "active")
                                 except Exception as _e:
-                                    self.printException(_e, "apply_index_change: node.set_class failed in authoritative branch")
+                                    self.printException(
+                                        _e, "apply_index_change: node.set_class failed in authoritative branch"
+                                    )
                                 try:
                                     node.refresh()
                                 except Exception as _e:
-                                    self.printException(_e, "apply_index_change: node.refresh failed in authoritative branch")
+                                    self.printException(
+                                        _e, "apply_index_change: node.refresh failed in authoritative branch"
+                                    )
                             try:
                                 # Post-render debug: log visible node texts and active state
                                 debug_nodes = []
@@ -888,12 +896,20 @@ class AppBase(AppException, ListView):
                                     try:
                                         txt = self.text_of(n)
                                     except Exception as _e:
-                                        self.printException(_e, "apply_index_change: authoritative extracting text failed")
+                                        self.printException(
+                                            _e, "apply_index_change: authoritative extracting text failed"
+                                        )
                                         txt = "<text-error>"
                                     try:
-                                        state = n.has_class("active") if hasattr(n, "has_class") else ("active" in getattr(n, "classes", []))
+                                        state = (
+                                            n.has_class("active")
+                                            if hasattr(n, "has_class")
+                                            else ("active" in getattr(n, "classes", []))
+                                        )
                                     except Exception as _e:
-                                        self.printException(_e, "apply_index_change: authoritative checking class failed")
+                                        self.printException(
+                                            _e, "apply_index_change: authoritative checking class failed"
+                                        )
                                         state = False
                                     debug_nodes.append(f"{i}:{txt}:{'A' if state else '_'}")
                                 logger.debug("apply_index_change: authoritative post-render nodes=%s", debug_nodes)
@@ -903,7 +919,9 @@ class AppBase(AppException, ListView):
                                 try:
                                     self._ensure_index_visible()
                                 except Exception as _e:
-                                    self.printException(_e, "apply_index_change: _ensure_index_visible failed after render")
+                                    self.printException(
+                                        _e, "apply_index_change: _ensure_index_visible failed after render"
+                                    )
                             return nodes_after[new]
                     except Exception as _e:
                         self.printException(_e, "apply_index_change: applying active class after render failed")
@@ -939,7 +957,11 @@ class AppBase(AppException, ListView):
                                     self.printException(_e, "apply_index_change: fallback extracting text failed")
                                     txt = "<text-error>"
                                 try:
-                                    state = n.has_class("active") if hasattr(n, "has_class") else ("active" in getattr(n, "classes", []))
+                                    state = (
+                                        n.has_class("active")
+                                        if hasattr(n, "has_class")
+                                        else ("active" in getattr(n, "classes", []))
+                                    )
                                 except Exception as _e:
                                     self.printException(_e, "apply_index_change: fallback checking class failed")
                                     state = False
@@ -2026,6 +2048,7 @@ class FileListBase(AppBase):
         # compatibility with older layouts.
         try:
             logger.debug("_render_hash_header: prev_hash=%r curr_hash=%r", prev_hash, curr_hash)
+
             def _short(h: str | None) -> str:
                 if not h:
                     return "None"
@@ -2170,7 +2193,9 @@ class FileListBase(AppBase):
             self.printException(e, "_build_status_map failed")
             return None
 
-    def _populate_from_file_infos(self, file_infos: list[dict], active_raw: str | None = None, active_index: int | None = None) -> None:
+    def _populate_from_file_infos(
+        self, file_infos: list[dict], active_raw: str | None = None, active_index: int | None = None
+    ) -> None:
         """
         Append ListItems for each dict in `file_infos`.
 
@@ -2178,6 +2203,9 @@ class FileListBase(AppBase):
         This centralizes the row-creation logic used by file-list preparers.
         """
         try:
+            t_total_start = time.perf_counter()
+            next_idx = 0
+            appended_count = 0
             for info in file_infos:
                 try:
                     name = info.get("name")
@@ -2204,12 +2232,10 @@ class FileListBase(AppBase):
                                 item._raw_text = name
                             item._filename = name
                             logger.debug("_populate_from_file_infos: adding dir item for %s", full)
-                            self.append(item)
-                            # If this row should be active during creation, apply now
+                            # Determine activation before appending to avoid render races
                             try:
-                                cur_idx = len(self.nodes()) - 1
                                 should_activate = False
-                                if active_index is not None and cur_idx == active_index:
+                                if active_index is not None and next_idx == active_index:
                                     should_activate = True
                                 if active_raw is not None and item._raw_text == active_raw:
                                     should_activate = True
@@ -2217,21 +2243,45 @@ class FileListBase(AppBase):
                                     try:
                                         item.set_class(True, "active")
                                     except Exception as e:
-                                        self.printException(e, "_populate_from_file_infos: set_class failed for dir; trying add_class")
+                                        self.printException(
+                                            e, "_populate_from_file_infos: set_class failed for dir; trying add_class"
+                                        )
                                         try:
                                             item.add_class("active")
                                         except Exception as e2:
-                                            self.printException(e2, "_populate_from_file_infos: add_class failed for dir")
+                                            self.printException(
+                                                e2, "_populate_from_file_infos: add_class failed for dir"
+                                            )
                                     try:
-                                        self.index = cur_idx
+                                        self.index = next_idx
                                     except Exception as e:
-                                        self.printException(e, "_populate_from_file_infos: setting index attribute failed for dir; trying setattr")
+                                        self.printException(
+                                            e,
+                                            "_populate_from_file_infos: setting index attribute failed for dir; trying setattr",
+                                        )
                                         try:
-                                            setattr(self, "index", cur_idx)
+                                            setattr(self, "index", next_idx)
                                         except Exception as e2:
-                                            self.printException(e2, "_populate_from_file_infos: setattr for index failed for dir")
+                                            self.printException(
+                                                e2, "_populate_from_file_infos: setattr for index failed for dir"
+                                            )
                             except Exception as _e:
-                                self.printException(_e, "_populate_from_file_infos: post-append activation failed for dir")
+                                self.printException(
+                                    _e, "_populate_from_file_infos: pre-append activation failed for dir"
+                                )
+                            try:
+                                t_app_start = time.perf_counter()
+                                self.append(item)
+                                t_app_end = time.perf_counter()
+                                logger.debug(
+                                    "_populate_from_file_infos: appended dir item in %.3fms index=%d",
+                                    (t_app_end - t_app_start) * 1000,
+                                    next_idx,
+                                )
+                                appended_count += 1
+                            except Exception as e:
+                                self.printException(e, "_populate_from_file_infos: append dir failed")
+                            next_idx += 1
                         except Exception as e:
                             self.printException(e, "_populate_from_file_infos append dir failed")
                         continue
@@ -2267,12 +2317,10 @@ class FileListBase(AppBase):
                             self.printException(e, "_populate_from_file_infos: relpath fallback failed")
                             item._raw_text = name
                         item._filename = name
-                        self.append(item)
-                        # Apply active class during creation to avoid render races
+                        # Determine activation before appending to avoid render races
                         try:
-                            cur_idx = len(self.nodes()) - 1
                             should_activate = False
-                            if active_index is not None and cur_idx == active_index:
+                            if active_index is not None and next_idx == active_index:
                                 should_activate = True
                             if active_raw is not None and item._raw_text == active_raw:
                                 should_activate = True
@@ -2280,21 +2328,46 @@ class FileListBase(AppBase):
                                 try:
                                     item.set_class(True, "active")
                                 except Exception as e:
-                                    self.printException(e, f"_populate_from_file_infos: set_class failed for {name}; trying add_class")
+                                    self.printException(
+                                        e, f"_populate_from_file_infos: set_class failed for {name}; trying add_class"
+                                    )
                                     try:
                                         item.add_class("active")
                                     except Exception as e2:
-                                        self.printException(e2, f"_populate_from_file_infos: add_class failed for {name}")
+                                        self.printException(
+                                            e2, f"_populate_from_file_infos: add_class failed for {name}"
+                                        )
                                 try:
-                                    self.index = cur_idx
+                                    self.index = next_idx
                                 except Exception as e:
-                                    self.printException(e, f"_populate_from_file_infos: setting index attribute failed for {name}; trying setattr")
+                                    self.printException(
+                                        e,
+                                        f"_populate_from_file_infos: setting index attribute failed for {name}; trying setattr",
+                                    )
                                     try:
-                                        setattr(self, "index", cur_idx)
+                                        setattr(self, "index", next_idx)
                                     except Exception as e2:
-                                        self.printException(e2, f"_populate_from_file_infos: setattr for index failed for {name}")
+                                        self.printException(
+                                            e2, f"_populate_from_file_infos: setattr for index failed for {name}"
+                                        )
                         except Exception as _e:
-                            self.printException(_e, f"_populate_from_file_infos: post-append activation failed for {name}")
+                            self.printException(
+                                _e, f"_populate_from_file_infos: pre-append activation failed for {name}"
+                            )
+                        try:
+                            t_app_start = time.perf_counter()
+                            self.append(item)
+                            t_app_end = time.perf_counter()
+                            logger.debug(
+                                "_populate_from_file_infos: appended file item in %.3fms index=%d name=%r",
+                                (t_app_end - t_app_start) * 1000,
+                                next_idx,
+                                name,
+                            )
+                            appended_count += 1
+                        except Exception as e:
+                            self.printException(e, f"_populate_from_file_infos appending {name} failed")
+                        next_idx += 1
                     except Exception as e:
                         self.printException(e, f"_populate_from_file_infos appending {name} failed")
                         continue
@@ -2303,6 +2376,16 @@ class FileListBase(AppBase):
                     continue
         except Exception as e:
             self.printException(e, "_populate_from_file_infos failed")
+        finally:
+            try:
+                t_total_end = time.perf_counter()
+                logger.debug(
+                    "_populate_from_file_infos: total time %.3fms appended=%d",
+                    (t_total_end - t_total_start) * 1000,
+                    appended_count,
+                )
+            except Exception as e:
+                self.printException(e, "_populate_from_file_infos: final timing logging failed")
 
     def _to_display_rows(self, raw_filelist: list) -> list[dict]:
         """
@@ -2907,7 +2990,7 @@ class FileModeFileList(FileListBase):
         """
         Populate this widget with the file list for `path`.
 
-        `highlight_filename` if provided will be highlighted in the list; if
+        `highlight` if provided will be highlighted in the list; if
         `path` names a file the file's containing directory is listed and the
         filename is used as the highlight candidate.
         """
@@ -3002,102 +3085,99 @@ class FileModeFileList(FileListBase):
             repo_status = getattr(item, "_repo_status", None)
 
             if is_dir:
-                try:
-                    if enter_dir_test_fn(name):
-                        # Maintain a highlight history so when we return to a
-                        # parent directory we can re-highlight the child we
-                        # just came from. For downward navigation append the
-                        # dirname; for upward navigation (parent '..') move
-                        # left in the history and restore the child as
-                        # preselection.
-                        try:
-
-                            if name == "..":
-                                # Moving up: restore the child at the current
-                                # history position and move the position left.
-                                if 0 <= self._highlight_pos < len(self._highlight_history):
-                                    child = self._highlight_history[self._highlight_pos]
-                                    self._preselected_filename = child
-                                    self._highlight_pos = max(self._highlight_pos - 1, -1)
-                                elif self._highlight_history:
-                                    # Fallback: pop last entry
-                                    child = self._highlight_history.pop()
-                                    self._preselected_filename = child
-                                    self._highlight_pos = len(self._highlight_history) - 1
-                            else:
-                                # Moving down: if this name matches the next
-                                # forward history entry, advance the position
-                                # so right-navigation restores the previous
-                                # child highlight. Otherwise truncate any
-                                # forward history and append the new directory.
-                                try:
-                                    next_pos = self._highlight_pos + 1
-                                    if (
-                                        next_pos < len(self._highlight_history)
-                                        and self._highlight_history[next_pos] == name
-                                    ):
-                                        # Advance position along existing history
-                                        self._highlight_pos = next_pos
-                                        # Preselect the child (one step forward) if present
-                                        child_pos = self._highlight_pos + 1
-                                        if child_pos < len(self._highlight_history):
-                                            self._preselected_filename = self._highlight_history[child_pos]
-                                        else:
-                                            self._preselected_filename = None
-                                    else:
-                                        if self._highlight_pos < len(self._highlight_history) - 1:
-                                            del self._highlight_history[self._highlight_pos + 1 :]
-                                        self._highlight_history.append(name)
-                                        self._highlight_pos = len(self._highlight_history) - 1
-                                        self._preselected_filename = None
-                                except Exception as _e:
-                                    self.printException(_e, "_activate_or_open: pushing to _highlight_history failed")
-                        except Exception as _e:
-                            self.printException(_e, "_activate_or_open: highlight history update failed")
-
-                        # Compute and set new repository-relative directory
-                        try:
-                            cur_rel = self.app.rel_dir or ""
-                            new_rel = self.app.gitRepo.reldir_plus_dirname_to_reldir(cur_rel, name)
-                            self.app.rel_dir = new_rel
-                            # Clear any selected file when entering a directory
-                            self.app.rel_file = ""
-                        except Exception as _e:
-                            self.printException(_e, "_activate_or_open: computing new rel_dir failed")
-
-                        # Prefer restoring a previously-recorded child for
-                        # this directory if available. Keys in
-                        # `_last_child_by_dir` are normalized repo-relative
-                        # paths (see `key_left`), so normalize here too.
-                        try:
+                if enter_dir_test_fn(name):
+                    # Maintain a highlight history so when we return to a
+                    # parent directory we can re-highlight the child we
+                    # just came from. For downward navigation append the
+                    # dirname; for upward navigation (parent '..') move
+                    # left in the history and restore the child as
+                    # preselection.
+                    try:
+                        if name == "..":
+                            # Moving up: restore the child at the current
+                            # history position and move the position left.
+                            if 0 <= self._highlight_pos < len(self._highlight_history):
+                                child = self._highlight_history[self._highlight_pos]
+                                self._preselected_filename = child
+                                self._highlight_pos = max(self._highlight_pos - 1, -1)
+                            elif self._highlight_history:
+                                # Fallback: pop last entry
+                                child = self._highlight_history.pop()
+                                self._preselected_filename = child
+                                self._highlight_pos = len(self._highlight_history) - 1
+                        else:
+                            # Moving down: if this name matches the next
+                            # forward history entry, advance the position
+                            # so right-navigation restores the previous
+                            # child highlight. Otherwise truncate any
+                            # forward history and append the new directory.
                             try:
-                                norm_new_rel = os.path.normpath(new_rel)
-                            except Exception as e:
-                                self.printException(e, "_activate_or_open: normalizing new_rel failed")
-                                norm_new_rel = new_rel
-                            last_child = None
-                            if self._last_child_by_dir is not None:
-                                last_child = self._last_child_by_dir.get(norm_new_rel)
-                            logger.debug(
-                                "_activate_or_open: new_rel=%r last_child=%r history=%r pos=%r",
-                                norm_new_rel,
-                                last_child,
-                                self._highlight_history,
-                                self._highlight_pos,
-                            )
-                            if last_child:
-                                self._preselected_filename = last_child
-                        except Exception as e:
-                            self.printException(e, "_activate_or_open: restoring last child preselection failed")
+                                next_pos = self._highlight_pos + 1
+                                if (
+                                    next_pos < len(self._highlight_history)
+                                    and self._highlight_history[next_pos] == name
+                                ):
+                                    # Advance position along existing history
+                                    self._highlight_pos = next_pos
+                                    # Preselect the child (one step forward) if present
+                                    child_pos = self._highlight_pos + 1
+                                    if child_pos < len(self._highlight_history):
+                                        self._preselected_filename = self._highlight_history[child_pos]
+                                    else:
+                                        self._preselected_filename = None
+                                else:
+                                    if self._highlight_pos < len(self._highlight_history) - 1:
+                                        del self._highlight_history[self._highlight_pos + 1 :]
+                                    self._highlight_history.append(name)
+                                    self._highlight_pos = len(self._highlight_history) - 1
+                                    self._preselected_filename = None
+                            except Exception as _e:
+                                self.printException(_e, "_activate_or_open: pushing to _highlight_history failed")
+                    except Exception as _e:
+                        self.printException(_e, "_activate_or_open: highlight history update failed")
 
+                    # Compute and set new repository-relative directory
+                    try:
+                        cur_rel = self.app.rel_dir or ""
+                        new_rel = self.app.gitRepo.reldir_plus_dirname_to_reldir(cur_rel, name)
+                        self.app.rel_dir = new_rel
+                        # Clear any selected file when entering a directory
+                        self.app.rel_file = ""
+                    except Exception as _e:
+                        self.printException(_e, "_activate_or_open: computing new rel_dir failed")
+
+                    # Prefer restoring a previously-recorded child for
+                    # this directory if available. Keys in
+                    # `_last_child_by_dir` are normalized repo-relative
+                    # paths (see `key_left`), so normalize here too.
+                    try:
                         try:
-                            self.prepFileModeFileList()
+                            norm_new_rel = os.path.normpath(new_rel)
                         except Exception as e:
-                            self.printException(e, "_activate_or_open: prepFileModeFileList failed")
-                        return
-                except Exception as e:
-                    self.printException(e, "_activate_or_open: enter_dir_test_fn failed")
+                            self.printException(e, "_activate_or_open: normalizing new_rel failed")
+                            norm_new_rel = new_rel
+                        last_child = None
+                        if self._last_child_by_dir is not None:
+                            last_child = self._last_child_by_dir.get(norm_new_rel)
+                        logger.debug(
+                            "_activate_or_open: new_rel=%r last_child=%r history=%r pos=%r",
+                            norm_new_rel,
+                            last_child,
+                            self._highlight_history,
+                            self._highlight_pos,
+                        )
+                        if last_child:
+                            self._preselected_filename = last_child
+                    except Exception as e:
+                        self.printException(e, "_activate_or_open: restoring last child preselection failed")
 
+                    try:
+                        self.prepFileModeFileList()
+                    except Exception as e:
+                        self.printException(e, "_activate_or_open: prepFileModeFileList failed")
+                    return
+
+            # not is_dir
             try:
                 # Default behavior: prepare the right-hand file-history widget
                 # (the app composes a FileModeHistoryList on the right) and
@@ -3114,7 +3194,7 @@ class FileModeFileList(FileListBase):
                     # for Right key.
                     try:
                         status = repo_status
-                        if not is_dir and status in ("I", "U", "ignored", "untracked"):
+                        if status in ("I", "U", "ignored", "untracked"):
                             logger.debug(
                                 "_activate_or_open: skipping history prep for ignored/untracked file status=%r",
                                 status,
@@ -3130,6 +3210,7 @@ class FileModeFileList(FileListBase):
                             return
                     except Exception as _e:
                         self.printException(_e, "_activate_or_open: checking repo_status failed")
+
                     # Ensure `app.rel_dir`/`app.rel_file` reflect the
                     # currently-selected file so history preparers can
                     # rely on a single source of truth.
@@ -3288,7 +3369,7 @@ class RepoModeFileList(FileListBase):
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
 
     def prepRepoModeFileList(
-        self, prev_hash: str | None, curr_hash: str | None, highlight_filename: str | None = None
+        self, prev_hash: str | None, curr_hash: str | None, highlight: str | None = None
     ) -> None:
         """
         Populate this widget with files changed between `prev_hash` and `curr_hash`.
@@ -3299,10 +3380,10 @@ class RepoModeFileList(FileListBase):
         """
         try:
             logger.debug(
-                "prepRepoModeFileList: prev_hash=%r curr_hash=%r highlight_filename=%r",
+                "prepRepoModeFileList: prev_hash=%r curr_hash=%r highlight=%r",
                 prev_hash,
                 curr_hash,
-                highlight_filename,
+                highlight,
             )
             # Defensive: clear any stray active classes left by virtualization
             try:
@@ -3387,18 +3468,24 @@ class RepoModeFileList(FileListBase):
 
                             name = display
                             try:
-                                raw_val = self._canonical_relpath(full, repo_root_local) if full and repo_root_local else (full or name)
+                                raw_val = (
+                                    self._canonical_relpath(full, repo_root_local)
+                                    if full and repo_root_local
+                                    else (full or name)
+                                )
                             except Exception as e:
                                 self.printException(e, "prepRepoModeFileList: canonicalizing entry failed")
                                 raw_val = full or name
 
-                            file_infos.append({
-                                "name": name,
-                                "full": full,
-                                "is_dir": is_dir,
-                                "raw": raw_val,
-                                "repo_status": status,
-                            })
+                            file_infos.append(
+                                {
+                                    "name": name,
+                                    "full": full,
+                                    "is_dir": is_dir,
+                                    "raw": raw_val,
+                                    "repo_status": status,
+                                }
+                            )
                         except Exception as _ex:
                             self.printException(_ex, "prepRepoModeFileList: normalizing entry failed")
                             continue
@@ -3408,20 +3495,28 @@ class RepoModeFileList(FileListBase):
                         # otherwise default to selecting the top data row.
                         active_raw = None
                         active_idx = 0
-                        if highlight_filename:
+                        if highlight:
                             try:
-                                repo_root_local = self.app.gitRepo.get_repo_root() if hasattr(self.app, "gitRepo") else None
+                                repo_root_local = (
+                                    self.app.gitRepo.get_repo_root() if hasattr(self.app, "gitRepo") else None
+                                )
                             except Exception as e:
                                 self.printException(e, "prepRepoModeFileList: get_repo_root fallback")
                                 repo_root_local = None
                             try:
-                                active_raw = self._canonical_relpath(highlight_filename, repo_root_local) if highlight_filename and repo_root_local else (os.path.normpath(highlight_filename) if highlight_filename else None)
+                                active_raw = (
+                                    self._canonical_relpath(highlight, repo_root_local)
+                                    if highlight and repo_root_local
+                                    else (os.path.normpath(highlight) if highlight else None)
+                                )
                             except Exception as e:
                                 self.printException(e, "prepRepoModeFileList: _canonical_relpath fallback")
-                                active_raw = os.path.normpath(highlight_filename) if highlight_filename else None
+                                active_raw = os.path.normpath(highlight) if highlight else None
 
                         try:
-                            self._populate_from_file_infos(file_infos, active_raw=active_raw, active_index=(None if active_raw else active_idx))
+                            self._populate_from_file_infos(
+                                file_infos, active_raw=active_raw, active_index=(None if active_raw else active_idx)
+                            )
                         except Exception as _ex:
                             self.printException(_ex, "prepRepoModeFileList: populating entries failed")
                 except Exception as e:
@@ -3431,7 +3526,7 @@ class RepoModeFileList(FileListBase):
 
             self._populated = True
             # Highlight based on provided hashes (prefer curr_hash) or
-            # by filename when `highlight_filename` is provided. Ensure
+            # by filename when `highlight` is provided. Ensure
             # navigation skips the header when rows exist
             try:
                 nodes = self.nodes()
@@ -3448,10 +3543,10 @@ class RepoModeFileList(FileListBase):
                 self.app.current_hash = curr_hash
                 # If caller requested a filename highlight, record it via
                 # `rel_dir`/`rel_file` so other components can rely on a single source of truth.
-                if highlight_filename:
+                if highlight:
                     try:
                         # Store repo-relative highlight paths; normalize input
-                        rel = os.path.normpath(highlight_filename)
+                        rel = os.path.normpath(highlight)
                         rd, rf = os.path.split(rel)
                         self.app.rel_dir = rd or ""
                         self.app.rel_file = rf or ""
@@ -3462,8 +3557,8 @@ class RepoModeFileList(FileListBase):
             try:
                 # If a filename highlight was requested prefer it over
                 # commit-based highlighting.
-                if highlight_filename:
-                    self._highlight_filename(highlight_filename)
+                if highlight:
+                    self._highlight_filename(highlight)
                 else:
                     self._highlight_top()
             except Exception as e:
@@ -3472,7 +3567,7 @@ class RepoModeFileList(FileListBase):
             # Run centralized finalization so UI/app state is kept consistent
             try:
                 self._finalize_filelist_prep(
-                    curr_hash=curr_hash, prev_hash=prev_hash, path=highlight_filename if highlight_filename else None
+                    curr_hash=curr_hash, prev_hash=prev_hash, path=highlight if highlight else None
                 )
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: finalize failed")
@@ -4142,7 +4237,6 @@ class RepoModeHistoryList(HistoryListBase):
 
     def prepRepoModeHistoryList(
         self,
-        repo_path: str | None = None,
         prev_hash: str | None = None,
         curr_hash: str | None = None,
         highlight: str | None = None,
@@ -4150,13 +4244,11 @@ class RepoModeHistoryList(HistoryListBase):
         """
         Prepare the repository-wide commit history view.
 
-        `repo_path` may narrow the view to a subpath; `prev_hash` and
-        `curr_hash` may be used to constrain the commit range.
+        `prev_hash` and `curr_hash` may be used to constrain the commit range.
         """
         try:
             logger.debug(
-                "prepRepoModeHistoryList: repo_path=%r prev_hash=%r curr_hash=%r",
-                repo_path,
+                "prepRepoModeHistoryList: prev_hash=%r curr_hash=%r",
                 prev_hash,
                 curr_hash,
             )
@@ -4219,7 +4311,7 @@ class RepoModeHistoryList(HistoryListBase):
                 # matched `highlight` row (if any).
                 effective_curr = curr_hash or matched_highlight_hash
                 try:
-                    self._finalize_historylist_prep(curr_hash=effective_curr, prev_hash=prev_hash, path=repo_path)
+                    self._finalize_historylist_prep(curr_hash=effective_curr, prev_hash=prev_hash)
                 except Exception as e:
                     self.printException(e, "prepRepoModeHistoryList: finalize failed")
             except Exception as e:
@@ -4259,7 +4351,7 @@ class RepoModeHistoryList(HistoryListBase):
                     curr_hash,
                     hf,
                 )
-                self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash, highlight_filename=hf)
+                self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash, highlight=hf)
                 try:
                     # Switch to the right-file list view and update footer
                     self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
@@ -4905,27 +4997,16 @@ class GitHistoryNavTool(AppException, App):
                 raise RuntimeError(f"widget resolution failed in on_mount: {e}") from e
 
             # Ensure help content is prepared so help is immediately available
-            if self.help_list is not None:
-                try:
-                    self.help_list.prepHelp()
-                except Exception as e:
-                    self.printException(e, "on_mount: prepHelp failed")
-
-                # Also set the left column to file fullscreen when hashes
-                # were provided so the paired layout is prepared.
-                try:
-                    self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
-                except Exception as e:
-                    self.printException(e, "on_mount: change_state for file_fullscreen failed")
+            self.help_list.prepHelp()
 
             # Populate the canonical left lists and set focus so key handlers
             # and highlight behavior work immediately in both modes.
             try:
                 if not self.repo_first:
-                    try:
-                        self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
-                    except Exception as e:
-                        self.printException(e, "on_mount: prepFileModeFileList outer failed")
+                    self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
+                    # Also set the left column to file fullscreen when hashes
+                    # were provided so the paired layout is prepared.
+                    self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
                 else:
                     # If starting in repo-first mode, pre-populate the left
                     # repository-history widget so the UI shows commits immediately.
@@ -4941,69 +5022,25 @@ class GitHistoryNavTool(AppException, App):
 
                         # Call preparer once with any provided hashes so it may
                         # highlight/mark the requested commits during prep.
-                        try:
-                            # Compute repository-relative `rel` and only resolve
-                            # an absolute path when needed for filesystem checks.
-                            try:
-                                if self.rel_file:
-                                    rel = os.path.join(self.rel_dir or "", self.rel_file)
-                                else:
-                                    rel = self.rel_dir or ""
-                            except Exception as e:
-                                self.printException(e, "preparer: computing rel failed")
-                                rel = self.rel_dir or ""
+                        self.repo_mode_history_list.prepRepoModeHistoryList(
+                            prev_hash=prev, curr_hash=curr, highlight=self.highlight
+                        )
+                        self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
 
-                            if rel:
-                                ip = self.gitRepo.full_path_for(os.path.dirname(rel), os.path.basename(rel))
-                            else:
-                                ip = self.gitRepo.get_repo_root()
+                        # If in repo-first mode, check to see if there is a filename:
+                        #     if so, also prep repo mode file list and pass the names as a highlight
+                        #          and change  state to the file list
+                        # .    else, there is no repo mode file list at this time
+                        #           and change  state to the history list only
+                        #if self.rel_file:
+                        #    self.repo_mode_file_list.prepRepoModeFileList(prev, curr, highlight=self.rel_file)
+                        #    self.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
+                        #else:
+                        #    self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
 
-                            if os.path.isdir(ip):
-                                rdir = rel
-                                rpath = None
-                            else:
-                                rdir = os.path.dirname(rel) or ""
-                                rpath = os.path.basename(rel)
-
-                            try:
-                                self.repo_mode_history_list.prepRepoModeHistoryList(
-                                    repo_path=rel, prev_hash=prev, curr_hash=curr, highlight=self.highlight
-                                )
-                            except Exception as _ex:
-                                self.printException(_ex, "on_mount: prepRepoModeHistoryList failed")
-                        except Exception as e:
-                            self.printException(e, "on_mount: prepRepoModeHistoryList failed")
-
-                        # If starting in repo-first mode and hashes were given,
-                        # populate the repo file list so the right column shows files.
-                        if curr is not None or prev is not None:
-                            try:
-                                self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
-                            except Exception as e:
-                                self.printException(e, "preparing repo mode file list failed")
-                            # Centralize layout/focus/footer handling via change_state.
-                            try:
-                                self.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
-                            except Exception as e:
-                                self.printException(e, "on_mount: change_state for history_fullscreen failed")
-                        else:
-                            # Centralize layout/focus/footer handling via change_state.
-                            try:
-                                self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
-                            except Exception as e:
-                                self.printException(e, "on_mount: change_state for history_fullscreen failed")
                     except Exception as e:
                         self.printException(e, "on_mount: repo-first initialization failed")
 
-                    # Ensure help content is prepared so help is immediately available
-                    try:
-                        if self.help_list is not None:
-                            try:
-                                self.help_list.prepHelp()
-                            except Exception as e:
-                                self.printException(e, "on_mount: prepHelp failed")
-                    except Exception as e:
-                        self.printException(e, "on_mount: prepHelp outer failure")
             except Exception as e:
                 self.printException(e, "on_mount: initial prep failed")
         except Exception as e:
@@ -5089,16 +5126,14 @@ class GitHistoryNavTool(AppException, App):
                 except Exception as e:
                     self.printException(e, "key_r: event.stop failed")
 
-            # Local references to avoid repeated attribute lookups
-            app = self
-            prev = app.previous_hash
-            curr = app.current_hash
+            prev = self.previous_hash
+            curr = self.current_hash
             # Build repo-relative path from rel_dir/rel_file; default to '.'
             try:
-                if app.rel_file:
-                    path = os.path.join(app.rel_dir or "", app.rel_file)
+                if self.rel_file:
+                    path = os.path.join(self.rel_dir or "", self.rel_file)
                 else:
-                    path = app.rel_dir or "."
+                    path = self.rel_dir or "."
             except Exception as e:
                 self.printException(e, "key_r: computing path failed")
                 path = "."
@@ -5114,9 +5149,9 @@ class GitHistoryNavTool(AppException, App):
 
             # Re-run file-mode file list preparer if visible
             try:
-                if hasattr(app, "file_mode_file_list") and _is_visible(app.file_mode_file_list):
+                if _is_visible(self.file_mode_file_list):
                     try:
-                        gitrepo = app.gitRepo
+                        gitrepo = self.gitRepo
                         ip = path
                         root = gitrepo.get_repo_root()
                         if ip == root:
@@ -5132,11 +5167,11 @@ class GitHistoryNavTool(AppException, App):
                             rdir = os.path.dirname(rel) or ""
                             rpath = os.path.basename(rel)
                         try:
-                            app.file_mode_file_list.app.rel_dir = rdir
-                            app.file_mode_file_list.app.rel_file = rpath
+                            self.file_mode_file_list.app.rel_dir = rdir
+                            self.file_mode_file_list.app.rel_file = rpath
                         except Exception as _e:
                             self.printException(_e, "_activate_or_open: scanning nodes for '..' failed")
-                        app.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
+                        self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
                     except Exception as e:
                         self.printException(e, "key_r: prepFileModeFileList failed")
             except Exception as e:
@@ -5144,9 +5179,9 @@ class GitHistoryNavTool(AppException, App):
 
             # Re-run repo-mode file list preparer if visible
             try:
-                if hasattr(app, "repo_mode_file_list") and _is_visible(app.repo_mode_file_list):
+                if _is_visible(self.repo_mode_file_list):
                     try:
-                        app.repo_mode_file_list.prepRepoModeFileList(prev, curr)
+                        self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
                     except Exception as e:
                         self.printException(e, "key_r: prepRepoModeFileList failed")
             except Exception as e:
@@ -5154,11 +5189,9 @@ class GitHistoryNavTool(AppException, App):
 
             # Re-run left repo history if visible
             try:
-                if hasattr(app, "repo_mode_history_list") and _is_visible(app.repo_mode_history_list):
+                if _is_visible(self.repo_mode_history_list):
                     try:
-                        app.repo_mode_history_list.prepRepoModeHistoryList(
-                            repo_path=path, prev_hash=prev, curr_hash=curr
-                        )
+                        self.repo_mode_history_list.prepRepoModeHistoryList(prev_hash=prev, curr_hash=curr)
                     except Exception as e:
                         self.printException(e, "key_r: prepRepoModeHistoryList failed")
             except Exception as e:
@@ -5166,9 +5199,9 @@ class GitHistoryNavTool(AppException, App):
 
             # Re-run right file history (file-mode history) if visible
             try:
-                if hasattr(app, "file_mode_history_list") and _is_visible(app.file_mode_history_list):
+                if _is_visible(self.file_mode_history_list):
                     try:
-                        app.file_mode_history_list.prepFileModeHistoryList(path=path, prev_hash=prev, curr_hash=curr)
+                        self.file_mode_history_list.prepFileModeHistoryList(path=path, prev_hash=prev, curr_hash=curr)
                     except Exception as e:
                         self.printException(e, "key_r: prepFileModeHistoryList failed")
             except Exception as e:
@@ -5403,30 +5436,27 @@ class GitHistoryNavTool(AppException, App):
                 label_name = None
 
                 # Reset title label classes
-                try:
-                    title_ids = [
-                        LEFT_FILE_TITLE,
-                        LEFT_HISTORY_TITLE,
-                        RIGHT_HISTORY_TITLE,
-                        RIGHT_FILE_TITLE,
-                        DIFF_TITLE,
-                        HELP_TITLE,
-                    ]
-                    for tid in title_ids:
+                title_ids = [
+                    LEFT_FILE_TITLE,
+                    LEFT_HISTORY_TITLE,
+                    RIGHT_HISTORY_TITLE,
+                    RIGHT_FILE_TITLE,
+                    DIFF_TITLE,
+                    HELP_TITLE,
+                ]
+                for tid in title_ids:
+                    try:
+                        lbl = self.query_one(f"#{tid}", Label)
                         try:
-                            lbl = self.query_one(f"#{tid}", Label)
-                            try:
-                                lbl.set_class(False, "active")
-                            except Exception as e:
-                                self.printException(e, "change_focus resetting title label class failed")
-                                try:
-                                    lbl.remove_class("active")
-                                except Exception as e:
-                                    self.printException(e, "change_focus removing title label class failed")
+                            lbl.set_class(False, "active")
                         except Exception as e:
-                            self.printException(e, "change_focus querying title label failed")
-                except Exception as e:
-                    self.printException(e, "change_focus resetting title label classes failed")
+                            self.printException(e, "change_focus resetting title label class failed")
+                            try:
+                                lbl.remove_class("active")
+                            except Exception as e:
+                                self.printException(e, "change_focus removing title label class failed")
+                    except Exception as e:
+                        self.printException(e, "change_focus querying title label failed")
 
                 if key == LEFT_FILE_LIST_ID:
                     widget = self.file_mode_file_list
@@ -5446,6 +5476,7 @@ class GitHistoryNavTool(AppException, App):
                 elif key == HELP_LIST_ID:
                     widget = self.help_list
                     label_name = HELP_TITLE
+
                 else:
                     try:
                         caller = inspect.stack()[1]
@@ -5463,202 +5494,318 @@ class GitHistoryNavTool(AppException, App):
                     return
 
                 try:
-                    if widget is not None:
-                        # If there is an existing focused column, set its border to gray
-                        # Force all canonical candidate widgets to gray borders,
-                        # then we'll set the chosen widget to white below.
-                        try:
-                            candidates = [
-                                ("left_file_list", self.file_mode_file_list),
-                                ("left_history_list", self.repo_mode_history_list),
-                                ("right_file_list", self.repo_mode_file_list),
-                                ("right_history_list", self.file_mode_history_list),
-                                ("diff_list", self.diff_list),
-                                ("help_list", self.help_list),
-                            ]
-                            for cname, w in candidates:
-                                try:
-                                    if w is None:
-                                        continue
-                                    try:
-                                        before = getattr(w.styles, "border", None)
-                                    except Exception as _ex:
-                                        self.printException(_ex)
-                                        before = "<unavailable>"
-                                    logger.debug(
-                                        "change_focus:%d: forcing gray border for %s (before=%r)",
-                                        inspect.currentframe().f_lineno,
-                                        cname,
-                                        before,
-                                    )
-                                    try:
-                                        # Prefer applying a CSS class to represent
-                                        # unfocused/gray state so rendering decisions
-                                        # stay declarative. Fall back to directly
-                                        # mutating `styles.border` when the widget
-                                        # doesn't support `set_class`.
-                                        w.set_class(False, "focused")
-                                        w.set_class(False, "focused-white")
-                                        w.set_class(True, "focused-gray")
-                                    except Exception as e:
-                                        self.printException(e)
-                                        try:
-                                            w.styles.border = ("solid", "gray")
-                                        except Exception as _ex:
-                                            self.printException(_ex)
-                                    try:
-                                        readback = getattr(w.styles, "border", None)
-                                    except Exception as _ex:
-                                        self.printException(_ex)
-                                        readback = "<unavailable>"
-                                    logger.debug(
-                                        "change_focus:%d: forced gray border readback=%r for %s",
-                                        inspect.currentframe().f_lineno,
-                                        readback,
-                                        cname,
-                                    )
-                                except Exception as _ex:
-                                    self.printException(_ex)
-                        except Exception as _ex:
-                            self.printException(_ex)
-
-                        try:
-                            logger.debug(
-                                "change_focus:%d: calling set_focus on widget=%r key=%r",
-                                inspect.currentframe().f_lineno,
-                                type(widget).__name__ if widget is not None else None,
-                                key,
-                            )
-                            self.set_focus(widget)
-                        except Exception as e:
-                            self.printException(e, f"could not set focus to widget for {target}")
-                            # Fallback: resolve widget by id and call set_focus
+                    # If there is an existing focused column, set its border to gray
+                    # Force all canonical candidate widgets to gray borders,
+                    # then we'll set the chosen widget to white below.
+                    try:
+                        candidates = [
+                            ("left_file_list", self.file_mode_file_list),
+                            ("left_history_list", self.repo_mode_history_list),
+                            ("right_file_list", self.repo_mode_file_list),
+                            ("right_history_list", self.file_mode_history_list),
+                            ("diff_list", self.diff_list),
+                            ("help_list", self.help_list),
+                        ]
+                        for cname, w in candidates:
+                            if w is None:
+                                continue
                             try:
-                                logger.debug(
-                                    "change_focus:%d: attempting widget.focus() fallback for key=%r",
-                                    inspect.currentframe().f_lineno,
-                                    key,
-                                )
-                                widget.focus()
-                            except Exception as e:
-                                self.printException(e, f"could not fallback focus to widget for {target}")
-
-                        # Now set the new focused widget's border to white
-                        try:
-                            # read current focused widget border safely
-                            try:
-                                cur_border = getattr(widget.styles, "border", None)
+                                before = getattr(w.styles, "border", None)
                             except Exception as _ex:
                                 self.printException(_ex)
-                                cur_border = "<unavailable>"
+                                before = "<unavailable>"
                             logger.debug(
-                                "change_focus:%d: focused widget before set border=%r key=%r",
+                                "change_focus:%d: forcing gray border for %s (before=%r)",
                                 inspect.currentframe().f_lineno,
-                                cur_border,
-                                key,
-                            )
-                            logger.debug(
-                                "change_focus:%d: setting focused widget class -> focused for key=%r",
-                                inspect.currentframe().f_lineno,
-                                key,
+                                cname,
+                                before,
                             )
                             try:
-                                widget.set_class(True, "focused")
-                                widget.set_class(False, "focused-gray")
-                                widget.set_class(True, "focused-white")
+                                # Prefer applying a CSS class to represent
+                                # unfocused/gray state so rendering decisions
+                                # stay declarative. Fall back to directly
+                                # mutating `styles.border` when the widget
+                                # doesn't support `set_class`.
+                                w.set_class(False, "focused")
+                                w.set_class(False, "focused-white")
+                                w.set_class(True, "focused-gray")
                             except Exception as e:
                                 self.printException(e)
                                 try:
-                                    widget.styles.border = ("solid", "white")
+                                    w.styles.border = ("solid", "gray")
                                 except Exception as _ex:
                                     self.printException(_ex)
                             try:
-                                readback = getattr(widget.styles, "border", None)
+                                readback = getattr(w.styles, "border", None)
                             except Exception as _ex:
                                 self.printException(_ex)
                                 readback = "<unavailable>"
                             logger.debug(
-                                "change_focus:%d: focused widget.styles.border readback=%r key=%r",
+                                "change_focus:%d: forced gray border readback=%r for %s",
                                 inspect.currentframe().f_lineno,
                                 readback,
-                                key,
+                                cname,
                             )
-                        except Exception as _ex:
-                            self.printException(_ex)
-                        # Best-effort: some terminals and render paths can race
-                        # focus changes and style application. Try to apply the
-                        # index highlight synchronously first to avoid visible
-                        # delay; fall back to a post-refresh scheduled call if
-                        # the immediate attempt doesn't take effect.
+                    except Exception as _ex:
+                        self.printException(_ex)
+
+                    logger.debug(
+                        "change_focus:%d: calling set_focus on widget=%r key=%r",
+                        inspect.currentframe().f_lineno,
+                        type(widget).__name__ if widget is not None else None,
+                        key,
+                    )
+                    try:
+                        self.set_focus(widget)
+                    except Exception as e:
+                        self.printException(e, f"could not set focus to widget for {target}")
+                        # Fallback: resolve widget by id and call set_focus
+                        logger.debug(
+                            "change_focus:%d: attempting widget.focus() fallback for key=%r",
+                            inspect.currentframe().f_lineno,
+                            key,
+                        )
                         try:
-                            if widget is not None and hasattr(widget, "apply_index_change"):
-                                try:
-                                    logger.debug(
-                                        "change_focus:%d: attempting immediate apply_index_change for key=%r",
-                                        inspect.currentframe().f_lineno,
-                                        key,
-                                    )
-                                    applied = None
-                                    try:
-                                        applied = widget.apply_index_change(None, getattr(widget, "index", None))
-                                    except Exception as _ex:
-                                        self.printException(_ex, "change_focus: immediate apply_index_change failed")
-                                        applied = None
-                                    # If immediate application returned None or seemed ineffective,
-                                    # schedule a post-refresh fallback to ensure the UI eventually
-                                    # receives the active-class update.
-                                    if applied is None:
-                                        try:
-                                            widget_name = type(widget).__name__ if widget is not None else "<unknown>"
-                                            # Historical note: scheduled highlights did not
-                                            # reliably work for `FileModeHistoryList` and
-                                            # were intentionally avoided. Preserve that
-                                            # behavior by skipping the scheduled fallback
-                                            # for that widget type and only attempt the
-                                            # immediate apply above.
-                                            if widget_name == "FileModeHistoryList":
-                                                logger.debug(
-                                                    "change_focus:%d: skipping scheduled fallback for %s",
-                                                    inspect.currentframe().f_lineno,
-                                                    widget_name,
-                                                )
-                                            else:
-                                                logger.debug(
-                                                    "change_focus:%d: scheduling post-refresh apply_index_change for key=%r",
-                                                    inspect.currentframe().f_lineno,
-                                                    key,
-                                                )
-                                                self.call_after_refresh(lambda: widget.apply_index_change(None, getattr(widget, "index", None)))
-                                        except Exception as _ex:
-                                            self.printException(_ex, "change_focus: scheduling post-refresh apply_index_change failed")
-                                except Exception as _ex:
-                                    self.printException(_ex)
+                            widget.focus()
+                        except Exception as e:
+                            self.printException(e, f"could not fallback focus to widget for {target}")
+
+                    # Now set the new focused widget's border to white
+                    try:
+                        # read current focused widget border safely
+                        try:
+                            cur_border = getattr(widget.styles, "border", None)
                         except Exception as _ex:
                             self.printException(_ex)
-                        # Attempt to resolve by id and set border
+                            cur_border = "<unavailable>"
+                        logger.debug(
+                            "change_focus:%d: focused widget before set border=%r key=%r",
+                            inspect.currentframe().f_lineno,
+                            cur_border,
+                            key,
+                        )
+                        try:
+                            widget.set_class(True, "focused")
+                            widget.set_class(False, "focused-gray")
+                            widget.set_class(True, "focused-white")
+                        except Exception as e:
+                            self.printException(e)
                             try:
-                                w = None
-                                try:
-                                    w = self.query_one(f"#{key}")
-                                except Exception as _ex:
-                                    self.printException(_ex)
-                                    w = None
-                                if w is not None:
-                                    logger.debug(
-                                        "change_focus:%d: setting fallback widget class -> focused for resolved id=%r",
-                                        inspect.currentframe().f_lineno,
-                                        key,
-                                    )
-                                    try:
-                                        w.set_class(True, "focused")
-                                    except Exception as e:
-                                        self.printException(e)
-                                        try:
-                                            w.styles.border = ("solid", "white")
-                                        except Exception as _ex:
-                                            self.printException(_ex)
+                                widget.styles.border = ("solid", "white")
                             except Exception as _ex:
                                 self.printException(_ex)
+                        try:
+                            readback = getattr(widget.styles, "border", None)
+                        except Exception as _ex:
+                            self.printException(_ex)
+                            readback = "<unavailable>"
+                        logger.debug(
+                            "change_focus:%d: focused widget.styles.border readback=%r key=%r",
+                            inspect.currentframe().f_lineno,
+                            readback,
+                            key,
+                        )
+                    except Exception as _ex:
+                        self.printException(_ex)
+
+                    # Best-effort: some terminals and render paths can race
+                    # focus changes and style application. Try to apply the
+                    # index highlight synchronously first to avoid visible
+                    # delay; fall back to a post-refresh scheduled call if
+                    # the immediate attempt doesn't take effect.
+                    try:
+                        logger.debug(
+                            "change_focus:%d: attempting immediate apply_index_change for key=%r",
+                            inspect.currentframe().f_lineno,
+                            key,
+                        )
+                        applied = None
+                        try:
+                            # Prefer an explicit target index when possible. Some
+                            # widgets initialize with `index=None` until they are
+                            # populated; pass `_min_index` (or 0) to ensure an
+                            # immediate activation attempt actually targets a
+                            # concrete row instead of becoming a no-op.
+                            t_im_start = time.perf_counter()
+                            target_idx = getattr(widget, "index", None)
+                            if target_idx is None:
+                                target_idx = getattr(widget, "_min_index", 0) or 0
+                            applied = widget.apply_index_change(None, target_idx)
+                            t_im_end = time.perf_counter()
+                            logger.debug(
+                                "change_focus:%d: immediate apply_index_change took %.3fms returned=%r target_idx=%r",
+                                inspect.currentframe().f_lineno,
+                                (t_im_end - t_im_start) * 1000,
+                                bool(applied),
+                                target_idx,
+                            )
+                        except Exception as _ex:
+                            self.printException(_ex, "change_focus: immediate apply_index_change failed")
+                            applied = None
+                        # If immediate application returned None or seemed ineffective,
+                        # schedule a post-refresh fallback to ensure the UI eventually
+                        # receives the active-class update.
+                        if applied is None:
+                            try:
+                                # Try to authoritative-apply the active class
+                                # synchronously in-case rendering paths race and
+                                # the framework doesn't pick up the immediate
+                                # `apply_index_change` side-effects. This mirrors
+                                # the fallback behavior but runs inline to avoid
+                                # the visible delay before `call_after_refresh`.
+                                widget_idx = getattr(widget, "index", None)
+                                nodes_now = None
+                                try:
+                                    nodes_now = widget.nodes()
+                                except Exception as _ex:
+                                    self.printException(
+                                        _ex,
+                                        "change_focus: widget.nodes() failed during authoritative activation",
+                                    )
+
+                                if nodes_now and (widget_idx is not None and 0 <= widget_idx < len(nodes_now)):
+                                    try:
+                                        logger.debug(
+                                            "change_focus:%d: authoritative immediate activation for key=%r idx=%r",
+                                            inspect.currentframe().f_lineno,
+                                            key,
+                                            widget_idx,
+                                        )
+                                        for i, node in enumerate(nodes_now):
+                                            try:
+                                                node.set_class(i == widget_idx, "active")
+                                            except Exception as _ex:
+                                                self.printException(
+                                                    _ex,
+                                                    "change_focus: node.set_class failed during authoritative activation",
+                                                )
+                                            try:
+                                                node.refresh()
+                                            except Exception as _ex:
+                                                self.printException(
+                                                    _ex,
+                                                    "change_focus: node.refresh failed during authoritative activation",
+                                                )
+                                        try:
+                                            if hasattr(widget, "_ensure_index_visible"):
+                                                widget._ensure_index_visible()
+                                        except Exception as _ex:
+                                            self.printException(
+                                                _ex,
+                                                "change_focus: _ensure_index_visible failed during authoritative activation",
+                                            )
+                                        # We applied the authoritative activation inline; no
+                                        # need to schedule the post-refresh fallback for
+                                        # most widget types. Still preserve the historical
+                                        # skip for FileModeHistoryList.
+                                        widget_name = type(widget).__name__ if widget is not None else "<unknown>"
+                                        if widget_name == "FileModeHistoryList":
+                                            logger.debug(
+                                                "change_focus:%d: skipping scheduled fallback for %s",
+                                                inspect.currentframe().f_lineno,
+                                                widget_name,
+                                            )
+                                        else:
+                                            logger.debug(
+                                                "change_focus:%d: authoritative activation applied for key=%r; scheduling a no-op post-refresh for safety",
+                                                inspect.currentframe().f_lineno,
+                                                key,
+                                            )
+                                            try:
+                                                # Schedule a lightweight no-op to allow any
+                                                # remaining render pipeline steps to complete.
+                                                t_sched_start = time.perf_counter()
+                                                self.call_after_refresh(lambda: None)
+                                                t_sched_end = time.perf_counter()
+                                                logger.debug(
+                                                    "change_focus:%d: call_after_refresh no-op scheduled in %.3fms",
+                                                    inspect.currentframe().f_lineno,
+                                                    (t_sched_end - t_sched_start) * 1000,
+                                                )
+                                            except Exception as _ex:
+                                                self.printException(
+                                                    _ex,
+                                                    "change_focus: scheduling post-refresh no-op failed",
+                                                )
+                                    except Exception as _ex:
+                                        self.printException(
+                                            _ex, "change_focus: authoritative immediate activation failed"
+                                        )
+                                else:
+                                    # If we couldn't find nodes to directly update,
+                                    # fall back to the prior behavior and schedule the
+                                    # post-refresh `apply_index_change` to complete
+                                    # the activation when the UI finishes rendering.
+                                    try:
+                                        widget_name = type(widget).__name__ if widget is not None else "<unknown>"
+                                        if widget_name == "FileModeHistoryList":
+                                            logger.debug(
+                                                "change_focus:%d: skipping scheduled fallback for %s",
+                                                inspect.currentframe().f_lineno,
+                                                widget_name,
+                                            )
+                                        else:
+                                            logger.debug(
+                                                "change_focus:%d: scheduling post-refresh apply_index_change for key=%r",
+                                                inspect.currentframe().f_lineno,
+                                                key,
+                                            )
+                                            try:
+                                                t_sched_start = time.perf_counter()
+                                                target_idx_sched = getattr(widget, "index", None)
+                                                if target_idx_sched is None:
+                                                    target_idx_sched = getattr(widget, "_min_index", 0) or 0
+                                                self.call_after_refresh(
+                                                    lambda: widget.apply_index_change(None, target_idx_sched)
+                                                )
+                                                t_sched_end = time.perf_counter()
+                                                logger.debug(
+                                                    "change_focus:%d: call_after_refresh scheduled in %.3fms target_idx=%r",
+                                                    inspect.currentframe().f_lineno,
+                                                    (t_sched_end - t_sched_start) * 1000,
+                                                    target_idx_sched,
+                                                )
+                                            except Exception as _ex:
+                                                self.printException(
+                                                    _ex,
+                                                    "change_focus: scheduling post-refresh apply_index_change failed",
+                                                )
+                                    except Exception as _ex:
+                                        self.printException(
+                                            _ex,
+                                            "change_focus: scheduling post-refresh apply_index_change failed",
+                                        )
+                            except Exception as _ex:
+                                self.printException(
+                                    _ex, "change_focus: scheduling post-refresh apply_index_change failed"
+                                )
+
+                    except Exception as _ex:
+                        self.printException(_ex, f"change_focus: applying focus styles failed for {target}")
+                        # Attempt to resolve by id and set border
+                        try:
+                            w = None
+                            try:
+                                w = self.query_one(f"#{key}")
+                            except Exception as _ex:
+                                self.printException(_ex)
+                                w = None
+                            if w is not None:
+                                logger.debug(
+                                    "change_focus:%d: setting fallback widget class -> focused for resolved id=%r",
+                                    inspect.currentframe().f_lineno,
+                                    key,
+                                )
+                                try:
+                                    w.set_class(True, "focused")
+                                except Exception as e:
+                                    self.printException(e)
+                                    try:
+                                        w.styles.border = ("solid", "white")
+                                    except Exception as _ex:
+                                        self.printException(_ex)
+                        except Exception as _ex:
+                            self.printException(_ex)
 
                     # best-effort normalize index/scroll for file lists
                     try:
@@ -5839,23 +5986,9 @@ class GitHistoryNavTool(AppException, App):
         # When toggling from file_fullscreen, populate the repo history
         # so the paired history_fullscreen view is ready.
         try:
-            try:
-                # Determine a repository-relative path to request from the preparer
-                rd = self.rel_dir
-                rf = self.rel_file
-                if rf:
-                    repo_path = os.path.join(rd or "", rf)
-                else:
-                    repo_path = rd or ""
-            except Exception as e:
-                self.printException(e, "toggle_file_fullscreen: computing repo_path failed")
-                repo_path = ""
-            try:
-                self.repo_mode_history_list.prepRepoModeHistoryList(repo_path=repo_path)
-            except Exception as e:
-                self.printException(e, "toggle_file_fullscreen prepRepoModeHistoryList failed")
+            self.repo_mode_history_list.prepRepoModeHistoryList()
         except Exception as e:
-            self.printException(e, "toggle_file_fullscreen unexpected failure")
+            self.printException(e, "toggle_file_fullscreen prepRepoModeHistoryList failed")
         try:
             self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
         except Exception as e:
@@ -5924,19 +6057,8 @@ class GitHistoryNavTool(AppException, App):
             # Use the current app-level hashes as the initial request; the
             # preparer will update app-level state to reflect the highlighted
             # selection and we will read back the authoritative values.
-            try:
-                rd = self.rel_dir
-                rf = self.rel_file
-                if rf:
-                    repo_path = os.path.join(rd or "", rf)
-                else:
-                    repo_path = rd or ""
-            except Exception as e:
-                self.printException(e, "toggle_file_history: computing repo_path failed")
-                repo_path = ""
-
             self.repo_mode_history_list.prepRepoModeHistoryList(
-                repo_path=repo_path, prev_hash=self.previous_hash, curr_hash=self.current_hash
+                prev_hash=self.previous_hash, curr_hash=self.current_hash
             )
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo history failed")
@@ -5960,7 +6082,7 @@ class GitHistoryNavTool(AppException, App):
             # Pass the repo-relative highlight so matching uses repository-relative rows.
             hl = saved_path
             logger.debug("toggle_file_history: passing highlight=%r", hl)
-            self.repo_mode_file_list.prepRepoModeFileList(use_prev, use_curr, highlight_filename=hl)
+            self.repo_mode_file_list.prepRepoModeFileList(use_prev, use_curr, highlight=hl)
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo file list failed")
         try:
@@ -6181,23 +6303,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         except Exception as e:
             printException(e, f"Not a git repository or invalid path: {raw_path}")
             sys.exit(f"Not a git repository: {raw_path}")
-
-        # Compute a validated absolute candidate path using repo-relative
-        # components. Use `abs_path_for` which validates containment.
-        try:
-            if rel_dir == "" and rel_file == "":
-                full_candidate = gitrepo.get_repo_root()
-            else:
-                full_candidate = gitrepo.abs_path_for(rel_dir, rel_file)
-        except Exception as e:
-            printException(e, f"Not a git repository or invalid path: {raw_path}")
-            sys.exit(f"Not a git repository: {raw_path}")
-
-        # Sanity-check the prepared rel_dir/rel_file before passing to the app
-        if rel_dir and os.path.isabs(rel_dir):
-            sys.exit(f"internal error: rel_dir must be repository-relative: {rel_dir}")
-        if rel_file and os.path.isabs(rel_file):
-            sys.exit(f"internal error: rel_file must be repository-relative: {rel_file}")
 
         logger.debug(
             "Starting GitHistoryNavTool; raw_path=%s repo_root=%s rel_dir=%r rel_file=%r",

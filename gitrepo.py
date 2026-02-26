@@ -114,6 +114,8 @@ class GitRepo(AppException):
      abspath = gitRepo.abs_path_for(rel_dir, rel_file)
          Return an absolute path from (reldir,relfile).
 
+     is_dir = gitRepo.is_directory(rel_dir, rel_file)
+         Return True if the repository-relative (reldir,relfile) resolves to an existing directory.
 
 
     Most of the remaining functions return information about the repository from various points of view,
@@ -395,7 +397,7 @@ class GitRepo(AppException):
         try:
             full = os.path.normpath(os.path.join(self._repoRoot, rel_dir, rel_file))
         except Exception as e:
-            printException(e, "abs_path_for: failed to construct path")
+            self.printException(e, "abs_path_for: failed to construct path")
             raise ValueError(f"abs_path_for: failed to construct path: {e}") from e
 
         # Ensure the resulting path is inside the repository root
@@ -405,10 +407,26 @@ class GitRepo(AppException):
             if common != repo_norm:
                 raise ValueError("abs_path_for: computed path is outside the repository root")
         except Exception as e:
-            printException(e, "abs_path_for: validation failed")
+            self.printException(e, "abs_path_for: validation failed")
             raise ValueError(f"abs_path_for: validation failed: {e}") from e
 
         return full
+
+    def is_directory(self, rel_dir: str, rel_file: str) -> bool:
+        """
+        Return True if the repository-relative (rel_dir, rel_file) resolves to an existing directory.
+
+        If `rel_dir` is an empty string use `rel_file` directly under the repo root.
+        """
+        if rel_dir == "":
+            full = os.path.join(self._repoRoot, rel_file)
+        else:
+            full = os.path.join(self._repoRoot, rel_dir, rel_file)
+        try:
+            return os.path.isdir(full)
+        except Exception as e:
+            self.printException(e, f"is_directory: failed to check directory {rel_dir}/{rel_file}")
+            return False
 
     ################################################################
     # helper functions
