@@ -1484,6 +1484,34 @@ class AppBase(AppException, ListView):
         self._log_visible_items("key_enter after processing index change")
         return None
 
+    def toggle_ignore(self, event: events.Key | None = None) -> None:
+        """Toggle app-level ignored-file visibility and refresh file-mode list."""
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "toggle_ignore: event.stop failed")
+            self.app.no_ignored = not bool(self.app.no_ignored)
+            logger.debug("%s.toggle_ignore: no_ignored=%r", type(self).__name__, self.app.no_ignored)
+            self.app.file_mode_file_list.prepFileModeFileList()
+        except Exception as e:
+            self.printException(e, "toggle_ignore failed")
+
+    def toggle_untracked(self, event: events.Key | None = None) -> None:
+        """Toggle app-level untracked-file visibility and refresh file-mode list."""
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "toggle_untracked: event.stop failed")
+            self.app.no_untracked = not bool(self.app.no_untracked)
+            logger.debug("%s.toggle_untracked: no_untracked=%r", type(self).__name__, self.app.no_untracked)
+            self.app.file_mode_file_list.prepFileModeFileList()
+        except Exception as e:
+            self.printException(e, "toggle_untracked failed")
+
     def key_s_helper(self, event: events.Key | None = None) -> None:
         """
         Common helper to prompt and save snapshot files for a visible widget.
@@ -3362,35 +3390,11 @@ class FileModeFileList(FileListBase):
 
     def key_i(self, event: events.Key | None = None) -> None:
         """Toggle ignored-file visibility and refresh the file-mode list."""
-        logger.debug("FileModeFileList.key_i called: key=%r index=%r", getattr(event, "key", None), self.index)
-        try:
-            if event is not None:
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "FileModeFileList.key_i: event.stop failed")
-            self.app.no_ignored = not bool(self.app.no_ignored)
-            logger.debug("FileModeFileList.key_i: no_ignored=%r", self.app.no_ignored)
-            self.prepFileModeFileList()
-        except Exception as e:
-            self.printException(e, "FileModeFileList.key_i failed")
-        self._log_visible_items("key_i after processing index change")
+        return self.toggle_ignore(event)
 
     def key_u(self, event: events.Key | None = None) -> None:
         """Toggle untracked-file visibility and refresh the file-mode list."""
-        logger.debug("FileModeFileList.key_u called: key=%r index=%r", getattr(event, "key", None), self.index)
-        try:
-            if event is not None:
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "FileModeFileList.key_u: event.stop failed")
-            self.app.no_untracked = not bool(self.app.no_untracked)
-            logger.debug("FileModeFileList.key_u: no_untracked=%r", self.app.no_untracked)
-            self.prepFileModeFileList()
-        except Exception as e:
-            self.printException(e, "FileModeFileList.key_u failed")
-        self._log_visible_items("key_u after processing index change")
+        return self.toggle_untracked(event)
 
 
 class RepoModeFileList(FileListBase):
@@ -4148,6 +4152,12 @@ class FileModeHistoryList(HistoryListBase):
             self.key_s_helper(event)
         except Exception as e:
             self.printException(e, "FileModeHistoryList.key_s: helper failed")
+
+    def key_i(self, event: events.Key | None = None) -> None:
+        return self.toggle_ignore(event)
+
+    def key_u(self, event: events.Key | None = None) -> None:
+        return self.toggle_untracked(event)
 
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """
