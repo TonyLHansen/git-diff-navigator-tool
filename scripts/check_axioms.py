@@ -521,21 +521,39 @@ def _find_getattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[in
     return results
 
 
-def _find_hasattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[int, str]]:
+def _find_hasattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[int, str, str, str]]:
     """
-    Find usages of hasattr(self, 'attr') and return list of (lineno, attrname).
+    Find usages of hasattr(self, 'attr') and hasattr(self.xyz, 'attr').
+
+    Returns a list of (lineno, attrname, func, enclosing_class).
+    For nested-self patterns, attrname is emitted as "xyz.attr".
 
     Only matches literal string attribute names. Does not attempt to resolve
     dynamic expressions.
     """
 
-    results: List[tuple[int, str]] = []
+    results: List[tuple[int, str, str, str]] = []
 
     # Some Python versions don't expose ast.Str (strings are ast.Constant).
     has_ast_Str = hasattr(ast, "Str")
     str_node_types = (ast.Constant, ast.Str) if has_ast_Str else (ast.Constant,)
 
     class Finder(ast.NodeVisitor):
+        def __init__(self):
+            self.stack: List[ast.AST] = []
+
+        def generic_visit(self, node: ast.AST) -> None:
+            self.stack.append(node)
+            super().generic_visit(node)
+            self.stack.pop()
+
+        def _enclosing_class(self) -> str | None:
+            """Return the name of the enclosing ClassDef or None."""
+            for anc in reversed(self.stack):
+                if isinstance(anc, ast.ClassDef):
+                    return anc.name
+            return None
+
         def visit_Call(self, node: ast.Call) -> None:
             try:
                 if isinstance(node.func, ast.Name) and node.func.id == "hasattr" and len(node.args) >= 2:
@@ -550,7 +568,17 @@ def _find_hasattr_on_self(path: Path, text: str, tree: ast.AST) -> List[tuple[in
                         if isinstance(attr_name, str):
                             lineno = getattr(node, "lineno", None)
                             if lineno is not None:
-                                results.append((lineno, attr_name))
+                                results.append((lineno, attr_name, node.func.id, self._enclosing_class()))
+                    # match hasattr(self.xyz, 'attr') where first arg is Attribute off self
+                    if isinstance(first, ast.Attribute) and isinstance(first.value, ast.Name) and first.value.id == "self":
+                        if has_ast_Str and isinstance(second, ast.Str):
+                            attr_name = second.s
+                        else:
+                            attr_name = getattr(second, "value", None)
+                        if isinstance(attr_name, str):
+                            lineno = getattr(node, "lineno", None)
+                            if lineno is not None:
+                                results.append((lineno, f"{first.attr}.{attr_name}", node.func.id, self._enclosing_class()))
             except Exception as e:
                 printException(e, f"error walking AST for hasattr detection in {path}")
             self.generic_visit(node)
@@ -577,9 +605,26 @@ def check_prefer_no_direct_hasattrs(path: Path, text: str, tree: ast.AST) -> Lis
     for s in classes.values():
         assigned_attrs.update(s)
 
-    for lineno, attr in hasattr_uses:
-        if attr in assigned_attrs:
-            errs.append((str(path), lineno, f"hasattr(self, '{attr}') used but '{attr}' is assigned in __init__/on_mount; unnecessary check"))
+    for lineno, attr, func, encl in hasattr_uses:
+        if "." in attr:
+            right = attr.split(".", 1)[1]
+            if right in assigned_attrs or _attr_provided_by_bases(encl, right, class_bases):
+                errs.append(
+                    (
+                        str(path),
+                        lineno,
+                        f"hasattr(self.{attr.split('.', 1)[0]}, '{right}') used but '{right}' is known to exist; unnecessary check",
+                    )
+                )
+        else:
+            if attr in assigned_attrs or _attr_provided_by_bases(encl, attr, class_bases):
+                errs.append(
+                    (
+                        str(path),
+                        lineno,
+                        f"{func}(self, '{attr}') used but '{attr}' is known to exist; unnecessary check",
+                    )
+                )
 
     return errs
 
