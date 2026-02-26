@@ -704,9 +704,13 @@ class AppBase(AppException, ListView):
         Uses getattr to tolerate Textual internals not being present yet.
         """
         try:
-            # Prefer the public `children` live view when available so callers
-            # observe the current DOM without allocating a snapshot.
-            n = self.children
+            # Prefer currently-displayed children so highlight/class changes
+            # apply to visible rows during async remove/append cycles.
+            c = self.children
+            if c:
+                return c
+            # Fallback to ListView internal storage when no children exist.
+            n = self._nodes
             return n if n else []
         except Exception as e:
             self.printException(e, "nodes failed")
@@ -853,6 +857,31 @@ class AppBase(AppException, ListView):
             # Authoritative re-render when we have node data available.
             try:
                 if hasattr(self, "_nodes_by_dir") and self._nodes_by_dir and hasattr(self, "_render_filemode_display"):
+                    # Focus handoff frequently invokes apply_index_change(None, idx)
+                    # with the same current index on startup. Re-rendering in
+                    # that case can duplicate rows because clear/append run in
+                    # the same cycle. For same-index updates, enforce classes
+                    # in-place and skip authoritative re-render.
+                    try:
+                        current_index = getattr(self, "index", None)
+                    except Exception as e:
+                        self.printException(e, "apply_index_change: reading current index failed")
+                        current_index = None
+                    if new is not None and current_index == new and (old is None or old == new):
+                        nodes_same = self.nodes()
+                        if nodes_same and 0 <= new < len(nodes_same):
+                            for i, node in enumerate(nodes_same):
+                                try:
+                                    node.set_class(i == new, "active")
+                                except Exception as _e:
+                                    self.printException(_e, "apply_index_change: node.set_class failed in same-index branch")
+                            try:
+                                if hasattr(self, "_ensure_index_visible"):
+                                    self._ensure_index_visible()
+                            except Exception as _e:
+                                self.printException(_e, "apply_index_change: _ensure_index_visible failed in same-index branch")
+                            return nodes_same[new]
+
                     rel_dir = self.app.rel_dir
                     rel_file = self.app.rel_file
                     logger.debug(
@@ -1484,6 +1513,23 @@ class AppBase(AppException, ListView):
         self._log_visible_items("key_enter after processing index change")
         return None
 
+    def _preserve_filemode_selection_for_refresh(self) -> None:
+        """Capture current file-mode selection so redraw can reselect it."""
+        try:
+            fl = self.app.file_mode_file_list
+            nodes = fl.nodes()
+            idx = fl.index if fl.index is not None else (fl._min_index or 0)
+            if idx is None or not (0 <= idx < len(nodes)):
+                return
+            node = nodes[idx]
+            selected = getattr(node, "_filename", None) or getattr(node, "_raw_text", None)
+            if not selected:
+                return
+            fl._preselected_filename = selected
+            logger.debug("%s: preserved file-mode selection=%r", type(self).__name__, selected)
+        except Exception as e:
+            self.printException(e, "_preserve_filemode_selection_for_refresh failed")
+
     def toggle_ignore(self, event: events.Key | None = None) -> None:
         """Toggle app-level ignored-file visibility and refresh file-mode list."""
         try:
@@ -1492,6 +1538,7 @@ class AppBase(AppException, ListView):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "toggle_ignore: event.stop failed")
+            self._preserve_filemode_selection_for_refresh()
             self.app.no_ignored = not bool(self.app.no_ignored)
             logger.debug("%s.toggle_ignore: no_ignored=%r", type(self).__name__, self.app.no_ignored)
             self.app.file_mode_file_list.prepFileModeFileList()
@@ -1506,6 +1553,7 @@ class AppBase(AppException, ListView):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "toggle_untracked: event.stop failed")
+            self._preserve_filemode_selection_for_refresh()
             self.app.no_untracked = not bool(self.app.no_untracked)
             logger.debug("%s.toggle_untracked: no_untracked=%r", type(self).__name__, self.app.no_untracked)
             self.app.file_mode_file_list.prepFileModeFileList()
@@ -2953,32 +3001,30 @@ class FileModeFileList(FileListBase):
                                         it.add_class("active")
                                     except Exception as e2:
                                         self.printException(e2, "_render_filemode_display: adding active class failed")
+                            else:
+                                try:
+                                    it.set_class(False, "active")
+                                except Exception as e:
+                                    self.printException(e, "_render_filemode_display: clearing active class failed")
                         except Exception as _e:
                             self.printException(_e, "_render_filemode_display: preparing item classes failed")
 
-                    # Commit prepared items in a single batch to avoid
-                    # per-item mount/refresh overhead which can make single-key
-                    # navigation feel slow. Prefer the internal DOM fast-path
-                    # `_add_children` which attaches children synchronously;
-                    # fall back to public `mount` when not available.
+                    # Commit prepared items synchronously so the active row
+                    # class is present on first paint (startup should show
+                    # row 0 selected without post-refresh correction).
                     try:
                         t0 = time.perf_counter()
                         try:
                             self.clear()
                         except Exception as e_clear:
                             self.printException(e_clear, "_render_filemode_display: clear() failed")
-                        if new_items:
+                        for it in new_items:
                             try:
-                                # Use public `mount` to ensure widgets are mounted
-                                # into the DOM and will be rendered. The internal
-                                # `_add_children` path may not complete full mount
-                                # lifecycle in all Textual versions, causing items
-                                # to remain unmounted and invisible.
-                                self.mount(*new_items)
+                                self.append(it)
                             except Exception as e_add:
-                                self.printException(e_add, "_render_filemode_display: mount failed")
+                                self.printException(e_add, "_render_filemode_display: append failed")
                         t1 = time.perf_counter()
-                        logger.debug("_render_filemode_display: batch add completed in %.3fms", (t1 - t0) * 1000)
+                        logger.debug("_render_filemode_display: sync append completed in %.3fms", (t1 - t0) * 1000)
                     except Exception as e:
                         self.printException(e, "_render_filemode_display: batch add failed")
                 except Exception as _e:
@@ -3294,6 +3340,7 @@ class FileModeFileList(FileListBase):
         # after the directory-enter flow completes. This makes the visual
         # highlight deterministic even if the watcher path races.
         old_idx = getattr(self, "index", None)
+        before_state = (self.app.rel_dir, self.app.rel_file, self.app._current_layout)
         # If we're not currently positioned on the parent entry ('..'),
         # record the current child selection for this directory so we can
         # restore it when re-entering. Then move the selection to the
@@ -3335,7 +3382,9 @@ class FileModeFileList(FileListBase):
             self.printException(_e, "FileModeFileList.key_left preselect parent failed")
 
         self._activate_or_open(event, enter_dir_test_fn=lambda name: name == "..", allow_file_open=False)
-        self.apply_index_change(old_idx, getattr(self, "index", None))
+        after_state = (self.app.rel_dir, self.app.rel_file, self.app._current_layout)
+        if before_state == after_state:
+            self.apply_index_change(old_idx, getattr(self, "index", None))
 
         try:
             nodes = self.nodes()
@@ -3351,6 +3400,7 @@ class FileModeFileList(FileListBase):
     def key_right(self, event: events.Key | None = None) -> None:
         """Handle Right key in a file list: enter directories or open files."""
         logger.debug("FileModeFileList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+        before_state = (self.app.rel_dir, self.app.rel_file, self.app._current_layout)
         try:
             old_idx = getattr(self, "index", None)
             # If the current node is a directory, proactively suppress watch
@@ -3376,8 +3426,10 @@ class FileModeFileList(FileListBase):
             self.printException(_e, "FileModeFileList.key_right: pre-suppress failed")
 
         self._activate_or_open(event, enter_dir_test_fn=lambda name: (name is not None) and name != "..")
+        after_state = (self.app.rel_dir, self.app.rel_file, self.app._current_layout)
         try:
-            self.apply_index_change(old_idx, getattr(self, "index", None))
+            if before_state == after_state:
+                self.apply_index_change(old_idx, getattr(self, "index", None))
         except Exception as e:
             self.printException(e, "FileModeFileList.key_right: applying index change failed")
         self._log_visible_items("key_right after processing index change")
@@ -4154,9 +4206,11 @@ class FileModeHistoryList(HistoryListBase):
             self.printException(e, "FileModeHistoryList.key_s: helper failed")
 
     def key_i(self, event: events.Key | None = None) -> None:
+        """Toggle ignored-file visibility and refresh file-mode list."""
         return self.toggle_ignore(event)
 
     def key_u(self, event: events.Key | None = None) -> None:
+        """Toggle untracked-file visibility and refresh file-mode list."""
         return self.toggle_untracked(event)
 
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
