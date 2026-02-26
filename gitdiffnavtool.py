@@ -9,6 +9,7 @@ steps will fill in the concrete classes and behavior.
 from __future__ import annotations
 
 import argparse
+import configparser
 import logging
 import os
 import sys
@@ -174,6 +175,13 @@ RIGHT_FILE_FOOTER = Text("Files: press Left to return")
 HELP_FOOTER = Text("Help: press Enter to return")
 # Footer text used when showing the diff for a history/file selection
 HISTORY_FILE_DIFF_FOOTER = Text("Diff: press Left to return to files")
+
+# Text("File: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End", style="bold")
+# Text("History: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Begin/End  →  m(ark)", style="bold")
+# Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Begin/End  Press any key to return", style="bold")
+# Text("Help: q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
+# Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End →/f(ull) c(olor) d(iff-type)", style="bold")
+# Text("Diff: q(uit)  ?/h(elp)  ←/f(ull) ↑/↓/PgUp/PgDn/Begin/End c(olor) d(iff-type)", style="bold")
 
 # Common styles used across file/history preparers
 STYLE_DIR = "white on blue"
@@ -6241,7 +6249,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     Returns process exit code (0 on success).
     """
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
-    parser.add_argument("path", nargs="+", help="one or more directories or files to open")
     parser.add_argument(
         "-C", "--no-color", dest="no_color", action="store_true", help="start with diff colorization off"
     )
@@ -6266,14 +6273,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument(
         "-I",
-        "--no-ignored",
+        "--no-ignored-files",
         dest="no_ignored",
         action="store_true",
         help="exclude ignored files from file-mode listings",
     )
     parser.add_argument(
         "-U",
-        "--no-untracked",
+        "--no-untracked-files",
         dest="no_untracked",
         action="store_true",
         help="exclude untracked files from file-mode listings",
@@ -6287,6 +6294,67 @@ def main(argv: Optional[list[str]] = None) -> int:
         metavar="BASENAME",
         help="basename of a file to pre-highlight (must be a basename, no path elements)",
     )
+    parser.add_argument("path", nargs="1", help="one or more directories or files to open")
+
+    # Load optional configuration from .gitdiffnavtool.ini (cwd then $HOME).
+    # Keys in the [gitdiffnavtool] section:
+    #   ignored-files=true/false
+    #   untracked-files=true/false
+    #   repo-first=true/false
+    #   color=true/false
+    #   debug=<filename>
+    # CLI options always take precedence over config defaults.
+    cfg_files = [os.path.join(os.getcwd(), ".gitdiffnavtool.ini"), os.path.join(os.path.expanduser("~"), ".gitdiffnavtool.ini")]
+    cfg = configparser.ConfigParser()
+    read_files = [p for p in cfg_files if os.path.exists(p)]
+    if read_files:
+        try:
+            cfg.read(read_files)
+            if "gitdiffnavtool" in cfg:
+                src = cfg["gitdiffnavtool"]
+            else:
+                src = cfg.defaults()
+
+            def _getbool(name: str):
+                if name in src:
+                    v = src.get(name)
+                    if v is None:
+                        return None
+                    vs = v.strip().lower()
+                    if vs in ("1", "true", "yes", "on"):
+                        return True
+                    if vs in ("0", "false", "no", "off"):
+                        return False
+                return None
+
+            defaults = {}
+
+            b = _getbool("repo-first")
+            if b is not None:
+                defaults["repo_first"] = bool(b)
+
+            b = _getbool("ignored-files")
+            if b is not None:
+                defaults["no_ignored"] = not bool(b)
+
+            b = _getbool("untracked-files")
+            if b is not None:
+                defaults["no_untracked"] = not bool(b)
+
+            b = _getbool("color")
+            if b is not None:
+                defaults["no_color"] = not bool(b)
+
+            if "debug" in src:
+                dbg = (src.get("debug") or "").strip()
+                if dbg:
+                    defaults["debug"] = dbg
+
+            if defaults:
+                parser.set_defaults(**defaults)
+        except Exception as e:
+            printException(e, f"failed reading config files {read_files}")
+
     args = parser.parse_args(argv)
 
     # Validate --highlight is a bare basename (no path elements)
@@ -6301,19 +6369,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     # Configure logging if debug file requested
-    try:
-        if args.debug:
-            try:
-                os.makedirs(os.path.dirname(args.debug) or "", exist_ok=True)
-            except Exception as e:
-                printException(e, "could not create directories for debug log file")
-            logging.basicConfig(
-                filename=args.debug,
-                level=logging.DEBUG,
-                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            )
-            logging.getLogger().setLevel(logging.DEBUG)
-            logger.debug("Debug logging enabled -> %s", args.debug)
+    if args.debug:
+        try:
+            os.makedirs(os.path.dirname(args.debug) or "", exist_ok=True)
+        except Exception as e:
+            printException(e, "could not create directories for debug log file")
+        logging.basicConfig(
+            filename=args.debug,
+            level=logging.DEBUG,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled -> %s", args.debug)
 
         # Enable TRACE-level logging if requested (applies to root and handlers)
         enable_trace_logging(bool(args.debug_tracing))
@@ -6322,6 +6389,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         if args.verbose < 3:
             logging.getLogger("markdown_it").setLevel(logging.WARNING)
 
+    try:
         # If repo-hash provided, validate count and imply repo-first
         repo_hashes = None
         if args.repo_hash:
