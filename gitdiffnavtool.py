@@ -3422,12 +3422,12 @@ class RepoModeFileList(FileListBase):
                             if isinstance(ent, (list, tuple)) and len(ent) >= 1:
                                 full = ent[0]
                                 status = ent[1] if len(ent) > 1 else None
-                                display = os.path.basename(full) if full else ""
+                                display = os.path.normpath(full) if full else ""
                                 is_dir = False
                             else:
                                 full = str(ent)
                                 status = None
-                                display = os.path.basename(full) if full else ""
+                                display = os.path.normpath(full) if full else ""
                                 is_dir = False
 
                             name = display
