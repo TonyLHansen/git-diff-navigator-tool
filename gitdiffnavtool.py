@@ -5158,9 +5158,10 @@ class GitHistoryNavTool(AppException, App):
         except Exception as e:
             self.printException(e, "GitHistoryNavTool.on_key failed")
 
-    def key_q(self, event: events.Key | None = None) -> None:
+    def key_q(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Quit the application on `q` keypress (synonym for ^Q)."""
-        logger.debug("GitHistoryNavTool.key_q called: key=%r", getattr(event, "key", None))
+        if not recursive:
+            logger.debug("GitHistoryNavTool.key_q called: key=%r", getattr(event, "key", None))
         try:
             if event is not None:
                 try:
@@ -5183,14 +5184,15 @@ class GitHistoryNavTool(AppException, App):
         logger.debug("GitHistoryNavTool.key_Q called: key=%r", getattr(event, "key", None))
         return self.key_q(event, recursive=True)
 
-    def key_h(self, event: events.Key | None = None) -> None:
+    def key_h(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """
         Show help: save state, prepare help, then display help fullscreen.
 
         This records the single-slot state, ensures help content is prepared,
         and switches layout/focus/footer to the help configuration.
         """
-        logger.debug("GitHistoryNavTool.key_h called: key=%r", getattr(event, "key", None))
+        if not recursive:
+            logger.debug("GitHistoryNavTool.key_h called: key=%r", getattr(event, "key", None))
         try:
             if event is not None:
                 try:
@@ -5222,6 +5224,11 @@ class GitHistoryNavTool(AppException, App):
         logger.debug("GitHistoryNavTool.key_question called: key=%r", getattr(event, "key", None))
         return self.key_h(event, recursive=True)
 
+    def key_question_mark(self, event: events.Key | None = None) -> None:
+        """Handle terminal mappings where '?' is reported as 'question_mark'."""
+        logger.debug("GitHistoryNavTool.key_question_mark called: key=%r", getattr(event, "key", None))
+        return self.key_h(event, recursive=True)
+
     def key_r(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """
         Global revert: re-run preparers for visible HistoryList and FileList widgets.
@@ -5230,7 +5237,8 @@ class GitHistoryNavTool(AppException, App):
         the current app state (hashes and path) to restore highlights. It does
         not change which columns are visible or which widget has focus.
         """
-        logger.debug("GitHistoryNavTool.key_r called: key=%r", getattr(event, "key", None))
+        if not recursive:
+            logger.debug("GitHistoryNavTool.key_r called: key=%r", getattr(event, "key", None))
         try:
             if event is not None:
                 try:
