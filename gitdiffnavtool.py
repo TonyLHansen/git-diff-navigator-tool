@@ -4510,7 +4510,16 @@ class DiffList(AppBase):
                 except Exception as _ex:
                     self.printException(_ex, "prepDiffList: retrieving app.diff_variants failed")
                     variant_arg = None
-                variation = [variant_arg] if variant_arg else None
+
+                # Support variants as either a single arg string or a list
+                # of argv tokens (e.g. ["--word-diff=porcelain", "--no-color"]).
+                variation = None
+                if variant_arg:
+                    if isinstance(variant_arg, (list, tuple)):
+                        variation = [str(v) for v in variant_arg if v]
+                    else:
+                        variation = [str(variant_arg)]
+
                 out_lines = gitrepo.getDiff(filename, prev, curr, variation)
                 out = "\n".join(out_lines) if out_lines else ""
             except Exception as e:
@@ -4530,7 +4539,10 @@ class DiffList(AppBase):
                     except Exception as e:
                         self.printException(e, "prepDiffList: retrieving app.diff_variants failed")
                         variant_arg = None
-                    vdisp = variant_arg if variant_arg else ""
+                    if isinstance(variant_arg, (list, tuple)):
+                        vdisp = " ".join([str(v) for v in variant_arg if v])
+                    else:
+                        vdisp = variant_arg if variant_arg else ""
                     vspace = " " if variant_arg else ""
                     header = f"'Diff{vspace}{vdisp}' for {filename} between {p_short} and {c_short}"
                 except Exception as e:
@@ -4619,26 +4631,120 @@ class DiffList(AppBase):
         logger.debug("DiffList.key_C called: key=%r", getattr(event, "key", None))
         return self.key_c(event, recursive=True)
 
-    def _render_output(self) -> None:
-        """Clear and render `self.output` honoring `self._colorized`."""
+    def _build_porcelain_rows(self, body_lines: list[str], colorized: bool) -> list[Text]:
+        """
+        Convert `git diff --word-diff=porcelain` body lines into render rows.
+
+        Porcelain uses prefixed runs:
+        - `' '` context run
+        - `'+'` added run
+        - `'-'` removed run
+        - `'~'` newline marker
+        This helper reconstructs visual lines and applies inline styles to
+        added/removed runs so coloring appears *within* each line.
+        """
+        rows: list[Text] = []
+        current = Text("")
+
+        def flush_current(force_empty: bool = False) -> None:
+            nonlocal current
+            if current.plain or force_empty:
+                rows.append(current)
+                current = Text("")
+
+        def is_patch_header(ln: str) -> bool:
+            return (
+                ln.startswith("diff --git")
+                or ln.startswith("index ")
+                or ln.startswith("@@")
+                or ln.startswith("---")
+                or ln.startswith("+++")
+            )
+
         try:
-            self.clear()
-            for i, ln in enumerate(self.output or []):
-                try:
+            for ln in body_lines:
+                # newline marker in porcelain output
+                if ln == "~":
+                    flush_current(force_empty=True)
+                    continue
+
+                # flush accumulated inline row before rendering patch metadata
+                if is_patch_header(ln):
+                    flush_current(force_empty=False)
                     style = None
-                    if self._colorized:
-                        if ln.startswith("+") and not ln.startswith("+++"):
-                            style = "green"
-                        elif ln.startswith("-") and not ln.startswith("---"):
-                            style = "red"
-                        elif ln.startswith("@@"):
+                    if colorized:
+                        if ln.startswith("@@"):
                             style = "magenta"
                         elif ln.startswith("diff --git") or ln.startswith("index "):
                             style = "bold white"
-                    if style:
-                        item = ListItem(Label(Text(ln, style=style)))
+                    rows.append(Text(ln, style=style) if style else Text(ln))
+                    continue
+
+                if ln and ln[0] in (" ", "+", "-"):
+                    token = ln[0]
+                    payload = ln[1:]
+                    seg_style = None
+                    if colorized:
+                        if token == "+":
+                            seg_style = "green"
+                        elif token == "-":
+                            seg_style = "red"
+                    current.append(payload, style=seg_style)
+                else:
+                    # Defensive fallback for unexpected lines
+                    flush_current(force_empty=False)
+                    rows.append(Text(ln))
+
+            flush_current(force_empty=False)
+            return rows
+        except Exception as e:
+            self.printException(e, "_build_porcelain_rows failed")
+            return [Text(ln) for ln in body_lines]
+
+    def _render_output(self) -> None:
+        """Clear and render `self.output` honoring `self._colorized`."""
+        try:
+            is_porcelain_variant = False
+            try:
+                variant_arg = None
+                if 0 <= int(self.variant or 0) < len(self.app.diff_variants):
+                    variant_arg = self.app.diff_variants[int(self.variant or 0)]
+                if isinstance(variant_arg, (list, tuple)):
+                    is_porcelain_variant = any(str(v).startswith("--word-diff=porcelain") for v in variant_arg)
+                elif isinstance(variant_arg, str):
+                    is_porcelain_variant = variant_arg.startswith("--word-diff=porcelain")
+            except Exception as e:
+                self.printException(e, "_render_output: determining porcelain variant failed")
+
+            rendered_rows: list[Text] = []
+            try:
+                if self.output:
+                    header_text = Text(self.output[0])
+                    body_lines = self.output[1:]
+                    if is_porcelain_variant:
+                        rendered_rows = [header_text] + self._build_porcelain_rows(body_lines, self._colorized)
                     else:
-                        item = ListItem(Label(Text(ln)))
+                        rendered_rows = [header_text]
+                        for ln in body_lines:
+                            style = None
+                            if self._colorized:
+                                if ln.startswith("+") and not ln.startswith("+++"):
+                                    style = "green"
+                                elif ln.startswith("-") and not ln.startswith("---"):
+                                    style = "red"
+                                elif ln.startswith("@@"):
+                                    style = "magenta"
+                                elif ln.startswith("diff --git") or ln.startswith("index "):
+                                    style = "bold white"
+                            rendered_rows.append(Text(ln, style=style) if style else Text(ln))
+            except Exception as e:
+                self.printException(e, "_render_output: preparing rendered rows failed")
+                rendered_rows = [Text(ln) for ln in (self.output or [])]
+
+            self.clear()
+            for i, txt in enumerate(rendered_rows):
+                try:
+                    item = ListItem(Label(txt))
                     # Make the first line (our diff header) unselectable so
                     # navigation/highlight skips it.
                     try:
@@ -5033,9 +5139,17 @@ class GitHistoryNavTool(AppException, App):
         self.current_hash = None
         self.previous_hash = None
 
-        # Optional diff variant arguments indexed by variant_index.
-        # index 0 -> None (no extra arg), 1 -> ignore-space-change, 2 -> patience algorithm
-        self.diff_variants: list[Optional[str]] = [None, "--ignore-space-change", "--diff-algorithm=patience"]
+        # Optional diff variant argument sets indexed by variant_index.
+        # index 0 -> default unified diff
+        # index 1 -> ignore space changes
+        # index 2 -> patience algorithm
+        # index 3 -> word-diff porcelain (machine-parseable)
+        self.diff_variants: list[Optional[list[str]]] = [
+            None,
+            ["--ignore-space-change"],
+            ["--diff-algorithm=patience"],
+            ["--word-diff=porcelain", "--no-color"],
+        ]
 
     def compose(self):
         """
