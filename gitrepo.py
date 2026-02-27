@@ -1531,29 +1531,24 @@ class GitRepo(AppException):
             # If textual diff is empty, attempt metadata summary fallback
             if not (out and out.strip()):
                 try:
-                    pseudo_names = (self.MODS, self.STAGED)
                     # Determine whether metadata diff should use --cached.
-                    if hash1 in pseudo_names and hash2 in pseudo_names and {hash1, hash2} == {self.STAGED, self.MODS}:
+                    # Use normalized refs so NEWREPO maps to empty-tree hash
+                    # consistently with the main textual diff path.
+                    if (ref1 == self.STAGED and ref2 is None) or (ref2 == self.STAGED and ref1 is None):
                         use_cached = False
                     else:
-                        use_cached = hash1 == self.STAGED or hash2 == self.STAGED
+                        use_cached = ref1 == self.STAGED or ref2 == self.STAGED
                     meta_cmd = ["git", "-C", self._repoRoot, "diff"]
                     if use_cached:
                         meta_cmd.append("--cached")
                     meta_cmd += ["--name-status", "--summary"]
-                    # Include explicit refs when provided (avoid pseudo names)
-                    if hash1 in pseudo_names or hash2 in pseudo_names:
-                        if hash1 and hash1 not in pseudo_names and hash2 and hash2 not in pseudo_names:
-                            meta_cmd += [hash1, hash2]
-                        elif hash2 and hash2 not in pseudo_names:
-                            meta_cmd.append(hash2)
-                        elif hash1 and hash1 not in pseudo_names:
-                            meta_cmd.append(hash1)
-                    else:
-                        if hash1 and hash2:
-                            meta_cmd += [hash1, hash2]
-                        elif hash2 and not hash1:
-                            meta_cmd.append(hash2)
+                    # Include explicit refs when provided.
+                    # `None` means working tree and is omitted.
+                    # `STAGED` is represented by --cached and is omitted.
+                    if ref1 is not None and ref1 != self.STAGED:
+                        meta_cmd.append(ref1)
+                    if ref2 is not None and ref2 != self.STAGED:
+                        meta_cmd.append(ref2)
                     if filename:
                         meta_cmd += ["--", filename]
                     meta_out = self._git_run(meta_cmd, text=True)

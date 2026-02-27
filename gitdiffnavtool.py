@@ -163,25 +163,31 @@ DIFF_TITLE = "diff-title"
 HELP_LIST_ID = "help-list"
 HELP_TITLE = "help-title"
 
-# Footer text used when switching to file-history view
-RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
-# Footer text used when showing the left history pane
-LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
 # Footer text used when showing the left file list
-LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
-# Footer text used when showing the right file list (file list view)
-RIGHT_FILE_FOOTER = Text("Files: press Left to return")
-# Footer text used for help screen
-HELP_FOOTER = Text("Help: press Enter to return")
-# Footer text used when showing the diff for a history/file selection
-HISTORY_FILE_DIFF_FOOTER = Text("Diff: press Left to return to files")
+# LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
+LEFT_FILE_FOOTER = Text("File: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End", style="bold")
 
-# Text("File: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End", style="bold")
-# Text("History: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Begin/End  →  m(ark)", style="bold")
-# Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Begin/End  Press any key to return", style="bold")
+# Footer text used when switching to file-history view
+# RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
+RIGHT_HISTORY_FOOTER = Text("History: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Begin/End  →  m(ark)", style="bold")
+
+# Footer text used when showing the left history pane
+# LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
+LEFT_HISTORY_FOOTER = Text("History: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Begin/End  →  m(ark)", style="bold")
+
+# Footer text used when showing the right file list (file list view)
+# RIGHT_FILE_FOOTER = Text("Files: press Left to return")
+RIGHT_FILE_FOOTER = Text("File: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End", style="bold")
+
+# Footer text used for help screen
+# HELP_FOOTER = Text("Help: press Enter to return")
+HELP_FOOTER = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Begin/End  Press any key to return", style="bold")
 # Text("Help: q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
-# Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End →/f(ull) c(olor) d(iff-type)", style="bold")
-# Text("Diff: q(uit)  ?/h(elp)  ←/f(ull) ↑/↓/PgUp/PgDn/Begin/End c(olor) d(iff-type)", style="bold")
+
+# Footer text used when showing the diff for a history/file selection
+# DIFF_FOOTER = Text("Diff: press Left to return to files")
+DIFF_FOOTER_1 = Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End →/f(ull) c(olor) d(iff-type)", style="bold")
+DIFF_FOOTER_2 = Text("Diff: q(uit)  ?/h(elp)  ↑/↓/PgUp/PgDn/Begin/End ←/f(ull) c(olor) d(iff-type)", style="bold")
 
 INITIAL_POPUP_TEXT = """
 Welcome to Git Diff Navigator Tool!
@@ -1521,9 +1527,10 @@ class AppBase(AppException, ListView):
             self.printException(e, "key_end failed")
 
     # Default stubs for left/right/enter — subclasses should override as needed
-    def key_left(self, event: events.Key | None = None) -> None:
+    def key_left(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Default left-key handler; subclasses may override to provide actions."""
-        logger.debug("AppBase.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("AppBase.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -1535,9 +1542,10 @@ class AppBase(AppException, ListView):
         self._log_visible_items("key_left after processing index change")
         return None
 
-    def key_right(self, event: events.Key | None = None) -> None:
+    def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Default right-key handler; subclasses may override to provide actions."""
-        logger.debug("AppBase.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("AppBase.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -3374,13 +3382,14 @@ class FileModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "FileModeFileList._activate_or_open failed")
 
-    def key_left(self, event: events.Key | None = None) -> None:
+    def key_left(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """
         Handle Left key in a file list: enter parent directory when selected.
 
         This delegates to `_activate_or_open` and prevents opening files.
         """
-        logger.debug("FileModeFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("FileModeFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         # If we're at the repository root, Left should be a no-op.
         if self.app.rel_dir == "":
             logger.debug("FileModeFileList.key_left: at repo root, no-op")
@@ -3447,9 +3456,10 @@ class FileModeFileList(FileListBase):
             self.printException(_e, "FileModeFileList.key_left post-action logging failed")
         self._log_visible_items("key_left after processing index change")
 
-    def key_right(self, event: events.Key | None = None) -> None:
+    def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Handle Right key in a file list: enter directories or open files."""
-        logger.debug("FileModeFileList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("FileModeFileList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         before_state = (self.app.rel_dir, self.app.rel_file, self.app._current_layout)
         try:
             old_idx = getattr(self, "index", None)
@@ -3644,14 +3654,15 @@ class RepoModeFileList(FileListBase):
         except Exception as e:
             self.printException(e, "prepRepoModeFileList failed")
 
-    def key_left(self, event: events.Key | None = None) -> None:
+    def key_left(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """
         Handle Left key in repo-mode file list: switch to history fullscreen.
 
         Typically moves focus back to the left history column or toggles
         the paired layout; defensive with event.stop() handling.
         """
-        logger.debug("RepoModeFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("RepoModeFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
             try:
                 event.stop()
@@ -3722,7 +3733,7 @@ class RepoModeFileList(FileListBase):
                 self.printException(e, "RepoModeFileList.key_right: prepDiffList failed")
 
             try:
-                self.app.change_state("history_file_diff", f"#{DIFF_LIST_ID}", HISTORY_FILE_DIFF_FOOTER)
+                self.app.change_state("history_file_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER_1)
             except Exception as e:
                 self.printException(e, "RepoModeFileList.key_right change_state failed")
         except Exception as e:
@@ -4303,7 +4314,7 @@ class FileModeHistoryList(HistoryListBase):
 
             # Switch to the file-history-diff layout and focus diff list
             try:
-                self.app.change_state("file_history_diff", f"#{DIFF_LIST_ID}", HISTORY_FILE_DIFF_FOOTER)
+                self.app.change_state("file_history_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER_1)
             except Exception as e:
                 self.printException(e, "FileModeHistoryList.key_right change_state failed")
         except Exception as e:
@@ -4315,9 +4326,10 @@ class FileModeHistoryList(HistoryListBase):
         logger.debug("FileModeHistoryList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_right(event, recursive=True)
 
-    def key_left(self, event: events.Key | None = None) -> None:
+    def key_left(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Return to file fullscreen and focus the left file list."""
-        logger.debug("FileModeHistoryList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("FileModeHistoryList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
             try:
                 event.stop()
@@ -4401,7 +4413,7 @@ class RepoModeHistoryList(HistoryListBase):
         except Exception as e:
             self.printException(e, "prepRepoModeHistoryList failed")
 
-    def key_right(self, event: events.Key | None = None) -> None:
+    def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """
         Open the selected/marked commit-pair in the repo file list preparer.
 
@@ -4409,7 +4421,8 @@ class RepoModeHistoryList(HistoryListBase):
         it performs (populate the repo file list and switch to the files
         column) is meaningful only for repository-wide history views.
         """
-        logger.debug("RepoModeHistoryList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("RepoModeHistoryList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -4573,14 +4586,15 @@ class DiffList(AppBase):
         except Exception as e:
             self.printException(e, "DiffList.key_c failed")
 
-    def key_right(self, event: events.Key | None = None) -> None:
+    def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """
         When in a history-file diff layout, promote the diff to fullscreen.
 
         If the current app layout is one of the file-history diff layouts,
         save it and switch to the `diff_fullscreen` layout. Otherwise noop.
         """
-        logger.debug("DiffList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("DiffList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -4709,9 +4723,10 @@ class DiffList(AppBase):
         logger.debug("DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_d(event, recursive=True)
 
-    def key_left(self, event: events.Key | None = None) -> None:
+    def key_left(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Return from diff view to the right file list."""
-        logger.debug("DiffList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("DiffList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
                 try:
@@ -4726,6 +4741,7 @@ class DiffList(AppBase):
                         target = self._saved_layout or "history_file_diff"
                         # restore layout
                         self.app.change_layout(target)
+                        self.app.change_footer(DIFF_FOOTER_1)
                         # clear saved layout
                         self._saved_layout = None
                         return
@@ -4742,13 +4758,14 @@ class DiffList(AppBase):
 
         self._log_visible_items("key_left after processing index change")
 
-    def key_enter(self, event: events.Key | None = None) -> None:
+    def key_enter(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """
         If fullscreen, act like Left (close); otherwise act like Right.
 
         This mirrors the behavior of using Enter to toggle fullscreen/back.
         """
-        logger.debug("DiffList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("DiffList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             current = self.app._current_layout
             if current == "diff_fullscreen":
@@ -4757,6 +4774,16 @@ class DiffList(AppBase):
                 return self.key_right(event, recursive=True)
         except Exception as e:
             self.printException(e, "DiffList.key_enter failed")
+
+    def key_f(self, event: events.Key | None = None) -> None:
+        """Alias for `key_enter` used to toggle fullscreen diff behavior."""
+        logger.debug("DiffList.key_f called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_enter(event, recursive=True)
+
+    def key_F(self, event: events.Key | None = None) -> None:
+        """Alias for `key_f` (Shift-F)."""
+        logger.debug("DiffList.key_F called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_enter(event, recursive=True)
 
 
 HELP_TEXT = """
@@ -5478,6 +5505,7 @@ class GitHistoryNavTool(AppException, App):
                 self._apply_column_layout(0, 5, 0, 20, 75, 0)
             elif newlayout == "diff_fullscreen":
                 self._apply_column_layout(0, 0, 0, 0, 100, 0)
+                self.change_footer(DIFF_FOOTER_2)
             elif newlayout == "help_fullscreen":
                 self._apply_column_layout(0, 0, 0, 0, 0, 100)
             else:
@@ -6315,7 +6343,7 @@ class GitHistoryNavTool(AppException, App):
             self.printException(e, "toggle_file_history_diff: toggle_file_history failed")
         try:
             # show diff in the right diff column and set go_back
-            self.change_state("history_file_diff", f"#{DIFF_LIST_ID}", HISTORY_FILE_DIFF_FOOTER)
+            self.change_state("history_file_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER)
             try:
                 self.diff_list.go_back = ("history_file", RIGHT_FILE_LIST_ID, RIGHT_FILE_FOOTER)
             except Exception as e:
@@ -6330,7 +6358,7 @@ class GitHistoryNavTool(AppException, App):
         except Exception as e:
             self.printException(e, "toggle_history_file_diff: toggle_history_file failed")
         try:
-            self.change_state("file_history_diff", f"#{DIFF_LIST_ID}", HISTORY_FILE_DIFF_FOOTER)
+            self.change_state("file_history_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER_1)
             try:
                 self.diff_list.go_back = ("file_history", RIGHT_HISTORY_LIST_ID, RIGHT_HISTORY_FOOTER)
             except Exception as e:
