@@ -183,6 +183,44 @@ HISTORY_FILE_DIFF_FOOTER = Text("Diff: press Left to return to files")
 # Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End →/f(ull) c(olor) d(iff-type)", style="bold")
 # Text("Diff: q(uit)  ?/h(elp)  ←/f(ull) ↑/↓/PgUp/PgDn/Begin/End c(olor) d(iff-type)", style="bold")
 
+INITIAL_POPUP_TEXT = """
+Welcome to Git Diff Navigator Tool!
+
+This tool helps you explore git repositories and their histories with a focus on navigating diffs and file changes.
+You may type a "q" (or "Q") to quit at any time. Press "Enter" to dismiss this message and get started, or "?" for help.
+
+The basic navigation keys are:
+
+- Up/Down arrows/PageUp/PageDown/Beginning/End: move the current selection up and down
+- Left/Right arrows/Enter: switch between file list view, history view, and the diff view for the current selection.
+
+The program normally starts in a file list view showing the files in the root of the current repository,
+somewhat similar to what you see with `git status`. You can then navigate up and down to switch the current
+selection, and press Right or Enter to either 1) drill down into subdirectories to see the files there, 
+or 2) switch to the history view (using Right arrow or Enter)to see all of the commits associated with the chosen file.
+From the history view you can navigate the commits and press Right or Enter again to see the diff for that commit and file.
+(You can also mark a particular commit in the history view with "m" and then navigate to another commit; 
+press Right/Enter to see the diff between the marked commit and the current selection.)
+As second Right/Enter will switch to a full screen diff view, and from there you can press Left to return to the previous view.
+
+Alternatively, you can start the program in repository mode (using the `-R`/`--repo-first` flag) that
+initially shows a history view of all commits in the repository. You can then select a commit
+and press Right arrow to see the file list for that commit (or that commit and a marked commit when using "m" to mark a commit).
+Pressing Right/Enter on a file in that list will show the diff for that file and commit.
+
+Each window will also display a footer with context-sensitive hints for available actions.
+For example, when viewing the file list, the footer will prompt you to press Right to view the file history. 
+When viewing a diff, the footer will show options for toggling full/side-by-side diff, color, and diff type.
+
+Remember, you can press "?" at any time to view the help screen with these and additional instructions.
+And of course, you can quit at any time by pressing "q" or "Q".
+
+If you want to skip this message on future launches, you can edit the configuration file (gitdiffnavtool.ini) 
+and set `initial-popup = false` under the `[gitdiffnavtool]` section.
+"""
+
+
+
 # Common styles used across file/history preparers
 STYLE_DIR = "white on blue"
 STYLE_PARENT = STYLE_DIR
@@ -882,12 +920,16 @@ class AppBase(AppException, ListView):
                                 try:
                                     node.set_class(i == new, "active")
                                 except Exception as _e:
-                                    self.printException(_e, "apply_index_change: node.set_class failed in same-index branch")
+                                    self.printException(
+                                        _e, "apply_index_change: node.set_class failed in same-index branch"
+                                    )
                             try:
                                 if hasattr(self, "_ensure_index_visible"):
                                     self._ensure_index_visible()
                             except Exception as _e:
-                                self.printException(_e, "apply_index_change: _ensure_index_visible failed in same-index branch")
+                                self.printException(
+                                    _e, "apply_index_change: _ensure_index_visible failed in same-index branch"
+                                )
                             return nodes_same[new]
 
                     rel_dir = self.app.rel_dir
@@ -4890,6 +4932,7 @@ class GitHistoryNavTool(AppException, App):
         no_ignored: bool,
         no_untracked: bool,
         no_color: bool,
+        no_initial_popup: bool,
         verbose: int,
         highlight: str | None,
         **kwargs,
@@ -4944,6 +4987,7 @@ class GitHistoryNavTool(AppException, App):
         self.highlight = highlight
 
         self.no_color = no_color
+        self.no_initial_popup = no_initial_popup
         self.no_ignored = no_ignored
         self.no_untracked = no_untracked
         self.repo_first = repo_first
@@ -5084,8 +5128,35 @@ class GitHistoryNavTool(AppException, App):
 
             except Exception as e:
                 self.printException(e, "on_mount: initial prep failed")
+
+            if not self.no_initial_popup:
+                try:
+                    self.push_screen(MessageModal(INITIAL_POPUP_TEXT))
+                except Exception as e:
+                    self.printException(e, "on_mount: push test modal failed")
         except Exception as e:
             self.printException(e, "on_mount failed")
+
+    def on_key(self, event: events.Key) -> None:
+        """When MessageModal is active, dismiss it on any key and stop propagation."""
+        try:
+            try:
+                current_screen = self.screen
+            except Exception as e:
+                self.printException(e, "on_key: reading current screen failed")
+                current_screen = None
+
+            if isinstance(current_screen, MessageModal):
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "on_key: event.stop failed while modal active")
+                try:
+                    self.pop_screen()
+                except Exception as e:
+                    self.printException(e, "on_key: pop_screen failed while modal active")
+        except Exception as e:
+            self.printException(e, "GitHistoryNavTool.on_key failed")
 
     def key_q(self, event: events.Key | None = None) -> None:
         """Quit the application on `q` keypress (synonym for ^Q)."""
@@ -6279,6 +6350,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="exclude ignored files from file-mode listings",
     )
     parser.add_argument(
+        "-P",
+        "--no-initial-popup",
+        dest="no_initial_popup",
+        action="store_true",
+        help="disable the startup popup",
+    )
+    parser.add_argument(
         "-U",
         "--no-untracked-files",
         dest="no_untracked",
@@ -6301,10 +6379,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     #   ignored-files=true/false
     #   untracked-files=true/false
     #   repo-first=true/false
+    #   initial-popup=true/false
     #   color=true/false
     #   debug=<filename>
     # CLI options always take precedence over config defaults.
-    cfg_files = [os.path.join(os.getcwd(), ".gitdiffnavtool.ini"), os.path.join(os.path.expanduser("~"), ".gitdiffnavtool.ini")]
+    cfg_files = [
+        os.path.join(os.getcwd(), ".gitdiffnavtool.ini"),
+        os.path.join(os.path.expanduser("~"), ".gitdiffnavtool.ini"),
+    ]
     cfg = configparser.ConfigParser()
     read_files = [p for p in cfg_files if os.path.exists(p)]
     if read_files:
@@ -6344,6 +6426,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             b = _getbool("color")
             if b is not None:
                 defaults["no_color"] = not bool(b)
+
+            b = _getbool("initial-popup")
+            if b is not None:
+                defaults["no_initial_popup"] = not bool(b)
 
             if "debug" in src:
                 dbg = (src.get("debug") or "").strip()
@@ -6433,6 +6519,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             no_ignored=args.no_ignored,
             no_untracked=args.no_untracked,
             no_color=args.no_color,
+            no_initial_popup=args.no_initial_popup,
             verbose=args.verbose,
             highlight=args.highlight,
         )

@@ -1268,9 +1268,7 @@ class GitRepo(AppException):
 
             untracked = self.getFileListUntracked() or []
             untracked_paths = {
-                os.path.normpath(str(ent[0]))
-                for ent in untracked
-                if isinstance(ent, (list, tuple)) and len(ent) > 0
+                os.path.normpath(str(ent[0])) for ent in untracked if isinstance(ent, (list, tuple)) and len(ent) > 0
             }
 
             out: list[Any] = []
