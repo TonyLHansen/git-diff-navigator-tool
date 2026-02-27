@@ -5231,11 +5231,10 @@ class GitHistoryNavTool(AppException, App):
 
     def key_r(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """
-        Global revert: re-run preparers for visible HistoryList and FileList widgets.
+        Global refresh: reset GitRepo cache and refresh the active layout.
 
-        This re-executes the prep methods for visible file/history widgets using
-        the current app state (hashes and path) to restore highlights. It does
-        not change which columns are visible or which widget has focus.
+        This keeps refresh behavior simple by avoiding path/hash recomputation
+        in this handler and delegating state handling to each preparer.
         """
         if not recursive:
             logger.debug("GitHistoryNavTool.key_r called: key=%r", getattr(event, "key", None))
@@ -5245,87 +5244,120 @@ class GitHistoryNavTool(AppException, App):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "key_r: event.stop failed")
-
-            prev = self.previous_hash
-            curr = self.current_hash
-            # Build repo-relative path from rel_dir/rel_file; default to '.'
             try:
-                if self.rel_file:
-                    path = os.path.join(self.rel_dir or "", self.rel_file)
-                else:
-                    path = self.rel_dir or "."
+                self.gitRepo.reset_cache()
             except Exception as e:
-                self.printException(e, "key_r: computing path failed")
-                path = "."
+                self.printException(e, "key_r: gitRepo.reset_cache failed")
 
-            # Helper to decide visibility (styles.display == "none" means hidden)
-            def _is_visible(widget) -> bool:
+            layout = self._current_layout
+            current_rel_path = os.path.join(self.rel_dir or "", self.rel_file) if self.rel_file else (self.rel_dir or ".")
+
+            def _refresh_diff() -> None:
+                filename = os.path.join(self.rel_dir or "", self.rel_file) if self.rel_file else (self.rel_dir or "")
+                prev = self.previous_hash if self.previous_hash is not None else GitRepo.NEWREPO
+                self.diff_list.prepDiffList(
+                    filename,
+                    prev,
+                    self.current_hash,
+                    self.diff_list.variant,
+                    self.diff_list.go_back,
+                )
+
+            if layout == "file_fullscreen":
                 try:
-                    disp = getattr(getattr(widget, "styles", None), "display", None)
-                    return not (disp == "none")
+                    self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
                 except Exception as e:
-                    self.printException(e, "key_r: _is_visible failed")
-                    return True
+                    self.printException(e, "key_r: prepFileModeFileList failed")
 
-            # Re-run file-mode file list preparer if visible
-            try:
-                if _is_visible(self.file_mode_file_list):
-                    try:
-                        gitrepo = self.gitRepo
-                        ip = path
-                        root = gitrepo.get_repo_root()
-                        if ip == root:
-                            rel = ""
-                        elif ip.startswith(root + os.sep):
-                            rel = ip[len(root) + 1 :]
-                        else:
-                            rel = os.path.relpath(ip, root)
-                        if os.path.isdir(ip):
-                            rdir = rel
-                            rpath = None
-                        else:
-                            rdir = os.path.dirname(rel) or ""
-                            rpath = os.path.basename(rel)
-                        try:
-                            self.file_mode_file_list.app.rel_dir = rdir
-                            self.file_mode_file_list.app.rel_file = rpath
-                        except Exception as _e:
-                            self.printException(_e, "_activate_or_open: scanning nodes for '..' failed")
-                        self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
-                    except Exception as e:
-                        self.printException(e, "key_r: prepFileModeFileList failed")
-            except Exception as e:
-                self.printException(e, "key_r: checking file_mode_file_list failed")
+            elif layout == "history_fullscreen":
+                try:
+                    self.repo_mode_history_list.prepRepoModeHistoryList(
+                        prev_hash=self.previous_hash,
+                        curr_hash=self.current_hash,
+                    )
+                except Exception as e:
+                    self.printException(e, "key_r: prepRepoModeHistoryList failed")
 
-            # Re-run repo-mode file list preparer if visible
-            try:
-                if _is_visible(self.repo_mode_file_list):
-                    try:
-                        self.repo_mode_file_list.prepRepoModeFileList(prev, curr)
-                    except Exception as e:
-                        self.printException(e, "key_r: prepRepoModeFileList failed")
-            except Exception as e:
-                self.printException(e, "key_r: checking repo_mode_file_list failed")
+            elif layout == "file_history":
+                try:
+                    self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
+                except Exception as e:
+                    self.printException(e, "key_r: prepFileModeFileList failed")
+                try:
+                    self.file_mode_history_list.prepFileModeHistoryList(
+                        path=current_rel_path,
+                        prev_hash=self.previous_hash,
+                        curr_hash=self.current_hash,
+                    )
+                except Exception as e:
+                    self.printException(e, "key_r: prepFileModeHistoryList failed")
 
-            # Re-run left repo history if visible
-            try:
-                if _is_visible(self.repo_mode_history_list):
-                    try:
-                        self.repo_mode_history_list.prepRepoModeHistoryList(prev_hash=prev, curr_hash=curr)
-                    except Exception as e:
-                        self.printException(e, "key_r: prepRepoModeHistoryList failed")
-            except Exception as e:
-                self.printException(e, "key_r: checking repo_mode_history_list failed")
+            elif layout == "history_file":
+                try:
+                    self.repo_mode_history_list.prepRepoModeHistoryList(
+                        prev_hash=self.previous_hash,
+                        curr_hash=self.current_hash,
+                    )
+                except Exception as e:
+                    self.printException(e, "key_r: prepRepoModeHistoryList failed")
+                try:
+                    self.repo_mode_file_list.prepRepoModeFileList(self.previous_hash, self.current_hash)
+                except Exception as e:
+                    self.printException(e, "key_r: prepRepoModeFileList failed")
 
-            # Re-run right file history (file-mode history) if visible
-            try:
-                if _is_visible(self.file_mode_history_list):
-                    try:
-                        self.file_mode_history_list.prepFileModeHistoryList(path=path, prev_hash=prev, curr_hash=curr)
-                    except Exception as e:
-                        self.printException(e, "key_r: prepFileModeHistoryList failed")
-            except Exception as e:
-                self.printException(e, "key_r: checking file_mode_history_list failed")
+            elif layout == "file_history_diff":
+                try:
+                    self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
+                except Exception as e:
+                    self.printException(e, "key_r: prepFileModeFileList failed")
+                try:
+                    self.file_mode_history_list.prepFileModeHistoryList(
+                        path=current_rel_path,
+                        prev_hash=self.previous_hash,
+                        curr_hash=self.current_hash,
+                    )
+                except Exception as e:
+                    self.printException(e, "key_r: prepFileModeHistoryList failed")
+                try:
+                    _refresh_diff()
+                except Exception as e:
+                    self.printException(e, "key_r: prepDiffList failed")
+
+            elif layout == "history_file_diff":
+                try:
+                    self.repo_mode_history_list.prepRepoModeHistoryList(
+                        prev_hash=self.previous_hash,
+                        curr_hash=self.current_hash,
+                    )
+                except Exception as e:
+                    self.printException(e, "key_r: prepRepoModeHistoryList failed")
+                try:
+                    self.repo_mode_file_list.prepRepoModeFileList(self.previous_hash, self.current_hash)
+                except Exception as e:
+                    self.printException(e, "key_r: prepRepoModeFileList failed")
+                try:
+                    _refresh_diff()
+                except Exception as e:
+                    self.printException(e, "key_r: prepDiffList failed")
+
+            elif layout == "diff_fullscreen":
+                try:
+                    _refresh_diff()
+                except Exception as e:
+                    self.printException(e, "key_r: prepDiffList failed")
+
+            elif layout == "help_fullscreen":
+                try:
+                    self.help_list.prepHelp()
+                except Exception as e:
+                    self.printException(e, "key_r: prepHelp failed")
+
+            else:
+                logger.debug("key_r: unknown layout %r; refreshing active file list as fallback", layout)
+                try:
+                    self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
+                except Exception as e:
+                    self.printException(e, "key_r: fallback prepFileModeFileList failed")
 
         except Exception as e:
             self.printException(e, "key_r failed")
