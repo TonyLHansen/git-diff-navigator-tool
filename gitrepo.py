@@ -1588,7 +1588,8 @@ class GitRepo(AppException):
                             def _path_match(p: str) -> bool:
                                 try:
                                     return p == filename or os.path.basename(p) == os.path.basename(filename)
-                                except Exception:
+                                except Exception as e:
+                                    self.printException(e, "_path_match failed; falling back to direct equality")
                                     return p == filename
 
                             for ln in probe_out.splitlines():

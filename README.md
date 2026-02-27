@@ -55,6 +55,7 @@ Left and Right arrow keys perform differently in each column.
     - open the Diff column for the currently highlighted log entry against the checkmarked entry (if there is a checkmarked entry) or the next entry in the list.
   - A Left Arrow will close the History column.
 
+
 - Diff column:
   - Lines are populated using `git diff` between the two hashes (or pseudo-hashes for staged and modified unstaged versions).
   - A header line indicates the two hashes being compared, e.g.:
@@ -62,12 +63,11 @@ Left and Right arrow keys perform differently in each column.
   - The order is always the lower list item vs the higher item, so diffs read `older..newer`.
   - A Left Arrow will close the Diff column.
   - Commands while focused in the Diff column:
-    - `d` / `D`: rotate the diff command variant. The variants cycle through: 
-      - the default `git diff`, 
-      - `git diff --ignore-space-change`, and 
-      - `git diff --diff-algorithm=patience`.
+    - `d` / `D`: rotate the diff command variant. The variants cycle through common textual options (for example: ignore-space-change, patience, and word-diff) when a full textual diff is available.
     - `c` / `C`: toggle the use of color.
     - `f` / `F`: toggle fullscreen mode (hide other columns).
+    - `t` / `T`: toggle or swap paired layouts (e.g., switch between file and history fullscreen views).
+    - `w` / `W`: write a snapshot of the currently-visible diff (previous docs referred to this as "save").
 
 
 Implementation notes
@@ -75,8 +75,7 @@ Implementation notes
 - Language: Python 3.14
 - UI: Textual (ListView, ListItem, Label, ModalScreen)
 - Git integration:
-  - `git` CLI is used for `log --follow` and `diff` (preserves `--follow` rename semantics).
-  - `pygit2` is used for repository discovery, status mapping, and per-index-entry mtime (used for `STAGED` timestamps).
+  - `git` CLI is used for all git operations and cached for speed.
 - Data model: ListItems have attached metadata attributes `_filename`, `_hash`, `_repo_status`, and `_raw_text` for robust lookups and reliable UI updates.
 
 Running
@@ -84,7 +83,7 @@ Running
 Run the application as follows:
 
 ```bash
-gitdiffnavtool.py [--no-color] [path]
+gitdiffnavtool.py [options] [path]
 ```
 
 If `--no-color` is provided, the diff output will not be colorized.
@@ -93,7 +92,7 @@ If `--no-color` is provided, the diff output will not be colorized.
 
 Dependencies
 ------------
-- Required python libraries: `textual`, `rich`, `pygit2`.
+- Required python libraries: `textual`, `rich`.
 
 Troubleshooting
 ---------------

@@ -165,29 +165,29 @@ HELP_TITLE = "help-title"
 
 # Footer text used when showing the left file list
 # LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
-LEFT_FILE_FOOTER = Text("File: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End", style="bold")
+LEFT_FILE_FOOTER = Text("File: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/Enter", style="bold")
 
 # Footer text used when switching to file-history view
 # RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
-RIGHT_HISTORY_FOOTER = Text("History: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Begin/End  →  m(ark)", style="bold")
+RIGHT_HISTORY_FOOTER = Text("History: q(uit)  t(swap)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/Enter  m(ark)", style="bold")
 
 # Footer text used when showing the left history pane
 # LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
-LEFT_HISTORY_FOOTER = Text("History: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Begin/End  →  m(ark)", style="bold")
+LEFT_HISTORY_FOOTER = Text("History: q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/Enter  m(ark)", style="bold")
 
 # Footer text used when showing the right file list (file list view)
 # RIGHT_FILE_FOOTER = Text("Files: press Left to return")
-RIGHT_FILE_FOOTER = Text("File: q(uit)  s(wap)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End", style="bold")
+RIGHT_FILE_FOOTER = Text("File: q(uit)  t(swap)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/Enter", style="bold")
 
 # Footer text used for help screen
 # HELP_FOOTER = Text("Help: press Enter to return")
-HELP_FOOTER = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Begin/End  Press any key to return", style="bold")
+HELP_FOOTER = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Home/End  Press Enter to return", style="bold")
 # Text("Help: q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
 
 # Footer text used when showing the diff for a history/file selection
 # DIFF_FOOTER = Text("Diff: press Left to return to files")
-DIFF_FOOTER_1 = Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Begin/End →/f(ull) c(olor) d(iff-type)", style="bold")
-DIFF_FOOTER_2 = Text("Diff: q(uit)  ?/h(elp)  ↑/↓/PgUp/PgDn/Begin/End ←/f(ull) c(olor) d(iff-type)", style="bold")
+DIFF_FOOTER_1 = Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End →/f(ull) c(olor) d(iff-type) t(oggle) w(write)", style="bold")
+DIFF_FOOTER_2 = Text("Diff: q(uit)  ?/h(elp)  ↑/↓/PgUp/PgDn/Home/End ←/f(ull) c(olor) d(iff-type) t(oggle) w(write)", style="bold")
 
 INITIAL_POPUP_TEXT = """
 Welcome to Git Diff Navigator Tool!
@@ -216,7 +216,8 @@ Pressing Right/Enter on a file in that list will show the diff for that file and
 
 Each window will also display a footer with context-sensitive hints for available actions.
 For example, when viewing the file list, the footer will prompt you to press Right to view the file history. 
-When viewing a diff, the footer will show options for toggling full/side-by-side diff, color, and diff type.
+When viewing a diff, the footer will show options for toggling full/side-by-side diff, toggling paired layouts (`t`),
+writing a snapshot (`w`), color ('c'), and diff ('d') type.
 
 Remember, you can press "?" at any time to view the help screen with these and additional instructions.
 And of course, you can quit at any time by pressing "q" or "Q".
@@ -225,6 +226,86 @@ If you want to skip this message on future launches, you can edit the configurat
 and set `initial-popup = false` under the `[gitdiffnavtool]` section.
 """
 
+HELP_TEXT = """
+# gitdiffnavtool help
+
+Overview:
+- gitdiffnavtool is a terminal UI for exploring a Git repository: the
+    left/right columns show file trees and per-file history, the central
+    commit lists show repository history, and the diff column shows patches
+    for a selected file/commit pair. It uses the `git` CLI for status and history operations.
+
+Invocation:
+- Run `gitdiffnavtool [path]` to open the app for `path` (directory or
+    file).
+- Run `gitdiffnavtool [-r/--repo-first [--repo-hash hash1] [--repo-hash hash2]] [path]` to open
+    the app in repository mode, optionally comparing `hash1` and `hash2`.
+- Use `--no-color` to disable colored diffs.
+
+Basic navigation:
+- Arrow keys: Up / Down / PageUp / PageDown / Home / End move
+    the selection within the focused column.
+- Right (or Enter): open/enter the selected row (enter directories,
+    open file history or diff depending on focus).
+- Left: go back / close / move focus to the previous column.
+- `q` (or Ctrl-Q): quit the application.
+
+Global actions:
+- `h` or `?`: show this help screen.
+- `r`: refresh the current view.
+- `t`: toggle/swap between file-first and repo-first views.
+- `w`: prompt to write snapshot files for the current file/hash combination.
+
+Column-specific information and commands:
+
+Left File Column (Files):
+- Shows directory tree or file list for the working tree path.
+- Right on a directory: enter that directory.
+- Right on a tracked file: open the file's history in the right-side
+    history column.
+
+Left History Column (File History for left pane):
+- Shows commits affecting the file selected in the left file pane.
+- Mark a row with `m` to select it as the `prev` commit; navigate to a
+    second row and press Right to diff between the two marked rows.
+- Right on a row: open the diff for that file between the selected
+    commit pair.
+
+Right History Column (Repository History):
+- Shows repository-wide commits (newest first). Use this to pick commit
+    ranges to inspect repository-wide changes.
+- Press `m` on a row to mark it (acts as one side of a commit pair).
+- With a commit pair selected, press Right to populate the Right File
+    Column with the files changed between those commits.
+
+Right File Column (Files for selected commit-pair or pseudo refs):
+- When populated from a repo commit pair you will see per-file status
+    markers (A/M/D/U/!) followed by the filename.
+- Special pseudo-rows: `MODS` and `STAGED` appear at the top when the
+    selected refs are the working tree/index. Expanding `MODS` shows the
+    modified (unstaged) files; expanding `STAGED` shows staged changes.
+- Right on a file row: open the file-level diff between the selected
+    commit pair (or between index and working-tree when using `STAGED`/`MODS`).
+
+Diff Column:
+- Shows the textual patch for the current file/commit pair. The first
+    line is a one-line header describing the file and the two refs being
+    compared and is not selectable.
+- Commands when focused:
+    - `d` / `D`: rotate the diff command variant. When a full textual diff is available this cycles through configured textual variants (for example, ignore-space-change and patience).
+    - `c` / `C`: toggle colorized diffs on/off.
+    - `f` / `F`: toggle fullscreen mode (hide other columns).
+    - `t` / `T`: toggle paired layouts (e.g., swap between file and history fullscreen).
+    - `w` / `W`: write a snapshot of the currently-visible diff (previous docs used the term "save").
+
+Tips and behavior notes:
+- Short commit hashes are shown using the app's `HASH_LENGTH` constant.
+- `MODS` lists working-tree modifications (unstaged).
+- `STAGED` lists index changes (files that were added (staged) but not committed).
+- When diffing between `STAGED` and `MODS` the UI shows the comparison the user
+    expects (index vs working-tree).
+- The app uses the `git` CLI for its repository operations.
+"""
 
 
 # Common styles used across file/history preparers
@@ -1618,11 +1699,11 @@ class AppBase(AppException, ListView):
         except Exception as e:
             self.printException(e, "toggle_untracked failed")
 
-    def key_s_helper(self, event: events.Key | None = None) -> None:
+    def key_w_helper(self, event: events.Key | None = None) -> None:
         """
-        Common helper to prompt and save snapshot files for a visible widget.
+        Common helper to prompt and write snapshot files for a visible widget.
 
-        Pops a modal asking whether to save the older (previous_hash), newer
+        Pops a modal asking whether to write the older (previous_hash), newer
         (current_hash), or both versions of the current `app.rel_dir`/`app.rel_file`.
         The modal performs the actual file extraction and writing.
         """
@@ -1631,7 +1712,7 @@ class AppBase(AppException, ListView):
                 try:
                     event.stop()
                 except Exception as e:
-                    self.printException(e, "key_s_helper: event.stop failed")
+                    self.printException(e, "key_w_helper: event.stop failed")
 
             # Build an absolute filepath from app rel_dir/rel_file when available
             filepath = self.app.gitRepo.full_path_for(self.app.rel_dir, self.app.rel_file)
@@ -1646,23 +1727,23 @@ class AppBase(AppException, ListView):
                 try:
                     repo_root_val = self.app.repo_root
                 except Exception as e:
-                    self.printException(e, "key_s_helper: reading app.repo_root failed")
+                    self.printException(e, "key_w_helper: reading app.repo_root failed")
                     repo_root_val = None
-                msg = f"Create {os.path.basename(filepath)}.HASH. Do you wish to save the (o)lder file, the (n)ewer file, or (b)oth? (Any other key to cancel.)"
+                msg = f"Create {os.path.basename(filepath)}.HASH. Do you wish to write the (o)lder file, the (n)ewer file, or (b)oth? (Any other key to cancel.)"
                 self.app.push_screen(
                     SaveSnapshotModal(
                         msg, filepath=filepath, prev_hash=prev_hash, curr_hash=curr_hash, repo_root=repo_root_val
                     )
                 )
             except Exception as e:
-                self.printException(e, "key_s_helper: push SaveSnapshotModal failed")
+                self.printException(e, "key_w_helper: push SaveSnapshotModal failed")
         except Exception as e:
-            self.printException(e, "key_s_helper failed")
+            self.printException(e, "key_w_helper failed")
 
 
 class SaveSnapshotModal(AppException, ModalScreen):
     """
-    Modal that prompts the user to save older/newer versions of a file.
+    Modal that prompts the user to write older/newer versions of a file.
 
     The modal handles the key press and writes the requested snapshots
     to files named '<filepath>.<hash>'. Supported keys: o/O (older),
@@ -1731,7 +1812,7 @@ class SaveSnapshotModal(AppException, ModalScreen):
                 self.printException(e, "SaveSnapshotModal.on_key: pop_screen failed")
 
     def _save(self, hashval: str | None) -> None:
-        """Save the file content for the given hash into a target snapshot file."""
+        """Write the file content for the given hash into a target snapshot file."""
         if not hashval or not self.filepath:
             return
 
@@ -3745,19 +3826,19 @@ class RepoModeFileList(FileListBase):
         logger.debug("RepoModeFileList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_right(event, recursive=True)
 
-    def key_s(self, event: events.Key | None = None) -> None:
+    def key_w(self, event: events.Key | None = None) -> None:
         """Prompt to save snapshot files for the selected file (older/newer/both)."""
-        logger.debug("RepoModeFileList.key_s called: key=%r index=%r", getattr(event, "key", None), self.index)
+        logger.debug("RepoModeFileList.key_w called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
             try:
                 event.stop()
             except Exception as e:
-                self.printException(e, "RepoModeFileList.key_s: event.stop failed")
+                self.printException(e, "RepoModeFileList.key_w: event.stop failed")
         try:
-            self.key_s_helper(event)
+            self.key_w_helper(event)
         except Exception as e:
-            self.printException(e, "RepoModeFileList.key_s: helper failed")
-        self._log_visible_items("key_s after processing index change")
+            self.printException(e, "RepoModeFileList.key_w: helper failed")
+        self._log_visible_items("key_w after processing index change")
 
 
 class HistoryListBase(AppBase):
@@ -4253,18 +4334,18 @@ class FileModeHistoryList(HistoryListBase):
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
 
-    def key_s(self, event: events.Key | None = None) -> None:
+    def key_w(self, event: events.Key | None = None) -> None:
         """Prompt to save snapshot files for the current file history selection."""
-        logger.debug("FileModeHistoryList.key_s called: key=%r index=%r", getattr(event, "key", None), self.index)
+        logger.debug("FileModeHistoryList.key_w called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
             try:
                 event.stop()
             except Exception as e:
-                self.printException(e, "FileModeHistoryList.key_s: event.stop failed")
+                self.printException(e, "FileModeHistoryList.key_w: event.stop failed")
         try:
-            self.key_s_helper(event)
+            self.key_w_helper(event)
         except Exception as e:
-            self.printException(e, "FileModeHistoryList.key_s: helper failed")
+            self.printException(e, "FileModeHistoryList.key_w: helper failed")
 
     def key_i(self, event: events.Key | None = None) -> None:
         """Toggle ignored-file visibility and refresh file-mode list."""
@@ -4811,18 +4892,18 @@ class DiffList(AppBase):
         except Exception as e:
             self.printException(e, "DiffList.key_d failed")
 
-    def key_s(self, event: events.Key | None = None) -> None:
+    def key_w(self, event: events.Key | None = None) -> None:
         """Prompt to save snapshot files for the diff's current file."""
-        logger.debug("DiffList.key_s called: key=%r index=%r", getattr(event, "key", None), self.index)
+        logger.debug("DiffList.key_w called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
             try:
                 event.stop()
             except Exception as e:
-                self.printException(e, "DiffList.key_s: event.stop failed")
+                self.printException(e, "DiffList.key_w: event.stop failed")
         try:
-            self.key_s_helper(event)
+            self.key_w_helper(event)
         except Exception as e:
-            self.printException(e, "DiffList.key_s: helper failed")
+            self.printException(e, "DiffList.key_w: helper failed")
 
     def key_D(self, event: events.Key | None = None) -> None:
         """Alias for `key_d` (Shift-D)."""
@@ -4891,83 +4972,6 @@ class DiffList(AppBase):
         logger.debug("DiffList.key_F called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_enter(event, recursive=True)
 
-
-HELP_TEXT = """
-# gitdiffnavtool help
-
-Overview:
-- gitdiffnavtool is a terminal UI for exploring a Git repository: the
-    left/right columns show file trees and per-file history, the central
-    commit lists show repository history, and the diff column shows patches
-    for a selected file/commit pair. It uses the `git` CLI for status and history operations.
-
-Invocation:
-- Run `gitdiffnavtool [path]` to open the app for `path` (directory or
-    file).
-- Run `gitdiffnavtool [-r/--repo-first [--repo-hash hash1] [--repo-hash hash2]] [path]` to open
-    the app in repository mode, optionally comparing `hash1` and `hash2`.
-- Use `--no-color` to disable colored diffs.
-
-Basic navigation:
-- Arrow keys: Up / Down / PageUp / PageDown / Home / End move
-    the selection within the focused column.
-- Right (or Enter): open/enter the selected row (enter directories,
-    open file history or diff depending on focus).
-- Left: go back / close / move focus to the previous column.
-- `q` (or Ctrl-Q): quit the application.
-
-Global actions:
-- `h` or `?`: show this help screen.
-- `r`: refresh the current view.
-- `s`: prompt to save snapshot files for the current file/hash combination.
-
-Column-specific information and commands:
-
-Left File Column (Files):
-- Shows directory tree or file list for the working tree path.
-- Right on a directory: enter that directory.
-- Right on a tracked file: open the file's history in the right-side
-    history column.
-
-Left History Column (File History for left pane):
-- Shows commits affecting the file selected in the left file pane.
-- Mark a row with `m` to select it as the `prev` commit; navigate to a
-    second row and press Right to diff between the two marked rows.
-- Right on a row: open the diff for that file between the selected
-    commit pair.
-
-Right History Column (Repository History):
-- Shows repository-wide commits (newest first). Use this to pick commit
-    ranges to inspect repository-wide changes.
-- Press `m` on a row to mark it (acts as one side of a commit pair).
-- With a commit pair selected, press Right to populate the Right File
-    Column with the files changed between those commits.
-
-Right File Column (Files for selected commit-pair or pseudo refs):
-- When populated from a repo commit pair you will see per-file status
-    markers (A/M/D/U/!) followed by the filename.
-- Special pseudo-rows: `MODS` and `STAGED` appear at the top when the
-    selected refs are the working tree/index. Expanding `MODS` shows the
-    modified (unstaged) files; expanding `STAGED` shows staged changes.
-- Right on a file row: open the file-level diff between the selected
-    commit pair (or between index and working-tree when using `STAGED`/`MODS`).
-
-Diff Column:
-- Shows the textual patch for the current file/commit pair. The first
-    line is a one-line header describing the file and the two refs being
-    compared and is not selectable.
-- Commands when focused:
-    - `c`: toggle colorized diffs on/off.
-
-
-Tips and behavior notes:
-- Short commit hashes are shown using the app's `HASH_LENGTH` constant.
-- `MODS` lists working-tree modifications (unstaged).
-- `STAGED` lists index changes (files that were added (staged) but not committed).
-- When diffing between `STAGED` and `MODS` the UI shows the comparison the user
-    expects (index vs working-tree).
-- The app uses the `git` CLI for its repository operations.
-"""
 
 #    - `toggle-color` / `c`: toggle colorized diff output.
 #    - `cycle-diff-variant` / `d`: cycle to the next diff variant (e.g. ignore-space-change, patience).
@@ -6259,18 +6263,18 @@ class GitHistoryNavTool(AppException, App):
         except Exception as e:
             self.printException(e, "toggle outer failure")
 
-    def key_w(self, event: events.Key | None = None) -> None:
-        """Toggle the paired layout for the current layout (invoked by 'w')."""
-        logger.debug("GitHistoryNavTool.key_w called: key=%r", getattr(event, "key", None))
+    def key_t(self, event: events.Key | None = None) -> None:
+        """Swap (Toggle) the paired layout for the current layout (invoked by 't')."""
+        logger.debug("GitHistoryNavTool.key_t called: key=%r", getattr(event, "key", None))
         return self.toggle(self._current_layout, event)
 
-    def key_W(self, event: events.Key | None = None) -> None:
-        """Alias for `key_w` (Shift-W)."""
-        logger.debug("GitHistoryNavTool.key_W called: key=%r", getattr(event, "key", None))
-        return self.key_w(event, recursive=True)
+    def key_T(self, event: events.Key | None = None) -> None:
+        """Alias for `key_t` (Shift-T)."""
+        logger.debug("GitHistoryNavTool.key_T called: key=%r", getattr(event, "key", None))
+        return self.key_t(event, recursive=True)
 
     # Per-layout toggle implementations. These prepare lists and switch
-    # layouts in pairs so the `s` key toggles between related views.
+    # layouts in pairs so the `t` key toggles between related views.
     def toggle_file_fullscreen(self) -> None:
         """
         Toggle between file fullscreen and the paired history fullscreen view.
