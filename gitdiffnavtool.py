@@ -165,23 +165,23 @@ HELP_TITLE = "help-title"
 
 # Footer text used when showing the left file list
 # LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
-LEFT_FILE_FOOTER = Text("File: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/Enter", style="bold")
+LEFT_FILE_FOOTER = Text("File: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
 
 # Footer text used when switching to file-history view
 # RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
-RIGHT_HISTORY_FOOTER = Text("History: q(uit)  t(swap)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/Enter  m(ark)", style="bold")
+RIGHT_HISTORY_FOOTER = Text("History: q(uit)  t(swap)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold")
 
 # Footer text used when showing the left history pane
 # LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
-LEFT_HISTORY_FOOTER = Text("History: q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/Enter  m(ark)", style="bold")
+LEFT_HISTORY_FOOTER = Text("History: q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold")
 
 # Footer text used when showing the right file list (file list view)
 # RIGHT_FILE_FOOTER = Text("Files: press Left to return")
-RIGHT_FILE_FOOTER = Text("File: q(uit)  t(swap)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/Enter", style="bold")
+RIGHT_FILE_FOOTER = Text("File: q(uit)  t(swap)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
 
 # Footer text used for help screen
-# HELP_FOOTER = Text("Help: press Enter to return")
-HELP_FOOTER = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Home/End  Press Enter to return", style="bold")
+# HELP_FOOTER = Text("Help: press Enter/␍ to return")
+HELP_FOOTER = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Home/End  Press Enter/␍ to return", style="bold")
 # Text("Help: q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
 
 # Footer text used when showing the diff for a history/file selection
@@ -193,26 +193,26 @@ INITIAL_POPUP_TEXT = """
 Welcome to Git Diff Navigator Tool!
 
 This tool helps you explore git repositories and their histories with a focus on navigating diffs and file changes.
-You may type a "q" (or "Q") to quit at any time. Press "Enter" to dismiss this message and get started, or "?" for help.
+You may type a "q" (or "Q") to quit at any time. Press "Enter/␍" to dismiss this message and get started, or "?" for help.
 
 The basic navigation keys are:
 
 - Up/Down arrows/PageUp/PageDown/Beginning/End: move the current selection up and down
-- Left/Right arrows/Enter: switch between file list view, history view, and the diff view for the current selection.
+- Left/Right arrows/Enter/␍: switch between file list view, history view, and the diff view for the current selection.
 
 The program normally starts in a file list view showing the files in the root of the current repository,
 somewhat similar to what you see with `git status`. You can then navigate up and down to switch the current
-selection, and press Right or Enter to either 1) drill down into subdirectories to see the files there, 
-or 2) switch to the history view (using Right arrow or Enter)to see all of the commits associated with the chosen file.
-From the history view you can navigate the commits and press Right or Enter again to see the diff for that commit and file.
+selection, and press Right or Enter/␍ to either 1) drill down into subdirectories to see the files there, 
+or 2) switch to the history view (using Right arrow or Enter/␍) to see all of the commits associated with the chosen file.
+From the history view you can navigate the commits and press Right or Enter/␍ again to see the diff for that commit and file.
 (You can also mark a particular commit in the history view with "m" and then navigate to another commit; 
-press Right/Enter to see the diff between the marked commit and the current selection.)
-As second Right/Enter will switch to a full screen diff view, and from there you can press Left to return to the previous view.
+press Right/Enter/␍ to see the diff between the marked commit and the current selection.)
+As second Right/Enter/␍ will switch to a full screen diff view, and from there you can press Left to return to the previous view.
 
 Alternatively, you can start the program in repository mode (using the `-R`/`--repo-first` flag) that
 initially shows a history view of all commits in the repository. You can then select a commit
 and press Right arrow to see the file list for that commit (or that commit and a marked commit when using "m" to mark a commit).
-Pressing Right/Enter on a file in that list will show the diff for that file and commit.
+Pressing Right/Enter/␍ on a file in that list will show the diff for that file and commit.
 
 Each window will also display a footer with context-sensitive hints for available actions.
 For example, when viewing the file list, the footer will prompt you to press Right to view the file history. 
@@ -245,7 +245,7 @@ Invocation:
 Basic navigation:
 - Arrow keys: Up / Down / PageUp / PageDown / Home / End move
     the selection within the focused column.
-- Right (or Enter): open/enter the selected row (enter directories,
+- Right (or Enter/␍): open/enter the selected row (enter directories,
     open file history or diff depending on focus).
 - Left: go back / close / move focus to the previous column.
 - `q` (or Ctrl-Q): quit the application.
@@ -317,6 +317,7 @@ STYLE_CONFLICTED = "magenta"
 STYLE_STAGED = "cyan"
 STYLE_IGNORED = "dim italic"
 STYLE_MODIFIED = "yellow"
+STYLE_MODIFIED_DIR = "black on yellow"
 STYLE_UNTRACKED = "bold yellow"
 STYLE_DEFAULT = "white"
 
@@ -326,7 +327,7 @@ STYLE_FILELIST_KEY = "dim"
 STYLE_HELP_BG = f"white on {HIGHLIGHT_HELP_BG}"
 
 # Header row text for file lists (unselectable)
-FILELIST_KEY_ROW_TEXT = "Key:  '\u00a0' tracked  U untracked  M modified  A staged  D deleted  I ignored  ! conflicted"
+FILELIST_KEY_ROW_TEXT = "Key:  '\u00a0' tracked  M modified  A staged  D deleted  I ignored  U untracked  ! conflicted"
 
 # Number of characters to display for short hashes
 HASH_LENGTH = 12
@@ -2939,15 +2940,46 @@ class FileModeFileList(FileListBase):
             # Show directories first (use right-arrow marker and include '/').
             for dname in sorted(slice_node["dirs"]):
                 try:
-                    dir_item = ListItem(Label(Text(f"→ {dname}/", style=STYLE_DIR)))
+                    # Compute repo-relative raw path for this directory
                     try:
+                        raw = os.path.join(rel_dir, dname) if rel_dir else dname
+                    except Exception as _e:
+                        self.printException(_e, "_render_filemode_display: os.path.join failed")
+                        raw = dname
+
+                    # Determine if this directory (recursively) contains any modified files.
+                    try:
+                        has_modified = False
+                        prefix = raw + os.sep
+                        for k, v in nodes_by_dir.items():
+                            # match the directory itself or any descendant directories
+                            if k == raw or k.startswith(prefix):
+                                files_list = v.get("files", []) if isinstance(v, dict) else []
+                                for _name, _status, _iso in files_list:
+                                    if _status == "modified":
+                                        has_modified = True
+                                        break
+                            if has_modified:
+                                break
+                    except Exception as _e:
+                        self.printException(_e, "_render_filemode_display: checking modified children failed")
+
+                    # Build a Text label where the arrow prefix is styled specially
+                    try:
+                        if has_modified:
+                            # txt = Text("→ ", style=STYLE_MODIFIED_DIR)
+                            # txt.append(f"{dname}/", style=STYLE_DIR)
+                            txt = Text(f"→ {dname}/", style=STYLE_MODIFIED_DIR)
+                        else:
+                            txt = Text(f"→ {dname}/", style=STYLE_DIR)
+                    except Exception as _e:
+                        self.printException(_e, "_render_filemode_display: building dir Text failed")
+                        txt = Text(f"→ {dname}/", style=STYLE_DIR)
+
+                    try:
+                        dir_item = ListItem(Label(txt))
                         dir_item._is_dir = True
                         dir_item._filename = dname
-                        try:
-                            raw = os.path.join(rel_dir, dname) if rel_dir else dname
-                        except Exception as _e:
-                            self.printException(_e, "_render_filemode_display: os.path.join failed")
-                            raw = dname
                         dir_item._raw_text = raw
                     except Exception as _e:
                         self.printException(_e, "_render_filemode_display: setting dir item metadata failed")

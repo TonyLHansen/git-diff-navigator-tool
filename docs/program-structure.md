@@ -117,8 +117,8 @@ State kept during navigation
   - `current_commit_sha` and `current_prev_sha` are updated from the highlighted item (and from checked items when applicable).
   - The `compute_commit_pair_hashes` helper derives the pair to diff from the highlighted index and the single checked index (if set). These values are preserved across view changes and used by the diff builder.
 
-Swap behavior (s/S)
-- Pressing `s` or `S` swaps the active view between file-first and repo-first variants (or toggles the left/right file/history pairing) while preserving key navigation state:
+Swap behavior (t/T)
+- Pressing `t` or `T` swaps the active view between file-first and repo-first variants (or toggles the left/right file/history pairing) while preserving key navigation state:
   - The app flips its `log_first`/`repo-first` mode flag and invokes the appropriate toggle helper (`_toggle_left_file_to_history`, `_toggle_left_history_to_file`, `_toggle_right_history_to_file`, `_toggle_right_file_to_history`) depending on the current focus.
   - When swapping, the implementation preps the counterpart lists using the current `displayed_path` and `current_diff_file` (if present) so the same directory and filename remain visible after the swap. These prep calls schedule highlighting after DOM refreshes (see 'Interplay and lifecycle').
   - For history/repo swaps, `current_commit_sha` and `current_prev_sha` (and any checked commit index) are preserved; the `_choose_hash_in_history` and `compute_commit_pair_hashes` helpers are used to re-select the nearest matching commits in the target history widget.
@@ -130,18 +130,19 @@ Swap behavior (s/S)
 - Highlighting enforced via watch_index/on_list_view_highlighted plus inline styles and Label updates.
 
 Git interactions
-- Repo discovery via `pygit2.discover_repository`; repo status and index mtimes via pygit2.
-- Working tree statuses used for markers and pseudo entries.
+- Repo discovery, status and index metadata are performed via the `git` CLI (for example `git rev-parse`, `git status`, and `git log`).
+- Working tree statuses are used for markers and pseudo entries.
 - History:
   - File history: `git log --follow --date=short --pretty=format:%ad %h %s -- <file>`
-  - Repo history: pygit2 walk from HEAD (or branches/tags) sorted by time.
+  - Repo history: `git log` and related CLI commands; the CLI is the canonical path.
 - Diff building:
-  - Core: `git diff` with variants: default, `--ignore-space-change`, `--diff-algorithm=patience` (rotated with d/D).
+-  - Core: `git diff` with variants: default, `--ignore-space-change`, `--diff-algorithm=patience` (rotated with d/D).
   - Pseudo hashes handling:
     - STAGED vs commits: `git diff --cached <commit> -- <file>`
     - MODS vs commits: `git diff <commit> -- <file>` or `git diff -- <file>` when no commit.
     - STAGED vs MODS: `git diff --name-only --cached` etc. for file lists; `git diff --cached -- --file` vs `git diff -- --file` for diffs.
-- RepoModeFileList when comparing commits uses pygit2 diff between trees; when involving STAGED/MODS, uses `git diff --name-only` commands to list files.
+    - NEWREPO: special pseudo-hash representing the empty/initial tree used when comparing a freshly-created repo or an initial import. Commands that compare against `NEWREPO` should treat it as the empty tree (for example using git's empty-tree hash `4b825dc642cb6eb9a060e54bf8d69288fbee4904` or the equivalent `--root`/initial-commit handling) so that added files are shown as additions rather than passing the literal token to `git`.
+  - RepoModeFileList when comparing commits uses the `git` CLI to perform tree diffs; when involving `STAGED`/`MODS` it uses `git diff --name-only` commands to list files.
 
 - Columns and mapping
 - The UI is built from six dedicated columns whose widths and visibility are controlled at runtime. The app composes these columns in a fixed order and `change_layout` / `_apply_column_layout` adjust each column's width percent and `styles.display` to show or hide columns as needed. Layout changes are immediate and recorded in `_current_layout` for state/save semantics.
@@ -301,7 +302,7 @@ Class Structure
 - `GitHistoryNavTool` (main App)
   - Role: compose the UI, track global state, respond to global keys, build repo cache, orchestrate layout changes and focus transitions.
   - Key attributes: `path`, `displayed_path`, `repo_available`, `repo_root`, `repo_index_set`, `repo_status_map`, `repo_index_mtime_map`, single-slot `_saved_state`, `_current_layout`, `_current_focus`, `_current_footer`, `current_commit_sha`, `current_prev_sha`, `current_diff_file`, `diff_variants`, `diff_cmd_index`, footer Texts (`footer_file`, `footer_history`, `footer_diff3`, `footer_diff_full`, `footer_help`).
-  - Key methods: `compose()` (build columns and canonical widgets), `on_mount()` (resolve canonical widgets, build repo cache, perform initial prep depending on startup mode), `change_layout(newlayout)` / `_apply_column_layout(...)` (set widths and displays), `change_state(layout, focus, footer)` (apply layout/focus/footer), `change_focus(target)` (focus widget and update title label classes), `save_state()`/`restore_state()` (single-slot save/restore), `build_repo_cache()` (pygit2 discovery/status/index mtime map), `_choose_hash_in_history(...)`, `build_diff_cmd(...)`.
+  - Key methods: `compose()` (build columns and canonical widgets), `on_mount()` (resolve canonical widgets, build repo cache, perform initial prep depending on startup mode), `change_layout(newlayout)` / `_apply_column_layout(...)` (set widths and displays), `change_state(layout, focus, footer)` (apply layout/focus/footer), `change_focus(target)` (focus widget and update title label classes), `save_state()`/`restore_state()` (single-slot save/restore), `build_repo_cache()` (discover repo and build status/index metadata using the `git` CLI), `_choose_hash_in_history(...)`, `build_diff_cmd(...)`.
   - Notes: centralizes the mapping of logical behaviors to canonical widget ids and provides helpers used by all widgets to preserve selection/indices across layout changes.
 
 Interplay and lifecycle
@@ -332,8 +333,8 @@ Help screen behavior
 Library usage
 - Textual: layout via `Vertical`/`Horizontal`, widgets `ListView`, `ListItem`, `Label`, focus/events (use `call_after_refresh` for DOM-dependent work; see 'Interplay and lifecycle'), CSS styling for highlight/borders.
 - Rich: `Text` for styled text, `Markdown` for help rendering, `Align` (not heavily used), color styles for statuses and highlights.
-- pygit2: repo discovery, status, index mtime map, commit walking, tree diffs.
-- subprocess: shell out to `git log`, `git diff`, `git ls-tree`, and `git diff --name-only` for staged/unstaged lists.
+ - `git` CLI: primary mechanism for discovery, status, history and diffs. The CLI is sufficient for basic operation.
+ - subprocess: shell out to `git log`, `git diff`, `git ls-tree`, and `git diff --name-only` for staged/unstaged lists.
 - argparse: CLI parsing for path, no-color, repo-first.
   
 
@@ -364,10 +365,10 @@ Assumptions and axioms
 - Coding / DRY guideline: prefer shared helper methods over duplicated code. When behavior or logic would be identical between two concrete classes (for example, `FileModeRepoList` and `RepoModeRepoList`), move that logic into a common base such as `RepoListBase`. When functionality would otherwise be duplicated across both `FileListBase` and `RepoListBase`, implement it once on `AppBase` and call it from the subclasses. Before adding new code that looks similar to existing code elsewhere, refactor the existing implementation into a shared method and reuse it. This reduces bugs, centralizes exception/logging handling, and keeps the UI behavior consistent across modes.
 
 
-- Assumptions: 
+ - Assumptions: 
 Git repo available for full functionality; 
 terminal supports ANSI colors; Textual APIs available; 
-pygit2 installed; working directory is repo or contains path argument; 
+working directory is repo or contains path argument; 
 diff commands use `git` in PATH; 
 highlight color may be adjusted via constant; 
 ListView items contain `Label` children; 
@@ -395,8 +396,8 @@ only one checked history item allowed.
 - Matching precedence: when highlighting/selecting a node, prefer (1) full-path equality (canonical), (2) `_hash` equality or prefix match, (3) visible text equality.
 - Row metadata: list row nodes may carry attributes like `_raw_text`, `_hash`, `_is_dir`, `_hash_header`, and `_selectable` that code relies on for logic and matching.
 
-## 3. Pseudo-refs & File/Repo State
-- Pseudo refs: represent working-tree state using pseudo-entries `MODS` (modified/unstaged) and `STAGED` (indexed but uncommitted); treat them specially instead of as normal git refs.
+-## 3. Pseudo-refs & File/Repo State
+- Pseudo refs: represent working-tree state using pseudo-entries `MODS` (modified/unstaged), `STAGED` (indexed but uncommitted), and `NEWREPO` (the initial/empty-tree pseudo-ref); treat these specially instead of as normal git refs.
 - File-level pseudo entries: `prepFileModeHistoryList` should insert `MODS` and `STAGED` pseudo-rows for the specific file when applicable.
 - Repo-level pseudo entries: `prepRepoModeHistoryList` should insert `MODS` then `STAGED` at the top when the repo has working-tree changes.
 
