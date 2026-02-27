@@ -1469,6 +1469,8 @@ class GitRepo(AppException):
             if hash1 is None or hash2 is None:
                 raise ValueError("getDiff: hash1 and hash2 must be specified (not None)")
 
+            logger.debug("getDiff: start filename=%r hash1=%r hash2=%r variation=%r", filename, hash1, hash2, variation)
+
             # return empty diff if both hashes are identical
             if hash1 == hash2:
                 return []
@@ -1503,6 +1505,7 @@ class GitRepo(AppException):
 
             ref1 = token_to_ref(hash1)
             ref2 = token_to_ref(hash2)
+            logger.debug("getDiff: normalized refs ref1=%r ref2=%r empty_tree=%r", ref1, ref2, EMPTY_TREE)
 
             # If both refs resolve to the special staged marker, map to cached diff
             args: list[str] = ["git", "diff"]
@@ -1526,10 +1529,12 @@ class GitRepo(AppException):
 
             # Append separator and filename
             args += ["--", filename]
+            logger.debug("getDiff: textual diff cmd=%r", args)
 
             out = self._git_run(args, text=True)
             # If textual diff is empty, attempt metadata summary fallback
             if not (out and out.strip()):
+                logger.debug("getDiff: textual diff empty for filename=%r; entering metadata fallback", filename)
                 try:
                     # Determine whether metadata diff should use --cached.
                     # Use normalized refs so NEWREPO maps to empty-tree hash
@@ -1551,11 +1556,126 @@ class GitRepo(AppException):
                         meta_cmd.append(ref2)
                     if filename:
                         meta_cmd += ["--", filename]
+                    logger.debug("getDiff: metadata cmd=%r", meta_cmd)
                     meta_out = self._git_run(meta_cmd, text=True)
                     if meta_out and meta_out.strip():
+                        logger.debug("getDiff: metadata fallback produced output (len=%d)", len(meta_out.splitlines()))
                         out = meta_out
                     else:
-                        out = "(no textual changes for this file)"
+                        logger.debug(
+                            "getDiff: metadata fallback empty for filename=%r; probing unfiltered rename status",
+                            filename,
+                        )
+                        # Path-limited metadata can be empty for renames when
+                        # the selected filename exists only on one side of the
+                        # comparison. Probe unfiltered name-status and provide
+                        # a clearer message when a rename is involved.
+                        rename_msg = None
+                        try:
+                            probe_cmd = ["git", "-C", self._repoRoot, "diff"]
+                            if use_cached:
+                                probe_cmd.append("--cached")
+                            probe_cmd += ["--name-status", "--find-renames"]
+                            if ref1 is not None and ref1 != self.STAGED:
+                                probe_cmd.append(ref1)
+                            if ref2 is not None and ref2 != self.STAGED:
+                                probe_cmd.append(ref2)
+                            logger.debug("getDiff: rename probe cmd=%r", probe_cmd)
+
+                            probe_out = self._git_run(probe_cmd, text=True) or ""
+                            logger.debug("getDiff: rename probe output lines=%d", len(probe_out.splitlines()))
+
+                            def _path_match(p: str) -> bool:
+                                try:
+                                    return p == filename or os.path.basename(p) == os.path.basename(filename)
+                                except Exception:
+                                    return p == filename
+
+                            for ln in probe_out.splitlines():
+                                parts = ln.split("\t")
+                                if len(parts) < 3:
+                                    continue
+                                code = parts[0].strip()
+                                if not code.startswith("R"):
+                                    continue
+                                oldp = parts[1].strip()
+                                newp = parts[2].strip()
+                                old_match = _path_match(oldp)
+                                new_match = _path_match(newp)
+                                logger.debug(
+                                    "getDiff: rename candidate code=%r old=%r new=%r old_match=%r new_match=%r",
+                                    code,
+                                    oldp,
+                                    newp,
+                                    old_match,
+                                    new_match,
+                                )
+                                if old_match or new_match:
+                                    rename_msg = f"(file renamed: {oldp} -> {newp}; no textual changes)"
+                                    break
+
+                            # NEWREPO<->commit diffs may not expose rename
+                            # pairs in tree-to-tree output because the empty
+                            # tree side has no source path. Probe commit-level
+                            # rename metadata as a second chance.
+                            if (
+                                rename_msg is None
+                                and (
+                                    (hash1 == self.NEWREPO and hash2 not in (self.NEWREPO, self.STAGED, self.MODS))
+                                    or (hash2 == self.NEWREPO and hash1 not in (self.NEWREPO, self.STAGED, self.MODS))
+                                )
+                            ):
+                                try:
+                                    commit_ref = hash2 if hash1 == self.NEWREPO else hash1
+                                    show_cmd = [
+                                        "git",
+                                        "-C",
+                                        self._repoRoot,
+                                        "show",
+                                        "--name-status",
+                                        "--format=",
+                                        "--find-renames",
+                                        commit_ref,
+                                    ]
+                                    logger.debug("getDiff: commit-rename probe cmd=%r", show_cmd)
+                                    show_out = self._git_run(show_cmd, text=True) or ""
+                                    logger.debug(
+                                        "getDiff: commit-rename probe output lines=%d for commit=%r",
+                                        len(show_out.splitlines()),
+                                        commit_ref,
+                                    )
+                                    for ln in show_out.splitlines():
+                                        parts = ln.split("\t")
+                                        if len(parts) < 3:
+                                            continue
+                                        code = parts[0].strip()
+                                        if not code.startswith("R"):
+                                            continue
+                                        oldp = parts[1].strip()
+                                        newp = parts[2].strip()
+                                        old_match = _path_match(oldp)
+                                        new_match = _path_match(newp)
+                                        logger.debug(
+                                            "getDiff: commit-rename candidate code=%r old=%r new=%r old_match=%r new_match=%r",
+                                            code,
+                                            oldp,
+                                            newp,
+                                            old_match,
+                                            new_match,
+                                        )
+                                        if old_match or new_match:
+                                            rename_msg = (
+                                                f"(file renamed in commit {commit_ref[:12]}: {oldp} -> {newp}; "
+                                                "no textual changes for selected path)"
+                                            )
+                                            break
+                                except Exception as e:
+                                    self.printException(e, "getDiff: commit rename probe failed")
+                        except Exception as e:
+                            self.printException(e, "getDiff: rename probe failed")
+
+                        logger.debug("getDiff: rename probe result rename_msg=%r", rename_msg)
+                        out = rename_msg or "(no textual changes for this file)"
                 except Exception as e:
                     self.printException(e, "getDiff: metadata diff failed")
 
