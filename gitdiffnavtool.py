@@ -16,7 +16,7 @@ import sys
 import subprocess
 import traceback
 import inspect
-from typing import Optional
+from typing import Optional, Callable
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 import pprint
@@ -259,6 +259,9 @@ DIFF_SCHEME_MAP = {
         "del_span": None,
     },
 }
+
+# Friendly names for diff variants (used by CLI/config)
+DIFF_VARIANT_NAMES = ["classic", "ignore-spaces", "patience", "word-diff"]
 
 INITIAL_POPUP_TEXT = """
 Welcome to Git Diff Navigator Tool!
@@ -4716,19 +4719,19 @@ class DiffList(AppBase):
                 c_short = curr[:HASH_LENGTH] if curr else "None"
 
                 try:
-                    variant_arg = None
+                    # Prefer a human-friendly variant name for the header
+                    variant_name = None
                     try:
-                        if 0 <= variant_index < len(self.app.diff_variants):
-                            variant_arg = self.app.diff_variants[variant_index]
+                        if 0 <= variant_index < len(DIFF_VARIANT_NAMES):
+                            variant_name = DIFF_VARIANT_NAMES[variant_index]
                     except Exception as e:
-                        self.printException(e, "prepDiffList: retrieving app.diff_variants failed")
-                        variant_arg = None
-                    if isinstance(variant_arg, (list, tuple)):
-                        vdisp = " ".join([str(v) for v in variant_arg if v])
-                    else:
-                        vdisp = variant_arg if variant_arg else ""
-                    vspace = " " if variant_arg else ""
-                    header = f"'Diff{vspace}{vdisp}' for {filename} between {p_short} and {c_short}"
+                        self.printException(e, "prepDiffList: retrieving variant name failed")
+                        variant_name = None
+
+                    if not variant_name:
+                        variant_name = DIFF_VARIANT_NAMES[0] if DIFF_VARIANT_NAMES else "default"
+
+                    header = f"Diff ({variant_name}, color={self.app.color_scheme}) for {filename} between {p_short} and {c_short}"
                 except Exception as e:
                     self.printException(e, "prepDiffList: building header failed")
                     header = f"Diff for {filename} between {p_short} and {c_short}"
@@ -4798,11 +4801,17 @@ class DiffList(AppBase):
                     hdr = None
                     try:
                         hdr = self.app.query_one(f"#{DIFF_TITLE}", Label)
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "DiffList.key_c: query header failed")
                         hdr = None
                     if hdr is not None:
                         try:
-                            hdr.update(Text(f"Diff (color={new_scheme})"))
+                            # Reflect both the active variant and the new color
+                            try:
+                                vname = DIFF_VARIANT_NAMES[self.variant]
+                            except Exception:
+                                vname = DIFF_VARIANT_NAMES[0] if DIFF_VARIANT_NAMES else "default"
+                            hdr.update(Text(f"Diff ({vname}, color={new_scheme})"))
                         except Exception as e:
                             self.printException(e, "DiffList.key_c: updating header failed")
                 except Exception as e:
@@ -5215,7 +5224,8 @@ class GitHistoryNavTool(AppException, App):
         no_initial_popup: bool,
         verbose: int,
         highlight: str | None,
-        color_scheme: str,
+        color_scheme: str | None,
+        diff_variant: str | None = None,
         **kwargs,
     ):
         """
@@ -5298,6 +5308,8 @@ class GitHistoryNavTool(AppException, App):
             ["--word-diff=porcelain", "--no-color"],
         ]
         self.color_scheme = color_scheme
+        # Record any requested initial diff variant name for on_mount application
+        self.initial_diff_variant = diff_variant
 
     def compose(self):
         """
@@ -5332,8 +5344,9 @@ class GitHistoryNavTool(AppException, App):
                 yield Label(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY), id="right-file-key")
                 yield RepoModeFileList(id=RIGHT_FILE_LIST_ID)
             with Vertical(id="diff-column"):
-                # Show current color scheme in the Diff title for visibility
-                yield Label(Text(f"Diff (color={self.color_scheme})"), id=DIFF_TITLE)
+                # Simple Diff title; detailed variant+color appears in the
+                # first line of the diff output (prepDiffList builds it).
+                yield Label(Text("Diff"), id=DIFF_TITLE)
                 yield DiffList(id=DIFF_LIST_ID)
             with Vertical(id="help-column"):
                 yield Label(Text("Help"), id=HELP_TITLE)
@@ -5369,6 +5382,9 @@ class GitHistoryNavTool(AppException, App):
 
             # Ensure help content is prepared so help is immediately available
             self.help_list.prepHelp()
+
+            # Apply any requested initial diff variant (from CLI or config)
+            self.diff_list.variant = DIFF_VARIANT_NAMES.index(self.initial_diff_variant)
 
             # Populate the canonical left lists and set focus so key handlers
             # and highlight behavior work immediately in both modes.
@@ -6606,7 +6622,7 @@ class GitHistoryNavTool(AppException, App):
             self.printException(e, "toggle_file_history_diff: toggle_file_history failed")
         try:
             # show diff in the right diff column and set go_back
-            self.change_state("history_file_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER)
+            self.change_state("history_file_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER_1)
             try:
                 self.diff_list.go_back = ("history_file", RIGHT_FILE_LIST_ID, RIGHT_FILE_FOOTER)
             except Exception as e:
@@ -6675,6 +6691,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         metavar="SCHEME",
         choices=DIFF_COLOR_SCHEMES,
         help=f"start with color scheme (one of: {', '.join(DIFF_COLOR_SCHEMES)})",
+    )
+    parser.add_argument(
+        "--diff",
+        dest="diff",
+        metavar="VARIANT",
+        choices=DIFF_VARIANT_NAMES,
+        help=f"start with diff variant (one of: {', '.join(DIFF_VARIANT_NAMES)})",
     )
     parser.add_argument(
         "-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)"
@@ -6755,41 +6778,56 @@ def main(argv: Optional[list[str]] = None) -> int:
 
             defaults = {}
 
-            b = _getbool("repo-first")
-            if b is not None:
-                defaults["repo_first"] = bool(b)
+            # Map simple boolean-like config keys to parser defaults. The
+            # transform callable converts the parsed boolean to the desired
+            # destination value (e.g. invert for `no_` flags).
+            bool_map: list[tuple[str, str, Callable[[bool], object]]] = [
+                ("repo-first", "repo_first", lambda x: bool(x)),
+                ("ignored-files", "no_ignored", lambda x: not bool(x)),
+                ("untracked-files", "no_untracked", lambda x: not bool(x)),
+                ("initial-popup", "no_initial_popup", lambda x: not bool(x)),
+            ]
 
-            b = _getbool("ignored-files")
-            if b is not None:
-                defaults["no_ignored"] = not bool(b)
+            for cfg_key, dest, transform in bool_map:
+                b = _getbool(cfg_key)
+                if b is not None:
+                    defaults[dest] = transform(b)
 
-            b = _getbool("untracked-files")
-            if b is not None:
-                defaults["no_untracked"] = not bool(b)
-
-            # `color` in config must be a named scheme from DIFF_COLOR_SCHEMES.
-            # Accept only explicit scheme names; boolean-like values are not
-            # interpreted and will be treated as invalid.
-            if "color" in src:
-                v = (src.get("color") or "").strip()
+            # Normalize and validate simple named-choice config keys.
+            def _match_choice(key: str, allowed: list[str]) -> str | None:
+                raw = src.get(key)
+                if raw is None:
+                    return None
+                v = raw.strip() if isinstance(raw, str) else str(raw).strip()
                 if v == "":
-                    pass
-                else:
-                    vs = v.lower()
-                    match = None
-                    for s in DIFF_COLOR_SCHEMES:
-                        if s.lower() == vs:
-                            match = s
-                            break
-                    if match:
-                        defaults["color"] = match
-                    else:
-                        # Treat invalid config value as fatal: exit with error
-                        sys.exit(f"invalid color scheme '{v}' in config; must be one of: {', '.join(DIFF_COLOR_SCHEMES)}")
+                    return None
+                vs = v.lower()
+                for s in allowed:
+                    if s.lower() == vs:
+                        return s
+                return None
 
-            b = _getbool("initial-popup")
-            if b is not None:
-                defaults["no_initial_popup"] = not bool(b)
+            # `color` must be a scheme name from DIFF_COLOR_SCHEMES (blank = leave alone).
+            if "color" in src:
+                match = _match_choice("color", DIFF_COLOR_SCHEMES)
+                if match:
+                    defaults["color"] = match
+                else:
+                    raw = src.get("color")
+                    raw_str = raw if isinstance(raw, str) else str(raw)
+                    if raw_str.strip() != "":
+                        sys.exit(f"invalid color scheme '{raw_str}' in config; must be one of: {', '.join(DIFF_COLOR_SCHEMES)}")
+
+            # `diff` must be a variant name from DIFF_VARIANT_NAMES (blank = leave alone).
+            if "diff" in src:
+                match = _match_choice("diff", DIFF_VARIANT_NAMES)
+                if match:
+                    defaults["diff"] = match
+                else:
+                    raw = src.get("diff")
+                    raw_str = raw if isinstance(raw, str) else str(raw)
+                    if raw_str.strip() != "":
+                        sys.exit(f"invalid diff variant '{raw_str}' in config; must be one of: {', '.join(DIFF_VARIANT_NAMES)}")
 
             if "debug" in src:
                 dbg = (src.get("debug") or "").strip()
@@ -6883,6 +6921,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             verbose=args.verbose,
             highlight=args.highlight,
             color_scheme=args.color,
+            diff_variant=args.diff,
         )
         # Run the textual app (blocks until exit)
         app.run()
