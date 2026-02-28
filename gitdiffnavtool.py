@@ -5426,15 +5426,22 @@ class GitHistoryNavTool(AppException, App):
 
                     # If a file was provided on the command line, open its
                     # history as if the user had navigated down to it and
-                    # pressed Right.
+                    # pressed Right. Otherwise show the left file list in
+                    # fullscreen so users starting with no filename see the
+                    # file listing immediately.
                     try:
                         if self.rel_file:
                             self.file_mode_file_list._activate_or_open(None, enter_dir_test_fn=lambda name: True)
+                            # Show the file-history layout so the history list is
+                            # visible when the app is started with a specific file.
+                            self.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
+                        else:
+                            try:
+                                self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
+                            except Exception as _e:
+                                self.printException(_e, "on_mount: change_state to file_fullscreen failed")
                     except Exception as _e:
                         self.printException(_e, "on_mount: opening initial file history failed")
-                    # Show the file-history layout so the history list is
-                    # visible when the app is started with a specific file.
-                    self.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
                 else:
                     # If starting in repo-first mode, pre-populate the left
                     # repository-history widget so the UI shows commits immediately.
