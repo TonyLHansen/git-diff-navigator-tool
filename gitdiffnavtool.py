@@ -5405,10 +5405,29 @@ class GitHistoryNavTool(AppException, App):
             # and highlight behavior work immediately in both modes.
             try:
                 if not self.repo_first:
+                    # If the app was started with a specific file, ensure
+                    # that file is preselected in the file-mode list so the
+                    # UI highlights it on startup. `prepFileModeFileList`
+                    # will honor `_preselected_filename` when rendering.
+                    try:
+                        if self.rel_file:
+                            self.file_mode_file_list._preselected_filename = os.path.basename(self.rel_file)
+                    except Exception as _e:
+                        self.printException(_e, "on_mount: setting _preselected_filename failed")
+
                     self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
-                    # Also set the left column to file fullscreen when hashes
-                    # were provided so the paired layout is prepared.
-                    self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
+
+                    # If a file was provided on the command line, open its
+                    # history as if the user had navigated down to it and
+                    # pressed Right.
+                    try:
+                        if self.rel_file:
+                            self.file_mode_file_list._activate_or_open(None, enter_dir_test_fn=lambda name: True)
+                    except Exception as _e:
+                        self.printException(_e, "on_mount: opening initial file history failed")
+                    # Show the file-history layout so the history list is
+                    # visible when the app is started with a specific file.
+                    self.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
                 else:
                     # If starting in repo-first mode, pre-populate the left
                     # repository-history widget so the UI shows commits immediately.
