@@ -3499,6 +3499,17 @@ class FileModeFileList(FileListBase):
                     except Exception as e:
                         self.printException(e, "_activate_or_open: prepFileModeFileList failed")
                     return
+                else:
+                    # Caller explicitly chose not to treat this directory
+                    # selection as an enter action (for example, selecting
+                    # the parent '..' when pressing Right). In that case
+                    # we should not fall through to file-history handling
+                    # (which would run `git log` on a directory path).
+                    try:
+                        self.error_message(f"No history for directory: {name}")
+                    except Exception as _e:
+                        self.printException(_e, "_activate_or_open: error_message failed for directory")
+                    return
 
             # not is_dir
             try:
