@@ -4493,7 +4493,14 @@ class FileModeHistoryList(HistoryListBase):
 
         prev_hash, curr_hash = self._compute_selected_pair()
         try:
-            filename = self.app.rel_file or ""
+            # Build a repository-relative filename from rel_dir/rel_file
+            try:
+                rd = self.app.rel_dir or ""
+                rf = self.app.rel_file or ""
+                filename = os.path.join(rd, rf) if rf else (rd or "")
+            except Exception as _e:
+                self.printException(_e, "FileModeHistoryList.key_right: computing filename failed")
+                filename = self.app.rel_file or ""
             # Ask the diff list to prepare the diff for this file and pair
             try:
                 # When opening from a file's history, ensure left returns to
