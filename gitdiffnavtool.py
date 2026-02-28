@@ -55,6 +55,10 @@ HIGHLIGHT_HELP_BG = "#95a5a6"
 # Default highlight background used when a widget doesn't specify one
 HIGHLIGHT_DEFAULT_BG = "light_gray"
 
+# Background used specifically for `style`-scheme deletions so the global
+# default highlight background doesn't need to be changed for this purpose.
+STYLE_DELETE_BG = "#d3d3d3"
+
 # Status markers mapping used to render the left-most TAG for file rows.
 # Keys correspond to computed repo statuses (strings used by preparatory APIs).
 MARKERS = {
@@ -188,6 +192,73 @@ HELP_FOOTER = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Home/End  Press Enter/␍ to
 # DIFF_FOOTER = Text("Diff: press Left to return to files")
 DIFF_FOOTER_1 = Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End →/f(ull) c(olor) d(iff-type) t(oggle) w(write)", style="bold")
 DIFF_FOOTER_2 = Text("Diff: q(uit)  ?/h(elp)  ↑/↓/PgUp/PgDn/Home/End ←/f(ull) c(olor) d(iff-type) t(oggle) w(write)", style="bold")
+
+# Supported diff color schemes (used by CLI/config and runtime cycling)
+DIFF_COLOR_SCHEMES = [
+    "red-green",
+    "blue-orange",
+    "teal-purple",
+    "style",
+    "none",
+]
+
+# Map scheme name -> mapping of run/line types to Rich styles.
+DIFF_SCHEME_MAP = {
+    "red-green": {
+        "add_run": "bold green",
+        "del_run": "bold red",
+        "add_line": "green",
+        "del_line": "red",
+        # compatibility keys used by renderers
+        "add": "bold green",
+        "del": "bold red",
+        "add_span": "green",
+        "del_span": "red",
+    },
+    "blue-orange": {
+        "add_run": "bold blue",
+        "del_run": "bold #ff8800",
+        "add_line": "blue",
+        "del_line": "#ff8800",
+        "add": "bold blue",
+        "del": "bold #ff8800",
+        "add_span": "blue",
+        "del_span": "#ff8800",
+    },
+    "teal-purple": {
+        "add_run": "bold cyan",
+        "del_run": "bold magenta",
+        "add_line": "cyan",
+        "del_line": "magenta",
+        "add": "bold cyan",
+        "del": "bold magenta",
+        "add_span": "cyan",
+        "del_span": "magenta",
+    },
+    "style": {
+        # 'style' uses highlighting and text-style only (no colors):
+        # additions -> bold + reverse (highlight), deletions -> underline
+        # with a light-gray background for contrast.
+        "add_run": "bold reverse",
+        "del_run": f"black underline on {STYLE_DELETE_BG}",
+        "add_line": "reverse",
+        "del_line": f"black on {STYLE_DELETE_BG}",
+        "add": "bold reverse",
+        "del": f"black underline on {STYLE_DELETE_BG}",
+        "add_span": "reverse",
+        "del_span": f"black underline on {STYLE_DELETE_BG}",
+    },
+    "none": {
+        "add_run": None,
+        "del_run": None,
+        "add_line": None,
+        "del_line": None,
+        "add": None,
+        "del": None,
+        "add_span": None,
+        "del_span": None,
+    },
+}
 
 INITIAL_POPUP_TEXT = """
 Welcome to Git Diff Navigator Tool!
@@ -4694,7 +4765,13 @@ class DiffList(AppBase):
             self.printException(e, "prepDiffList failed")
 
     def key_c(self, event: events.Key | None = None) -> None:
-        """Toggle colorization of the diff output and re-render."""
+        """
+        Cycle diff color schemes (c/C) and re-render.
+
+        Cycles through DIFF_COLOR_SCHEMES in order. Selecting `none` disables
+        colorized rendering; other schemes enable color/styling based on the
+        configured mapping.
+        """
         logger.debug("DiffList.key_c called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             if event is not None:
@@ -4702,9 +4779,34 @@ class DiffList(AppBase):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "DiffList.key_c: event.stop failed")
-            self._colorized = not self._colorized
-            logger.debug("DiffList colorized=%s", self._colorized)
             try:
+                # cycle to next scheme
+                current = self.app.color_scheme
+                try:
+                    idx = DIFF_COLOR_SCHEMES.index(current)
+                except ValueError as e:
+                    self.printException(e, "DiffList.key_c: unknown current color_scheme")
+                    idx = 0
+                new_idx = (idx + 1) % len(DIFF_COLOR_SCHEMES)
+                new_scheme = DIFF_COLOR_SCHEMES[new_idx]
+                self.app.color_scheme = new_scheme
+                # update boolean used by render helpers
+                self._colorized = new_scheme != "none"
+                logger.debug("DiffList: switched color scheme %s -> %s (colorized=%s)", current, new_scheme, self._colorized)
+                # Update Diff header to reflect new scheme
+                try:
+                    hdr = None
+                    try:
+                        hdr = self.app.query_one(f"#{DIFF_TITLE}", Label)
+                    except Exception:
+                        hdr = None
+                    if hdr is not None:
+                        try:
+                            hdr.update(Text(f"Diff (color={new_scheme})"))
+                        except Exception as e:
+                            self.printException(e, "DiffList.key_c: updating header failed")
+                except Exception as e:
+                    self.printException(e, "DiffList.key_c header update outer failure")
                 self._render_output()
             except Exception as e:
                 self.printException(e, "DiffList.key_c re-render failed")
@@ -4799,11 +4901,10 @@ class DiffList(AppBase):
                     # When colorized, apply inline styles; when not, use
                     # compact bracket markers to indicate inline changes.
                     if colorized:
-                        seg_style = None
-                        if token == "+":
-                            seg_style = "green"
-                        elif token == "-":
-                            seg_style = "red"
+                        # map scheme -> style
+                        scheme = self.app.color_scheme
+                        mapping = DIFF_SCHEME_MAP.get(scheme, DIFF_SCHEME_MAP[DIFF_COLOR_SCHEMES[0]])
+                        seg_style = mapping.get("add") if token == "+" else mapping.get("del")
                         current.append(payload, style=seg_style)
                     else:
                         if token == "+":
@@ -4850,10 +4951,12 @@ class DiffList(AppBase):
                         for ln in body_lines:
                             style = None
                             if self._colorized:
+                                scheme = self.app.color_scheme
+                                mapping = DIFF_SCHEME_MAP.get(scheme, DIFF_SCHEME_MAP[DIFF_COLOR_SCHEMES[0]])
                                 if ln.startswith("+") and not ln.startswith("+++"):
-                                    style = "green"
+                                    style = mapping.get("add_span")
                                 elif ln.startswith("-") and not ln.startswith("---"):
-                                    style = "red"
+                                    style = mapping.get("del_span")
                                 elif ln.startswith("@@"):
                                     style = "magenta"
                                 elif ln.startswith("diff --git") or ln.startswith("index "):
@@ -5109,10 +5212,10 @@ class GitHistoryNavTool(AppException, App):
         repo_hashes: list,
         no_ignored: bool,
         no_untracked: bool,
-        no_color: bool,
         no_initial_popup: bool,
         verbose: int,
         highlight: str | None,
+        color_scheme: str,
         **kwargs,
     ):
         """
@@ -5164,7 +5267,6 @@ class GitHistoryNavTool(AppException, App):
         # Optional initial filename basename to highlight when listing a dir
         self.highlight = highlight
 
-        self.no_color = no_color
         self.no_initial_popup = no_initial_popup
         self.no_ignored = no_ignored
         self.no_untracked = no_untracked
@@ -5195,6 +5297,7 @@ class GitHistoryNavTool(AppException, App):
             ["--diff-algorithm=patience"],
             ["--word-diff=porcelain", "--no-color"],
         ]
+        self.color_scheme = color_scheme
 
     def compose(self):
         """
@@ -5229,7 +5332,8 @@ class GitHistoryNavTool(AppException, App):
                 yield Label(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY), id="right-file-key")
                 yield RepoModeFileList(id=RIGHT_FILE_LIST_ID)
             with Vertical(id="diff-column"):
-                yield Label(Text("Diff"), id=DIFF_TITLE)
+                # Show current color scheme in the Diff title for visibility
+                yield Label(Text(f"Diff (color={self.color_scheme})"), id=DIFF_TITLE)
                 yield DiffList(id=DIFF_LIST_ID)
             with Vertical(id="help-column"):
                 yield Label(Text("Help"), id=HELP_TITLE)
@@ -6547,8 +6651,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     Returns process exit code (0 on success).
     """
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
-    parser.add_argument(
-        "-C", "--no-color", dest="no_color", action="store_true", help="start with diff colorization off"
+    # Mutually-exclusive color options: choose a named scheme or disable color
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "-C",
+        "--no-color",
+        dest="no_color",
+        action="store_true",
+        help="start with diff colorization off",
+    )
+    group.add_argument(
+        "--color",
+        dest="color",
+        metavar="SCHEME",
+        choices=DIFF_COLOR_SCHEMES,
+        help=f"start with color scheme (one of: {', '.join(DIFF_COLOR_SCHEMES)})",
     )
     parser.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
     parser.add_argument(
@@ -6650,9 +6767,25 @@ def main(argv: Optional[list[str]] = None) -> int:
             if b is not None:
                 defaults["no_untracked"] = not bool(b)
 
-            b = _getbool("color")
-            if b is not None:
-                defaults["no_color"] = not bool(b)
+            # `color` in config must be a named scheme from DIFF_COLOR_SCHEMES.
+            # Accept only explicit scheme names; boolean-like values are not
+            # interpreted and will be treated as invalid.
+            if "color" in src:
+                v = (src.get("color") or "").strip()
+                if v == "":
+                    pass
+                else:
+                    vs = v.lower()
+                    match = None
+                    for s in DIFF_COLOR_SCHEMES:
+                        if s.lower() == vs:
+                            match = s
+                            break
+                    if match:
+                        defaults["color"] = match
+                    else:
+                        # Treat invalid config value as fatal: exit with error
+                        sys.exit(f"invalid color scheme '{v}' in config; must be one of: {', '.join(DIFF_COLOR_SCHEMES)}")
 
             b = _getbool("initial-popup")
             if b is not None:
@@ -6737,6 +6870,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             rel_dir,
             rel_file,
         )
+
         app = GitHistoryNavTool(
             gitRepo=gitrepo,
             rel_dir=rel_dir,
@@ -6745,10 +6879,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             repo_hashes=repo_hashes,
             no_ignored=args.no_ignored,
             no_untracked=args.no_untracked,
-            no_color=args.no_color,
             no_initial_popup=args.no_initial_popup,
             verbose=args.verbose,
             highlight=args.highlight,
+            color_scheme=args.color,
         )
         # Run the textual app (blocks until exit)
         app.run()
