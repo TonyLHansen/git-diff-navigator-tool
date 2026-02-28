@@ -6651,6 +6651,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     Returns process exit code (0 on success).
     """
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
+    parser.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
+    parser.add_argument(
+        "-R",
+        "--repo-hash",
+        dest="repo_hash",
+        action="append",
+        metavar="HASH",
+        help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
+    )
     # Mutually-exclusive color options: choose a named scheme or disable color
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -6667,7 +6676,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         choices=DIFF_COLOR_SCHEMES,
         help=f"start with color scheme (one of: {', '.join(DIFF_COLOR_SCHEMES)})",
     )
-    parser.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
     parser.add_argument(
         "-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)"
     )
@@ -6677,14 +6685,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         dest="debug_tracing",
         action="store_true",
         help="enable TRACE-level (very verbose) logging",
-    )
-    parser.add_argument(
-        "-R",
-        "--repo-hash",
-        dest="repo_hash",
-        action="append",
-        metavar="HASH",
-        help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
     )
     parser.add_argument(
         "-I",
