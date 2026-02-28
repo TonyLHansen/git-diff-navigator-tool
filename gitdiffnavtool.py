@@ -4796,13 +4796,22 @@ class DiffList(AppBase):
                 if ln and ln[0] in (" ", "+", "-"):
                     token = ln[0]
                     payload = ln[1:]
-                    seg_style = None
+                    # When colorized, apply inline styles; when not, use
+                    # compact bracket markers to indicate inline changes.
                     if colorized:
+                        seg_style = None
                         if token == "+":
                             seg_style = "green"
                         elif token == "-":
                             seg_style = "red"
-                    current.append(payload, style=seg_style)
+                        current.append(payload, style=seg_style)
+                    else:
+                        if token == "+":
+                            current.append(f"[+{payload}+]")
+                        elif token == "-":
+                            current.append(f"[-{payload}-]")
+                        else:
+                            current.append(payload)
                 else:
                     # Defensive fallback for unexpected lines
                     flush_current(force_empty=False)
