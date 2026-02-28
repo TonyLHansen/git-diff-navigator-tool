@@ -4807,10 +4807,7 @@ class DiffList(AppBase):
                     if hdr is not None:
                         try:
                             # Reflect both the active variant and the new color
-                            try:
-                                vname = DIFF_VARIANT_NAMES[self.variant]
-                            except Exception:
-                                vname = DIFF_VARIANT_NAMES[0] if DIFF_VARIANT_NAMES else "default"
+                            vname = DIFF_VARIANT_NAMES[self.variant]
                             hdr.update(Text(f"Diff ({vname}, color={new_scheme})"))
                         except Exception as e:
                             self.printException(e, "DiffList.key_c: updating header failed")
@@ -4913,8 +4910,15 @@ class DiffList(AppBase):
                         # map scheme -> style
                         scheme = self.app.color_scheme
                         mapping = DIFF_SCHEME_MAP.get(scheme, DIFF_SCHEME_MAP[DIFF_COLOR_SCHEMES[0]])
-                        seg_style = mapping.get("add") if token == "+" else mapping.get("del")
-                        current.append(payload, style=seg_style)
+                        if token == "+":
+                            seg_style = mapping.get("add")
+                            current.append(payload, style=seg_style)
+                        elif token == "-":
+                            seg_style = mapping.get("del")
+                            current.append(payload, style=seg_style)
+                        else:
+                            # context run: no inline styling
+                            current.append(payload)
                     else:
                         if token == "+":
                             current.append(f"[+{payload}+]")
