@@ -57,7 +57,7 @@ HIGHLIGHT_DEFAULT_BG = "light_gray"
 
 # Background used specifically for `style`-scheme deletions so the global
 # default highlight background doesn't need to be changed for this purpose.
-STYLE_DELETE_BG = "#d3d3d3"
+STYLE_DELETE_BG = "#a3a3a3"
 
 # Status markers mapping used to render the left-most TAG for file rows.
 # Keys correspond to computed repo statuses (strings used by preparatory APIs).
