@@ -1022,6 +1022,135 @@ def check_redundant_nested_try(path: Path, text: str, tree: ast.AST) -> List[Tup
     return errs
 
 
+def check_swallowing_callers(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
+    """
+    Detect functions or methods whose top-level body contains a Try with
+    ExceptHandler(s) that do not contain any `raise` statements (i.e.
+    they swallow exceptions). For such callees, find call sites within
+    the same file that are wrapped in a Try/Except and flag the caller's
+    try/except as likely unnecessary.
+
+    This check is intentionally conservative: it only inspects top-level
+    Try nodes in the callee's body and only considers explicit `raise`
+    statements as evidence that the callee re-raises.
+    """
+    errs: List[Tuple[str, int, str]] = []
+
+    try:
+        swallowing: List[Tuple[str, Optional[str], int]] = []
+
+        class FuncCollector(ast.NodeVisitor):
+            def __init__(self):
+                self.current_class: Optional[str] = None
+
+            def visit_ClassDef(self, node: ast.ClassDef) -> None:
+                prev = self.current_class
+                self.current_class = node.name
+                for item in node.body:
+                    # inspect direct methods only
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        self.visit(item)
+                self.current_class = prev
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+                try:
+                    for stmt in getattr(node, "body", []) or []:
+                        if isinstance(stmt, ast.Try):
+                            handlers = getattr(stmt, "handlers", []) or []
+                            if not handlers:
+                                continue
+                            any_raise = False
+                            for h in handlers:
+                                for sub in ast.walk(h):
+                                    if isinstance(sub, ast.Raise):
+                                        any_raise = True
+                                        break
+                                if any_raise:
+                                    break
+                            if not any_raise:
+                                swallowing.append((node.name, self.current_class, getattr(node, "lineno", 0)))
+                                break
+                except Exception as e:
+                    printException(e, f"collecting swallowing functions in {path}")
+
+            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+                # treat async defs the same way
+                self.visit_FunctionDef(node)  # type: ignore[arg-type]
+
+        FuncCollector().visit(tree)
+
+        if not swallowing:
+            return errs
+
+        # Build quick lookup sets
+        swallow_names = {name for name, cls, ln in swallowing}
+
+        class CallFinder(ast.NodeVisitor):
+            def __init__(self):
+                self.stack: List[ast.AST] = []
+
+            def generic_visit(self, node: ast.AST) -> None:
+                self.stack.append(node)
+                super().generic_visit(node)
+                self.stack.pop()
+
+            def _enclosing_function(self) -> Optional[str]:
+                for anc in reversed(self.stack):
+                    if isinstance(anc, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        return getattr(anc, "name", None)
+                return None
+
+            def _has_try_ancestor(self) -> Optional[ast.Try]:
+                for anc in reversed(self.stack):
+                    if isinstance(anc, ast.Try):
+                        return anc
+                return None
+
+            def visit_Call(self, node: ast.Call) -> None:
+                try:
+                    func = getattr(node, "func", None)
+                    callee_name = None
+                    is_attr = False
+                    if isinstance(func, ast.Name):
+                        callee_name = func.id
+                    elif isinstance(func, ast.Attribute):
+                        callee_name = getattr(func, "attr", None)
+                        is_attr = True
+                    if not callee_name:
+                        return
+
+                    if callee_name not in swallow_names:
+                        return
+
+                    # Skip calls that occur inside the callee's own definition
+                    encl_fn = self._enclosing_function()
+                    if encl_fn and encl_fn == callee_name:
+                        return
+
+                    try_node = self._has_try_ancestor()
+                    if try_node is None:
+                        return
+
+                    lineno = getattr(node, "lineno", None) or 0
+                    # Build a friendly callee representation
+                    qual = callee_name
+                    msg = (
+                        f"call to '{qual}' at line {lineno} is inside a try/except, but '{qual}' swallows exceptions (its handler contains no 'raise'); "
+                        f"the caller's try/except may be unnecessary"
+                    )
+                    try_lineno = getattr(try_node, "lineno", None) or 0
+                    errs.append((str(path), try_lineno, msg))
+                except Exception as e:
+                    printException(e, f"inspecting Call nodes in {path}")
+                self.generic_visit(node)
+
+        CallFinder().visit(tree)
+    except Exception as e:
+        printException(e, f"check_swallowing_callers failed for {path}")
+
+    return errs
+
+
 def check_imports_module_level(path: Path, text: str, tree: ast.AST) -> List[Tuple[str, int, str]]:
     """
     Flag Import/ImportFrom nodes that are not at module top-level.
@@ -1979,6 +2108,22 @@ def main(argv: List[str] | None = None) -> int:
         help="Enable nested-try-except check (opposite of -N).",
     )
 
+    # New check: callers wrapping calls to functions/methods that swallow
+    # exceptions (function body has a try/except whose handlers do not raise).
+    gk = parser.add_mutually_exclusive_group()
+    gk.add_argument("-K",
+        "--no-swallowing-caller-check",
+        dest="check_swallowing_callers",
+        action="store_false",
+        help="Skip checking for callers that wrap calls to functions that swallow exceptions (default: check)",
+    )
+    gk.add_argument("-k",
+        "--swallowing-caller-check",
+        dest="enable_swallowing_callers",
+        action="store_true",
+        help="Enable swallowing-caller check (opposite of -K).",
+    )
+
     gp = parser.add_mutually_exclusive_group()
     gp.add_argument("-P",
         "--no-pass-check",
@@ -2143,6 +2288,7 @@ def main(argv: List[str] | None = None) -> int:
                 "logger-in-try": ("enable_logger_in_try", "check_logger_in_try"),
                 "printexception-in-try": ("enable_printexception_in_try", "check_printexception_in_try"),
                 "nested-try-except": ("enable_nested_try", "check_nested_try"),
+                "swallowing-caller-check": ("enable_swallowing_callers", "check_swallowing_callers"),
                 "pass-check": ("enable_pass_check", "check_pass"),
                 "check-docstrings": ("enable_check_docstrings", "check_docstrings"),
                 "getattr-not-initialized": ("enable_getattr_not_initialized", "check_getattr_not_initialized"),
@@ -2271,6 +2417,8 @@ def main(argv: List[str] | None = None) -> int:
         args.check_repeat = True
     if args.enable_check_init_first:
         args.check_init_first = True
+    if getattr(args, "enable_swallowing_callers", False):
+        args.check_swallowing_callers = True
 
     logger.info("cwd: %s", Path.cwd())
     # Single computed display token for suggested calls: either 'print' or 'printException'
@@ -2417,6 +2565,12 @@ def main(argv: List[str] | None = None) -> int:
                         errs += check_redundant_nested_try(p, text=text, tree=tree)
                     except Exception as e:
                         printException(e, f"check_redundant_nested_try failed for {p}")
+                # Detect callers wrapping calls to functions/methods that swallow exceptions
+                if getattr(args, "check_swallowing_callers", False):
+                    try:
+                        errs += check_swallowing_callers(p, text=text, tree=tree)
+                    except Exception as e:
+                        printException(e, f"check_swallowing_callers failed for {p}")
                 # Detect repeated definitions (module functions and class methods)
                 if args.check_repeat:
                     try:
