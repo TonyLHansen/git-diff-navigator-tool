@@ -6463,16 +6463,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         metavar="HASH",
         help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
     )
-    # Mutually-exclusive color options: choose a named scheme or disable color
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
+    
+    # Diff options group
+    diff_group = parser.add_argument_group("Diff Options")
+    # Mutually-exclusive color options within diff group
+    color_group = diff_group.add_mutually_exclusive_group()
+    color_group.add_argument(
         "-C",
         "--no-color",
         dest="no_color",
         action="store_true",
         help="same as `--color=none` with diff colorization off",
     )
-    group.add_argument(
+    color_group.add_argument(
         "-c",
         "--color",
         dest="color",
@@ -6480,7 +6483,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         choices=DIFF_COLOR_SCHEMES,
         help=f"start with color scheme (one of: {', '.join(DIFF_COLOR_SCHEMES)})",
     )
-    parser.add_argument(
+    diff_group.add_argument(
         "--diff",
         dest="diff",
         metavar="VARIANT",
