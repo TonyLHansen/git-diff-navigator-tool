@@ -657,11 +657,10 @@ class AppBase(AppException, ListView):
             try:
                 repo_root_local = self.app.gitRepo.get_repo_root()
                 canonical = self._canonical_relpath(full_path, repo_root_local) if full_path else full_path
-            except Exception as _ex:
-                self.printException(_ex, "_append_file_row: canonicalizing path failed")
+            except Exception as e:
+                self.printException(e, "_append_file_row: canonicalizing path failed")
                 canonical = full_path
-
-            # Determine marker and style from status
+            
             try:
                 marker = MARKERS.get(status, MARKERS.get("tracked_clean", " "))
             except Exception as _ex:
@@ -1738,7 +1737,7 @@ class AppBase(AppException, ListView):
                     self.printException(e, "key_w_helper: event.stop failed")
 
             # Build an absolute filepath from app rel_dir/rel_file when available
-            filepath = self.app.gitRepo.full_path_for(self.app.rel_dir, self.app.rel_file)
+            filepath = self.app.gitRepo.abs_path_for(self.app.rel_dir, self.app.rel_file)
             prev_hash = self.app.previous_hash
             curr_hash = self.app.current_hash
 
@@ -1747,11 +1746,9 @@ class AppBase(AppException, ListView):
                 pass
 
             try:
-                try:
-                    repo_root_val = self.app.repo_root
-                except Exception as e:
-                    self.printException(e, "key_w_helper: reading app.repo_root failed")
-                    repo_root_val = None
+                # Prefer asking the GitRepo for the canonical repo root
+                repo_root_val = self.app.gitRepo.get_repo_root()
+
                 msg = f"Create {os.path.basename(filepath)}.HASH. Do you wish to write the (o)lder file, the (n)ewer file, or (b)oth? (Any other key to cancel.)"
                 self.app.push_screen(
                     SaveSnapshotModal(
@@ -1845,6 +1842,14 @@ class SaveSnapshotModal(AppException, ModalScreen):
             self.printException(e, "SaveSnapshotModal._save: computing relpath failed")
             relpath = os.path.basename(self.filepath)
 
+        # Normalize repository-relative components into (reldir, relfile)
+        try:
+            gitrepo = self.app.gitRepo
+            reldir, relfile = gitrepo.repo_rel_path_to_reldir_relfile(relpath)
+        except Exception as e:
+            self.printException(e, "SaveSnapshotModal._save: computing reldir/relfile failed")
+            reldir, relfile = os.path.dirname(relpath), os.path.basename(relpath)
+
         target_path = f"{self.filepath}.{hashval}"
 
         # Helper to write bytes to target
@@ -1878,7 +1883,7 @@ class SaveSnapshotModal(AppException, ModalScreen):
             # Read from index via git show :<relpath>
             try:
                 gitrepo = self.app.gitRepo
-                data = gitrepo.getFileContents("STAGED", relpath)
+                data = gitrepo.getFileContents("STAGED", reldir, relfile)
                 if data is None:
                     raise Exception("git show STAGED failed")
                 _write_bytes(data)
@@ -1890,7 +1895,7 @@ class SaveSnapshotModal(AppException, ModalScreen):
         # Otherwise treat as commit-ish hash: git show <hash>:<relpath>
         try:
             gitrepo = self.app.gitRepo
-            data = gitrepo.getFileContents(hashval, relpath)
+            data = gitrepo.getFileContents(hashval, reldir, relfile)
             if data is None:
                 raise Exception("git show failed")
             _write_bytes(data)
