@@ -1944,11 +1944,8 @@ class MessageModal(ModalScreen):
             # Record the key used to dismiss the modal so callers can inspect it.
             try:
                 self.dismiss_key = getattr(event, "key", None)
-                try:
-                    setattr(self.app, "last_modal_key", self.dismiss_key)
-                except Exception:
-                    # non-fatal if app doesn't accept attribute assignment
-                    pass
+                self.app.last_modal_key = self.dismiss_key
+                # non-fatal if app doesn't accept attribute assignment
             except Exception as _ex:
                 printException(_ex, "MessageModal.on_key: recording dismiss key failed")
             try:
@@ -6473,9 +6470,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--no-color",
         dest="no_color",
         action="store_true",
-        help="start with diff colorization off",
+        help="same as `--color=none` with diff colorization off",
     )
     group.add_argument(
+        "-c",
         "--color",
         dest="color",
         metavar="SCHEME",
@@ -6499,27 +6497,58 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="enable TRACE-level (very verbose) logging",
     )
-    parser.add_argument(
+    
+    # Mutually exclusive group for ignored-files flags
+    ignored_group = parser.add_mutually_exclusive_group()
+    ignored_group.add_argument(
         "-I",
         "--no-ignored-files",
         dest="no_ignored",
         action="store_true",
         help="exclude ignored files from file-mode listings",
     )
-    parser.add_argument(
+    ignored_group.add_argument(
+        "-i",
+        "--ignored-files",
+        dest="ignored_files",
+        action="store_true",
+        help="include ignored files in file-mode listings (overrides config setting)",
+    )
+    
+    # Mutually exclusive group for initial-popup flags
+    popup_group = parser.add_mutually_exclusive_group()
+    popup_group.add_argument(
         "-P",
         "--no-initial-popup",
         dest="no_initial_popup",
         action="store_true",
         help="disable the startup popup",
     )
-    parser.add_argument(
+    popup_group.add_argument(
+        "-p",
+        "--initial-popup",
+        dest="initial_popup",
+        action="store_true",
+        help="enable the startup popup (overrides config setting)",
+    )
+    
+    # Mutually exclusive group for untracked-files flags
+    untracked_group = parser.add_mutually_exclusive_group()
+    untracked_group.add_argument(
         "-U",
         "--no-untracked-files",
         dest="no_untracked",
         action="store_true",
         help="exclude untracked files from file-mode listings",
     )
+    untracked_group.add_argument(
+        "-u",
+        "--untracked-files",
+        dest="untracked_files",
+        action="store_true",
+        help="include untracked files in file-mode listings (overrides config setting)",
+    )
+    
     parser.add_argument(
         "-v", "--verbose", dest="verbose", action="count", default=0, help="increase verbosity (repeatable)"
     )
@@ -6630,6 +6659,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             printException(e, f"failed reading config files {read_files}")
 
     args = parser.parse_args(argv)
+
+    # Handle CLI flag overrides for initial-popup, ignored-files, and untracked-files:
+    # Positive flags (e.g., --initial-popup, --ignored-files) take precedence over
+    # negative flags and config defaults.
+    if args.initial_popup:
+        args.no_initial_popup = False
+    if args.ignored_files:
+        args.no_ignored = False
+    if args.untracked_files:
+        args.no_untracked = False
 
     # Validate --highlight is a bare basename (no path elements)
     try:
