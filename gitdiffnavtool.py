@@ -526,11 +526,8 @@ class AppBase(AppException, ListView):
             )
             for i, node in enumerate(nodes):
                 try:
-                    try:
-                        txt = self.text_of(node)
-                    except Exception as _e:
-                        self.printException(_e, "_log_visible_items: text_of(node) failed")
-                        txt = repr(node)
+                    txt = self.text_of(node)
+                    
                     # Collect underscore-prefixed attributes and their reprs
                     attrs = {}
                     for a in dir(node):
@@ -739,14 +736,11 @@ class AppBase(AppException, ListView):
 
             try:
                 self.append(item)
-                try:
-                    # Add a parent directory entry ("..") when appropriate;
-                    # this will be a non-selectable directory row placed
-                    # immediately after the headers so users can navigate up.
-                    # Use the canonical repo-relative path for parent rendering
-                    self._render_parent_entry_if_needed(canonical)
-                except Exception as _e:
-                    self.printException(_e, "_append_file_row: _render_parent_entry_if_needed failed")
+                # Add a parent directory entry ("..") when appropriate;
+                # this will be a non-selectable directory row placed
+                # immediately after the headers so users can navigate up.
+                # Use the canonical repo-relative path for parent rendering
+                self._render_parent_entry_if_needed(canonical)
             except Exception as _ex:
                 self.printException(_ex, "_append_file_row: append failed")
         except Exception as e:
@@ -961,10 +955,7 @@ class AppBase(AppException, ListView):
                 # Apply highlight/scroll behavior synchronously by rebuilding
                 # the current view from authoritative data rather than
                 # mutating styles after the fact.
-                try:
-                    self.apply_index_change(old, new_index)
-                except Exception as _e:
-                    self.printException(_e, "_activate_index: apply_index_change failed")
+                self.apply_index_change(old, new_index)
             except Exception as e:
                 self.printException(e, "_activate_index: failed to set index and apply changes")
         except Exception as e:
@@ -1038,11 +1029,7 @@ class AppBase(AppException, ListView):
                         # Post-toggle debug: log visible node texts and active state
                         debug_nodes = []
                         for i, n in enumerate(self.nodes()):
-                            try:
-                                txt = self.text_of(n)
-                            except Exception as _e:
-                                self.printException(_e, "apply_index_change: fast-path extracting text failed")
-                                txt = "<text-error>"
+                            txt = self.text_of(n)
                             try:
                                 state = (
                                     n.has_class("active")
@@ -1134,13 +1121,8 @@ class AppBase(AppException, ListView):
                                 # Post-render debug: log visible node texts and active state
                                 debug_nodes = []
                                 for i, n in enumerate(nodes_after):
-                                    try:
-                                        txt = self.text_of(n)
-                                    except Exception as _e:
-                                        self.printException(
-                                            _e, "apply_index_change: authoritative extracting text failed"
-                                        )
-                                        txt = "<text-error>"
+                                    txt = self.text_of(n)
+                                        
                                     try:
                                         state = (
                                             n.has_class("active")
@@ -1157,12 +1139,7 @@ class AppBase(AppException, ListView):
                             except Exception as _e:
                                 self.printException(_e, "apply_index_change: authoritative post-render logging failed")
                             if hasattr(self, "_ensure_index_visible"):
-                                try:
-                                    self._ensure_index_visible()
-                                except Exception as _e:
-                                    self.printException(
-                                        _e, "apply_index_change: _ensure_index_visible failed after render"
-                                    )
+                                self._ensure_index_visible()
                             return nodes_after[new]
                     except Exception as _e:
                         self.printException(_e, "apply_index_change: applying active class after render failed")
@@ -1192,11 +1169,7 @@ class AppBase(AppException, ListView):
                             # Post-fallback debug: log visible node texts and active state
                             debug_nodes = []
                             for i, n in enumerate(nodes_now):
-                                try:
-                                    txt = self.text_of(n)
-                                except Exception as _e:
-                                    self.printException(_e, "apply_index_change: fallback extracting text failed")
-                                    txt = "<text-error>"
+                                txt = self.text_of(n)
                                 try:
                                     state = (
                                         n.has_class("active")
@@ -1268,11 +1241,7 @@ class AppBase(AppException, ListView):
                             return
 
                         # fallback to visible text equality
-                        try:
-                            txt = self.text_of(node)
-                        except Exception as e:
-                            self.printException(e, "_highlight_match: extracting text failed")
-                            txt = str(node)
+                        txt = self.text_of(node)
                         if txt == match:
                             self._activate_index(i)
                             return
@@ -1325,10 +1294,7 @@ class AppBase(AppException, ListView):
 
         Intended to be called from lambdas passed to `call_after_refresh`.
         """
-        try:
-            self._activate_index(idx)
-        except Exception as e:
-            self.printException(e, "_safe_activate_index failed")
+        self._activate_index(idx)
 
     def _safe_scroll_to_widget(self, node, animate: bool = False) -> None:
         """
@@ -1361,10 +1327,7 @@ class AppBase(AppException, ListView):
 
         Useful for scheduling highlight operations after UI refresh.
         """
-        try:
-            self._highlight_match(match)
-        except Exception as e:
-            self.printException(e, "_safe_highlight_match failed")
+        self._highlight_match(match)
 
     def error_message(self, message: str) -> None:
         """
@@ -1401,10 +1364,7 @@ class AppBase(AppException, ListView):
 
             # If no explicit hashes provided, attempt to compute the selected pair.
             if hasattr(self, "_compute_selected_pair"):
-                try:
-                    self._compute_selected_pair()
-                except Exception as _ex:
-                    self.printException(_ex, "_finalize_prep_common: _compute_selected_pair failed")
+                self._compute_selected_pair()
 
             # Normalize and store repo-relative path components when provided.
             if path is not None:
@@ -1537,18 +1497,12 @@ class AppBase(AppException, ListView):
                     except Exception as e:
                         self.printException(e, "key_page_down: setting index failed")
                     if hasattr(self, "_ensure_index_visible"):
-                        try:
-                            self._ensure_index_visible()
-                        except Exception as e:
-                            self.printException(e, "key_page_down: ensure index visible failed")
+                        self._ensure_index_visible()
                 except Exception as e:
                     self.printException(e, "key_page_down: immediate toggle failed")
 
                 # Authoritative activation to keep internal state consistent.
-                try:
-                    self._activate_index(new_index)
-                except Exception as e:
-                    self.printException(e, "key_page_down: activate failed")
+                self._activate_index(new_index)
             except Exception as e:
                 self.printException(e, "key_page_down: activate failed")
         except Exception as e:
@@ -1625,17 +1579,11 @@ class AppBase(AppException, ListView):
                     except Exception as e:
                         self.printException(e, "key_page_up: setting index failed")
                     if hasattr(self, "_ensure_index_visible"):
-                        try:
-                            self._ensure_index_visible()
-                        except Exception as e:
-                            self.printException(e, "key_page_up: ensure index visible failed")
+                        self._ensure_index_visible()
                 except Exception as e:
                     self.printException(e, "key_page_up: immediate toggle failed")
 
-                try:
-                    self._activate_index(new_index)
-                except Exception as e:
-                    self.printException(e, "key_page_up: activate failed")
+                self._activate_index(new_index)
             except Exception as e:
                 self.printException(e, "key_page_up: activate failed")
         except Exception as e:
@@ -2129,25 +2077,16 @@ class FileListBase(AppBase):
                                 self.call_after_refresh(lambda: self._safe_activate_index(i))
                             except Exception as e:
                                 self.printException(e, "_highlight_filename: scheduling index set failed")
-                                try:
-                                    self._activate_index(i)
-                                except Exception as e2:
-                                    self.printException(e2, "setting index in _highlight_filename")
+                                self._activate_index(i)
                             return
-                    try:
-                        text = self.text_of(node)
-                    except Exception as e:
-                        self.printException(e, "_highlight_filename: extracting text failed")
-                        text = str(node)
+
+                    text = self.text_of(node)
                     if text == filename:
                         try:
                             self.call_after_refresh(lambda: self._safe_activate_index(i))
                         except Exception as e:
                             self.printException(e, "_highlight_filename: scheduling index set failed")
-                            try:
-                                self._activate_index(i)
-                            except Exception as e:
-                                self.printException(e, "setting index in _highlight_filename")
+                            self._activate_index(i)
                         return
                 except Exception as e:
                     self.printException(e, "_highlight_filename: checking node failed")
@@ -2161,28 +2100,17 @@ class FileListBase(AppBase):
         try:
             try:
                 if path is not None:
-                    try:
-                        # Prefer filename/path highlighting when a path is provided
-                        self._highlight_filename(path)
-                    except Exception as e:
-                        self.printException(e, "FileListBase._finalize_filelist_prep: _highlight_filename failed")
+                    # Prefer filename/path highlighting when a path is provided
+                    self._highlight_filename(path)
                 elif curr_hash:
-                    try:
-                        self._highlight_match(curr_hash)
-                    except Exception as e:
-                        self.printException(e, "FileListBase._finalize_filelist_prep: _highlight_match failed")
+                    self._highlight_match(curr_hash)
                 else:
-                    try:
-                        self._highlight_top()
-                    except Exception as e:
-                        self.printException(e, "FileListBase._finalize_filelist_prep: _highlight_top failed")
+                    self._highlight_top()
             except Exception as e:
                 self.printException(e, "FileListBase._finalize_filelist_prep: highlight step failed")
 
-            try:
-                self._finalize_prep_common(curr_hash=curr_hash, prev_hash=prev_hash, path=path)
-            except Exception as e:
-                self.printException(e, "FileListBase._finalize_filelist_prep: _finalize_prep_common failed")
+            self._finalize_prep_common(curr_hash=curr_hash, prev_hash=prev_hash, path=path)
+
         except Exception as e:
             self.printException(e, "FileListBase._finalize_filelist_prep failed")
 
@@ -2264,11 +2192,7 @@ class FileListBase(AppBase):
         Safe wrapper around `text_of` that falls back to stringifying the
         node when extraction fails.
         """
-        try:
-            return self.text_of(node)
-        except Exception as e:
-            self.printException(e)
-            return str(node)
+        return self.text_of(node)
 
     def _render_parent_entry_if_needed(self, path: str) -> None:
         """
@@ -2417,10 +2341,7 @@ class FileListBase(AppBase):
                     self.call_after_refresh(lambda: self._safe_highlight_match(candidate))
                 except Exception as e:
                     self.printException(e, "_schedule_highlight_and_visibility: scheduling highlight failed")
-                    try:
-                        self._highlight_match(candidate)
-                    except Exception as e2:
-                        self.printException(e2, "_schedule_highlight_and_visibility: immediate highlight failed")
+                    self._highlight_match(candidate)
 
                 try:
                     self.call_after_refresh(self._ensure_index_visible)
@@ -2433,12 +2354,7 @@ class FileListBase(AppBase):
                     self.call_after_refresh(self._highlight_top)
                 except Exception as e:
                     self.printException(e, "_schedule_highlight_and_visibility: scheduling _highlight_top failed")
-                    try:
-                        self._highlight_top()
-                    except Exception as e2:
-                        self.printException(
-                            e2, "_schedule_highlight_and_visibility: immediate _highlight_top fallback failed"
-                        )
+                    self._highlight_top()
         except Exception as e:
             self.printException(e, "_schedule_highlight_and_visibility failed")
 
@@ -3297,10 +3213,7 @@ class FileModeFileList(FileListBase):
                                 self._ensure_index_visible()
                         except Exception as e:
                             self.printException(e, "_render_filemode_display: initial _ensure_index_visible failed")
-                            try:
-                                self._ensure_index_visible()
-                            except Exception as _e:
-                                self.printException(_e, "_render_filemode_display: _ensure_index_visible failed")
+                            self._ensure_index_visible()
                 except Exception as _e:
                     self.printException(_e, "_render_filemode_display: _ensure_index_visible failed")
             except Exception as e:
@@ -3362,10 +3275,7 @@ class FileModeFileList(FileListBase):
                 self._nodes_by_dir = {}
 
             # Delegate UI rendering to helper (renderer reads `self._nodes_by_dir`).
-            try:
-                self._render_filemode_display(self._nodes_by_dir, self.app.rel_dir, self.app.rel_file)
-            except Exception as e:
-                self.printException(e, "prepFileModeFileList: rendering display failed")
+            self._render_filemode_display(self._nodes_by_dir, self.app.rel_dir, self.app.rel_file)
 
             # Log visible items after rendering so diagnostics capture the
             # freshly-populated list and the highlighted item.
@@ -3494,21 +3404,16 @@ class FileModeFileList(FileListBase):
                     except Exception as e:
                         self.printException(e, "_activate_or_open: restoring last child preselection failed")
 
-                    try:
-                        self.prepFileModeFileList()
-                    except Exception as e:
-                        self.printException(e, "_activate_or_open: prepFileModeFileList failed")
+                    self.prepFileModeFileList()
                     return
+
                 else:
                     # Caller explicitly chose not to treat this directory
                     # selection as an enter action (for example, selecting
                     # the parent '..' when pressing Right). In that case
                     # we should not fall through to file-history handling
                     # (which would run `git log` on a directory path).
-                    try:
-                        self.error_message(f"No history for directory: {name}")
-                    except Exception as _e:
-                        self.printException(_e, "_activate_or_open: error_message failed for directory")
+                    self.error_message(f"No history for directory: {name}")
                     return
 
             # not is_dir
@@ -3572,11 +3477,8 @@ class FileModeFileList(FileListBase):
             except Exception as e:
                 self.printException(e, "_activate_or_open: prepFileModeHistoryList failed")
 
-            try:
-                # Switch UI to file-history layout and focus
-                self.app.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
-            except Exception as e:
-                self.printException(e, "FileModeFileList._activate_or_open change_state failed")
+            # Switch UI to file-history layout and focus
+            self.app.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
         except Exception as e:
             self.printException(e, "FileModeFileList._activate_or_open failed")
 
@@ -3736,10 +3638,7 @@ class RepoModeFileList(FileListBase):
                 curr_hash,
             )
             # Defensive: clear any stray active classes left by virtualization
-            try:
-                self._clear_active_classes()
-            except Exception as e:
-                self.printException(e, "prepRepoModeFileList: clearing active classes failed")
+            self._clear_active_classes()
 
             try:
                 self.clear()
@@ -3866,11 +3765,8 @@ class RepoModeFileList(FileListBase):
                 event.stop()
             except Exception as e:
                 self.printException(e, "RepoModeFileList.key_left: event.stop failed")
-        try:
-            # Switch layout back to left-side history fullscreen
-            self.app.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
-        except Exception as e:
-            self.printException(e, "RepoModeFileList.key_left change_state failed")
+        # Switch layout back to left-side history fullscreen
+        self.app.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
         self._log_visible_items("key_left after processing index change")
 
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
@@ -3930,10 +3826,7 @@ class RepoModeFileList(FileListBase):
             except Exception as e:
                 self.printException(e, "RepoModeFileList.key_right: prepDiffList failed")
 
-            try:
                 self.app.change_state("history_file_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER_1)
-            except Exception as e:
-                self.printException(e, "RepoModeFileList.key_right change_state failed")
         except Exception as e:
             self.printException(e, "RepoModeFileList.key_right failed")
         self._log_visible_items("key_right after processing index change")
@@ -3951,10 +3844,7 @@ class RepoModeFileList(FileListBase):
                 event.stop()
             except Exception as e:
                 self.printException(e, "RepoModeFileList.key_w: event.stop failed")
-        try:
-            self.key_w_helper(event)
-        except Exception as e:
-            self.printException(e, "RepoModeFileList.key_w: helper failed")
+                self.key_w_helper(event)
         self._log_visible_items("key_w after processing index change")
 
 
@@ -4196,10 +4086,7 @@ class HistoryListBase(AppBase):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "HistoryListBase.key_m: event.stop failed")
-            try:
-                self.toggle_check_current()
-            except Exception as e:
-                self.printException(e, "HistoryListBase.key_m toggle failed")
+                    self.toggle_check_current()
         except Exception as e:
             self.printException(e, "HistoryListBase.key_m failed")
 
@@ -4247,10 +4134,7 @@ class HistoryListBase(AppBase):
         can rely on them immediately.
         """
         try:
-            try:
-                self._compute_selected_pair()
-            except Exception as e:
-                self.printException(e, "watch_history_index: computing selected pair failed")
+            self._compute_selected_pair()
             logger.debug(
                 "watch_history_index: updated app.current_hash=%r app.previous_hash=%r",
                 self.app.current_hash,
@@ -4324,15 +4208,9 @@ class HistoryListBase(AppBase):
             try:
                 marked_applied = False
                 if curr_hash:
-                    try:
-                        self._highlight_match(curr_hash)
-                    except Exception as e:
-                        self.printException(e, "HistoryListBase._finalize_historylist_prep: _highlight_match failed")
+                    self._highlight_match(curr_hash)
                 elif not prev_hash:
-                    try:
-                        self._highlight_top()
-                    except Exception as e:
-                        self.printException(e, "HistoryListBase._finalize_historylist_prep: _highlight_top failed")
+                    self._highlight_top()
 
                 if prev_hash:
                     try:
@@ -4370,28 +4248,15 @@ class HistoryListBase(AppBase):
                                 marked_applied,
                             )
                         else:
-                            try:
-                                self._highlight_top()
-                            except Exception as e:
-                                self.printException(
-                                    e, "HistoryListBase._finalize_historylist_prep: _highlight_top failed"
-                                )
+                            self._highlight_top()
                         if not marked_applied and not curr_hash:
-                            try:
-                                self._highlight_top()
-                            except Exception as e:
-                                self.printException(
-                                    e, "HistoryListBase._finalize_historylist_prep: _highlight_top failed"
-                                )
+                            self._highlight_top()
                     except Exception as e:
                         self.printException(e, "HistoryListBase._finalize_historylist_prep: locating prev_hash failed")
             except Exception as e:
                 self.printException(e, "HistoryListBase._finalize_historylist_prep: highlight step failed")
 
-            try:
-                self._finalize_prep_common(curr_hash=curr_hash, prev_hash=prev_hash, path=path)
-            except Exception as e:
-                self.printException(e, "HistoryListBase._finalize_historylist_prep: _finalize_prep_common failed")
+            self._finalize_prep_common(curr_hash=curr_hash, prev_hash=prev_hash, path=path)
         except Exception as e:
             self.printException(e, "HistoryListBase._finalize_historylist_prep failed")
 
@@ -4444,10 +4309,7 @@ class FileModeHistoryList(HistoryListBase):
                 self.printException(_e, "prepFileModeHistoryList: iterating entries failed")
 
             self._populated = True
-            try:
-                self._finalize_historylist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=rel_path)
-            except Exception as _e:
-                self.printException(_e, "prepFileModeHistoryList: finalize failed")
+            self._finalize_historylist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=rel_path)
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
 
@@ -4459,10 +4321,7 @@ class FileModeHistoryList(HistoryListBase):
                 event.stop()
             except Exception as e:
                 self.printException(e, "FileModeHistoryList.key_w: event.stop failed")
-        try:
-            self.key_w_helper(event)
-        except Exception as e:
-            self.printException(e, "FileModeHistoryList.key_w: helper failed")
+                self.key_w_helper(event)
 
     def key_i(self, event: events.Key | None = None) -> None:
         """Toggle ignored-file visibility and refresh file-mode list."""
@@ -4518,10 +4377,7 @@ class FileModeHistoryList(HistoryListBase):
                 self.printException(e, "FileModeHistoryList.key_right: prepDiffList failed")
 
             # Switch to the file-history-diff layout and focus diff list
-            try:
-                self.app.change_state("file_history_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER_1)
-            except Exception as e:
-                self.printException(e, "FileModeHistoryList.key_right change_state failed")
+            self.app.change_state("file_history_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER_1)
         except Exception as e:
             self.printException(e, "FileModeHistoryList.key_right prep failed")
         self._log_visible_items("key_right after processing index change")
@@ -4569,10 +4425,7 @@ class RepoModeHistoryList(HistoryListBase):
             )
 
             # Clear any stray active classes (defensive) and existing rows
-            try:
-                self._clear_active_classes()
-            except Exception as e:
-                self.printException(e, "prepRepoModeHistoryList: clearing active classes failed")
+            self._clear_active_classes()
 
             try:
                 self.clear()
@@ -4609,12 +4462,9 @@ class RepoModeHistoryList(HistoryListBase):
             # to the centralized finalizer which will honor provided hashes.
             try:
                 self._populated = True
-                try:
-                    self._finalize_historylist_prep(curr_hash=curr_hash, prev_hash=prev_hash)
-                except Exception as e:
-                    self.printException(e, "prepRepoModeHistoryList: finalize failed")
+                self._finalize_historylist_prep(curr_hash=curr_hash, prev_hash=prev_hash)
             except Exception as e:
-                self.printException(e, "prepRepoModeHistoryList: setting populated failed")
+                self.printException(e, "prepRepoModeHistoryList: finalize or setting populated failed")
         except Exception as e:
             self.printException(e, "prepRepoModeHistoryList failed")
 
@@ -4645,11 +4495,8 @@ class RepoModeHistoryList(HistoryListBase):
                     curr_hash,
                 )
                 self.app.repo_mode_file_list.prepRepoModeFileList(prev_hash, curr_hash)
-                try:
-                    # Switch to the right-file list view and update footer
-                    self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
-                except Exception as e:
-                    self.printException(e, "RepoModeHistoryList.key_right change_state failed")
+                # Switch to the right-file list view and update footer
+                self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
             except Exception as e:
                 self.printException(e, "RepoModeHistoryList.key_right prep failed")
         except Exception as e:
@@ -4768,20 +4615,11 @@ class DiffList(AppBase):
             # Update go-back state only.
             self.go_back = go_back
 
-            try:
-                self._render_output()
-            except Exception as e:
-                self.printException(e, "prepDiffList: render failed")
-            try:
-                self._populated = True
-                self._highlight_top()
-            except Exception as e:
-                self.printException(e, "prepDiffList: highlight failed")
+            self._render_output()
+            self._populated = True
+            self._highlight_top()
 
-            try:
-                self._finalize_prep_common(curr_hash=curr, prev_hash=prev, path=filename)
-            except Exception as e:
-                self.printException(e, "prepDiffList: finalize failed")
+            self._finalize_prep_common(curr_hash=curr, prev_hash=prev, path=filename)
         except Exception as e:
             self.printException(e, "prepDiffList failed")
 
@@ -5075,10 +4913,7 @@ class DiffList(AppBase):
                 event.stop()
             except Exception as e:
                 self.printException(e, "DiffList.key_w: event.stop failed")
-        try:
-            self.key_w_helper(event)
-        except Exception as e:
-            self.printException(e, "DiffList.key_w: helper failed")
+        self.key_w_helper(event)
 
     def key_D(self, event: events.Key | None = None) -> None:
         """Alias for `key_d` (Shift-D)."""
@@ -5199,10 +5034,7 @@ class HelpList(AppBase):
             except Exception as e:
                 self.printException(e, "prepHelp append failed")
             self._populated = True
-            try:
-                self._highlight_top()
-            except Exception as e:
-                self.printException(e, "prepHelp: highlight failed")
+            self._highlight_top()
         except Exception as e:
             self.printException(e, "prepHelp failed")
 
@@ -5216,10 +5048,7 @@ class HelpList(AppBase):
                 except Exception as e:
                     self.printException(e, "HelpList.key_enter: event.stop failed")
             app = self.app
-            try:
-                app.restore_state()
-            except Exception as e:
-                self.printException(e, "HelpList.restore_state failed")
+            app.restore_state()
         except Exception as e:
             self.printException(e, "HelpList.key_enter failed")
 
@@ -5436,10 +5265,7 @@ class GitHistoryNavTool(AppException, App):
                             # visible when the app is started with a specific file.
                             self.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
                         else:
-                            try:
-                                self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
-                            except Exception as _e:
-                                self.printException(_e, "on_mount: change_state to file_fullscreen failed")
+                            self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
                     except Exception as _e:
                         self.printException(_e, "on_mount: opening initial file history failed")
                 else:
@@ -5554,17 +5380,11 @@ class GitHistoryNavTool(AppException, App):
                 except Exception as e:
                     self.printException(e, "key_h: event.stop failed")
             logger.debug("key_h invoked: saving state and showing help")
-            try:
-                self.save_state()
-            except Exception as e:
-                self.printException(e, "key_h: save_state failed")
+            self.save_state()
             # Help text is static and prepopulated during on_mount; no need
             # to call prepHelp() again here.
 
-            try:
-                self.change_state("help_fullscreen", f"#{HELP_LIST_ID}", HELP_FOOTER)
-            except Exception as e:
-                self.printException(e, "key_h: change_state failed")
+            self.change_state("help_fullscreen", f"#{HELP_LIST_ID}", HELP_FOOTER)
         except Exception as e:
             self.printException(e, "key_h outer failure")
 
@@ -5618,100 +5438,55 @@ class GitHistoryNavTool(AppException, App):
                 )
 
             if layout == "file_fullscreen":
-                try:
-                    self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
-                except Exception as e:
-                    self.printException(e, "key_r: prepFileModeFileList failed")
+                self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
 
             elif layout == "history_fullscreen":
-                try:
-                    self.repo_mode_history_list.prepRepoModeHistoryList(
-                        prev_hash=self.previous_hash,
-                        curr_hash=self.current_hash,
-                    )
-                except Exception as e:
-                    self.printException(e, "key_r: prepRepoModeHistoryList failed")
+                self.repo_mode_history_list.prepRepoModeHistoryList(
+                    prev_hash=self.previous_hash,
+                    curr_hash=self.current_hash,
+                )
 
             elif layout == "file_history":
-                try:
-                    self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
-                except Exception as e:
-                    self.printException(e, "key_r: prepFileModeFileList failed")
-                try:
-                    self.file_mode_history_list.prepFileModeHistoryList(
-                        path=current_rel_path,
-                        prev_hash=self.previous_hash,
-                        curr_hash=self.current_hash,
-                    )
-                except Exception as e:
-                    self.printException(e, "key_r: prepFileModeHistoryList failed")
+                self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
+                self.file_mode_history_list.prepFileModeHistoryList(
+                    path=current_rel_path,
+                    prev_hash=self.previous_hash,
+                    curr_hash=self.current_hash,
+                )
 
             elif layout == "history_file":
-                try:
-                    self.repo_mode_history_list.prepRepoModeHistoryList(
-                        prev_hash=self.previous_hash,
-                        curr_hash=self.current_hash,
-                    )
-                except Exception as e:
-                    self.printException(e, "key_r: prepRepoModeHistoryList failed")
-                try:
-                    self.repo_mode_file_list.prepRepoModeFileList(self.previous_hash, self.current_hash)
-                except Exception as e:
-                    self.printException(e, "key_r: prepRepoModeFileList failed")
+                self.repo_mode_history_list.prepRepoModeHistoryList(
+                    prev_hash=self.previous_hash,
+                    curr_hash=self.current_hash,
+                )
+                self.repo_mode_file_list.prepRepoModeFileList(self.previous_hash, self.current_hash)
 
             elif layout == "file_history_diff":
-                try:
-                    self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
-                except Exception as e:
-                    self.printException(e, "key_r: prepFileModeFileList failed")
-                try:
-                    self.file_mode_history_list.prepFileModeHistoryList(
-                        path=current_rel_path,
-                        prev_hash=self.previous_hash,
-                        curr_hash=self.current_hash,
-                    )
-                except Exception as e:
-                    self.printException(e, "key_r: prepFileModeHistoryList failed")
-                try:
-                    _refresh_diff()
-                except Exception as e:
-                    self.printException(e, "key_r: prepDiffList failed")
+                self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
+                self.file_mode_history_list.prepFileModeHistoryList(
+                    path=current_rel_path,
+                    prev_hash=self.previous_hash,
+                    curr_hash=self.current_hash,
+                )
+                _refresh_diff()
 
             elif layout == "history_file_diff":
-                try:
-                    self.repo_mode_history_list.prepRepoModeHistoryList(
-                        prev_hash=self.previous_hash,
-                        curr_hash=self.current_hash,
-                    )
-                except Exception as e:
-                    self.printException(e, "key_r: prepRepoModeHistoryList failed")
-                try:
-                    self.repo_mode_file_list.prepRepoModeFileList(self.previous_hash, self.current_hash)
-                except Exception as e:
-                    self.printException(e, "key_r: prepRepoModeFileList failed")
-                try:
-                    _refresh_diff()
-                except Exception as e:
-                    self.printException(e, "key_r: prepDiffList failed")
+                self.repo_mode_history_list.prepRepoModeHistoryList(
+                    prev_hash=self.previous_hash,
+                    curr_hash=self.current_hash,
+                )
+                self.repo_mode_file_list.prepRepoModeFileList(self.previous_hash, self.current_hash)
+                _refresh_diff()
 
             elif layout == "diff_fullscreen":
-                try:
-                    _refresh_diff()
-                except Exception as e:
-                    self.printException(e, "key_r: prepDiffList failed")
+                _refresh_diff()
 
             elif layout == "help_fullscreen":
-                try:
-                    self.help_list.prepHelp()
-                except Exception as e:
-                    self.printException(e, "key_r: prepHelp failed")
+                self.help_list.prepHelp()
 
             else:
                 logger.debug("key_r: unknown layout %r; refreshing active file list as fallback", layout)
-                try:
-                    self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
-                except Exception as e:
-                    self.printException(e, "key_r: fallback prepFileModeFileList failed")
+                self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
 
         except Exception as e:
             self.printException(e, "key_r failed")
@@ -5858,20 +5633,11 @@ class GitHistoryNavTool(AppException, App):
             logger.debug("change_state: focus raw=%r type=%s", focus, type(focus))
 
             if layout is not None:
-                try:
-                    self.change_layout(layout)
-                except Exception as e:
-                    self.printException(e, "change_state.change_layout failed")
+                self.change_layout(layout)
             if focus is not None:
-                try:
-                    self.change_focus(focus)
-                except Exception as e:
-                    self.printException(e, "change_state.change_focus failed")
+                self.change_focus(focus)
             if footer is not None:
-                try:
-                    self.change_footer(footer)
-                except Exception as e:
-                    self.printException(e, "change_state.change_footer failed")
+                self.change_footer(footer)
 
             # change_layout/change_focus/change_footer are responsible for
             # recording their own current values; do not duplicate here.
@@ -5909,10 +5675,7 @@ class GitHistoryNavTool(AppException, App):
             layout, focus, footer = s
 
             logger.debug(f"restore_state: restoring layout={layout} focus={focus} footer={footer}")
-            try:
-                self.change_state(layout, focus, footer)
-            except Exception as e:
-                self.printException(e, "restore_state.change_state failed")
+            self.change_state(layout, focus, footer)
 
             # clear saved slot after restore
             try:
@@ -6161,14 +5924,7 @@ class GitHistoryNavTool(AppException, App):
                                 # the fallback behavior but runs inline to avoid
                                 # the visible delay before `call_after_refresh`.
                                 widget_idx = getattr(widget, "index", None)
-                                nodes_now = None
-                                try:
-                                    nodes_now = widget.nodes()
-                                except Exception as _ex:
-                                    self.printException(
-                                        _ex,
-                                        "change_focus: widget.nodes() failed during authoritative activation",
-                                    )
+                                nodes_now = widget.nodes()
 
                                 if nodes_now and (widget_idx is not None and 0 <= widget_idx < len(nodes_now)):
                                     try:
@@ -6492,14 +6248,8 @@ class GitHistoryNavTool(AppException, App):
         """
         # When toggling from file_fullscreen, populate the repo history
         # so the paired history_fullscreen view is ready.
-        try:
-            self.repo_mode_history_list.prepRepoModeHistoryList()
-        except Exception as e:
-            self.printException(e, "toggle_file_fullscreen prepRepoModeHistoryList failed")
-        try:
-            self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
-        except Exception as e:
-            self.printException(e, "toggle_file_fullscreen change_state failed")
+        self.repo_mode_history_list.prepRepoModeHistoryList()
+        self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
 
     def toggle_history_fullscreen(self) -> None:
         """
@@ -6538,10 +6288,7 @@ class GitHistoryNavTool(AppException, App):
                 self.printException(_ex, "toggle_history_fullscreen prepFileModeFileList failed")
         except Exception as e:
             self.printException(e, "toggle_history_fullscreen prepFileModeFileList failed")
-        try:
-            self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
-        except Exception as e:
-            self.printException(e, "toggle_history_fullscreen change_state failed")
+        self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
 
     def toggle_file_history(self) -> None:
         """
@@ -6591,10 +6338,7 @@ class GitHistoryNavTool(AppException, App):
             self.repo_mode_file_list.prepRepoModeFileList(use_prev, use_curr)
         except Exception as e:
             self.printException(e, "toggle_file_history preparing repo file list failed")
-        try:
-            self.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
-        except Exception as e:
-            self.printException(e, "toggle_file_history change_state failed")
+        self.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
 
     def toggle_history_file(self) -> None:
         """
@@ -6645,18 +6389,12 @@ class GitHistoryNavTool(AppException, App):
                 self.printException(_ex, "toggle_history_file prepFileModeFileList failed")
         except Exception as e:
             self.printException(e, "toggle_history_file prepFileModeFileList failed")
-        try:
-            # Prepare the right history list for the current file and request
-            # the preparer highlight/mark the provided commit hashes.
-            self.file_mode_history_list.prepFileModeHistoryList(
-                saved_path or ".", prev_hash=saved_prev, curr_hash=saved_curr
-            )
-        except Exception as e:
-            self.printException(e, "toggle_history_file prepping file history failed")
-        try:
-            self.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
-        except Exception as e:
-            self.printException(e, "toggle_history_file change_state failed")
+        # Prepare the right history list for the current file and request
+        # the preparer highlight/mark the provided commit hashes.
+        self.file_mode_history_list.prepFileModeHistoryList(
+            saved_path or ".", prev_hash=saved_prev, curr_hash=saved_curr
+        )
+        self.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
 
     def toggle_file_history_diff(self) -> None:
         """
@@ -6664,10 +6402,7 @@ class GitHistoryNavTool(AppException, App):
 
         Prepares file-history state then shows the diff and updates `diff_list.go_back`.
         """
-        try:
-            self.toggle_file_history()
-        except Exception as e:
-            self.printException(e, "toggle_file_history_diff: toggle_file_history failed")
+        self.toggle_file_history()
         try:
             # show diff in the right diff column and set go_back
             self.change_state("history_file_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER_1)
@@ -6680,10 +6415,7 @@ class GitHistoryNavTool(AppException, App):
 
     def toggle_history_file_diff(self) -> None:
         """Toggle to a history-file diff view and set appropriate go-back state."""
-        try:
-            self.toggle_history_file()
-        except Exception as e:
-            self.printException(e, "toggle_history_file_diff: toggle_history_file failed")
+        self.toggle_history_file()
         try:
             self.change_state("file_history_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER_1)
             try:
@@ -6698,10 +6430,7 @@ class GitHistoryNavTool(AppException, App):
         try:
             saved = self.diff_list._saved_layout
             if saved:
-                try:
-                    self.toggle(saved)
-                except Exception as e:
-                    self.printException(e, "toggle_diff_fullscreen dispatch failed")
+                self.toggle(saved)
         except Exception as e:
             self.printException(e, "toggle_diff_fullscreen retrieving saved layout failed")
 

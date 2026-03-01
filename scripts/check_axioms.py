@@ -1181,7 +1181,7 @@ def check_swallowing_callers(path: Path, text: str, tree: ast.AST) -> List[Tuple
                     qual = callee_name
                     msg = (
                         f"call to '{qual}' at line {lineno} is the sole statement in a try:, but '{qual}' swallows exceptions (its handler contains no 'raise'); "
-                        f"the caller's try/except may be unnecessary"
+                        f"the caller's try/except may be safely removed"
                     )
                     try_lineno = getattr(try_node, "lineno", None) or 0
                     errs.append((str(path), try_lineno, msg))
@@ -2287,6 +2287,12 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=0,
         help="Increase verbosity (specify multiple times for more detail)."
     )
+    parser.add_argument(
+        "--reverse",
+        dest="reverse",
+        action="store_true",
+        help="Print reported issues in reverse order (bottom-up).",
+    )
     parser.add_argument("--ignore",
         dest="ignore",
         action="append",
@@ -2635,7 +2641,7 @@ def main(argv: List[str] | None = None) -> int:
         if all_errs:
             error_count += len(all_errs)
             # Sort errors by file path then numeric line number
-            all_errs.sort(key=lambda t: (t[0], t[1]))
+            all_errs.sort(key=lambda t: (t[0], t[1]), reverse=args.reverse)
 
             print("Axiom violations detected:")
             for fpath, lineno, msg in all_errs:
@@ -2648,7 +2654,7 @@ def main(argv: List[str] | None = None) -> int:
                 unused_errs = check_unused_symbols(args.check_unused, py_files, root)
                 if unused_errs:
                     # extend and report immediately
-                    unused_errs.sort(key=lambda t: (t[0], t[1]))
+                    unused_errs.sort(key=lambda t: (t[0], t[1]), reverse=args.reverse)
                     print("Unused symbol(s) detected:")
                     for fpath, lineno, msg in unused_errs:
                         print(f"{fpath}:{lineno}: {msg}")
