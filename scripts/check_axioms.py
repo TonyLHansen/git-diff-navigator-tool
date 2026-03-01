@@ -1102,9 +1102,27 @@ def check_swallowing_callers(path: Path, text: str, tree: ast.AST) -> List[Tuple
                 return None
 
             def _has_try_ancestor(self) -> Optional[ast.Try]:
-                """Return the nearest enclosing ast.Try node or None."""
-                for anc in reversed(self.stack):
+                """
+                Return the nearest enclosing ast.Try node whose `body` (or orelse)
+                contains the current node. If the node is inside an ExceptHandler
+                (i.e. the try's handler), treat it as not being in the try: portion
+                and continue searching outer Try nodes.
+
+                This checks the ancestor stack to ensure there is no ExceptHandler
+                between the Try node and the current node.
+                """
+                # Walk ancestors from nearest to farthest
+                for idx in range(len(self.stack) - 1, -1, -1):
+                    anc = self.stack[idx]
                     if isinstance(anc, ast.Try):
+                        # Any ExceptHandler between this Try and the current node
+                        # indicates the current node is inside the except: branch
+                        between = self.stack[idx + 1 :]
+                        in_except = any(isinstance(b, ast.ExceptHandler) for b in between)
+                        if in_except:
+                            # skip this Try, keep looking for an outer Try
+                            continue
+                        # Otherwise, this Try encloses the node in its body/orelse
                         return anc
                 return None
 
@@ -1133,11 +1151,36 @@ def check_swallowing_callers(path: Path, text: str, tree: ast.AST) -> List[Tuple
                     if try_node is None:
                         return
 
+                    # Only flag when the Try's body is a single top-level
+                    # statement and that statement contains this Call. This
+                    # keeps the check conservative: callers that perform
+                    # additional work in the try: portion likely need the
+                    # exception handling and should not be flagged.
+                    body = getattr(try_node, "body", []) or []
+                    if len(body) != 1:
+                        return
+
+                    # Ensure the call is the direct/top-level expression in the sole body stmt.
+                    sole_stmt = body[0]
+                    is_direct_call = False
+                    # Expr(value=Call(...))
+                    if isinstance(sole_stmt, ast.Expr) and sole_stmt.value is node:
+                        is_direct_call = True
+                    # Assign/AnnAssign with value being the call
+                    elif isinstance(sole_stmt, ast.Assign) and getattr(sole_stmt, "value", None) is node:
+                        is_direct_call = True
+                    elif isinstance(sole_stmt, ast.AnnAssign) and getattr(sole_stmt, "value", None) is node:
+                        is_direct_call = True
+                    # Return value being the call
+                    elif isinstance(sole_stmt, ast.Return) and getattr(sole_stmt, "value", None) is node:
+                        is_direct_call = True
+                    if not is_direct_call:
+                        return
+
                     lineno = getattr(node, "lineno", None) or 0
-                    # Build a friendly callee representation
                     qual = callee_name
                     msg = (
-                        f"call to '{qual}' at line {lineno} is inside a try/except, but '{qual}' swallows exceptions (its handler contains no 'raise'); "
+                        f"call to '{qual}' at line {lineno} is the sole statement in a try:, but '{qual}' swallows exceptions (its handler contains no 'raise'); "
                         f"the caller's try/except may be unnecessary"
                     )
                     try_lineno = getattr(try_node, "lineno", None) or 0

@@ -540,10 +540,7 @@ def main():
                 if args.timing:
                     print(f"RUN: {func_name} {name} returned {count_str} entries (t={dur:.3f}s)")
                 # Delegate printing to helper to keep output consistent
-                try:
-                    printResults(test_repo, f"RUN: {func_name} {name}", res, args.raw, limit)
-                except Exception as e:
-                    test_repo.printException(e, "run_one: printing result failed")
+                printResults(test_repo, f"RUN: {func_name} {name}", res, args.raw, limit)
             success = True
         except Exception as e:
             # printException prints to logger; still capture current stdout
