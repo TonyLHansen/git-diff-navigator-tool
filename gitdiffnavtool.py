@@ -6487,16 +6487,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         choices=DIFF_VARIANT_NAMES,
         help=f"start with diff variant (one of: {', '.join(DIFF_VARIANT_NAMES)})",
     )
-    parser.add_argument(
-        "-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)"
-    )
-    parser.add_argument(
-        "-D",
-        "--debug-tracing",
-        dest="debug_tracing",
-        action="store_true",
-        help="enable TRACE-level (very verbose) logging",
-    )
     
     # Mutually exclusive group for ignored-files flags
     ignored_group = parser.add_mutually_exclusive_group()
@@ -6549,9 +6539,22 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="include untracked files in file-mode listings (overrides config setting)",
     )
     
-    parser.add_argument(
+    # Debug options group
+    debug_group = parser.add_argument_group("Debug Options")
+    debug_group.add_argument(
+        "-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)"
+    )
+    debug_group.add_argument(
+        "-D",
+        "--debug-tracing",
+        dest="debug_tracing",
+        action="store_true",
+        help="enable TRACE-level (very verbose) logging",
+    )
+    debug_group.add_argument(
         "-v", "--verbose", dest="verbose", action="count", default=0, help="increase verbosity (repeatable)"
     )
+    
     parser.add_argument(
         "--highlight",
         dest="highlight",
