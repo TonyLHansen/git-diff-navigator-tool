@@ -1095,12 +1095,14 @@ def check_swallowing_callers(path: Path, text: str, tree: ast.AST) -> List[Tuple
                 self.stack.pop()
 
             def _enclosing_function(self) -> Optional[str]:
+                """Return the name of the enclosing function (if any)."""
                 for anc in reversed(self.stack):
                     if isinstance(anc, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         return getattr(anc, "name", None)
                 return None
 
             def _has_try_ancestor(self) -> Optional[ast.Try]:
+                """Return the nearest enclosing ast.Try node or None."""
                 for anc in reversed(self.stack):
                     if isinstance(anc, ast.Try):
                         return anc
@@ -2417,7 +2419,7 @@ def main(argv: List[str] | None = None) -> int:
         args.check_repeat = True
     if args.enable_check_init_first:
         args.check_init_first = True
-    if getattr(args, "enable_swallowing_callers", False):
+    if args.enable_swallowing_callers:
         args.check_swallowing_callers = True
 
     logger.info("cwd: %s", Path.cwd())
@@ -2566,7 +2568,7 @@ def main(argv: List[str] | None = None) -> int:
                     except Exception as e:
                         printException(e, f"check_redundant_nested_try failed for {p}")
                 # Detect callers wrapping calls to functions/methods that swallow exceptions
-                if getattr(args, "check_swallowing_callers", False):
+                if args.check_swallowing_callers:
                     try:
                         errs += check_swallowing_callers(p, text=text, tree=tree)
                     except Exception as e:
