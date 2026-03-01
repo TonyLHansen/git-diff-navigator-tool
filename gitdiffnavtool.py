@@ -1907,8 +1907,6 @@ class SaveSnapshotModal(AppException, ModalScreen):
 class MessageModal(ModalScreen):
     """
     Simple modal that shows a message (default "") and closes on any key.
-
-    Mirrors the helper from `gitdiffnavtool-old.py`.
     """
 
     def __init__(self, message: str | None = None, **kwargs) -> None:
@@ -1943,6 +1941,16 @@ class MessageModal(ModalScreen):
                 event.stop()
             except Exception as _use_pass:
                 pass
+            # Record the key used to dismiss the modal so callers can inspect it.
+            try:
+                self.dismiss_key = getattr(event, "key", None)
+                try:
+                    setattr(self.app, "last_modal_key", self.dismiss_key)
+                except Exception:
+                    # non-fatal if app doesn't accept attribute assignment
+                    pass
+            except Exception as _ex:
+                printException(_ex, "MessageModal.on_key: recording dismiss key failed")
             try:
                 self.app.pop_screen()
             except Exception as e:
