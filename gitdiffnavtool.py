@@ -615,171 +615,6 @@ class AppBase(AppException, ListView):
             self.printException(e, "_canonical_relpath failed")
             return path
 
-    def _format_pseudo_summary(self, pseudo_entries: list[tuple[str, str]]) -> None:
-        """
-        Append pseudo-summary rows (e.g. MODS/STAGED/UNTRACKED) to this list.
-
-        Centralized helper used by file- and repo-mode preparers to ensure
-        consistent display formatting and metadata attachment.
-        """
-        try:
-            for status, path in pseudo_entries:
-                try:
-                    display = f"{status} {path}"
-                    item = ListItem(Label(Text(display)))
-                    try:
-                        repo_root_local = self.app.gitRepo.get_repo_root()
-                        full = self._canonical_relpath(path, repo_root_local)
-                        item._raw_text = full
-                    except Exception as e:
-                        self.printException(e, "_format_pseudo_summary: resolving full path failed")
-                        item._raw_text = path
-                    item._is_dir = False
-                    self.append(item)
-                except Exception as e:
-                    self.printException(e, "_format_pseudo_summary append pseudo entry failed")
-        except Exception as e:
-            self.printException(e, "_format_pseudo_summary failed")
-
-    def _append_file_row(self, display: str, full_path: str, is_dir: bool = False, status: str | None = None) -> None:
-        """
-        Append a file-list row with consistent marker and status styling.
-
-        This centralizes file-row display so repo- and file-mode preparers
-        use identical formatting. The left-most marker is chosen from
-        `MARKERS` based on `status`. A style is applied using the project's
-        `STYLE_*` constants. Metadata attached to the ListItem:
-        - `_raw_text`: canonical full path
-        - `_filename`: basename
-        - `_is_dir`: bool
-        - `_repo_status`: optional status string
-
-        Exceptions are logged via `printException` so callers needn't
-        handle failures.
-        """
-        try:
-            try:
-                repo_root_local = self.app.gitRepo.get_repo_root()
-                canonical = self._canonical_relpath(full_path, repo_root_local) if full_path else full_path
-            except Exception as e:
-                self.printException(e, "_append_file_row: canonicalizing path failed")
-                canonical = full_path
-
-            try:
-                marker = MARKERS.get(status, MARKERS.get("tracked_clean", " "))
-            except Exception as _ex:
-                self.printException(_ex, "_append_file_row: computing marker failed")
-                marker = " "
-
-            try:
-                if status == "conflicted":
-                    style = STYLE_CONFLICTED
-                elif status == "staged":
-                    style = STYLE_STAGED
-                elif status == "wt_deleted":
-                    style = STYLE_WT_DELETED
-                elif status == "ignored":
-                    style = STYLE_IGNORED
-                elif status == "modified":
-                    style = STYLE_MODIFIED
-                elif status == "untracked":
-                    style = STYLE_UNTRACKED
-                else:
-                    style = STYLE_DEFAULT
-            except Exception as _ex:
-                self.printException(_ex, "_append_file_row: selecting style failed")
-                style = STYLE_DEFAULT
-
-            # Compose display with left marker
-            try:
-                display_text = f"{marker} {display}" if marker else display
-            except Exception as _ex:
-                self.printException(_ex, "_append_file_row: composing display failed")
-                display_text = display
-
-            try:
-                lbl = Label(Text(display_text, style=style))
-                item = ListItem(lbl)
-            except Exception as _ex:
-                self.printException(_ex, "_append_file_row: building ListItem failed")
-                item = ListItem(Label(display))
-
-            try:
-                item._raw_text = canonical
-            except Exception as _ex:
-                self.printException(_ex, "_append_file_row: setting _raw_text failed")
-                try:
-                    repo_root_local = self.app.gitRepo.get_repo_root()
-                    item._raw_text = os.path.relpath(full_path, repo_root_local) if full_path else display
-                except Exception as e:
-                    self.printException(e, "_append_file_row: relpath fallback failed")
-                    item._raw_text = display
-
-            try:
-                item._filename = (
-                    os.path.basename(canonical)
-                    if canonical
-                    else (os.path.basename(full_path) if full_path else display)
-                )
-            except Exception as _ex:
-                self.printException(_ex, "_append_file_row: setting _filename failed")
-                item._filename = display
-
-            try:
-                item._is_dir = bool(is_dir)
-            except Exception as _ex:
-                self.printException(_ex, "_append_file_row: setting _is_dir failed")
-                item._is_dir = False
-
-            try:
-                if status is not None:
-                    item._repo_status = status
-            except Exception as _ex:
-                self.printException(_ex, "_append_file_row: setting _repo_status failed")
-
-            try:
-                self.append(item)
-                # Add a parent directory entry ("..") when appropriate;
-                # this will be a non-selectable directory row placed
-                # immediately after the headers so users can navigate up.
-                # Use the canonical repo-relative path for parent rendering
-                self._render_parent_entry_if_needed(canonical)
-            except Exception as _ex:
-                self.printException(_ex, "_append_file_row: append failed")
-        except Exception as e:
-            self.printException(e, "_append_file_row failed")
-
-    def _parse_git_log_lines(self, lines: list[str]) -> list[tuple[datetime, str, str]]:
-        """
-        Parse lines produced by `git log --pretty=format:%H\t%aI\t%s`.
-
-        Returns a list of tuples (datetime, hash, subject). On parse errors
-        datetimes default to `datetime.min` so sorting remains robust.
-        """
-        out: list[tuple[datetime, str, str]] = []
-        try:
-            for ln in lines:
-                try:
-                    parts = ln.split("\t", 2)
-                    h = parts[0] if parts else ""
-                    date_s = parts[1] if len(parts) > 1 else ""
-                    msg = parts[2] if len(parts) > 2 else ""
-                    try:
-                        dt = datetime.fromisoformat(date_s) if date_s else datetime.min
-                    except Exception as _ex:
-                        self.printException(_ex, f"_parse_git_log_lines failed ISO parse for '{date_s}'")
-                        try:
-                            dt = datetime.strptime(date_s, "%Y-%m-%d") if date_s else datetime.min
-                        except Exception as _ex2:
-                            self.printException(_ex2, f"_parse_git_log_lines failed parsing date '{date_s}'")
-                            dt = datetime.min
-                    out.append((dt, h, msg))
-                except Exception as e:
-                    self.printException(e, "_parse_git_log_lines line parse failed")
-        except Exception as e:
-            self.printException(e, "_parse_git_log_lines failed")
-        return out
-
     def text_of(self, node) -> str:
         """Extract visible text from a ListItem's Label or renderable."""
         try:
@@ -810,97 +645,6 @@ class AppBase(AppException, ListView):
         except Exception as e:
             self.printException(e, "extracting text")
             return str(node)
-
-    def _extract_label_text(self, lbl) -> str:
-        """Safely extract visible text from a Label or its renderable."""
-        try:
-            renderable = getattr(lbl, "renderable", None)
-            if isinstance(renderable, Text):
-                return renderable.plain
-            if renderable is not None:
-                return str(renderable)
-            if hasattr(lbl, "text"):
-                return getattr(lbl, "text")
-            return str(lbl)
-        except Exception as e:
-            self.printException(e, "extracting label text")
-            return str(lbl)
-
-    def _date_key(self, t: tuple[str, str, str]):
-        """
-        Convert a (hash, date, msg) tuple's ISO date to a datetime for sorting.
-
-        Returns `datetime.min` when the date is missing or unparsable so
-        sorting remains robust.
-        """
-        try:
-            ds = t[1] if len(t) > 1 else ""
-            if ds:
-                try:
-                    # Prefer full ISO datetime parsing when available
-                    dt_obj = datetime.fromisoformat(ds)
-                except Exception as e:
-                    self.printException(e, f"parsing ISO datetime '{ds}' failed, trying date-only")
-                    try:
-                        dt_obj = datetime.strptime(ds, "%Y-%m-%d")
-                    except Exception as e2:
-                        self.printException(e2, f"parsing date-only '{ds}' failed, using datetime.min")
-                        dt_obj = datetime.min
-            else:
-                dt_obj = datetime.min
-            # Return (datetime, hash) so sorting is deterministic; datetime
-            # may include time when provided in ISO format.
-            return (dt_obj, t[0] if len(t) > 0 else "")
-        except Exception as _ex:
-            self.printException(_ex, f"_date_key failed for tuple: {t}")
-            return (datetime.min, "")
-
-    def _compute_pseudo_timestamps(self, repo_root: str, mods: list[str], single_path: str) -> tuple[str, str]:
-        """
-        Compute timestamps for pseudo-summary rows.
-
-        Returns (mods_ts, staged_ts) where each is an ISO-like timestamp
-        string (no leading space) or empty string when unavailable.
-        - When `mods` is provided, compute the latest mtime among those files.
-        - When `single_path` is provided, compute the mtime for that file.
-        `staged_ts` is computed from `.git/index` mtime when available.
-        """
-        mods_ts = ""
-        try:
-            if mods:
-                latest_m = None
-                for p in mods:
-                    try:
-                        full = os.path.join(repo_root, p)
-                        if os.path.exists(full):
-                            m = os.path.getmtime(full)
-                            if latest_m is None or m > latest_m:
-                                latest_m = m
-                    except Exception as _ex:
-                        self.printException(_ex, "_compute_pseudo_timestamps skipping file mtime due to error")
-                        continue
-                if latest_m is not None:
-                    mods_ts = datetime.fromtimestamp(latest_m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
-            elif single_path:
-                try:
-                    if os.path.exists(single_path):
-                        m = os.path.getmtime(single_path)
-                        mods_ts = datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
-                except Exception as _ex:
-                    self.printException(_ex, "_compute_pseudo_timestamps computing single_path mtime failed")
-        except Exception as e:
-            self.printException(e, "_compute_pseudo_timestamps failed computing mods_ts")
-
-        staged_ts = ""
-        try:
-            idx_path = os.path.join(repo_root, ".git", "index")
-            if os.path.exists(idx_path):
-                m = os.path.getmtime(idx_path)
-                staged_ts = datetime.fromtimestamp(m).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
-        except Exception as _ex:
-            self.printException(_ex, "_compute_pseudo_timestamps computing staged timestamp failed")
-
-        return (mods_ts, staged_ts)
 
     def nodes(self):
         """
@@ -963,17 +707,6 @@ class AppBase(AppException, ListView):
                 self.printException(e, "_activate_index: failed to set index and apply changes")
         except Exception as e:
             self.printException(e, "_activate_index failed")
-
-    def watch_index_helper(self, old: int | None, new: int | None):
-        """
-        Compatibility wrapper for the direct apply method.
-
-        Historically `watch_index_helper` implemented highlight and scroll
-        behavior. To centralize imperative control, that logic now lives in
-        `apply_index_change`. This wrapper forwards for callers that still
-        reference `watch_index_helper`.
-        """
-        return self.apply_index_change(old, new)
 
     def apply_index_change(self, old: int | None, new: int | None):
         """
@@ -1278,19 +1011,6 @@ class AppBase(AppException, ListView):
     # These centralize try/except logic so lambdas passed to
     # `call_after_refresh` remain small and identical behavior isn't
     # duplicated across the codebase.
-    def _safe_set_index(self, new_index: int) -> None:
-        """
-        Safely set the widget `index` attribute.
-
-        Wraps the assignment in a try/except and forwards exceptions to
-        `printException` so callers can schedule this to run after UI
-        refresh without raising.
-        """
-        try:
-            setattr(self, "index", new_index)
-        except Exception as e:
-            self.printException(e, "_safe_set_index failed")
-
     def _safe_activate_index(self, idx: int) -> None:
         """
         Invoke `_activate_index` and handle any exceptions.
@@ -1323,14 +1043,6 @@ class AppBase(AppException, ListView):
             getattr(node, "scroll_visible", lambda *a, **k: None)(visible)
         except Exception as e:
             self.printException(e, "_safe_node_scroll_visible failed")
-
-    def _safe_highlight_match(self, match: Optional[str]) -> None:
-        """
-        Safe wrapper around `_highlight_match` that logs failures.
-
-        Useful for scheduling highlight operations after UI refresh.
-        """
-        self._highlight_match(match)
 
     def error_message(self, message: str) -> None:
         """
@@ -2050,32 +1762,6 @@ class FileListBase(AppBase):
         except Exception as e:
             self.printException(e, "_ensure_index_visible failed")
 
-    def _add_filelist_key_header(self) -> None:
-        """
-        Insert an unselectable key legend row at the top of the file list.
-
-        This places the header at index 0 and sets `_min_index` to 1 so
-        navigation skips the header.
-        """
-        try:
-            # Create header row; use the configured style so it's visually distinct
-            item = ListItem(Label(Text(FILELIST_KEY_ROW_TEXT, style=STYLE_FILELIST_KEY)))
-            # Mark metadata so callers can recognize it and avoid selecting it
-            try:
-                item._filelist_key_header = True
-                item._selectable = False
-            except Exception as e:
-                self.printException(e, "_add_filelist_key_header: setting metadata failed")
-            try:
-                # Append header to the list; callers will set `_min_index`
-                # after populating rows to ensure it doesn't exceed the
-                # available node count.
-                self.append(item)
-            except Exception as e:
-                self.printException(e, "_add_filelist_key_header append failed")
-        except Exception as e:
-            self.printException(e, "_add_filelist_key_header failed")
-
     def _highlight_filename(self, filename: str) -> None:
         """Find the first node matching `filename` and move the index there."""
         try:
@@ -2225,61 +1911,6 @@ class FileListBase(AppBase):
         """
         return self.text_of(node)
 
-    def _render_parent_entry_if_needed(self, path: str) -> None:
-        """
-        Add a parent (`..`) entry when `path` is not the repo root.
-
-        Creates a non-selectable ListItem with metadata `_filename='..'` and
-        `_is_dir=True` and appends it to the list. Safe no-op on error.
-        """
-        try:
-            parent = os.path.dirname(path)
-            logger.debug("_render_parent_entry_if_needed: path=%s parent=%s", path, parent)
-            try:
-                parent_abs = os.path.normpath(parent) if parent else ""
-                path_abs = os.path.normpath(path) if path else ""
-                repo_root_abs = self.app.gitRepo.get_repo_root()
-            except Exception as e:
-                self.printException(e, "_render_parent_entry_if_needed: realpath lookup failed")
-                parent_abs = parent
-                path_abs = path
-                try:
-                    repo_root_abs = self.app.gitRepo.get_repo_root()
-                except Exception as e:
-                    self.printException(e, "_render_parent_entry_if_needed: getting repo_root failed")
-                    repo_root_abs = None
-            if parent and parent_abs != path_abs and path_abs != repo_root_abs:
-                try:
-                    parent_item = ListItem(Label(Text(f"← ..", style=STYLE_PARENT)))
-                    try:
-                        parent_item._filename = ".."
-                        parent_item._is_dir = True
-                        try:
-                            # Store repo-relative raw path when possible
-                            repo_root_local = self.app.gitRepo.get_repo_root()
-                            parent_item._raw_text = (
-                                os.path.relpath(parent_abs, repo_root_local) if parent_abs else parent
-                            )
-                        except Exception as e:
-                            self.printException(e, "_render_parent_entry_if_needed: relpath failed")
-                            parent_item._raw_text = parent
-                    except Exception as e:
-                        self.printException(e, "_render_parent_entry_if_needed: setting metadata failed")
-                        parent_item._raw_text = parent
-                        logger.debug(
-                            "_render_parent_entry_if_needed: adding parent dir item for %s", parent_item._raw_text
-                        )
-                    except Exception as e:
-                        self.printException(e, "_render_parent_entry_if_needed: setting parent item attributes failed")
-                    try:
-                        self.append(parent_item)
-                    except Exception as e:
-                        self.printException(e, "_render_parent_entry_if_needed: append parent failed")
-                except Exception as e:
-                    self.printException(e, "_render_parent_entry_if_needed: creating parent item failed")
-        except Exception as e:
-            self.printException(e, "_render_parent_entry_if_needed failed")
-
     def _render_hash_header(self, prev_hash: str | None, curr_hash: str | None) -> None:
         """
         Render the non-selectable hash header row for repo-mode file lists.
@@ -2324,111 +1955,6 @@ class FileListBase(AppBase):
                 self.printException(e, "_render_hash_header: creating/appending in-list header failed")
         except Exception as e:
             self.printException(e, "_render_hash_header failed")
-
-    def _schedule_highlight_and_visibility(self, highlight: str | None, base_path: str | None = None) -> None:
-        """
-        Schedule highlighting and ensure the selected node is visible.
-
-        If `highlight` is provided, resolve it to an absolute candidate inside
-        `base_path` (or this widget's `self.path`) when it's not already
-        absolute, schedule a safe highlight match, and then schedule index
-        visibility. When no `highlight` is provided schedule the logical
-        top highlight.
-        """
-        try:
-            if highlight:
-                try:
-                    candidate = highlight
-                    # Always treat highlights as repo-relative and resolve
-                    # them under `base_path` or the app's current path under
-                    # `repo_root` before highlighting.
-                    if base_path is None:
-                        try:
-                            rd = self.app.rel_dir
-                            rf = self.app.rel_file
-                            if rf:
-                                bp_rel = os.path.join(rd or "", rf)
-                            else:
-                                bp_rel = rd or "."
-                            try:
-                                repo_root_local = self.app.gitRepo.get_repo_root()
-                                bp = os.path.join(repo_root_local, bp_rel) if repo_root_local else bp_rel
-                            except Exception as e:
-                                self.printException(e, "_schedule_highlight_and_visibility: getting repo_root failed")
-                                bp = bp_rel
-                        except Exception as e:
-                            self.printException(
-                                e, "_schedule_highlight_and_visibility: reading app.rel_dir/rel_file failed"
-                            )
-                            bp = "."
-                    else:
-                        bp = base_path
-                    candidate = os.path.join(bp, candidate)
-                except Exception as e:
-                    self.printException(e, "_schedule_highlight_and_visibility: candidate adjustment failed")
-                    candidate = highlight
-
-                try:
-                    self.call_after_refresh(lambda: self._safe_highlight_match(candidate))
-                except Exception as e:
-                    self.printException(e, "_schedule_highlight_and_visibility: scheduling highlight failed")
-                    self._highlight_match(candidate)
-
-                try:
-                    self.call_after_refresh(self._ensure_index_visible)
-                except Exception as e:
-                    self.printException(
-                        e, "_schedule_highlight_and_visibility: scheduling _ensure_index_visible failed"
-                    )
-            else:
-                try:
-                    self.call_after_refresh(self._highlight_top)
-                except Exception as e:
-                    self.printException(e, "_schedule_highlight_and_visibility: scheduling _highlight_top failed")
-                    self._highlight_top()
-        except Exception as e:
-            self.printException(e, "_schedule_highlight_and_visibility failed")
-
-    def _build_status_map(self, path: str) -> dict | None:
-        """
-        Build and return a porcelain `status_map` for `path` or None.
-
-        Always prefer the git CLI based status map. Return None only on
-        unexpected failures so callers may fall back if necessary.
-        """
-        try:
-            # Build a map of repo-relative path -> two-char porcelain code
-            # (index, worktree) by invoking `git status --porcelain` via
-            # the shared GitRepo instance on the app. This centralizes git
-            # command invocation and reuses GitRepo's helpers.
-            gitrepo = self.app.gitRepo
-            out = gitrepo._git_run(["git", "status", "--porcelain", "--", path], text=True) or ""
-            if not out:
-                return {}
-
-            status_map: dict = {}
-            for line in out.splitlines():
-                if not line:
-                    continue
-                # porcelain format: XY SP PATH  (or '?? PATH')
-                try:
-                    # Prefer the common XY<space>path form
-                    if len(line) >= 4 and line[2] == " ":
-                        code = line[:2]
-                        p = line[3:]
-                    else:
-                        # Fallback: take first two chars as code and the rest as path
-                        code = (line + "  ")[:2]
-                        p = line[2:].lstrip()
-                    p = gitrepo._git_cli_decode_quoted_path(p.strip())
-                    status_map[p] = code
-                except Exception as _ex:
-                    self.printException(_ex, "_build_status_map: parsing line failed")
-                    continue
-            return status_map
-        except Exception as e:
-            self.printException(e, "_build_status_map failed")
-            return None
 
     def _populate_from_file_infos(
         self, file_infos: list[dict], active_raw: str | None = None, active_index: int | None = None
@@ -2623,118 +2149,6 @@ class FileListBase(AppBase):
                 )
             except Exception as e:
                 self.printException(e, "_populate_from_file_infos: final timing logging failed")
-
-    def _to_display_rows(self, raw_filelist: list) -> list[dict]:
-        """
-        Convert raw file-list items from backends into display-ready dicts.
-
-        Accepts backend outputs such as lists of `(path, status)` tuples
-        (repo-relative or absolute paths) or dicts with `display`/`full`.
-        Returns list of dicts with keys: `name`, `full`, `is_dir`, `raw`, `repo_status`.
-
-        - Paths are resolved into absolute full paths using `self.app.repo_root`.
-        """
-        rows: list[dict] = []
-        try:
-            try:
-                repo_root_local = self.app.gitRepo.get_repo_root()
-            except Exception as e:
-                self.printException(e, "_to_display_rows: getting repo_root failed")
-                repo_root_local = None
-            base = repo_root_local
-            for entry in raw_filelist or []:
-                try:
-                    # If already a normalized dict use it as-is (but ensure keys)
-                    if isinstance(entry, dict):
-                        full = entry.get("full") or entry.get("display") or entry.get("path")
-                        name = entry.get("name") or (os.path.basename(full) if full else entry.get("display"))
-                        is_dir = bool(entry.get("is_dir", False))
-                        raw = entry.get("raw", name)
-                        repo_status = entry.get("repo_status")
-                        # Resolve full to a normalized path when possible
-                        try:
-                            if full and base:
-                                full = os.path.join(base, full)
-                            # else leave `full` as provided (repo-relative or empty)
-                        except Exception as e:
-                            self.printException(e, "_to_display_rows: resolving full path failed")
-                        try:
-                            rel_raw = os.path.relpath(full, repo_root_local) if full and repo_root_local else full
-                        except Exception as e:
-                            self.printException(e, "_to_display_rows: rel_raw computation failed")
-                            rel_raw = raw
-                        rows.append(
-                            {"name": name, "full": full, "is_dir": is_dir, "raw": rel_raw, "repo_status": repo_status}
-                        )
-                        continue
-
-                    # Tuples of (path, status) are common from git diff helpers
-                    if isinstance(entry, (list, tuple)) and len(entry) >= 1:
-                        path = entry[0]
-                        status = entry[1] if len(entry) > 1 else None
-                        # Resolve full path
-                        try:
-                            # Treat `path` as repo-relative and form a path under `base`.
-                            full = os.path.join(base, path) if base else path
-                        except Exception as e:
-                            self.printException(e, "_to_display_rows: resolving full path failed")
-                            full = path
-
-                        # Determine name and directory-ness
-                        try:
-                            is_dir = os.path.isdir(full)
-                        except Exception as e:
-                            self.printException(e, "_to_display_rows: isdir check failed")
-                            is_dir = False
-                        name = os.path.basename(full) if full else path
-                        try:
-                            raw = (
-                                os.path.relpath(full, repo_root_local)
-                                if full and repo_root_local
-                                else (full if is_dir else name)
-                            )
-                        except Exception as e:
-                            self.printException(e, "_to_display_rows: raw relpath failed")
-                            raw = full if is_dir else name
-
-                        # Conservative repo_status: leave None for diff-driven lists
-                        repo_status = None
-                        # However map a few well-known status tokens when present
-                        try:
-                            s = str(status) if status is not None else ""
-                            s_up = s.upper()
-                            if s_up in ("??", "UNTRACKED"):
-                                repo_status = "untracked"
-                            elif s_up in ("!!", "IGNORED"):
-                                repo_status = "ignored"
-                            elif "U" in s_up or "!" in s_up:
-                                repo_status = "conflicted"
-                            elif s_up == "D" or "DELETED" in s_up:
-                                repo_status = "wt_deleted"
-                            elif s_up == "A" or "ADDED" in s_up:
-                                repo_status = "staged"
-                            elif s_up == "M" or "MODIFIED" in s_up:
-                                repo_status = "modified"
-                        except Exception as e:
-                            self.printException(e, "_to_display_rows: mapping status failed")
-                            repo_status = None
-
-                        rows.append(
-                            {"name": name, "full": full, "is_dir": is_dir, "raw": raw, "repo_status": repo_status}
-                        )
-                        continue
-
-                    # Fallback: stringify and append
-                    s = str(entry)
-                    rows.append(
-                        {"name": os.path.basename(s), "full": s, "is_dir": False, "raw": s, "repo_status": None}
-                    )
-                except Exception as e:
-                    self.printException(e, "_to_display_rows: processing entry failed")
-                    continue
-        except Exception as e:
-            self.printException(e, "_to_display_rows failed")
-        return rows
 
 
 class FileModeFileList(FileListBase):
@@ -3965,81 +3379,6 @@ class HistoryListBase(AppBase):
             self.printException(e, "_format_commit_row failed")
             return f"{h or ''} {msg}".strip()
 
-    def _to_history_entries(self, raw_list: list) -> list[dict]:
-        """
-        Normalize various backend hash-list formats into HistoryEntry dicts.
-
-        Accepts items produced by GitRepo helpers (tuples like
-        `(iso, hash, subject, status)`) or raw strings/tuples and returns a list of
-        dicts with keys: `iso`, `hash`, `subject`, `short_hash`, `meta`.
-        The status field (4th element) is preserved in meta but not extracted separately.
-        This is defensive and will try to preserve as much information as
-        possible when inputs vary.
-        """
-        out: list[dict] = []
-        try:
-            for item in raw_list or []:
-                try:
-                    iso = ""
-                    h = None
-                    subject = ""
-                    meta = item
-
-                    # Handle tuple/list forms: prefer (iso, hash, subject[, status])
-                    if isinstance(item, (list, tuple)):
-                        if len(item) >= 3:
-                            iso = item[0]
-                            h = item[1]
-                            subject = item[2] or ""
-                        elif len(item) == 2:
-                            iso = item[0]
-                            h = item[1]
-                            subject = ""
-                        elif len(item) == 1:
-                            # single-element tuple
-                            iso = str(item[0])
-                    elif isinstance(item, str):
-                        # Try to parse strings like "<iso> <hash> <subject>"
-                        parts = item.split(None, 2)
-                        if parts:
-                            if len(parts) >= 1:
-                                iso = parts[0]
-                            if len(parts) >= 2:
-                                h = parts[1]
-                            if len(parts) == 3:
-                                subject = parts[2]
-                    else:
-                        # Fallback: stringify the item
-                        iso = str(item)
-
-                    # Normalize iso value (if it's numeric epoch convert to iso)
-                    try:
-                        if isinstance(iso, (int, float)):
-                            iso = self._epoch_to_iso(int(iso))
-                        else:
-                            # leave as string; if object with strftime use that
-                            if hasattr(iso, "strftime"):
-                                try:
-                                    iso = iso.strftime("%Y-%m-%dT%H:%M:%S")
-                                except Exception as e:
-                                    self.printException(e, "_to_history_entries: iso.strftime failed")
-                                    iso = str(iso)
-                            else:
-                                iso = str(iso)
-                    except Exception as e:
-                        self.printException(e, "_to_history_entries: iso normalization failed")
-                        iso = str(iso)
-
-                    short_hash = (h or "")[:HASH_LENGTH] if h else ""
-
-                    out.append({"iso": iso, "hash": h, "subject": subject, "short_hash": short_hash, "meta": meta})
-                except Exception as e:
-                    self.printException(e, "_to_history_entries: processing item failed")
-                    continue
-        except Exception as e:
-            self.printException(e, "_to_history_entries failed")
-        return out
-
     def toggle_check_current(self, idx: int | None = None) -> None:
         """
         Toggle a single-mark (checked) state on the selected history row.
@@ -4157,24 +3496,6 @@ class HistoryListBase(AppBase):
                 self.index = self._min_index or 0
         except Exception as e:
             self.printException(e, "HistoryListBase.on_focus")
-
-    def watch_history_index(self, old: int | None, new: int | None, node_new) -> None:
-        """
-        History-list specific post-highlight hook.
-
-        Compute the selected commit pair and publish `app.current_hash` and
-        `app.previous_hash` so other components (file preparers, diffs)
-        can rely on them immediately.
-        """
-        try:
-            self._compute_selected_pair()
-            logger.debug(
-                "watch_history_index: updated app.current_hash=%r app.previous_hash=%r",
-                self.app.current_hash,
-                self.app.previous_hash,
-            )
-        except Exception as e:
-            self.printException(e, "watch_history_index failed")
 
     def _compute_selected_pair(self) -> tuple[str | None, str | None]:
         """

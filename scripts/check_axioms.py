@@ -2281,7 +2281,7 @@ def main(argv: List[str] | None = None) -> int:
         dest="check_unused",
         action="append",
         default=[],
-        help="Glob pattern to analyze for unused module-level functions and class methods (may be specified multiple times). In config file, provide comma-separated values or multiple 'check-unused' entries.",
+        help="File pattern(s) to analyze for unused module-level functions and class methods (may be specified multiple times). In config file, provide comma-separated values or multiple 'check-unused' entries.",
     )
 
     parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=0,
