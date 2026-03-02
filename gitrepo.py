@@ -1305,8 +1305,8 @@ class GitRepo(AppException):
                 output = self._git_run(["git", "rev-list", "--all", "--remotes"], text=True) or ""
                 if output:
                     pushed_hashes = {line.strip() for line in output.splitlines() if line.strip()}
-            except CalledProcessError:
-                pass
+            except CalledProcessError as e:
+                self.printException(e, "_get_pushed_hashes: git rev-list failed")
 
             self._cmd_cache[cache_key] = pushed_hashes
             return pushed_hashes
