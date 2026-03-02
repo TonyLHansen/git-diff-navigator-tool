@@ -3949,23 +3949,18 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "HistoryListBase._add_row failed")
 
-    def _format_commit_row(self, ts, h: str | None, msg: str) -> str:
+    def _format_commit_row(self, ts, h: str | None, msg: str, status: str | None = None) -> str:
         """
         Return a formatted commit row string for display.
 
         Centralized so formatting is consistent across preparers.
+        When status is 'unpushed', prepends an up arrow (↑) to indicate unpushed commits.
         """
         try:
-            try:
-                if hasattr(ts, "strftime"):
-                    date_stamp = ts.strftime("%Y-%m-%dT%H:%M:%S")
-                else:
-                    date_stamp = str(ts)
-            except Exception as _ex:
-                self.printException(_ex, f"_format_commit_row failed formatting date for {(ts,h,msg)}")
-                date_stamp = str(ts)
+            date_stamp = str(ts)
             short_hash = (h or "")[:HASH_LENGTH]
-            return f"{date_stamp} {short_hash} {msg}".strip()
+            push_marker = "↑ " if status == "unpushed" else ""
+            return f"{date_stamp} {push_marker}{short_hash} {msg}".strip()
         except Exception as e:
             self.printException(e, "_format_commit_row failed")
             return f"{h or ''} {msg}".strip()
@@ -3975,8 +3970,9 @@ class HistoryListBase(AppBase):
         Normalize various backend hash-list formats into HistoryEntry dicts.
 
         Accepts items produced by GitRepo helpers (tuples like
-        `(iso, hash, subject)`) or raw strings/tuples and returns a list of
+        `(iso, hash, subject, status)`) or raw strings/tuples and returns a list of
         dicts with keys: `iso`, `hash`, `subject`, `short_hash`, `meta`.
+        The status field (4th element) is preserved in meta but not extracted separately.
         This is defensive and will try to preserve as much information as
         possible when inputs vary.
         """
@@ -3989,7 +3985,7 @@ class HistoryListBase(AppBase):
                     subject = ""
                     meta = item
 
-                    # Handle tuple/list forms: prefer (iso, hash, subject)
+                    # Handle tuple/list forms: prefer (iso, hash, subject[, status])
                     if isinstance(item, (list, tuple)):
                         if len(item) >= 3:
                             iso = item[0]
@@ -4330,12 +4326,12 @@ class FileModeHistoryList(HistoryListBase):
                 self.printException(_e, "prepFileModeHistoryList: gitRepo.getNormalizedHashListFromFileName failed")
                 entries = []
 
-            # Render returned entries. Expect tuples like (iso, hash, subject).
+            # Render returned entries. Expect tuples like (iso, hash, subject, status).
             try:
                 first = True
-                for ts_iso, h, subject in entries:
+                for ts_iso, h, subject, status in entries:
                     try:
-                        text = self._format_commit_row(ts_iso, h, subject)
+                        text = self._format_commit_row(ts_iso, h, subject, status)
                         # Mark the first appended history row active immediately
                         # so the highlight is present without waiting for refresh.
                         self._add_row(text, h, mark_active=first)
@@ -4487,13 +4483,12 @@ class RepoModeHistoryList(HistoryListBase):
                 entries = []
 
             try:
-                # Entries are tuples (iso, hash, subject[, status]). Render each as a row
+                # Entries are tuples (iso, hash, subject, status). Render each as a row
                 # and mark the first row active for immediate focus.
                 first = True
                 for ts_iso, h, subject, status in entries:
                     try:
-                        push_marker = "↑ " if status == "unpushed" else ""
-                        text = f"{ts_iso} {push_marker}{h[:HASH_LENGTH]} {subject or ''}".strip()
+                        text = self._format_commit_row(ts_iso, h, subject, status)
                         is_active = first
 
                         self._add_row(text, h, mark_active=is_active)
