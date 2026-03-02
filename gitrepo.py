@@ -1619,12 +1619,9 @@ class GitRepo(AppException):
                             # pairs in tree-to-tree output because the empty
                             # tree side has no source path. Probe commit-level
                             # rename metadata as a second chance.
-                            if (
-                                rename_msg is None
-                                and (
-                                    (hash1 == self.NEWREPO and hash2 not in (self.NEWREPO, self.STAGED, self.MODS))
-                                    or (hash2 == self.NEWREPO and hash1 not in (self.NEWREPO, self.STAGED, self.MODS))
-                                )
+                            if rename_msg is None and (
+                                (hash1 == self.NEWREPO and hash2 not in (self.NEWREPO, self.STAGED, self.MODS))
+                                or (hash2 == self.NEWREPO and hash1 not in (self.NEWREPO, self.STAGED, self.MODS))
                             ):
                                 try:
                                     commit_ref = hash2 if hash1 == self.NEWREPO else hash1

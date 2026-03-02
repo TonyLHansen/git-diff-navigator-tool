@@ -190,8 +190,12 @@ HELP_FOOTER = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Home/End  Press Enter/␍ to
 
 # Footer text used when showing the diff for a history/file selection
 # DIFF_FOOTER = Text("Diff: press Left to return to files")
-DIFF_FOOTER_1 = Text("Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End →/f(ull) c(olor) d(iff-type) t(oggle) w(write)", style="bold")
-DIFF_FOOTER_2 = Text("Diff: q(uit)  ?/h(elp)  ↑/↓/PgUp/PgDn/Home/End ←/f(ull) c(olor) d(iff-type) t(oggle) w(write)", style="bold")
+DIFF_FOOTER_1 = Text(
+    "Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End →/f(ull) c(olor) d(iff-type) t(oggle) w(write)", style="bold"
+)
+DIFF_FOOTER_2 = Text(
+    "Diff: q(uit)  ?/h(elp)  ↑/↓/PgUp/PgDn/Home/End ←/f(ull) c(olor) d(iff-type) t(oggle) w(write)", style="bold"
+)
 
 # Supported diff color schemes (used by CLI/config and runtime cycling)
 DIFF_COLOR_SCHEMES = [
@@ -527,7 +531,7 @@ class AppBase(AppException, ListView):
             for i, node in enumerate(nodes):
                 try:
                     txt = self.text_of(node)
-                    
+
                     # Collect underscore-prefixed attributes and their reprs
                     attrs = {}
                     for a in dir(node):
@@ -660,7 +664,7 @@ class AppBase(AppException, ListView):
             except Exception as e:
                 self.printException(e, "_append_file_row: canonicalizing path failed")
                 canonical = full_path
-            
+
             try:
                 marker = MARKERS.get(status, MARKERS.get("tracked_clean", " "))
             except Exception as _ex:
@@ -1121,7 +1125,7 @@ class AppBase(AppException, ListView):
                                 debug_nodes = []
                                 for i, n in enumerate(nodes_after):
                                     txt = self.text_of(n)
-                                        
+
                                     try:
                                         state = (
                                             n.has_class("active")
@@ -1749,7 +1753,11 @@ class AppBase(AppException, ListView):
                 # Prefer asking the GitRepo for the canonical repo root
                 repo_root_val = self.app.gitRepo.get_repo_root()
 
-                msg = f"Create {os.path.basename(filepath)}.HASH. Do you wish to write the (o)lder file, the (n)ewer file, or (b)oth? (Any other key to cancel.)"
+                msg = (
+                    f"Create {os.path.basename(filepath)}.HASH.\n\n"
+                    "Do you wish to write the (o)lder file, the (n)ewer file, or (b)oth?\n\n"
+                    "(Any other key to cancel.)"
+                )
                 self.app.push_screen(
                     SaveSnapshotModal(
                         msg, filepath=filepath, prev_hash=prev_hash, curr_hash=curr_hash, repo_root=repo_root_val
@@ -1789,13 +1797,25 @@ class SaveSnapshotModal(AppException, ModalScreen):
     def compose(self):
         """Compose the modal contents (a single Label with the message)."""
         try:
-            yield Label(Text(self.message, style="bold"))
+            # yield Label(Text(self.message, style="bold"))
+            boxed = Panel(Text(self.message, style="bold"), expand=False)
+            yield Vertical(
+                Horizontal(Label(boxed, id="msg-modal"), id="msg-modal-row"),
+                Label(Text("Press any key to continue", style="dim"), id="msg-modal-prompt"),
+                id="msg-modal-wrapper",
+            )
         except Exception as e:
             # Best-effort: avoid modal failure — ensure we log the original
             self.printException(e, "SaveSnapshotModal.compose failed")
 
             try:
-                yield Label(Text(self.message or "", style="bold"))
+                # yield Label(Text(self.message or "", style="bold"))
+                boxed = Panel(Text(self.message, style="bold"), expand=False)
+                yield Vertical(
+                    Horizontal(Label(boxed, id="msg-modal"), id="msg-modal-row"),
+                    Label(Text("Press any key to continue", style="dim"), id="msg-modal-prompt"),
+                    id="msg-modal-wrapper",
+                )
             except Exception as e2:
                 # If even yielding fails, log and give up
                 self.printException(e2, "SaveSnapshotModal.compose fallback failed")
@@ -1805,7 +1825,8 @@ class SaveSnapshotModal(AppException, ModalScreen):
         try:
             key = getattr(event, "key", "")
             try:
-                event.stop()
+                if key not in ("q", "Q"):  # let q/Q pass through to allow quick cancel without logging
+                    event.stop()
             except Exception as e:
                 self.printException(e, "SaveSnapshotModal.on_key: event.stop failed")
 
@@ -3846,9 +3867,10 @@ class RepoModeFileList(FileListBase):
         logger.debug("RepoModeFileList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_right(event, recursive=True)
 
-    def key_w(self, event: events.Key | None = None) -> None:
+    def key_w(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Prompt to save snapshot files for the selected file (older/newer/both)."""
-        logger.debug("RepoModeFileList.key_w called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("RepoModeFileList.key_w called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
             try:
                 event.stop()
@@ -3856,6 +3878,11 @@ class RepoModeFileList(FileListBase):
                 self.printException(e, "RepoModeFileList.key_w: event.stop failed")
                 self.key_w_helper(event)
         self._log_visible_items("key_w after processing index change")
+
+    def key_W(self, event: events.Key | None = None) -> None:
+        """Alias for key_w to support uppercase 'W' as well."""
+        logger.debug("RepoModeFileList.key_W called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_w(event, recursive=True)
 
 
 class HistoryListBase(AppBase):
@@ -4323,15 +4350,21 @@ class FileModeHistoryList(HistoryListBase):
         except Exception as e:
             self.printException(e, "prepFileModeHistoryList failed")
 
-    def key_w(self, event: events.Key | None = None) -> None:
+    def key_w(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Prompt to save snapshot files for the current file history selection."""
-        logger.debug("FileModeHistoryList.key_w called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("FileModeHistoryList.key_w called: key=%r index=%r", getattr(event, "key", None), self.index)
         if event is not None:
             try:
                 event.stop()
             except Exception as e:
                 self.printException(e, "FileModeHistoryList.key_w: event.stop failed")
-                self.key_w_helper(event)
+            self.key_w_helper(event)
+
+    def key_W(self, event: events.Key | None = None) -> None:
+        """Alias for key_w to support uppercase 'W' as well."""
+        logger.debug("FileModeHistoryList.key_W called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_w(event, recursive=True)
 
     def key_i(self, event: events.Key | None = None) -> None:
         """Toggle ignored-file visibility and refresh file-mode list."""
@@ -4400,7 +4433,9 @@ class FileModeHistoryList(HistoryListBase):
     def key_left(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Return to file fullscreen and focus the left file list."""
         if not recursive:
-            logger.debug("FileModeHistoryList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
+            logger.debug(
+                "FileModeHistoryList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index
+            )
         if event is not None:
             try:
                 event.stop()
@@ -4487,7 +4522,9 @@ class RepoModeHistoryList(HistoryListBase):
         column) is meaningful only for repository-wide history views.
         """
         if not recursive:
-            logger.debug("RepoModeHistoryList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+            logger.debug(
+                "RepoModeHistoryList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index
+            )
         try:
             if event is not None:
                 try:
@@ -4661,7 +4698,9 @@ class DiffList(AppBase):
                 self.app.color_scheme = new_scheme
                 # update boolean used by render helpers
                 self._colorized = new_scheme != "none"
-                logger.debug("DiffList: switched color scheme %s -> %s (colorized=%s)", current, new_scheme, self._colorized)
+                logger.debug(
+                    "DiffList: switched color scheme %s -> %s (colorized=%s)", current, new_scheme, self._colorized
+                )
                 # Update Diff header to reflect new scheme
                 try:
                     hdr = None
@@ -5434,7 +5473,9 @@ class GitHistoryNavTool(AppException, App):
                 self.printException(e, "key_r: gitRepo.reset_cache failed")
 
             layout = self._current_layout
-            current_rel_path = os.path.join(self.rel_dir or "", self.rel_file) if self.rel_file else (self.rel_dir or ".")
+            current_rel_path = (
+                os.path.join(self.rel_dir or "", self.rel_file) if self.rel_file else (self.rel_dir or ".")
+            )
 
             def _refresh_diff() -> None:
                 filename = os.path.join(self.rel_dir or "", self.rel_file) if self.rel_file else (self.rel_dir or "")
@@ -6454,10 +6495,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     Returns process exit code (0 on success).
     """
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
-    
+
     # Startup options group
     startup_group = parser.add_argument_group("Startup Options")
-    startup_group.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
+    startup_group.add_argument(
+        "-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode"
+    )
     startup_group.add_argument(
         "-R",
         "--repo-hash",
@@ -6482,8 +6525,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="enable the startup popup (overrides config setting)",
     )
-    startup_group.add_argument("path", nargs="?", default=".", help="git repository or file within it (default: current directory)")
-    
+    startup_group.add_argument(
+        "path", nargs="?", default=".", help="git repository or file within it (default: current directory)"
+    )
+
     # Diff options group
     diff_group = parser.add_argument_group("Diff Options")
     # Mutually-exclusive color options within diff group
@@ -6510,7 +6555,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         choices=DIFF_VARIANT_NAMES,
         help=f"start with diff variant (one of: {', '.join(DIFF_VARIANT_NAMES)})",
     )
-    
+
     # File List Options group
     filelist_group = parser.add_argument_group("File List Options")
     # Mutually exclusive group for ignored-files flags
@@ -6545,7 +6590,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="include untracked files in file-mode listings (overrides config setting)",
     )
-    
+
     # Debug options group
     debug_group = parser.add_argument_group("Debug Options")
     debug_group.add_argument(
@@ -6643,7 +6688,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                     raw = src.get("color")
                     raw_str = raw if isinstance(raw, str) else str(raw)
                     if raw_str.strip() != "":
-                        sys.exit(f"invalid color scheme '{raw_str}' in config; must be one of: {', '.join(DIFF_COLOR_SCHEMES)}")
+                        sys.exit(
+                            f"invalid color scheme '{raw_str}' in config; must be one of: {', '.join(DIFF_COLOR_SCHEMES)}"
+                        )
 
             # `diff` must be a variant name from DIFF_VARIANT_NAMES (blank = leave alone).
             if "diff" in src:
@@ -6654,7 +6701,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                     raw = src.get("diff")
                     raw_str = raw if isinstance(raw, str) else str(raw)
                     if raw_str.strip() != "":
-                        sys.exit(f"invalid diff variant '{raw_str}' in config; must be one of: {', '.join(DIFF_VARIANT_NAMES)}")
+                        sys.exit(
+                            f"invalid diff variant '{raw_str}' in config; must be one of: {', '.join(DIFF_VARIANT_NAMES)}"
+                        )
 
             if "debug" in src:
                 dbg = (src.get("debug") or "").strip()
