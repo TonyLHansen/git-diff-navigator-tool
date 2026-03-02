@@ -1286,14 +1286,74 @@ class GitRepo(AppException):
     # Hash Lists
     ################
 
-    def getNormalizedHashListComplete(self) -> list[tuple[str, str, str]]:
-        """Return a combined list of commit hashes for staged, new, and entire repo."""
+    def _get_pushed_hashes(self) -> set[str]:
+        """Return commit hashes reachable from remote-tracking refs."""
+        try:
+            cache_key = "_get_pushed_hashes"
+            if cache_key in self._cmd_cache:
+                cached = self._cmd_cache[cache_key]
+                return cached if isinstance(cached, set) else set()
+
+            pushed_hashes: set[str] = set()
+
+            remote_out = self._git_run(["git", "config", "--get", "remote.origin.url"], text=True) or ""
+            if not remote_out.strip():
+                self._cmd_cache[cache_key] = pushed_hashes
+                return pushed_hashes
+
+            try:
+                output = self._git_run(["git", "rev-list", "--all", "--remotes"], text=True) or ""
+                if output:
+                    pushed_hashes = {line.strip() for line in output.splitlines() if line.strip()}
+            except CalledProcessError:
+                pass
+
+            self._cmd_cache[cache_key] = pushed_hashes
+            return pushed_hashes
+        except Exception as e:
+            self.printException(e, "_get_pushed_hashes: unexpected failure")
+            return set()
+
+    def _add_pushed_status_to_entries(
+        self, entries: list[tuple[str, str, str]]
+    ) -> list[tuple[str, str, str, str]]:
+        """Attach pushed/unpushed status to each hash entry tuple."""
+        try:
+            pushed_hashes = self._get_pushed_hashes()
+            with_status: list[tuple[str, str, str, str]] = []
+
+            pseudo_hashes = {self.MODS, self.STAGED, self.NEWREPO}
+            newrepo_status = "unpushed"
+            for _ts_iso, _h, _subject in reversed(entries):
+                if _h in pseudo_hashes:
+                    continue
+                newrepo_status = "pushed" if _h in pushed_hashes else "unpushed"
+                break
+
+            for ts_iso, h, subject in entries:
+                if h == self.NEWREPO:
+                    status = newrepo_status
+                elif h in ("MODS", "STAGED"):
+                    status = "unpushed"
+                elif h in pushed_hashes:
+                    status = "pushed"
+                else:
+                    status = "unpushed"
+                with_status.append((ts_iso, h, subject, status))
+
+            return with_status
+        except Exception as e:
+            self.printException(e, "_add_pushed_status_to_entries: unexpected failure")
+            return [(ts, h, subject, "unpushed") for ts, h, subject in entries]
+
+    def getNormalizedHashListComplete(self) -> list[tuple[str, str, str, str]]:
+        """Return combined hash entries with pushed/unpushed status."""
         new = self.getHashListNewChanges()
         staged = self.getHashListStagedChanges()
         entire = self.getHashListEntireRepo()
         newrepo = self.getHashListNewRepo()
         combined = new + staged + entire + newrepo
-        return combined
+        return self._add_pushed_status_to_entries(combined)
 
     def getHashListEntireRepo(self) -> list[tuple[str, str, str]]:
         """Return a list of all commit hashes in the repository."""

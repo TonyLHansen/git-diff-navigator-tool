@@ -4487,12 +4487,13 @@ class RepoModeHistoryList(HistoryListBase):
                 entries = []
 
             try:
-                # Entries are tuples (iso, hash, subject). Render each as a row
+                # Entries are tuples (iso, hash, subject[, status]). Render each as a row
                 # and mark the first row active for immediate focus.
                 first = True
-                for ts_iso, h, subject in entries:
+                for ts_iso, h, subject, status in entries:
                     try:
-                        text = f"{ts_iso} {h[:HASH_LENGTH]} {subject or ''}".strip()
+                        push_marker = "↑ " if status == "unpushed" else ""
+                        text = f"{ts_iso} {push_marker}{h[:HASH_LENGTH]} {subject or ''}".strip()
                         is_active = first
 
                         self._add_row(text, h, mark_active=is_active)
