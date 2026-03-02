@@ -6454,8 +6454,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     Returns process exit code (0 on success).
     """
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
-    parser.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
-    parser.add_argument(
+    
+    # Startup options group
+    startup_group = parser.add_argument_group("Startup Options")
+    startup_group.add_argument("-r", "--repo-first", dest="repo_first", action="store_true", help="start in repo-first mode")
+    startup_group.add_argument(
         "-R",
         "--repo-hash",
         dest="repo_hash",
@@ -6463,6 +6466,23 @@ def main(argv: Optional[list[str]] = None) -> int:
         metavar="HASH",
         help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
     )
+    # Mutually exclusive group for initial-popup flags
+    popup_group = startup_group.add_mutually_exclusive_group()
+    popup_group.add_argument(
+        "-P",
+        "--no-initial-popup",
+        dest="no_initial_popup",
+        action="store_true",
+        help="disable the startup popup",
+    )
+    popup_group.add_argument(
+        "-p",
+        "--initial-popup",
+        dest="initial_popup",
+        action="store_true",
+        help="enable the startup popup (overrides config setting)",
+    )
+    startup_group.add_argument("path", nargs="?", default=".", help="git repository or file within it (default: current directory)")
     
     # Diff options group
     diff_group = parser.add_argument_group("Diff Options")
@@ -6491,8 +6511,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         help=f"start with diff variant (one of: {', '.join(DIFF_VARIANT_NAMES)})",
     )
     
+    # File List Options group
+    filelist_group = parser.add_argument_group("File List Options")
     # Mutually exclusive group for ignored-files flags
-    ignored_group = parser.add_mutually_exclusive_group()
+    ignored_group = filelist_group.add_mutually_exclusive_group()
     ignored_group.add_argument(
         "-I",
         "--no-ignored-files",
@@ -6507,26 +6529,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="include ignored files in file-mode listings (overrides config setting)",
     )
-    
-    # Mutually exclusive group for initial-popup flags
-    popup_group = parser.add_mutually_exclusive_group()
-    popup_group.add_argument(
-        "-P",
-        "--no-initial-popup",
-        dest="no_initial_popup",
-        action="store_true",
-        help="disable the startup popup",
-    )
-    popup_group.add_argument(
-        "-p",
-        "--initial-popup",
-        dest="initial_popup",
-        action="store_true",
-        help="enable the startup popup (overrides config setting)",
-    )
-    
     # Mutually exclusive group for untracked-files flags
-    untracked_group = parser.add_mutually_exclusive_group()
+    untracked_group = filelist_group.add_mutually_exclusive_group()
     untracked_group.add_argument(
         "-U",
         "--no-untracked-files",
@@ -6557,14 +6561,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     debug_group.add_argument(
         "-v", "--verbose", dest="verbose", action="count", default=0, help="increase verbosity (repeatable)"
     )
-    
-    parser.add_argument(
+    debug_group.add_argument(
         "--highlight",
         dest="highlight",
         metavar="BASENAME",
         help="basename of a file to pre-highlight (must be a basename, no path elements)",
     )
-    parser.add_argument("path", nargs="?", default=".", help="directory or file to open (default: current directory)")
 
     # Load optional configuration from .gitdiffnavtool.ini (cwd then $HOME).
     # Keys in the [gitdiffnavtool] section:
