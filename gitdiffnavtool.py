@@ -173,7 +173,7 @@ LEFT_FILE_FOOTER = Text("File: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End 
 
 # Footer text used when switching to file-history view
 # RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
-RIGHT_HISTORY_FOOTER = Text("History: q(uit)  t(swap)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold")
+RIGHT_HISTORY_FOOTER = Text("History: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold")
 
 # Footer text used when showing the left history pane
 # LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
@@ -181,7 +181,7 @@ LEFT_HISTORY_FOOTER = Text("History: q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Ho
 
 # Footer text used when showing the right file list (file list view)
 # RIGHT_FILE_FOOTER = Text("Files: press Left to return")
-RIGHT_FILE_FOOTER = Text("File: q(uit)  t(swap)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
+RIGHT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
 
 # Footer text used for help screen
 # HELP_FOOTER = Text("Help: press Enter/␍ to return")
@@ -331,7 +331,7 @@ Basic navigation:
 Global actions:
 - `h` or `?`: show this help screen.
 - `r`: refresh the current view.
-- `t`: toggle/swap between file-first and repo-first views.
+- `t`: toggle between file-first and repo-first views.
 - `w`: prompt to write snapshot files for the current file/hash combination.
 
 Column-specific information and commands:
@@ -373,7 +373,7 @@ Diff Column:
     - `d` / `D`: rotate the diff command variant. When a full textual diff is available this cycles through configured textual variants (for example, ignore-space-change and patience).
     - `c` / `C`: toggle colorized diffs on/off.
     - `f` / `F`: toggle fullscreen mode (hide other columns).
-    - `t` / `T`: toggle paired layouts (e.g., swap between file and history fullscreen).
+    - `t` / `T`: toggle paired layouts (e.g., between file and history fullscreen).
     - `w` / `W`: write a snapshot of the currently-visible diff (previous docs used the term "save").
 
 Tips and behavior notes:
