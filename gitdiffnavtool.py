@@ -4096,7 +4096,7 @@ class HistoryListBase(AppBase):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "HistoryListBase.key_m: event.stop failed")
-                    self.toggle_check_current()
+                self.toggle_check_current()
         except Exception as e:
             self.printException(e, "HistoryListBase.key_m failed")
 
