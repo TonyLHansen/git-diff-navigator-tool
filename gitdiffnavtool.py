@@ -169,19 +169,19 @@ HELP_TITLE = "help-title"
 
 # Footer text used when showing the left file list
 # LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
-LEFT_FILE_FOOTER = Text("File: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
+LEFT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
 
 # Footer text used when switching to file-history view
 # RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
-RIGHT_HISTORY_FOOTER = Text("History: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold")
+RIGHT_HISTORY_FOOTER = Text("History: q(uit)  t(oggle)  w(write)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold")
 
 # Footer text used when showing the left history pane
 # LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
-LEFT_HISTORY_FOOTER = Text("History: q(uit)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold")
+LEFT_HISTORY_FOOTER = Text("History: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold")
 
 # Footer text used when showing the right file list (file list view)
 # RIGHT_FILE_FOOTER = Text("Files: press Left to return")
-RIGHT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
+RIGHT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  w(write)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
 
 # Footer text used for help screen
 # HELP_FOOTER = Text("Help: press Enter/␍ to return")
@@ -191,10 +191,10 @@ HELP_FOOTER = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Home/End  Press Enter/␍ to
 # Footer text used when showing the diff for a history/file selection
 # DIFF_FOOTER = Text("Diff: press Left to return to files")
 DIFF_FOOTER_1 = Text(
-    "Diff: q(uit)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End →/f(ull) c(olor) d(iff-type) t(oggle) w(write)", style="bold"
+    "Diff: q(uit)  t(oggle)  w(write)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)", style="bold"
 )
 DIFF_FOOTER_2 = Text(
-    "Diff: q(uit)  ?/h(elp)  ↑/↓/PgUp/PgDn/Home/End ←/f(ull) c(olor) d(iff-type) t(oggle) w(write)", style="bold"
+    "Diff: q(uit)  t(oggle)  w(write)  ?/h(elp)  ↑/↓/PgUp/PgDn/Home/End ←/f(ull)  c(olor)  d(iff-type)", style="bold"
 )
 
 # Supported diff color schemes (used by CLI/config and runtime cycling)
