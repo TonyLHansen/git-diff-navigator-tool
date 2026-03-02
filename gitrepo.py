@@ -178,7 +178,7 @@ class GitRepo(AppException):
     STAGED_MESSAGE = "Staged changes"
     MODS_MESSAGE = "Unstaged modifications"
 
-    def __init__(self, repoRoot: str):
+    def __init__(self, repoRoot: str, branch: str | None = None):
         # One-time per-process cache for git CLI command results
         self._cmd_cache: Dict[str, Any] = {}
         # Resolve the provided path to the git repository top; allow
@@ -188,10 +188,60 @@ class GitRepo(AppException):
         # resolve_repo_top should have raised on failure; assert for typing
         assert resolved is not None
         self._repoRoot: str = resolved
+        self._branch: str | None = (branch or "").strip() or None
+        
+        # Validate the configured branch if provided; throw exception if invalid
+        if self._branch:
+            try:
+                out = check_output(
+                    ["git", "rev-parse", "--verify", self._branch],
+                    cwd=self._repoRoot,
+                    text=True,
+                    stderr=open(os.devnull, "w")
+                )
+                if not out or not out.strip():
+                    raise ValueError(f"__init__: branch {self._branch!r} is not valid (did not resolve to a commit)")
+            except CalledProcessError as e:
+                raise ValueError(f"__init__: branch {self._branch!r} is not valid or does not exist in repository") from e
+            except Exception as e:
+                raise ValueError(f"__init__: failed to validate branch {self._branch!r}") from e
 
     def reset_cache(self) -> None:
         """Reset the per-process command/result cache."""
         self._cmd_cache = {}
+
+    def _get_default_ref(self) -> str:
+        """
+        Return the default git ref for this repository.
+        
+        Returns the configured branch if set and valid, otherwise returns "HEAD".
+        This ensures all history queries are branch-aware when a branch is configured.
+        """
+        return self._branch if self._branch else "HEAD"
+
+    def _get_upstream_ref(self) -> str | None:
+        """
+        Return the upstream tracking branch for the default ref, or None if unavailable.
+        
+        If a branch is configured, attempts to resolve <branch>@{upstream}.
+        Otherwise attempts to resolve HEAD@{upstream}.
+        Returns None if the upstream cannot be resolved.
+        
+        Used to compute pushed/unpushed status relative to the configured branch's upstream.
+        """
+        try:
+            default_ref = self._get_default_ref()
+            upstream_spec = f"{default_ref}@{{upstream}}"
+            out = check_output(
+                ["git", "rev-parse", "--verify", upstream_spec],
+                cwd=self._repoRoot,
+                text=True,
+                stderr=open(os.devnull, "w")
+            )
+            return upstream_spec if (out and out.strip()) else None
+        except (CalledProcessError, Exception):
+            # Upstream not configured or resolution failed; return None
+            return None
 
     @classmethod
     def resolve_repo_top(cls, path: str, raise_on_missing: bool = False) -> tuple[str | None, Exception | None]:
@@ -619,7 +669,8 @@ class GitRepo(AppException):
         first_commit_ts: float | None = None
         git_dir = os.path.join(self._repoRoot, ".git")
         try:
-            out = self._git_run(["git", "log", "--reverse", "--pretty=format:%ct"], text=True)
+            default_ref = self._get_default_ref()
+            out = self._git_run(["git", "log", default_ref, "--reverse", "--pretty=format:%ct"], text=True)
             if out:
                 for line in out.splitlines():
                     line = line.strip()
@@ -794,14 +845,17 @@ class GitRepo(AppException):
           so identical subprocess calls are cheap.
         """
         try:
+            logger.debug("_git_run(%s)", args)
             internal_key = f"_git_run:{' '.join(args)}:{'text' if text else 'bytes'}"
             if internal_key in self._cmd_cache:
+                logger.debug("_git_run cache hit: %s", args)
                 return self._cmd_cache[internal_key]
 
             try:
                 out = check_output(args, cwd=self._repoRoot, text=text)
             except CalledProcessError as e:
                 self.printException(e, f"_git_run: git command failed: {' '.join(args)}")
+                logger.debug("_git_run failed: %s", args)
                 # If caller provided a parsed-result cache_key, store an empty
                 # parsed result there so callers can return quickly next time.
                 if cache_key:
@@ -978,7 +1032,7 @@ class GitRepo(AppException):
         given commit (HEAD).
         """
         # Delegate to the new initial->commit helper to avoid duplication
-        return self.getFileListBetweenNewRepoAndHash("HEAD")
+        return self.getFileListBetweenNewRepoAndHash(self._get_default_ref())
 
     def getFileListBetweenTwoCommits(self, prev_hash: str, curr_hash: str) -> list[tuple[str, str]]:
         """
@@ -1072,7 +1126,7 @@ class GitRepo(AppException):
         Status will reflect the working-tree change type (modified/added/deleted).
         """
         # Delegate to the general handler to avoid duplicating logic
-        return self.getFileListBetweenHashAndCurrentTime("HEAD")
+        return self.getFileListBetweenHashAndCurrentTime(self._get_default_ref())
 
     def getFileListBetweenHashAndCurrentTime(self, hash: str) -> list[tuple[str, str]]:
         """
@@ -1087,7 +1141,7 @@ class GitRepo(AppException):
         """
         Return a list of `(path, status)` for files changed between HEAD and staged index."""
         # Delegate to the generalized staged-vs-hash implementation to avoid duplication
-        return self.getFileListBetweenHashAndStaged("HEAD")
+        return self.getFileListBetweenHashAndStaged(self._get_default_ref())
 
     def getFileListBetweenHashAndStaged(self, hash: str) -> list[tuple[str, str]]:
         """
@@ -1287,7 +1341,12 @@ class GitRepo(AppException):
     ################
 
     def _get_pushed_hashes(self) -> set[str]:
-        """Return commit hashes reachable from remote-tracking refs."""
+        """
+        Return commit hashes reachable from the configured branch's upstream.
+        
+        If a branch is configured, resolves pushed commits relative to its upstream.
+        Otherwise, falls back to all commits reachable from remote-tracking refs.
+        """
         try:
             cache_key = "_get_pushed_hashes"
             if cache_key in self._cmd_cache:
@@ -1296,6 +1355,20 @@ class GitRepo(AppException):
 
             pushed_hashes: set[str] = set()
 
+            # If a branch is configured, try to get its upstream
+            if self._branch:
+                upstream_ref = self._get_upstream_ref()
+                if upstream_ref:
+                    try:
+                        output = self._git_run(["git", "rev-list", upstream_ref], text=True) or ""
+                        if output:
+                            pushed_hashes = {line.strip() for line in output.splitlines() if line.strip()}
+                        self._cmd_cache[cache_key] = pushed_hashes
+                        return pushed_hashes
+                    except CalledProcessError as e:
+                        self.printException(e, "_get_pushed_hashes: git rev-list for upstream failed")
+
+            # Fallback: use all remote-tracking refs when no branch upstream or fallback mode
             remote_out = self._git_run(["git", "config", "--get", "remote.origin.url"], text=True) or ""
             if not remote_out.strip():
                 self._cmd_cache[cache_key] = pushed_hashes
@@ -1323,8 +1396,9 @@ class GitRepo(AppException):
         return new + staged + entire + newrepo
 
     def getHashListEntireRepo(self) -> list[tuple[str, str, str, str]]:
-        """Return all commit hashes in the repository with pushed status."""
-        output = self._git_run(["git", "log", "--all", "--pretty=format:%ct %H %s"], text=True)
+        """Return all commit hashes in the configured branch with pushed status."""
+        default_ref = self._get_default_ref()
+        output = self._git_run(["git", "log", default_ref, "--pretty=format:%ct %H %s"], text=True)
         pairs = self._parse_git_log_output(output or "")
         pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
@@ -1417,8 +1491,9 @@ class GitRepo(AppException):
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
 
+            default_ref = self._get_default_ref()
             output = self._git_run(
-                ["git", "log", "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key
+                ["git", "log", default_ref, "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key
             )
 
             # Get pushed hashes once for status lookup

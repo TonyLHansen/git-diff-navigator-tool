@@ -5829,18 +5829,34 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Mutually exclusive group for initial-popup flags
     popup_group = startup_group.add_mutually_exclusive_group()
     popup_group.add_argument(
+        "-p",
+        "--initial-popup",
+        dest="initial_popup",
+        action="store_true",
+        help="enable the startup popup (overrides config setting)",
+    )
+    popup_group.add_argument(
         "-P",
         "--no-initial-popup",
         dest="no_initial_popup",
         action="store_true",
         help="disable the startup popup",
     )
-    popup_group.add_argument(
-        "-p",
-        "--initial-popup",
-        dest="initial_popup",
+    # Mutually exclusive group for branch flags
+    branch_group = startup_group.add_mutually_exclusive_group()
+    branch_group.add_argument(
+        "-b",
+        "--branch",
+        dest="branch",
+        metavar="BRANCH",
+        help="use a specific git branch (overrides config setting)",
+    )
+    branch_group.add_argument(
+        "-B",
+        "--no-branch",
+        dest="no_branch",
         action="store_true",
-        help="enable the startup popup (overrides config setting)",
+        help="disable branch configuration (overrides config setting)",
     )
     startup_group.add_argument(
         "path", nargs="?", default=".", help="git repository or file within it (default: current directory)"
@@ -5851,19 +5867,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Mutually-exclusive color options within diff group
     color_group = diff_group.add_mutually_exclusive_group()
     color_group.add_argument(
-        "-C",
-        "--no-color",
-        dest="no_color",
-        action="store_true",
-        help="same as `--color=none` with diff colorization off",
-    )
-    color_group.add_argument(
         "-c",
         "--color",
         dest="color",
         metavar="SCHEME",
         choices=DIFF_COLOR_SCHEMES,
         help=f"start with color scheme (one of: {', '.join(DIFF_COLOR_SCHEMES)})",
+    )
+    color_group.add_argument(
+        "-C",
+        "--no-color",
+        dest="no_color",
+        action="store_true",
+        help="same as `--color=none` with diff colorization off",
     )
     diff_group.add_argument(
         "--diff",
@@ -5878,34 +5894,35 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Mutually exclusive group for ignored-files flags
     ignored_group = filelist_group.add_mutually_exclusive_group()
     ignored_group.add_argument(
-        "-I",
-        "--no-ignored-files",
-        dest="no_ignored",
-        action="store_true",
-        help="exclude ignored files from file-mode listings",
-    )
-    ignored_group.add_argument(
         "-i",
         "--ignored-files",
         dest="ignored_files",
         action="store_true",
         help="include ignored files in file-mode listings (overrides config setting)",
     )
+    ignored_group.add_argument(
+        "-I",
+        "--no-ignored-files",
+        dest="no_ignored",
+        action="store_true",
+        help="exclude ignored files from file-mode listings",
+    )
+
     # Mutually exclusive group for untracked-files flags
     untracked_group = filelist_group.add_mutually_exclusive_group()
-    untracked_group.add_argument(
-        "-U",
-        "--no-untracked-files",
-        dest="no_untracked",
-        action="store_true",
-        help="exclude untracked files from file-mode listings",
-    )
     untracked_group.add_argument(
         "-u",
         "--untracked-files",
         dest="untracked_files",
         action="store_true",
         help="include untracked files in file-mode listings (overrides config setting)",
+    )
+    untracked_group.add_argument(
+        "-U",
+        "--no-untracked-files",
+        dest="no_untracked",
+        action="store_true",
+        help="exclude untracked files from file-mode listings",
     )
 
     # Debug options group
@@ -5936,6 +5953,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     #   untracked-files=true/false
     #   repo-first=true/false
     #   initial-popup=true/false
+    #   branch=<branch-name>
     #   color=true/false
     #   debug=<filename>
     # CLI options always take precedence over config defaults.
@@ -5981,6 +5999,12 @@ def main(argv: Optional[list[str]] = None) -> int:
                 b = _getbool(cfg_key)
                 if b is not None:
                     defaults[dest] = transform(b)
+
+            # Optional branch name; blank means no configured branch.
+            if "branch" in src:
+                branch = (src.get("branch") or "").strip()
+                if branch:
+                    defaults["branch"] = branch
 
             # Normalize and validate simple named-choice config keys.
             def _match_choice(key: str, allowed: list[str]) -> str | None:
@@ -6034,7 +6058,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     args = parser.parse_args(argv)
 
-    # Handle CLI flag overrides for initial-popup, ignored-files, and untracked-files:
+    # Handle CLI flag overrides for initial-popup, ignored-files, untracked-files,
+    # and branch selection:
     # Positive flags (e.g., --initial-popup, --ignored-files) take precedence over
     # negative flags and config defaults.
     if args.initial_popup:
@@ -6043,6 +6068,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         args.no_ignored = False
     if args.untracked_files:
         args.no_untracked = False
+    if args.no_branch:
+        args.branch = None
 
     # Validate --highlight is a bare basename (no path elements)
     try:
@@ -6091,9 +6118,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         # repository-relative `relpath` for the provided path. The app will
         # receive the `gitRepo` instance so helpers can call into it.
         try:
-            gitrepo = GitRepo(args.path)
+            gitrepo = GitRepo(args.path, branch=args.branch)
+        except ValueError as ve:
+            if args.verbose:
+                printException(ve, f"repository discovery failed for {args.path}")
+            sys.exit(f"Invalid branch '{args.branch}' for '{args.path}'" if args.branch else f"Not a git repository: {args.path}")
         except Exception as e:
-            printException(e, f"repository discovery failed for {args.path}")
+            if args.verbose:
+                printException(e, f"repository discovery failed for {args.path}")
             sys.exit(f"Not a git repository: {args.path}")
         logger.debug("Discovered repository worktree root: %s", gitrepo.get_repo_root())
 
