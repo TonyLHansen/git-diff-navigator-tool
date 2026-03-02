@@ -1342,10 +1342,11 @@ class GitRepo(AppException):
 
     def _get_pushed_hashes(self) -> set[str]:
         """
-        Return commit hashes reachable from the configured branch's upstream.
-        
-        If a branch is configured, resolves pushed commits relative to its upstream.
-        Otherwise, falls back to all commits reachable from remote-tracking refs.
+        Return commit hashes reachable from the active upstream/remote refs.
+
+        Prefer commits reachable from `<default_ref>@{upstream}` where
+        `default_ref` is the configured branch or HEAD. If no upstream is
+        configured, fall back to all remote-tracking refs.
         """
         try:
             cache_key = "_get_pushed_hashes"
@@ -1355,18 +1356,17 @@ class GitRepo(AppException):
 
             pushed_hashes: set[str] = set()
 
-            # If a branch is configured, try to get its upstream
-            if self._branch:
-                upstream_ref = self._get_upstream_ref()
-                if upstream_ref:
-                    try:
-                        output = self._git_run(["git", "rev-list", upstream_ref], text=True) or ""
-                        if output:
-                            pushed_hashes = {line.strip() for line in output.splitlines() if line.strip()}
-                        self._cmd_cache[cache_key] = pushed_hashes
-                        return pushed_hashes
-                    except CalledProcessError as e:
-                        self.printException(e, "_get_pushed_hashes: git rev-list for upstream failed")
+            # Prefer upstream for configured branch OR current HEAD branch.
+            upstream_ref = self._get_upstream_ref()
+            if upstream_ref:
+                try:
+                    output = self._git_run(["git", "rev-list", upstream_ref], text=True) or ""
+                    if output:
+                        pushed_hashes = {line.strip() for line in output.splitlines() if line.strip()}
+                    self._cmd_cache[cache_key] = pushed_hashes
+                    return pushed_hashes
+                except CalledProcessError as e:
+                    self.printException(e, "_get_pushed_hashes: git rev-list for upstream failed")
 
             # Fallback: use all remote-tracking refs when no branch upstream or fallback mode
             remote_out = self._git_run(["git", "config", "--get", "remote.origin.url"], text=True) or ""
@@ -1375,7 +1375,7 @@ class GitRepo(AppException):
                 return pushed_hashes
 
             try:
-                output = self._git_run(["git", "rev-list", "--all", "--remotes"], text=True) or ""
+                output = self._git_run(["git", "rev-list", "--remotes"], text=True) or ""
                 if output:
                     pushed_hashes = {line.strip() for line in output.splitlines() if line.strip()}
             except CalledProcessError as e:
