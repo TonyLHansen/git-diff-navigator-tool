@@ -201,9 +201,9 @@ class GitRepo(AppException):
                 )
                 if not out or not out.strip():
                     raise ValueError(f"__init__: branch {self._branch!r} is not valid (did not resolve to a commit)")
-            except CalledProcessError as e:
+            except CalledProcessError as _use_raise:
                 raise ValueError(f"__init__: branch {self._branch!r} is not valid or does not exist in repository") from e
-            except Exception as e:
+            except Exception as _use_raise:
                 raise ValueError(f"__init__: failed to validate branch {self._branch!r}") from e
 
     def reset_cache(self) -> None:
