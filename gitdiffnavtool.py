@@ -289,7 +289,8 @@ You may type a "q" (or "Q") to quit at any time. Press "Enter/␍" to dismiss th
 The basic navigation keys are:
 
 - Up/Down arrows/PageUp/PageDown/Beginning/End: move the current selection up and down
-- Left/Right arrows/Enter/␍: switch between file list view, history view, and the diff view for the current selection.
+- Left/Right arrows: move back/forward through views depending on the focused pane.
+- Enter/␍: in list panes, behaves like Right; in Diff/OpenFile panes, toggles split/fullscreen.
 
 The program normally starts in a file list view showing the files in the root of the current repository,
 somewhat similar to what you see with `git status`. You can then navigate up and down to switch the current
@@ -298,17 +299,17 @@ or 2) switch to the history view (using Right arrow or Enter/␍) to see all of 
 From the history view you can navigate the commits and press Right or Enter/␍ again to see the diff for that commit and file.
 (You can also mark a particular commit in the history view with "m" and then navigate to another commit; 
 press Right/Enter/␍ to see the diff between the marked commit and the current selection.)
-As second Right/Enter/␍ will switch to a full screen diff view, and from there you can press Left to return to the previous view.
+While viewing Diff or OpenFile content, Right/Enter/`f` promotes the pane to fullscreen and Left returns to split (or back to the prior pane when already in split).
 
 Alternatively, you can start the program in repository mode (using the `-R`/`--repo-first` flag) that
 initially shows a history view of all commits in the repository. You can then select a commit
 and press Right arrow to see the file list for that commit (or that commit and a marked commit when using "m" to mark a commit).
-Pressing Right/Enter/␍ on a file in that list will show the diff for that file and commit.
+Pressing Right/Enter/␍ on a file in that list will show the diff for that file and commit. Press `o` to open file content in the OpenFile pane.
 
 Each window will also display a footer with context-sensitive hints for available actions.
 For example, when viewing the file list, the footer will prompt you to press Right to view the file history. 
-When viewing a diff, the footer will show options for toggling full/side-by-side diff, toggling paired layouts (`t`),
-writing a snapshot (`w`), color ('c'), and diff ('d') type.
+When viewing Diff/OpenFile content, the footer shows actions such as fullscreen toggle (`Enter`/`f`), paired-layout toggle (`t`),
+snapshot write (`w`), and (for Diff) color (`c`) and diff variant (`d`).
 
 Remember, you can press "?" at any time to view the help screen with these and additional instructions.
 And of course, you can quit at any time by pressing "q" or "Q".
@@ -321,10 +322,9 @@ HELP_TEXT = """
 # gitdiffnavtool help
 
 Overview:
-- gitdiffnavtool is a terminal UI for exploring a Git repository: the
-    left/right columns show file trees and per-file history, the central
-    commit lists show repository history, and the diff column shows patches
-    for a selected file/commit pair. It uses the `git` CLI for status and history operations.
+- gitdiffnavtool is a terminal UI for exploring a Git repository with
+    file lists, per-file and repo history lists, a diff pane, and an
+    open-file content pane. It uses the `git` CLI for status and history operations.
 
 Invocation:
 - Run `gitdiffnavtool [path]` to open the app for `path` (directory or
@@ -336,9 +336,9 @@ Invocation:
 Basic navigation:
 - Arrow keys: Up / Down / PageUp / PageDown / Home / End move
     the selection within the focused column.
-- Right (or Enter/␍): open/enter the selected row (enter directories,
-    open file history or diff depending on focus).
-- Left: go back / close / move focus to the previous column.
+- Right: open/enter the selected row, or promote Diff/OpenFile to fullscreen.
+- Enter/␍: in list columns behaves like Right; in Diff/OpenFile toggles split/fullscreen.
+- Left: go back / close (in Diff/OpenFile: fullscreen -> split, split -> prior state).
 - `q` (or Ctrl-Q): quit the application.
 
 Global actions:
@@ -385,9 +385,17 @@ Diff Column:
 - Commands when focused:
     - `d` / `D`: rotate the diff command variant. When a full textual diff is available this cycles through configured textual variants (for example, ignore-space-change and patience).
     - `c` / `C`: toggle colorized diffs on/off.
-    - `f` / `F`: toggle fullscreen mode (hide other columns).
-    - `t` / `T`: toggle paired layouts (e.g., between file and history fullscreen).
+    - `Right` / `Enter` / `f` / `F`: toggle split <-> fullscreen diff view.
+    - `t` / `T`: toggle paired split layouts (`history_file_diff` <-> `file_history_diff`).
     - `w` / `W`: write a snapshot of the currently-visible diff (previous docs used the term "save").
+
+Open File Column:
+- Shows file content at a selected commit (opened via `o` from history/file views).
+- Commands when focused:
+    - `Right` / `Enter` / `f` / `F`: toggle split <-> fullscreen open-file view.
+    - `t` / `T`: toggle paired split layouts (`history_file_open` <-> `file_history_open`).
+    - `Left`: close/open-file navigation back toward the originating list.
+    - `w` / `W`: write a snapshot for the current file/hash.
 
 Tips and behavior notes:
 - Short commit hashes are shown using the app's `HASH_LENGTH` constant.

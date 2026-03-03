@@ -15,13 +15,13 @@ I hope it helps you.
 
 Overview
 --------
-The Git Diff History Navigator Tool is a terminal Textual TUI that provides a three-column view for
+The Git Diff History Navigator Tool is a terminal Textual TUI that provides a multi-pane view for
 
 * browsing a filesystem tree,
 * viewing the git history for a selected file, and
-* exploring the diffs between different versions.
+* exploring diffs and opening file contents at selected commits.
 
-The three columns are titled: Files (left), History (middle), Diff (right).
+Depending on layout, panes include file lists, file/repo history lists, a diff view, and an open-file view.
 
 Type `q` or `Q` to exit the program.
 
@@ -44,7 +44,7 @@ Left and Right arrow keys perform differently in each column.
   - A Right Arrow will 
     - (for files) open the History column for the current filename
     - (for directories) navigates to the current directory name.
-  - A Left Arrow on the directory ".." will navigate to the parent directory.
+  - A Left Arrow navigates to the parent directory (no-op at repository root).
 
 - History column:
   - Lines are populated from `git log --follow`.
@@ -61,13 +61,21 @@ Left and Right arrow keys perform differently in each column.
   - A header line indicates the two hashes being compared, e.g.:
     `Comparing: <old_hash>..<new_hash>`.
   - The order is always the lower list item vs the higher item, so diffs read `older..newer`.
-  - A Left Arrow will close the Diff column.
+  - A Left Arrow closes fullscreen diff back to split, or returns to the prior pane from split mode.
   - Commands while focused in the Diff column:
     - `d` / `D`: rotate the diff command variant. The variants cycle through common textual options (for example: ignore-space-change, patience, and word-diff) when a full textual diff is available.
     - `c` / `C`: toggle the use of color.
-    - `f` / `F`: toggle fullscreen mode (hide other columns).
-    - `t` / `T`: toggle or swap paired layouts (e.g., switch between file and history fullscreen views).
+    - `Right` / `Enter` / `f` / `F`: toggle split/fullscreen.
+    - `t` / `T`: toggle paired split layouts (`history→file→diff` <-> `file→history→diff`).
     - `w` / `W`: write a snapshot of the currently-visible diff (previous docs referred to this as "save").
+
+- OpenFile column:
+  - Open with `o` from history/file views.
+  - Shows file content at a selected hash with line numbers.
+  - `Right` / `Enter` / `f` / `F`: toggle split/fullscreen.
+  - `t` / `T`: toggle paired split layouts (`history→file→open` <-> `file→history→open`).
+  - `Left`: close fullscreen to split, then return toward the originating pane.
+  - `w` / `W`: write snapshot files.
 
 
 Implementation notes
