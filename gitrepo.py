@@ -241,7 +241,7 @@ class GitRepo(AppException):
                 stderr=open(os.devnull, "w"),
             )
             return upstream_spec if (out and out.strip()) else None
-        except (CalledProcessError, Exception):
+        except (CalledProcessError, Exception) as _no_logging:
             # Upstream not configured or resolution failed; return None
             return None
 
