@@ -1719,6 +1719,35 @@ class RightSideBase(AppBase):
             self.printException(e, "_load_open_file failed")
 
 
+class FullScreenBase(AppBase):
+    """
+    Base class for widgets supporting fullscreen/split view toggles.
+    
+    Provides common key handlers and state management for DiffList and OpenFileList.
+    Subclasses should call super().__init__() and can override specific behaviors.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Track the layout we came from for fullscreen restoration
+        self._saved_layout: str | None = None
+
+    def key_w(self, event: events.Key | None = None) -> None:
+        """Prompt to save snapshot files for the current content."""
+        logger.debug(f"{self.__class__.__name__}.key_w called: key=%r", getattr(event, "key", None))
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, f"{self.__class__.__name__}.key_w: event.stop failed")
+        self.key_w_helper(event)
+
+    def key_W(self, event: events.Key | None = None) -> None:
+        """Alias for key_w (Shift-W)."""
+        logger.debug(f"{self.__class__.__name__}.key_W called: key=%r", getattr(event, "key", None))
+        return self.key_w(event)
+
+
 class FileListBase(AppBase):
     """
     Base for file list widgets.
@@ -3984,7 +4013,7 @@ class RepoModeHistoryList(HistoryListBase):
         return self.key_right(event, recursive=True)
 
 
-class DiffList(AppBase):
+class DiffList(FullScreenBase):
     """
     List view for showing diffs.
 
@@ -4003,10 +4032,6 @@ class DiffList(AppBase):
         # Where to return when leaving the diff view: (state_name, widget_id, footer)
         # Always initialized to a non-None default so callers can rely on it.
         self.go_back: tuple = ("history_file", RIGHT_FILE_LIST_ID, RIGHT_FILE_FOOTER)
-        # Saved layout for fullscreen diff toggles. When the user presses
-        # Right from a history_file_diff or file_history_diff layout we save
-        # that layout so `key_left` can restore it when exiting fullscreen.
-        self._saved_layout: str | None = None
 
     def prepDiffList(self, filename: str, prev: str, curr: str, variant_index: int, go_back: tuple) -> None:
         """
@@ -4381,16 +4406,6 @@ class DiffList(AppBase):
         except Exception as e:
             self.printException(e, "DiffList.key_d failed")
 
-    def key_w(self, event: events.Key | None = None) -> None:
-        """Prompt to save snapshot files for the diff's current file."""
-        logger.debug("DiffList.key_w called: key=%r index=%r", getattr(event, "key", None), self.index)
-        if event is not None:
-            try:
-                event.stop()
-            except Exception as e:
-                self.printException(e, "DiffList.key_w: event.stop failed")
-        self.key_w_helper(event)
-
     def key_D(self, event: events.Key | None = None) -> None:
         """Alias for `key_d` (Shift-D)."""
         logger.debug("DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), self.index)
@@ -4529,7 +4544,7 @@ class HelpList(AppBase):
             self.printException(e, "HelpList.key_enter failed")
 
 
-class OpenFileList(AppBase):
+class OpenFileList(FullScreenBase):
     """Renders file content as scrollable lines. Opened from history lists with 'o' key."""
 
     def __init__(self, *args, **kwargs):
@@ -4542,8 +4557,7 @@ class OpenFileList(AppBase):
         self._cached_key: tuple[str, str] | None = None
         # Track in-flight background load key to avoid duplicate scheduling
         self._loading_key: tuple[str, str] | None = None
-        # Track the layout we came from (file_history_open or history_file_open)
-        self._saved_layout = "file_history_open"
+        # _saved_layout is inherited from FullScreenBase and set by callers (key_o handlers)
 
     def prepOpenFileList(self, filename: str, hash_value: str) -> None:
         """
@@ -4658,7 +4672,8 @@ class OpenFileList(AppBase):
             self.printException(e, "_update_title failed")
 
     def text_of(self, node: ListItem) -> str:
-        """Extract file line text from a ListItem in OpenFileList.
+        """
+        Extract file line text from a ListItem in OpenFileList.
         
         Items are structured as ListItem(Label(Text(...))), so we access directly.
         """
@@ -4760,21 +4775,6 @@ class OpenFileList(AppBase):
         if not recursive:
             logger.debug("OpenFileList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_f(event, recursive=True)
-
-    def key_w(self, event: events.Key | None = None) -> None:
-        """Prompt to save snapshot files for the currently-displayed file."""
-        logger.debug("OpenFileList.key_w called: key=%r", getattr(event, "key", None))
-        if event is not None:
-            try:
-                event.stop()
-            except Exception as e:
-                self.printException(e, "OpenFileList.key_w: event.stop failed")
-        self.key_w_helper(event)
-
-    def key_W(self, event: events.Key | None = None) -> None:
-        """Alias for key_w (Shift-W)."""
-        logger.debug("OpenFileList.key_W called: key=%r", getattr(event, "key", None))
-        return self.key_w(event)
 
     def key_t(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Toggle between paired layouts (file_history_open <-> history_file_open)."""
