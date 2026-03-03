@@ -189,7 +189,7 @@ class GitRepo(AppException):
         assert resolved is not None
         self._repoRoot: str = resolved
         self._branch: str | None = (branch or "").strip() or None
-        
+
         # Validate the configured branch if provided; throw exception if invalid
         if self._branch:
             try:
@@ -197,12 +197,14 @@ class GitRepo(AppException):
                     ["git", "rev-parse", "--verify", self._branch],
                     cwd=self._repoRoot,
                     text=True,
-                    stderr=open(os.devnull, "w")
+                    stderr=open(os.devnull, "w"),
                 )
                 if not out or not out.strip():
                     raise ValueError(f"__init__: branch {self._branch!r} is not valid (did not resolve to a commit)")
             except CalledProcessError as _use_raise:
-                raise ValueError(f"__init__: branch {self._branch!r} is not valid or does not exist in repository") from e
+                raise ValueError(
+                    f"__init__: branch {self._branch!r} is not valid or does not exist in repository"
+                ) from e
             except Exception as _use_raise:
                 raise ValueError(f"__init__: failed to validate branch {self._branch!r}") from e
 
@@ -213,7 +215,7 @@ class GitRepo(AppException):
     def _get_default_ref(self) -> str:
         """
         Return the default git ref for this repository.
-        
+
         Returns the configured branch if set and valid, otherwise returns "HEAD".
         This ensures all history queries are branch-aware when a branch is configured.
         """
@@ -222,11 +224,11 @@ class GitRepo(AppException):
     def _get_upstream_ref(self) -> str | None:
         """
         Return the upstream tracking branch for the default ref, or None if unavailable.
-        
+
         If a branch is configured, attempts to resolve <branch>@{upstream}.
         Otherwise attempts to resolve HEAD@{upstream}.
         Returns None if the upstream cannot be resolved.
-        
+
         Used to compute pushed/unpushed status relative to the configured branch's upstream.
         """
         try:
@@ -236,7 +238,7 @@ class GitRepo(AppException):
                 ["git", "rev-parse", "--verify", upstream_spec],
                 cwd=self._repoRoot,
                 text=True,
-                stderr=open(os.devnull, "w")
+                stderr=open(os.devnull, "w"),
             )
             return upstream_spec if (out and out.strip()) else None
         except (CalledProcessError, Exception):

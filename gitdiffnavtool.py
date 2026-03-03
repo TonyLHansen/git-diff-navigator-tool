@@ -167,13 +167,18 @@ DIFF_TITLE = "diff-title"
 HELP_LIST_ID = "help-list"
 HELP_TITLE = "help-title"
 
+OPEN_FILE_LIST_ID = "open-file-list"
+OPEN_FILE_TITLE = "open-file-title"
+
 # Footer text used when showing the left file list
 # LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
 LEFT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
 
 # Footer text used when switching to file-history view
 # RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
-RIGHT_HISTORY_FOOTER = Text("History: q(uit)  t(oggle)  w(write)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold")
+RIGHT_HISTORY_FOOTER = Text(
+    "History: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold"
+)
 
 # Footer text used when showing the left history pane
 # LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
@@ -181,20 +186,22 @@ LEFT_HISTORY_FOOTER = Text("History: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/ Pg
 
 # Footer text used when showing the right file list (file list view)
 # RIGHT_FILE_FOOTER = Text("Files: press Left to return")
-RIGHT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  w(write)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
+RIGHT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
 
 # Footer text used for help screen
 # HELP_FOOTER = Text("Help: press Enter/␍ to return")
 HELP_FOOTER = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Home/End  Press Enter/␍ to return", style="bold")
 # Text("Help: q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
 
+# Footer text used when showing open file content
+OPEN_FILE_FOOTER = Text("OpenFile: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/f(ull)", style="bold")
 # Footer text used when showing the diff for a history/file selection
 # DIFF_FOOTER = Text("Diff: press Left to return to files")
 DIFF_FOOTER_1 = Text(
-    "Diff: q(uit)  t(oggle)  w(write)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)", style="bold"
+    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)", style="bold"
 )
 DIFF_FOOTER_2 = Text(
-    "Diff: q(uit)  t(oggle)  w(write)  ?/h(elp)  ↑/↓/PgUp/PgDn/Home/End ←/f(ull)  c(olor)  d(iff-type)", style="bold"
+    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ↑/↓/PgUp/PgDn/Home/End ←/f(ull)  c(olor)  d(iff-type)", style="bold"
 )
 
 # Supported diff color schemes (used by CLI/config and runtime cycling)
@@ -916,7 +923,8 @@ class AppBase(AppException, ListView):
                                     self.printException(_e, "apply_index_change: fallback checking class failed")
                                     state = False
                                 debug_nodes.append(f"{i}:{txt}:{'A' if state else '_'}")
-                            logger.debug("apply_index_change: fallback post-activation nodes=%s", debug_nodes)
+                            if self.app.verbose > 2:
+                                logger.debug("apply_index_change: fallback post-activation nodes=%s", debug_nodes)
                         except Exception as _e:
                             self.printException(_e, "apply_index_change: fallback post-activation logging failed")
                     except Exception as _e:
@@ -1687,6 +1695,22 @@ class MessageModal(ModalScreen):
                 printException(e, "MessageModal.on_key: pop_screen failed")
         except Exception as e:
             printException(e, "MessageModal.on_key failed")
+
+
+class RightSideBase(AppBase):
+    """
+    Mixin for right-side widgets that support opening files with the 'o' key.
+
+    Provides the _load_open_file method used by FileModeHistoryList and RepoModeFileList.
+    """
+
+    def _load_open_file(self, filepath: str, commit_hash: str) -> None:
+        """Load and display file content asynchronously."""
+        try:
+            self.app.openfile_list.prepOpenFileList(filepath, commit_hash)
+            self.app.openfile_list._update_title()
+        except Exception as e:
+            self.printException(e, "_load_open_file failed")
 
 
 class FileListBase(AppBase):
@@ -3054,7 +3078,7 @@ class FileModeFileList(FileListBase):
         return self.toggle_untracked(event)
 
 
-class RepoModeFileList(FileListBase):
+class RepoModeFileList(FileListBase, RightSideBase):
     """
     Repo-mode file list: shows files changed between commits.
 
@@ -3297,6 +3321,47 @@ class RepoModeFileList(FileListBase):
         """Alias for key_w to support uppercase 'W' as well."""
         logger.debug("RepoModeFileList.key_W called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_w(event, recursive=True)
+
+    def key_o(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Open the file content for the selected commit (key 'o')."""
+        if not recursive:
+            logger.debug("RepoModeFileList.key_o called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "RepoModeFileList.key_o: event.stop failed")
+        try:
+            # Get selected file path and current commit hash
+            idx = self.index
+            if idx < 0 or idx >= len(self.children):
+                return
+
+            selected_item = self.children[idx]
+            filepath = self.text_of(selected_item)
+
+            if not filepath:
+                return
+
+            commit_hash = self.app.current_hash
+            if commit_hash is None:
+                commit_hash = GitRepo.NEWREPO
+
+            # Switch to history_file_open layout immediately (don't wait for file load)
+            # Save the layout so OpenFileList knows where we came from
+            self.app.openfile_list._saved_layout = "history_file_open"
+            self.app.change_state("history_file_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+
+            # Load file content asynchronously in the background
+            self.app.call_later(lambda: self._load_open_file(filepath, commit_hash))
+        except Exception as e:
+            self.printException(e, "RepoModeFileList.key_o failed")
+        self._log_visible_items("key_o after processing")
+
+    def key_O(self, event: events.Key | None = None) -> None:
+        """Alias for key_o (Shift-O)."""
+        logger.debug("RepoModeFileList.key_O called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_o(event, recursive=True)
 
 
 class HistoryListBase(AppBase):
@@ -3615,7 +3680,7 @@ class HistoryListBase(AppBase):
             self.printException(e, "HistoryListBase._finalize_historylist_prep failed")
 
 
-class FileModeHistoryList(HistoryListBase):
+class FileModeHistoryList(HistoryListBase, RightSideBase):
     """History list for a single file's history. Stubbed prep method."""
 
     def prepFileModeHistoryList(self, path: str, prev_hash: str | None = None, curr_hash: str | None = None) -> None:
@@ -3764,6 +3829,45 @@ class FileModeHistoryList(HistoryListBase):
         except Exception as e:
             self.printException(e, "FileModeHistoryList.key_left change_state failed")
         self._log_visible_items("key_left after processing index change")
+
+    def key_o(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Open the file content for the selected commit (key 'o')."""
+        if not recursive:
+            logger.debug("FileModeHistoryList.key_o called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "FileModeHistoryList.key_o: event.stop failed")
+        try:
+            # Get selected commit hash from the current node
+            nodes = self._nodes or []
+            idx = self.index or 0
+            commit_hash = getattr(nodes[idx], "_hash", None) if 0 <= idx < len(nodes) else None
+            if commit_hash is None:
+                return
+
+            # Get the file path being displayed
+            filepath = os.path.join(self.app.rel_dir, self.app.rel_file) if self.app.rel_file else self.app.rel_dir
+
+            logger.debug("FileModeHistoryList.key_o about to change_state to file_history_open")
+            # Switch to file_history_open layout immediately (don't wait for file load)
+            # Save the layout so OpenFileList knows where we came from
+            self.app.openfile_list._saved_layout = "file_history_open"
+            self.app.change_state("file_history_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+            logger.debug("FileModeHistoryList.key_o change_state completed, now scheduling _load_open_file")
+
+            # Load file content asynchronously in the background
+            self.app.call_later(lambda: self._load_open_file(filepath, commit_hash))
+            logger.debug("FileModeHistoryList.key_o call_later scheduled, returning")
+        except Exception as e:
+            self.printException(e, "FileModeHistoryList.key_o failed")
+        self._log_visible_items("key_o after processing")
+
+    def key_O(self, event: events.Key | None = None) -> None:
+        """Alias for key_o (Shift-O)."""
+        logger.debug("FileModeHistoryList.key_O called: key=%r", getattr(event, "key", None))
+        return self.key_o(event, recursive=True)
 
 
 class RepoModeHistoryList(HistoryListBase):
@@ -4419,6 +4523,242 @@ class HelpList(AppBase):
             self.printException(e, "HelpList.key_enter failed")
 
 
+class OpenFileList(AppBase):
+    """Renders file content as scrollable lines. Opened from history lists with 'o' key."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.highlight_bg_style = HIGHLIGHT_HELP_BG
+        # Track current filename and hash for title display
+        self._open_filename = ""
+        self._open_hash = ""
+        # Track the layout we came from (file_history_open or history_file_open)
+        self._saved_layout = "file_history_open"
+
+    def prepOpenFileList(self, filename: str, hash_value: str) -> None:
+        """
+        Prepare and display file content for the given filename at hash_value.
+
+        Shows a loading message immediately, then schedules the actual file loading
+        in the background to keep the UI responsive.
+        """
+        try:
+            logger.debug("prepOpenFileList: filename=%r hash=%r", filename, hash_value)
+            self._open_filename = filename
+            self._open_hash = hash_value
+
+            # Clear the list and show loading message immediately
+            self.clear()
+            self.append(ListItem(Label(Text("Loading file..."))))
+
+            # Schedule the actual loading in the background so UI can update
+            self.app.call_later(lambda: self._load_and_render(filename, hash_value))
+
+            self._populated = True
+        except Exception as e:
+            self.printException(e, "prepOpenFileList failed")
+
+    def _load_and_render(self, filename: str, hash_value: str) -> None:
+        """Load file from git and start progressive rendering."""
+        try:
+            logger.debug("_load_and_render: starting load for %r @ %r", filename, hash_value)
+            # Get file contents at the given hash using gitRepo
+            reldir, relfile = self.app.gitRepo.repo_rel_path_to_reldir_relfile(filename)
+            content = self.app.gitRepo.getFileContents(hash_value, reldir, relfile)
+
+            if content is None:
+                content = b"(File not found or unable to read)"
+
+            # Decode content to string
+            try:
+                text_content = content.decode("utf-8", errors="replace")
+            except Exception as e:
+                self.printException(e, "_load_and_render: decoding content failed")
+                text_content = "(Unable to decode file content)"
+
+            # Split into lines for progressive rendering
+            lines = text_content.splitlines()
+            logger.debug("_load_and_render: loaded %d lines, starting progressive render", len(lines))
+
+            # Clear the list (remove loading message)
+            self.clear()
+
+            # Start chunked rendering
+            self._render_file_chunk(lines, 0)
+
+            self._highlight_top()
+        except Exception as e:
+            self.printException(e, "_load_and_render failed")
+            self.clear()
+            self.append(ListItem(Label(Text("(Error reading file)"))))
+
+    def _render_file_chunk(self, lines: list, start_idx: int, chunk_size: int = 500) -> None:
+        """Render a chunk of file lines, then schedule the next chunk."""
+        try:
+            # Render this chunk
+            end_idx = min(start_idx + chunk_size, len(lines))
+            for i in range(start_idx, end_idx):
+                line = lines[i]
+                display_line = f"{i+1:6d}:  {line}"
+                self.append(ListItem(Label(Text(display_line))))
+
+            logger.debug("prepOpenFileList: rendered lines %d-%d", start_idx, end_idx)
+
+            # Schedule next chunk if there are more lines
+            if end_idx < len(lines):
+                self.app.call_later(lambda: self._render_file_chunk(lines, end_idx, chunk_size))
+        except Exception as e:
+            self.printException(e, "_render_file_chunk failed")
+
+    def _update_title(self) -> None:
+        """Update the title to show filename and hash."""
+        try:
+            title_text = f"OpenFile: {self._open_filename} @ {self._open_hash[:12]}"
+            title_widget = self.app.query_one(f"#{OPEN_FILE_TITLE}", Label)
+            title_widget.update(Text(title_text))
+        except Exception as e:
+            self.printException(e, "_update_title failed")
+
+    def text_of(self, node: ListItem) -> str:
+        """Extract file line text from a ListItem in OpenFileList.
+        
+        Items are structured as ListItem(Label(Text(...))), so we access directly.
+        """
+        try:
+            # Get the Label child (first child of ListItem)
+            if node.children and isinstance(node.children[0], Label):
+                lbl = node.children[0]
+                if hasattr(lbl, "renderable"):
+                    renderable = lbl.renderable
+                    if isinstance(renderable, Text):
+                        return renderable.plain
+            # Fallback
+            return str(node)
+
+        except Exception as e:
+            self.printException(e, "OpenFileList.text_of failed")
+            return str(node)
+
+    def key_left(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Return from open file view to the previous history view."""
+        if not recursive:
+            logger.debug("OpenFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "OpenFileList.key_left: event.stop failed")
+
+            # Restore the saved layout (file_history_open or history_file_open)
+            layout = self._saved_layout
+            if layout == "file_history_open":
+                self.app.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
+            elif layout == "history_file_open":
+                self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
+            else:
+                # Fallback
+                self.app.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
+        except Exception as e:
+            self.printException(e, "OpenFileList.key_left failed")
+
+    def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Promote open file view to fullscreen."""
+        if not recursive:
+            logger.debug("OpenFileList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "OpenFileList.key_right: event.stop failed")
+
+            current = self.app._current_layout
+            if current in ("file_history_open", "history_file_open"):
+                # Save the current layout before going fullscreen
+                self._saved_layout = current
+                self.app.change_state("open_file_fullscreen", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+        except Exception as e:
+            self.printException(e, "OpenFileList.key_right failed")
+
+    def key_f(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Toggle between fullscreen and split view."""
+        if not recursive:
+            logger.debug("OpenFileList.key_f called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "OpenFileList.key_f: event.stop failed")
+
+            current = self.app._current_layout
+            if current == "open_file_fullscreen":
+                # Restore the saved layout
+                self.app.change_state(self._saved_layout, f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+            elif current in ("file_history_open", "history_file_open"):
+                # Save current and go fullscreen
+                self._saved_layout = current
+                self.app.change_state("open_file_fullscreen", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+        except Exception as e:
+            self.printException(e, "OpenFileList.key_f failed")
+
+    def key_F(self, event: events.Key | None = None) -> None:
+        """Alias for key_f (Shift-F)."""
+        logger.debug("OpenFileList.key_F called: key=%r", getattr(event, "key", None))
+        return self.key_f(event, recursive=True)
+
+    def key_enter(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Toggle fullscreen like key_f."""
+        if not recursive:
+            logger.debug("OpenFileList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_f(event, recursive=True)
+
+    def key_w(self, event: events.Key | None = None) -> None:
+        """Prompt to save snapshot files for the currently-displayed file."""
+        logger.debug("OpenFileList.key_w called: key=%r", getattr(event, "key", None))
+        if event is not None:
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "OpenFileList.key_w: event.stop failed")
+        self.key_w_helper(event)
+
+    def key_W(self, event: events.Key | None = None) -> None:
+        """Alias for key_w (Shift-W)."""
+        logger.debug("OpenFileList.key_W called: key=%r", getattr(event, "key", None))
+        return self.key_w(event)
+
+    def key_t(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Toggle between paired layouts (file_history_open <-> history_file_open)."""
+        if not recursive:
+            logger.debug("OpenFileList.key_t called: key=%r", getattr(event, "key", None))
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "OpenFileList.key_t: event.stop failed")
+
+            current = self.app._current_layout
+            if current == "file_history_open":
+                # Switch to history_file_open layout
+                self.app.change_state("history_file_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+            elif current == "history_file_open":
+                # Switch to file_history_open layout
+                self.app.change_state("file_history_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+            elif current == "open_file_fullscreen":
+                # Delegate to app toggle to handle fullscreen layout toggle
+                self.app.toggle(current, event)
+        except Exception as e:
+            self.printException(e, "OpenFileList.key_t failed")
+
+    def key_T(self, event: events.Key | None = None) -> None:
+        """Alias for key_t (Shift-T)."""
+        logger.debug("OpenFileList.key_T called: key=%r", getattr(event, "key", None))
+        return self.key_t(event, recursive=True)
+
+
 class GitHistoryNavTool(AppException, App):
     """
     Main Textual application wiring the lists together.
@@ -4568,6 +4908,9 @@ class GitHistoryNavTool(AppException, App):
             with Vertical(id="help-column"):
                 yield Label(Text("Help"), id=HELP_TITLE)
                 yield HelpList(id=HELP_LIST_ID)
+            with Vertical(id="open-column"):
+                yield Label(Text("OpenFile"), id=OPEN_FILE_TITLE)
+                yield OpenFileList(id=OPEN_FILE_LIST_ID)
 
         # Use a Label with id="footer" so `change_footer` can update it.
         # Placing it outside the `Horizontal` ensures it always sits below
@@ -4592,6 +4935,7 @@ class GitHistoryNavTool(AppException, App):
                 self.repo_mode_file_list = self.query_one(f"#{RIGHT_FILE_LIST_ID}", RepoModeFileList)
                 self.diff_list = self.query_one(f"#{DIFF_LIST_ID}", DiffList)
                 self.help_list = self.query_one(f"#{HELP_LIST_ID}", HelpList)
+                self.openfile_list = self.query_one(f"#{OPEN_FILE_LIST_ID}", OpenFileList)
             except Exception as e:
                 self.printException(e)
                 # composition must match expected ids
@@ -4872,9 +5216,10 @@ class GitHistoryNavTool(AppException, App):
         right_file_w: int,
         diff_w: int,
         help_w: int,
+        open_file_w: int,
     ) -> None:
         """
-        Set column widths and visibility for the six canonical columns.
+        Set column widths and visibility for the seven canonical columns.
 
         If a width is zero the column is hidden (styles.display set to "none").
         Otherwise `styles.width` is set to "{width}%" and `styles.display` is cleared.
@@ -4919,6 +5264,12 @@ class GitHistoryNavTool(AppException, App):
                 c.styles.flex = 0
             except Exception as e:
                 self.printException(e, "could not set help-column")
+            try:
+                c = self.query_one("#open-column")
+                c.styles.width = f"{open_file_w}%"
+                c.styles.flex = 0
+            except Exception as e:
+                self.printException(e, "could not set open-column")
 
             # set widget visibility based on widths
             try:
@@ -4945,6 +5296,10 @@ class GitHistoryNavTool(AppException, App):
                 self.help_list.styles.display = show if help_w else hide
             except Exception as e:
                 self.printException(e, "could not set help-list display")
+            try:
+                self.openfile_list.styles.display = show if open_file_w else hide
+            except Exception as e:
+                self.printException(e, "could not set openfile-list display")
         except Exception as e:
             self.printException(e, "error applying column layout")
 
@@ -4962,22 +5317,28 @@ class GitHistoryNavTool(AppException, App):
         try:
             logger.debug(f"change_layout: newlayout={newlayout}")
             if newlayout == "file_fullscreen":
-                self._apply_column_layout(100, 0, 0, 0, 0, 0)
+                self._apply_column_layout(100, 0, 0, 0, 0, 0, 0)
             elif newlayout == "history_fullscreen":
-                self._apply_column_layout(0, 100, 0, 0, 0, 0)
+                self._apply_column_layout(0, 100, 0, 0, 0, 0, 0)
             elif newlayout == "file_history":
-                self._apply_column_layout(15, 0, 85, 0, 0, 0)
+                self._apply_column_layout(15, 0, 85, 0, 0, 0, 0)
             elif newlayout == "history_file":
-                self._apply_column_layout(0, 15, 0, 85, 0, 0)
+                self._apply_column_layout(0, 15, 0, 85, 0, 0, 0)
             elif newlayout == "file_history_diff":
-                self._apply_column_layout(5, 0, 20, 0, 75, 0)
+                self._apply_column_layout(5, 0, 20, 0, 75, 0, 0)
             elif newlayout == "history_file_diff":
-                self._apply_column_layout(0, 5, 0, 20, 75, 0)
+                self._apply_column_layout(0, 5, 0, 20, 75, 0, 0)
+            elif newlayout == "file_history_open":
+                self._apply_column_layout(5, 0, 20, 0, 0, 0, 75)
+            elif newlayout == "history_file_open":
+                self._apply_column_layout(0, 5, 0, 20, 0, 0, 75)
+            elif newlayout == "open_file_fullscreen":
+                self._apply_column_layout(0, 0, 0, 0, 0, 0, 100)
             elif newlayout == "diff_fullscreen":
-                self._apply_column_layout(0, 0, 0, 0, 100, 0)
+                self._apply_column_layout(0, 0, 0, 0, 100, 0, 0)
                 self.change_footer(DIFF_FOOTER_2)
             elif newlayout == "help_fullscreen":
-                self._apply_column_layout(0, 0, 0, 0, 0, 100)
+                self._apply_column_layout(0, 0, 0, 0, 0, 100, 0)
             else:
                 raise ValueError(f"unknown layout: {newlayout}")
             try:
@@ -5081,6 +5442,7 @@ class GitHistoryNavTool(AppException, App):
                     RIGHT_FILE_TITLE,
                     DIFF_TITLE,
                     HELP_TITLE,
+                    OPEN_FILE_TITLE,
                 ]
                 for tid in title_ids:
                     try:
@@ -5114,6 +5476,9 @@ class GitHistoryNavTool(AppException, App):
                 elif key == HELP_LIST_ID:
                     widget = self.help_list
                     label_name = HELP_TITLE
+                elif key == OPEN_FILE_LIST_ID:
+                    widget = self.openfile_list
+                    label_name = OPEN_FILE_TITLE
 
                 else:
                     try:
@@ -5143,6 +5508,7 @@ class GitHistoryNavTool(AppException, App):
                             ("right_history_list", self.file_mode_history_list),
                             ("diff_list", self.diff_list),
                             ("help_list", self.help_list),
+                            ("open_file_list", self.openfile_list),
                         ]
                         for cname, w in candidates:
                             if w is None:
@@ -6122,7 +6488,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         except ValueError as ve:
             if args.verbose:
                 printException(ve, f"repository discovery failed for {args.path}")
-            sys.exit(f"Invalid branch '{args.branch}' for '{args.path}'" if args.branch else f"Not a git repository: {args.path}")
+            sys.exit(
+                f"Invalid branch '{args.branch}' for '{args.path}'"
+                if args.branch
+                else f"Not a git repository: {args.path}"
+            )
         except Exception as e:
             if args.verbose:
                 printException(e, f"repository discovery failed for {args.path}")
