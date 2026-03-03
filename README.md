@@ -95,8 +95,22 @@ gitdiffnavtool.py [options] [path]
 ```
 
 If `--no-color` is provided, the diff output will not be colorized.
+If `--hash-length N` is provided, displayed short commit hashes will use `N` characters.
 
 `path` is optional — it defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
+
+Configuration
+-------------
+You can set defaults in `.gitdiffnavtool.ini` (current directory or `$HOME`) under `[gitdiffnavtool]`.
+
+Example:
+
+```ini
+[gitdiffnavtool]
+hash-length = 12
+```
+
+`--hash-length` on the CLI overrides the config value.
 
 Dependencies
 ------------

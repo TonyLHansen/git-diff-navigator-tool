@@ -331,7 +331,7 @@ Invocation:
     file).
 - Run `gitdiffnavtool [-r/--repo-first [--repo-hash hash1] [--repo-hash hash2]] [path]` to open
     the app in repository mode, optionally comparing `hash1` and `hash2`.
-- Use `--no-color` to disable colored diffs.
+- Use `--hash-length N` to control displayed short-hash width (default: 12).
 
 Basic navigation:
 - Arrow keys: Up / Down / PageUp / PageDown / Home / End move
@@ -398,12 +398,16 @@ Open File Column:
     - `w` / `W`: write a snapshot for the current file/hash.
 
 Tips and behavior notes:
-- Short commit hashes are shown using the app's `HASH_LENGTH` constant.
+- Short commit hashes are shown using the configured hash length (`--hash-length` / `hash-length` in config).
 - `MODS` lists working-tree modifications (unstaged).
 - `STAGED` lists index changes (files that were added (staged) but not committed).
 - When diffing between `STAGED` and `MODS` the UI shows the comparison the user
     expects (index vs working-tree).
 - The app uses the `git` CLI for its repository operations.
+
+ADD a description of the color options and diff variants here
+
+ADD a description of the configuration file here
 """
 
 
@@ -2128,11 +2132,12 @@ class FileListBase(AppBase):
         # compatibility with older layouts.
         try:
             logger.debug("_render_hash_header: prev_hash=%r curr_hash=%r", prev_hash, curr_hash)
+            display_hash_length = self.app.hash_length
 
             def _short(h: str | None) -> str:
                 if not h:
                     return "None"
-                return h[:HASH_LENGTH] if len(h) > HASH_LENGTH else h
+                return h[:display_hash_length] if len(h) > display_hash_length else h
 
             hash_text = f"Hashes: prev={_short(prev_hash)}  curr={_short(curr_hash)}"
 
@@ -3618,7 +3623,8 @@ class HistoryListBase(AppBase):
         """
         try:
             date_stamp = str(ts)
-            short_hash = (h or "")[:HASH_LENGTH]
+            display_hash_length = self.app.hash_length
+            short_hash = (h or "")[:display_hash_length]
             push_marker = "↑ " if status == "unpushed" else ""
             return f"{date_stamp} {push_marker}{short_hash} {msg}".strip()
         except Exception as e:
@@ -4234,8 +4240,9 @@ class DiffList(FullScreenBase):
             # Save output lines on the object and render via helper
             # Prepend a human-readable header describing the diff context
             try:
-                p_short = prev[:HASH_LENGTH] if prev else "None"
-                c_short = curr[:HASH_LENGTH] if curr else "None"
+                display_hash_length = self.app.hash_length
+                p_short = prev[:display_hash_length] if prev else "None"
+                c_short = curr[:display_hash_length] if curr else "None"
 
                 try:
                     # Prefer a human-friendly variant name for the header
@@ -4794,6 +4801,7 @@ class GitDiffNavTool(AppException, App):
         highlight: str | None,
         color_scheme: str | None,
         diff_variant: str | None = None,
+        hash_length: int = HASH_LENGTH,
         **kwargs,
     ):
         """
@@ -4841,7 +4849,10 @@ class GitDiffNavTool(AppException, App):
 
         # Preserve verbosity for diagnostic controls
         self.verbose = verbose
-
+        # Number of characters used when displaying shortened commit hashes.
+        # Can be overridden via --hash-length / config.
+        self.hash_length = hash_length
+        
         # Optional initial filename basename to highlight when listing a dir
         self.highlight = highlight
 
@@ -6237,6 +6248,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="disable branch configuration (overrides config setting)",
     )
     startup_group.add_argument(
+        "--hash-length",
+        dest="hash_length",
+        metavar="N",
+        type=int,
+        default=HASH_LENGTH,
+        help=f"number of characters to display for short hashes (default: {HASH_LENGTH})",
+    )
+    startup_group.add_argument(
         "path", nargs="?", default=".", help="git repository or file within it (default: current directory)"
     )
 
@@ -6333,6 +6352,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     #   initial-popup=true/false
     #   branch=<branch-name>
     #   color=true/false
+    #   hash-length=<integer >= 1>
     #   debug=<filename>
     # CLI options always take precedence over config defaults.
     cfg_files = [
@@ -6429,6 +6449,20 @@ def main(argv: Optional[list[str]] = None) -> int:
                 if dbg:
                     defaults["debug"] = dbg
 
+            # Optional integer display width for short commit hashes.
+            if "hash-length" in src:
+                raw_hash_len = src.get("hash-length")
+                raw_hash_len_str = raw_hash_len if isinstance(raw_hash_len, str) else str(raw_hash_len)
+                if raw_hash_len_str.strip() != "":
+                    try:
+                        cfg_hash_len = int(raw_hash_len_str.strip())
+                        if cfg_hash_len < 1:
+                            raise ValueError("must be >= 1")
+                        defaults["hash_length"] = cfg_hash_len
+                    except Exception as e:
+                        printException(e, "invalid hash-length in config")
+                        sys.exit(f"invalid hash-length '{raw_hash_len_str}' in config; must be an integer >= 1")
+
             if defaults:
                 parser.set_defaults(**defaults)
         except Exception as e:
@@ -6456,6 +6490,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             if os.path.isabs(hl) or os.path.basename(hl) != hl:
                 printException(ValueError("--highlight must be a basename (no path elements)"), "argument error")
                 return 2
+        if int(args.hash_length) < 1:
+            printException(ValueError("--hash-length must be >= 1"), "argument error")
+            return 2
     except Exception as e:
         printException(e, "argument parsing/validation failed")
         return 2
@@ -6539,6 +6576,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             highlight=args.highlight,
             color_scheme=args.color,
             diff_variant=args.diff,
+            hash_length=args.hash_length,
         )
         # Run the textual app (blocks until exit)
         app.run()
