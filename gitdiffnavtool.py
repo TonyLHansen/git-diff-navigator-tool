@@ -1731,6 +1731,62 @@ class FullScreenBase(AppBase):
         super().__init__(*args, **kwargs)
         # Track the layout we came from for fullscreen restoration
         self._saved_layout: str | None = None
+        # Subclasses should set these in their __init__:
+        # _split_layout_history_file: split layout with history on left/file on right
+        # _split_layout_file_history: split layout with file on left/history on right
+        # _split_layouts: tuple of layout names where fullscreen can be invoked
+        # _fullscreen_layout: the name of the fullscreen layout to switch to
+        # _fullscreen_widget_id: widget ID to focus in fullscreen
+        # _fullscreen_footer: footer to display in fullscreen
+        self._split_layout_history_file: str = ""
+        self._split_layout_file_history: str = ""
+        self._split_layouts: tuple[str, ...] = ()
+        self._fullscreen_layout: str = ""
+        self._fullscreen_widget_id: str = ""
+        self._split_footer = None
+        self._fullscreen_footer = None
+
+    def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Promote to fullscreen when in a split layout."""
+        if not recursive:
+            logger.debug(f"{self.__class__.__name__}.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, f"{self.__class__.__name__}.key_right: event.stop failed")
+            current = self.app._current_layout
+            if current in self._split_layouts:
+                # Save the current layout before going fullscreen
+                self._saved_layout = current
+                self.app.change_state(self._fullscreen_layout, f"#{self._fullscreen_widget_id}", self._fullscreen_footer)
+        except Exception as e:
+            self.printException(e, f"{self.__class__.__name__}.key_right failed")
+
+    def key_f(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Main fullscreen toggle - subclasses override this. Default: no-op."""
+        pass
+
+    def key_F(self, event: events.Key | None = None) -> None:
+        """Alias for key_f (Shift-F)."""
+        logger.debug(f"{self.__class__.__name__}.key_F called: key=%r", getattr(event, "key", None))
+        return self.key_f(event, recursive=True)
+
+    def key_t(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Main toggle between paired layouts - subclasses override if needed. Default: no-op."""
+        pass
+
+    def key_T(self, event: events.Key | None = None) -> None:
+        """Alias for key_t (Shift-T)."""
+        logger.debug(f"{self.__class__.__name__}.key_T called: key=%r", getattr(event, "key", None))
+        return self.key_t(event, recursive=True)
+
+    def key_enter(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Default key_enter: toggle fullscreen like key_f. Subclasses can override."""
+        if not recursive:
+            logger.debug(f"{self.__class__.__name__}.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_f(event, recursive=True)
 
     def key_w(self, event: events.Key | None = None) -> None:
         """Prompt to save snapshot files for the current content."""
@@ -4032,6 +4088,14 @@ class DiffList(FullScreenBase):
         # Where to return when leaving the diff view: (state_name, widget_id, footer)
         # Always initialized to a non-None default so callers can rely on it.
         self.go_back: tuple = ("history_file", RIGHT_FILE_LIST_ID, RIGHT_FILE_FOOTER)
+        # FullScreenBase configuration for key_right
+        self._split_layout_history_file = "history_file_diff"
+        self._split_layout_file_history = "file_history_diff"
+        self._split_layouts = (self._split_layout_history_file, self._split_layout_file_history)
+        self._fullscreen_layout = "diff_fullscreen"
+        self._fullscreen_widget_id = DIFF_LIST_ID
+        self._fullscreen_footer = DIFF_FOOTER_2
+        self._split_footer = DIFF_FOOTER_1
 
     def prepDiffList(self, filename: str, prev: str, curr: str, variant_index: int, go_back: tuple) -> None:
         """
@@ -4176,33 +4240,7 @@ class DiffList(FullScreenBase):
         except Exception as e:
             self.printException(e, "DiffList.key_c failed")
 
-    def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
-        """
-        When in a history-file diff layout, promote the diff to fullscreen.
 
-        If the current app layout is one of the file-history diff layouts,
-        save it and switch to the `diff_fullscreen` layout. Otherwise noop.
-        """
-        if not recursive:
-            logger.debug("DiffList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
-        try:
-            if event is not None:
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "DiffList.key_right: event.stop failed")
-            current = self.app._current_layout
-            if current in ("history_file_diff", "file_history_diff"):
-                try:
-                    # save then switch to fullscreen diff
-                    self._saved_layout = current
-                    self.app.change_layout("diff_fullscreen")
-                except Exception as e:
-                    self.printException(e, "DiffList.key_right change_layout failed")
-        except Exception as e:
-            self.printException(e, "DiffList.key_right failed")
-
-        self._log_visible_items("key_right after processing index change")
 
     def key_C(self, event: events.Key | None = None) -> None:
         """Alias for `key_c` (Shift-C)."""
@@ -4424,12 +4462,12 @@ class DiffList(FullScreenBase):
             try:
                 # If we're in fullscreen diff, restore the saved layout.
                 current = self.app._current_layout
-                if current == "diff_fullscreen":
+                if current == self._fullscreen_layout:
                     try:
                         target = self._saved_layout or "history_file_diff"
                         # restore layout
                         self.app.change_layout(target)
-                        self.app.change_footer(DIFF_FOOTER_1)
+                        self.app.change_footer(self._split_footer)
                         # clear saved layout
                         self._saved_layout = None
                         return
@@ -4456,21 +4494,17 @@ class DiffList(FullScreenBase):
             logger.debug("DiffList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
             current = self.app._current_layout
-            if current == "diff_fullscreen":
+            if current == self._fullscreen_layout:
                 return self.key_left(event, recursive=True)
             else:
                 return self.key_right(event, recursive=True)
         except Exception as e:
             self.printException(e, "DiffList.key_enter failed")
 
-    def key_f(self, event: events.Key | None = None) -> None:
+    def key_f(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Alias for `key_enter` used to toggle fullscreen diff behavior."""
-        logger.debug("DiffList.key_f called: key=%r index=%r", getattr(event, "key", None), self.index)
-        return self.key_enter(event, recursive=True)
-
-    def key_F(self, event: events.Key | None = None) -> None:
-        """Alias for `key_f` (Shift-F)."""
-        logger.debug("DiffList.key_F called: key=%r index=%r", getattr(event, "key", None), self.index)
+        if not recursive:
+            logger.debug("DiffList.key_f called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_enter(event, recursive=True)
 
 
@@ -4557,7 +4591,14 @@ class OpenFileList(FullScreenBase):
         self._cached_key: tuple[str, str] | None = None
         # Track in-flight background load key to avoid duplicate scheduling
         self._loading_key: tuple[str, str] | None = None
-        # _saved_layout is inherited from FullScreenBase and set by callers (key_o handlers)
+        # FullScreenBase configuration for key_right
+        self._split_layout_history_file = "history_file_open"
+        self._split_layout_file_history = "file_history_open"
+        self._split_layouts = (self._split_layout_file_history, self._split_layout_history_file)
+        self._fullscreen_layout = "open_file_fullscreen"
+        self._fullscreen_widget_id = OPEN_FILE_LIST_ID
+        self._fullscreen_footer = OPEN_FILE_FOOTER_2
+        self._split_footer = OPEN_FILE_FOOTER_1
 
     def prepOpenFileList(self, filename: str, hash_value: str) -> None:
         """
@@ -4704,11 +4745,11 @@ class OpenFileList(FullScreenBase):
                     self.printException(e, "OpenFileList.key_left: event.stop failed")
 
             current = self.app._current_layout
-            if current == "open_file_fullscreen":
+            if current == self._fullscreen_layout:
                 try:
-                    target = self._saved_layout or "history_file_open"
+                    target = self._saved_layout or self._split_layout_history_file
                     self.app.change_layout(target)
-                    self.app.change_footer(OPEN_FILE_FOOTER_1)
+                    self.app.change_footer(self._split_footer)
                     return
                 except Exception as e:
                     self.printException(e, "OpenFileList.key_left restore split failed")
@@ -4724,24 +4765,7 @@ class OpenFileList(FullScreenBase):
         except Exception as e:
             self.printException(e, "OpenFileList.key_left failed")
 
-    def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
-        """Promote open file view to fullscreen."""
-        if not recursive:
-            logger.debug("OpenFileList.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
-        try:
-            if event is not None:
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "OpenFileList.key_right: event.stop failed")
 
-            current = self.app._current_layout
-            if current in ("file_history_open", "history_file_open"):
-                # Save the current layout before going fullscreen
-                self._saved_layout = current
-                self.app.change_state("open_file_fullscreen", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_2)
-        except Exception as e:
-            self.printException(e, "OpenFileList.key_right failed")
 
     def key_f(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Toggle between fullscreen and split view."""
@@ -4755,26 +4779,17 @@ class OpenFileList(FullScreenBase):
                     self.printException(e, "OpenFileList.key_f: event.stop failed")
 
             current = self.app._current_layout
-            if current == "open_file_fullscreen":
+            if current == self._fullscreen_layout:
                 # Restore the saved layout
-                self.app.change_state(self._saved_layout, f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_1)
-            elif current in ("file_history_open", "history_file_open"):
+                self.app.change_state(self._saved_layout, f"#{self._fullscreen_widget_id}", self._split_footer)
+            elif current in self._split_layouts:
                 # Save current and go fullscreen
                 self._saved_layout = current
-                self.app.change_state("open_file_fullscreen", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_2)
+                self.app.change_state(self._fullscreen_layout, f"#{self._fullscreen_widget_id}", self._fullscreen_footer)
         except Exception as e:
             self.printException(e, "OpenFileList.key_f failed")
 
-    def key_F(self, event: events.Key | None = None) -> None:
-        """Alias for key_f (Shift-F)."""
-        logger.debug("OpenFileList.key_F called: key=%r", getattr(event, "key", None))
-        return self.key_f(event, recursive=True)
 
-    def key_enter(self, event: events.Key | None = None, recursive: bool = False) -> None:
-        """Toggle fullscreen like key_f."""
-        if not recursive:
-            logger.debug("OpenFileList.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
-        return self.key_f(event, recursive=True)
 
     def key_t(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Toggle between paired layouts (file_history_open <-> history_file_open)."""
@@ -4788,22 +4803,23 @@ class OpenFileList(FullScreenBase):
                     self.printException(e, "OpenFileList.key_t: event.stop failed")
 
             current = self.app._current_layout
-            if current == "file_history_open":
-                # Switch to history_file_open layout
-                self.app.change_state("history_file_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_1)
-            elif current == "history_file_open":
-                # Switch to file_history_open layout
-                self.app.change_state("file_history_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_1)
-            elif current == "open_file_fullscreen":
-                # Delegate to app toggle to handle fullscreen layout toggle
-                self.app.toggle(current, event)
+            if len(self._split_layouts) >= 2:
+                # Toggle between the two split layouts
+                if current == self._split_layout_file_history:
+                    self.app.change_state(
+                        self._split_layout_history_file, f"#{self._fullscreen_widget_id}", self._split_footer
+                    )
+                elif current == self._split_layout_history_file:
+                    self.app.change_state(
+                        self._split_layout_file_history, f"#{self._fullscreen_widget_id}", self._split_footer
+                    )
+                elif current == self._fullscreen_layout:
+                    # Delegate to app toggle to handle fullscreen layout toggle
+                    self.app.toggle(current, event)
         except Exception as e:
             self.printException(e, "OpenFileList.key_t failed")
 
-    def key_T(self, event: events.Key | None = None) -> None:
-        """Alias for key_t (Shift-T)."""
-        logger.debug("OpenFileList.key_T called: key=%r", getattr(event, "key", None))
-        return self.key_t(event, recursive=True)
+
 
 
 class GitHistoryNavTool(AppException, App):
