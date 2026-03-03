@@ -1924,7 +1924,7 @@ class FileListBase(AppBase):
             # header rows are present again. This keeps the visual UI
             # consistent when users page back to the top of a long list.
             try:
-                # GitHistoryNavTool always creates the external header Labels;
+                # GitDiffNavTool always creates the external header Labels;
                 # assume they exist and skip the in-list header re-render path.
                 # This avoids redundant re-renders and keeps behavior deterministic.
                 pass
@@ -4762,7 +4762,7 @@ class OpenFileList(FullScreenBase):
             return str(node)
 
 
-class GitHistoryNavTool(AppException, App):
+class GitDiffNavTool(AppException, App):
     """
     Main Textual application wiring the lists together.
 
@@ -4815,7 +4815,7 @@ class GitHistoryNavTool(AppException, App):
         if rel_file:
             # Reject any rel_file that is not a basename (no subpath)
             if os.path.basename(rel_file) != rel_file:
-                raise ValueError("GitHistoryNavTool.__init__: rel_file must be a basename (no subpath)")
+                raise ValueError("GitDiffNavTool.__init__: rel_file must be a basename (no subpath)")
             # Assign the validated basename directly (no normalization needed)
             self.rel_file = rel_file
         else:
@@ -4829,7 +4829,7 @@ class GitHistoryNavTool(AppException, App):
         # Do not maintain `self.path` to avoid multiple source-of-truth values.
 
         # Log initial rel_dir / rel_file for debugging
-        logger.debug("GitHistoryNavTool.__init__: rel_dir=%r rel_file=%r", self.rel_dir, self.rel_file)
+        logger.debug("GitDiffNavTool.__init__: rel_dir=%r rel_file=%r", self.rel_dir, self.rel_file)
 
         # Preserve verbosity for diagnostic controls
         self.verbose = verbose
@@ -4847,7 +4847,7 @@ class GitHistoryNavTool(AppException, App):
         # placeholders for runtime state
         # `repo_root` is provided by main and should not be modified further.
         # Set the application title to include the repository path
-        self.title = f"GitHistoryNavTool ({self.gitRepo.get_repo_root()})"
+        self.title = f"GitDiffNavTool ({self.gitRepo.get_repo_root()})"
         self._saved_state = None
         self._current_layout = None
         # Track current focus selector for save/restore; initialize here
@@ -5049,12 +5049,12 @@ class GitHistoryNavTool(AppException, App):
                 except Exception as e:
                     self.printException(e, "on_key: pop_screen failed while modal active")
         except Exception as e:
-            self.printException(e, "GitHistoryNavTool.on_key failed")
+            self.printException(e, "GitDiffNavTool.on_key failed")
 
     def key_q(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Quit the application on `q` keypress (synonym for ^Q)."""
         if not recursive:
-            logger.debug("GitHistoryNavTool.key_q called: key=%r", getattr(event, "key", None))
+            logger.debug("GitDiffNavTool.key_q called: key=%r", getattr(event, "key", None))
         try:
             if event is not None:
                 try:
@@ -5074,7 +5074,7 @@ class GitHistoryNavTool(AppException, App):
 
     def key_Q(self, event: events.Key | None = None) -> None:
         """Uppercase Q also quits."""
-        logger.debug("GitHistoryNavTool.key_Q called: key=%r", getattr(event, "key", None))
+        logger.debug("GitDiffNavTool.key_Q called: key=%r", getattr(event, "key", None))
         return self.key_q(event, recursive=True)
 
     def key_h(self, event: events.Key | None = None, recursive: bool = False) -> None:
@@ -5085,7 +5085,7 @@ class GitHistoryNavTool(AppException, App):
         and switches layout/focus/footer to the help configuration.
         """
         if not recursive:
-            logger.debug("GitHistoryNavTool.key_h called: key=%r", getattr(event, "key", None))
+            logger.debug("GitDiffNavTool.key_h called: key=%r", getattr(event, "key", None))
         try:
             if event is not None:
                 try:
@@ -5103,17 +5103,17 @@ class GitHistoryNavTool(AppException, App):
 
     def key_H(self, event: events.Key | None = None) -> None:
         """Alias for `key_h` (uppercase H)."""
-        logger.debug("GitHistoryNavTool.key_H called: key=%r", getattr(event, "key", None))
+        logger.debug("GitDiffNavTool.key_H called: key=%r", getattr(event, "key", None))
         return self.key_h(event, recursive=True)
 
     def key_question(self, event: events.Key | None = None) -> None:
         """Handle terminal mappings where '?' is reported as 'question' by delegating to help."""
-        logger.debug("GitHistoryNavTool.key_question called: key=%r", getattr(event, "key", None))
+        logger.debug("GitDiffNavTool.key_question called: key=%r", getattr(event, "key", None))
         return self.key_h(event, recursive=True)
 
     def key_question_mark(self, event: events.Key | None = None) -> None:
         """Handle terminal mappings where '?' is reported as 'question_mark'."""
-        logger.debug("GitHistoryNavTool.key_question_mark called: key=%r", getattr(event, "key", None))
+        logger.debug("GitDiffNavTool.key_question_mark called: key=%r", getattr(event, "key", None))
         return self.key_h(event, recursive=True)
 
     def key_r(self, event: events.Key | None = None, recursive: bool = False) -> None:
@@ -5124,7 +5124,7 @@ class GitHistoryNavTool(AppException, App):
         in this handler and delegating state handling to each preparer.
         """
         if not recursive:
-            logger.debug("GitHistoryNavTool.key_r called: key=%r", getattr(event, "key", None))
+            logger.debug("GitDiffNavTool.key_r called: key=%r", getattr(event, "key", None))
         try:
             if event is not None:
                 try:
@@ -5208,7 +5208,7 @@ class GitHistoryNavTool(AppException, App):
 
     def key_R(self, event: events.Key | None = None) -> None:
         """Alias for `key_r` (Shift-R)."""
-        logger.debug("GitHistoryNavTool.key_R called: key=%r", getattr(event, "key", None))
+        logger.debug("GitDiffNavTool.key_R called: key=%r", getattr(event, "key", None))
         return self.key_r(event, recursive=True)
 
     def _apply_column_layout(
@@ -5968,12 +5968,12 @@ class GitHistoryNavTool(AppException, App):
 
     def key_t(self, event: events.Key | None = None) -> None:
         """Swap (Toggle) the paired layout for the current layout (invoked by 't')."""
-        logger.debug("GitHistoryNavTool.key_t called: key=%r", getattr(event, "key", None))
+        logger.debug("GitDiffNavTool.key_t called: key=%r", getattr(event, "key", None))
         return self.toggle(self._current_layout, event)
 
     def key_T(self, event: events.Key | None = None) -> None:
         """Alias for `key_t` (Shift-T)."""
-        logger.debug("GitHistoryNavTool.key_T called: key=%r", getattr(event, "key", None))
+        logger.debug("GitDiffNavTool.key_T called: key=%r", getattr(event, "key", None))
         return self.key_t(event, recursive=True)
 
     # Per-layout toggle implementations. These prepare lists and switch
@@ -6178,7 +6178,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     Command-line entry point for gitdiffnavtool.
 
     Parses CLI arguments, locates the repository worktree, configures
-    logging, and launches the `GitHistoryNavTool` Textual application.
+    logging, and launches the `GitDiffNavTool` Textual application.
     Returns process exit code (0 on success).
     """
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
@@ -6511,14 +6511,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             sys.exit(f"Not a git repository: {args.path}")
 
         logger.debug(
-            "Starting GitHistoryNavTool; args.path=%s repo_root=%s rel_dir=%r rel_file=%r",
+            "Starting GitDiffNavTool; args.path=%s repo_root=%s rel_dir=%r rel_file=%r",
             args.path,
             gitrepo.get_repo_root(),
             rel_dir,
             rel_file,
         )
 
-        app = GitHistoryNavTool(
+        app = GitDiffNavTool(
             gitRepo=gitrepo,
             rel_dir=rel_dir,
             rel_file=rel_file,
@@ -6536,7 +6536,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         app.run()
         return 0
     except Exception as e:
-        printException(e, "fatal error running GitHistoryNavTool")
+        printException(e, "fatal error running GitDiffNavTool")
         return 2
 
 
