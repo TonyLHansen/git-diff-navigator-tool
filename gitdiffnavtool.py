@@ -193,8 +193,14 @@ RIGHT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ← ↑/↓
 HELP_FOOTER = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Home/End  Press Enter/␍ to return", style="bold")
 # Text("Help: q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
 
-# Footer text used when showing open file content
-OPEN_FILE_FOOTER = Text("OpenFile: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/f(ull)", style="bold")
+# Footer text used when showing open file content (split panes)
+OPEN_FILE_FOOTER_1 = Text(
+    "OpenFile: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close) ↑/↓/PgUp/PgDn/Home/End  →/f(ull)", style="bold"
+)
+# Footer text used when showing open file content (fullscreen)
+OPEN_FILE_FOOTER_2 = Text(
+    "OpenFile: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ↑/↓/PgUp/PgDn/Home/End  ←/f(ull)", style="bold"
+)
 # Footer text used when showing the diff for a history/file selection
 # DIFF_FOOTER = Text("Diff: press Left to return to files")
 DIFF_FOOTER_1 = Text(
@@ -3350,7 +3356,7 @@ class RepoModeFileList(FileListBase, RightSideBase):
             # Switch to history_file_open layout immediately (don't wait for file load)
             # Save the layout so OpenFileList knows where we came from
             self.app.openfile_list._saved_layout = "history_file_open"
-            self.app.change_state("history_file_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+            self.app.change_state("history_file_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_1)
 
             # Load file content asynchronously in the background
             self.app.call_later(lambda: self._load_open_file(filepath, commit_hash))
@@ -3854,7 +3860,7 @@ class FileModeHistoryList(HistoryListBase, RightSideBase):
             # Switch to file_history_open layout immediately (don't wait for file load)
             # Save the layout so OpenFileList knows where we came from
             self.app.openfile_list._saved_layout = "file_history_open"
-            self.app.change_state("file_history_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+            self.app.change_state("file_history_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_1)
             logger.debug("FileModeHistoryList.key_o change_state completed, now scheduling _load_open_file")
 
             # Load file content asynchronously in the background
@@ -4532,6 +4538,10 @@ class OpenFileList(AppBase):
         # Track current filename and hash for title display
         self._open_filename = ""
         self._open_hash = ""
+        # Cache of currently-rendered content key (filename, hash)
+        self._cached_key: tuple[str, str] | None = None
+        # Track in-flight background load key to avoid duplicate scheduling
+        self._loading_key: tuple[str, str] | None = None
         # Track the layout we came from (file_history_open or history_file_open)
         self._saved_layout = "file_history_open"
 
@@ -4544,8 +4554,30 @@ class OpenFileList(AppBase):
         """
         try:
             logger.debug("prepOpenFileList: filename=%r hash=%r", filename, hash_value)
+            requested_key = (filename, hash_value)
+
+            # Fast path: if this exact content is already rendered, reuse it.
+            try:
+                if self._cached_key == requested_key and len(self.nodes() or []) > 0:
+                    logger.debug("prepOpenFileList: cache hit for %r @ %r; skipping reload", filename, hash_value)
+                    self._open_filename = filename
+                    self._open_hash = hash_value
+                    self._highlight_top()
+                    return
+            except Exception as e:
+                self.printException(e, "prepOpenFileList: cache check failed")
+
+            # If this key is already loading, do not schedule another load.
+            if self._loading_key == requested_key:
+                logger.debug("prepOpenFileList: load already in progress for %r @ %r", filename, hash_value)
+                self._open_filename = filename
+                self._open_hash = hash_value
+                return
+
             self._open_filename = filename
             self._open_hash = hash_value
+            self._loading_key = requested_key
+            self._cached_key = None
 
             # Clear the list and show loading message immediately
             self.clear()
@@ -4557,6 +4589,7 @@ class OpenFileList(AppBase):
             self._populated = True
         except Exception as e:
             self.printException(e, "prepOpenFileList failed")
+            self._loading_key = None
 
     def _load_and_render(self, filename: str, hash_value: str) -> None:
         """Load file from git and start progressive rendering."""
@@ -4586,9 +4619,14 @@ class OpenFileList(AppBase):
             # Start chunked rendering
             self._render_file_chunk(lines, 0)
 
+            # Mark cache key as ready for fast reopen.
+            self._cached_key = (filename, hash_value)
+            self._loading_key = None
+
             self._highlight_top()
         except Exception as e:
             self.printException(e, "_load_and_render failed")
+            self._loading_key = None
             self.clear()
             self.append(ListItem(Label(Text("(Error reading file)"))))
 
@@ -4640,7 +4678,7 @@ class OpenFileList(AppBase):
             return str(node)
 
     def key_left(self, event: events.Key | None = None, recursive: bool = False) -> None:
-        """Return from open file view to the previous history view."""
+        """Return from fullscreen to split, or close split open-file view."""
         if not recursive:
             logger.debug("OpenFileList.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
         try:
@@ -4650,14 +4688,23 @@ class OpenFileList(AppBase):
                 except Exception as e:
                     self.printException(e, "OpenFileList.key_left: event.stop failed")
 
-            # Restore the saved layout (file_history_open or history_file_open)
+            current = self.app._current_layout
+            if current == "open_file_fullscreen":
+                try:
+                    target = self._saved_layout or "history_file_open"
+                    self.app.change_layout(target)
+                    self.app.change_footer(OPEN_FILE_FOOTER_1)
+                    return
+                except Exception as e:
+                    self.printException(e, "OpenFileList.key_left restore split failed")
+
+            # In split mode, close the open-file pane and return to non-open layout.
             layout = self._saved_layout
             if layout == "file_history_open":
                 self.app.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
             elif layout == "history_file_open":
                 self.app.change_state("history_file", f"#{RIGHT_FILE_LIST_ID}", RIGHT_FILE_FOOTER)
             else:
-                # Fallback
                 self.app.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
         except Exception as e:
             self.printException(e, "OpenFileList.key_left failed")
@@ -4677,7 +4724,7 @@ class OpenFileList(AppBase):
             if current in ("file_history_open", "history_file_open"):
                 # Save the current layout before going fullscreen
                 self._saved_layout = current
-                self.app.change_state("open_file_fullscreen", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+                self.app.change_state("open_file_fullscreen", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_2)
         except Exception as e:
             self.printException(e, "OpenFileList.key_right failed")
 
@@ -4695,11 +4742,11 @@ class OpenFileList(AppBase):
             current = self.app._current_layout
             if current == "open_file_fullscreen":
                 # Restore the saved layout
-                self.app.change_state(self._saved_layout, f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+                self.app.change_state(self._saved_layout, f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_1)
             elif current in ("file_history_open", "history_file_open"):
                 # Save current and go fullscreen
                 self._saved_layout = current
-                self.app.change_state("open_file_fullscreen", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+                self.app.change_state("open_file_fullscreen", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_2)
         except Exception as e:
             self.printException(e, "OpenFileList.key_f failed")
 
@@ -4743,10 +4790,10 @@ class OpenFileList(AppBase):
             current = self.app._current_layout
             if current == "file_history_open":
                 # Switch to history_file_open layout
-                self.app.change_state("history_file_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+                self.app.change_state("history_file_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_1)
             elif current == "history_file_open":
                 # Switch to file_history_open layout
-                self.app.change_state("file_history_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER)
+                self.app.change_state("file_history_open", f"#{OPEN_FILE_LIST_ID}", OPEN_FILE_FOOTER_1)
             elif current == "open_file_fullscreen":
                 # Delegate to app toggle to handle fullscreen layout toggle
                 self.app.toggle(current, event)
@@ -5334,6 +5381,7 @@ class GitHistoryNavTool(AppException, App):
                 self._apply_column_layout(0, 5, 0, 20, 0, 0, 75)
             elif newlayout == "open_file_fullscreen":
                 self._apply_column_layout(0, 0, 0, 0, 0, 0, 100)
+                self.change_footer(OPEN_FILE_FOOTER_2)
             elif newlayout == "diff_fullscreen":
                 self._apply_column_layout(0, 0, 0, 0, 100, 0, 0)
                 self.change_footer(DIFF_FOOTER_2)
