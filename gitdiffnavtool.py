@@ -294,12 +294,17 @@ The basic navigation keys are:
 
 The program normally starts in a file list view showing the files in the root of the current repository,
 somewhat similar to what you see with `git status`. You can then navigate up and down to switch the current
-selection, and press Right or Enter/␍ to either 1) drill down into subdirectories to see the files there, 
-or 2) switch to the history view (using Right arrow or Enter/␍) to see all of the commits associated with the chosen file.
+selection, and press Right or Enter/␍ to either 
+
+1) drill down into subdirectories to see the files there, or 
+
+2) switch to the history view (using Right arrow or Enter/␍) to see all of the commits associated with the chosen file.
+
 From the history view you can navigate the commits and press Right or Enter/␍ again to see the diff for that commit and file.
 (You can also mark a particular commit in the history view with "m" and then navigate to another commit; 
 press Right/Enter/␍ to see the diff between the marked commit and the current selection.)
 While viewing Diff or OpenFile content, Right/Enter/`f` promotes the pane to fullscreen and Left returns to split (or back to the prior pane when already in split).
+Press `o` to open file content in the OpenFile pane.
 
 Alternatively, you can start the program in repository mode (using the `-R`/`--repo-first` flag) that
 initially shows a history view of all commits in the repository. You can then select a commit
@@ -316,6 +321,7 @@ And of course, you can quit at any time by pressing "q" or "Q".
 
 If you want to skip this message on future launches, you can edit the configuration file (gitdiffnavtool.ini) 
 and set `initial-popup = false` under the `[gitdiffnavtool]` section.
+(See the help screen for more info on the config file and available options.)
 """
 
 HELP_TEXT = """

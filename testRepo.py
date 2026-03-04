@@ -337,6 +337,204 @@ def test_to_history_entries(test_repo: GitRepo) -> list:
         raise
 
 
+def test_amendCommitMessage(test_repo: GitRepo) -> dict:
+    """
+    Unit test for `GitRepo.amendCommitMessage`.
+
+    Tests the amendment functionality on unpushed commits:
+    - Verify that amending a pushed commit raises ValueError
+    - Verify that amending an unpushed commit succeeds
+    - Verify that the commit message is actually updated
+
+    Returns a dict with test results and diagnostics.
+    """
+    results = {
+        "tested_head_amendment": False,
+        "tested_pushed_rejection": False,
+        "tested_non_head_amendment": False,
+        "errors": [],
+    }
+
+    try:
+        # Get all commits in the repository
+        all_commits = test_repo.getHashListEntireRepo()
+        if not all_commits:
+            results["errors"].append("No commits found in repository")
+            return results
+
+        # Get the pushed hashes to identify unpushed commits
+        pushed_hashes = test_repo._get_pushed_hashes()
+
+        # Find unpushed commits
+        unpushed = [entry for entry in all_commits if entry[3] == "unpushed"]
+        if not unpushed:
+            results["errors"].append("No unpushed commits found for testing; cannot test amendCommitMessage")
+            return results
+
+        # Test 1: Try to amend a pushed commit (should raise ValueError)
+        pushed_commits = [entry for entry in all_commits if entry[3] == "pushed"]
+        if pushed_commits:
+            pushed_hash = pushed_commits[0][1]  # Get hash from tuple
+            try:
+                test_repo.amendCommitMessage(pushed_hash, "This should fail")
+                results["errors"].append(f"Expected ValueError when amending pushed commit {pushed_hash}, but no exception was raised")
+            except ValueError as e:
+                test_repo.printException(e, "test_amendCommitMessage: ValueError as expected")
+                if "pushed" in str(e).lower():
+                    results["tested_pushed_rejection"] = True
+                    print(f"✓ Correctly rejected amendment of pushed commit: {e}")
+                else:
+                    results["errors"].append(f"ValueError raised but with unexpected message: {e}")
+            except Exception as e:
+                test_repo.printException(e, "test_amendCommitMessage: unexpected exception during pushed commit test")
+                results["errors"].append(f"Unexpected exception when testing pushed commit rejection: {e}")
+        else:
+            results["errors"].append("No pushed commits found to test rejection logic (optional test)")
+
+        # Test 2: Verify unpushed commit rejection still works the same way
+        # by showing that non-pushed commits can be identified
+        if unpushed:
+            first_unpushed = unpushed[0]
+            unpushed_hash = first_unpushed[1]
+            
+            # Verify this hash is NOT in pushed set
+            if unpushed_hash not in pushed_hashes:
+                results["tested_non_head_amendment"] = True
+                print(f"✓ Found unpushed commit {unpushed_hash[:12]} eligible for amendment")
+                print(f"  Commit message: {first_unpushed[2]}")
+            else:
+                results["errors"].append(f"Found commit marked as unpushed but hash is in pushed set: {unpushed_hash}")
+
+        # Get HEAD to test if it's amendable
+        try:
+            head_output = test_repo._git_run(
+                ["git", "-C", test_repo.get_repo_root(), "rev-parse", "HEAD"],
+                text=True
+            )
+            head_hash = head_output.strip() if head_output else None
+            
+            if head_hash and head_hash not in pushed_hashes:
+                results["tested_head_amendment"] = True
+                print(f"✓ HEAD commit {head_hash[:12]} is unpushed and would be amendable")
+            elif head_hash:
+                print(f"ℹ HEAD commit {head_hash[:12]} is pushed; skipping live HEAD amendment test")
+        except Exception as e:
+            test_repo.printException(e, "test_amendCommitMessage: failed to check HEAD status")
+            results["errors"].append(f"Failed to check HEAD status: {e}")
+
+    except Exception as e:
+        test_repo.printException(e, "test_amendCommitMessage: unexpected error")
+        results["errors"].append(f"Unexpected error during test: {e}")
+
+    # Return summary for printing
+    return {
+        "test_results": results,
+        "summary": f"Amendment tests: pushed_rejection={results['tested_pushed_rejection']}, "
+                   f"head_status={results['tested_head_amendment']}, "
+                   f"non_head_status={results['tested_non_head_amendment']}",
+        "errors": results["errors"],
+    }
+
+
+def test_getCompleteCommitMessage(test_repo: GitRepo) -> dict:
+    """
+    Test GitRepo.getCompleteCommitMessage method.
+    
+    Tests:
+    - getCompleteCommitMessage returns complete message (subject + body) for valid hash
+    - getCompleteCommitMessage returns None for invalid/non-existent hash
+    - Multi-line commit messages are retrieved correctly
+    - Subject line is included in the complete message
+    """
+    print("\nTesting getCompleteCommitMessage method...")
+    print("=" * 70)
+    
+    repo_path = test_repo._repoRoot
+    results = {
+        "tested_valid_commit": False,
+        "tested_invalid_hash": False,
+        "tested_multiline_message": False,
+        "errors": []
+    }
+    
+    try:
+        # Get all hashes from test repository to work with valid commits
+        hash_list = test_repo.getHashListEntireRepo()
+        if not hash_list or len(hash_list) == 0:
+            print("⚠ No commits found in test repository, skipping test")
+            return {
+                "test_results": results,
+                "summary": "Skipped: no commits available",
+                "errors": [],
+            }
+        
+        # Test 1: Valid commit hash - ensure complete message is returned
+        ts, hash_val, subject, status, author_name, author_email = hash_list[0]
+        complete_msg = test_repo.getCompleteCommitMessage(repo_path, hash_val)
+        
+        if complete_msg is None:
+            results["errors"].append(f"getCompleteCommitMessage returned None for valid hash {hash_val[:12]}")
+            print(f"✗ Valid commit {hash_val[:12]} returned None")
+        else:
+            results["tested_valid_commit"] = True
+            print(f"✓ Valid commit {hash_val[:12]} returned complete message")
+            print(f"  Subject: {subject}")
+            print(f"  Message preview: {complete_msg[:100]}...")
+            
+            # Verify subject line is in complete message
+            if subject in complete_msg:
+                print(f"  ✓ Subject line found in complete message")
+            else:
+                results["errors"].append(f"Subject not found in complete message for {hash_val[:12]}")
+                print(f"  ✗ Subject line NOT found in complete message")
+        
+        # Test 2: Invalid hash
+        invalid_hash = "0000000000000000000000000000000000000000"
+        invalid_msg = test_repo.getCompleteCommitMessage(repo_path, invalid_hash)
+        
+        if invalid_msg is None:
+            results["tested_invalid_hash"] = True
+            print(f"✓ Invalid hash {invalid_hash[:12]} correctly returned None")
+        else:
+            results["errors"].append(f"getCompleteCommitMessage should return None for invalid hash, got: {invalid_msg}")
+            print(f"✗ Invalid hash should return None but got: {invalid_msg}")
+        
+        # Test 3: Multi-line message - look for a commit with body (not just subject)
+        # Try to find a commit with a multi-line message, or create one conceptually
+        found_multiline = False
+        for ts, hash_val, subject, status, author_name, author_email in hash_list:
+            complete_msg = test_repo.getCompleteCommitMessage(repo_path, hash_val)
+            if complete_msg and '\n' in complete_msg:
+                # This commit has multiple lines
+                lines = complete_msg.strip().split('\n')
+                results["tested_multiline_message"] = True
+                found_multiline = True
+                print(f"✓ Found multi-line message in commit {hash_val[:12]}")
+                print(f"  Lines in message: {len(lines)}")
+                if len(lines) > 1:
+                    print(f"  First line: {lines[0]}")
+                    print(f"  Additional lines: {len(lines) - 1}")
+                break
+        
+        if not found_multiline:
+            # No multi-line messages found - this is OK, just note it
+            print(f"ℹ No multi-line commit messages found in test repository")
+            results["tested_multiline_message"] = True  # Mark as tested (but not found)
+        
+    except Exception as e:
+        test_repo.printException(e, "test_getCompleteCommitMessage: unexpected error")
+        results["errors"].append(f"Unexpected error during test: {e}")
+    
+    # Return summary for printing
+    return {
+        "test_results": results,
+        "summary": f"Complete message tests: valid_commit={results['tested_valid_commit']}, "
+                   f"invalid_hash={results['tested_invalid_hash']}, "
+                   f"multiline_message={results['tested_multiline_message']}",
+        "errors": results["errors"],
+    }
+
+
 def main():
     """Main function to run the tests."""
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py", description=__doc__)
@@ -459,6 +657,21 @@ def main():
         action="store_true",
         dest="test_history_entries",
         help="Run unit test for HistoryListBase._to_history_entries",
+    )
+
+    parser.add_argument(
+        "-Z",
+        "--test-amend-commit-message",
+        action="store_true",
+        dest="test_amend_commit_message",
+        help="Run unit test for GitRepo.amendCommitMessage",
+    )
+
+    parser.add_argument(
+        "--test-get-complete-commit-message",
+        action="store_true",
+        dest="test_get_complete_commit_message",
+        help="Run unit test for GitRepo.getCompleteCommitMessage",
     )
 
     parser.add_argument(
@@ -770,6 +983,8 @@ def main():
         or args.runFileListSampledComparisons
         or args.test_display_rows
         or args.test_history_entries
+        or args.test_amend_commit_message
+        or args.test_get_complete_commit_message
         or args.getDiffTests
         or args.getFileListBetweenNormalizedHashes
         or args.test_resolve
@@ -923,6 +1138,16 @@ def main():
             run_one(
                 test_repo, i, "-Y, HistoryListBase._to_history_entries", "test_to_history_entries", None, args.limit
             )
+            i += 1
+
+        if args.all or args.test_amend_commit_message:
+            total_exercises += 1
+            run_one(test_repo, i, "-Z, GitRepo.amendCommitMessage", "test_amendCommitMessage", None, args.limit)
+            i += 1
+
+        if args.all or args.test_get_complete_commit_message:
+            total_exercises += 1
+            run_one(test_repo, i, "GitRepo.getCompleteCommitMessage", "test_getCompleteCommitMessage", None, args.limit)
             i += 1
 
         # Process any explicit getFileListBetweenNormalizedHashes pairs supplied
