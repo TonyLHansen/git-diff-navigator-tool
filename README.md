@@ -48,6 +48,12 @@ Left and Right arrow keys perform differently in each column.
 
 - History column:
   - Lines are populated from `git log --follow`.
+  - Each commit row displays: **`TIMESTAMP ↑ HASH |AUTHOR_NAME EMAIL| SUBJECT`**
+    - **TIMESTAMP**: ISO 8601 format (e.g., `2026-03-04 14:30:00`)
+    - **↑**: Up arrow indicator for unpushed commits; absent for pushed commits
+    - **HASH**: Short commit hash (configurable via `--hash-length`, default 12 characters)
+    - **|AUTHOR NAME EMAIL|**: Author name and email in pipe-delimited format (use `--no-add-authors` to hide)
+    - **SUBJECT**: First line of commit message
   - Pseudo-log entries `STAGED` and `MODS` are inserted at the top when the file has been staged, and when there are uncommitted/unstaged modifications, respectively.
   - Press `m` (or `M`) to _mark_ the current log row with a leading `✓`.
     - Only one history row may be checked at a time — toggling a new row clears any prior checkmark.
@@ -94,9 +100,6 @@ Run the application as follows:
 gitdiffnavtool.py [options] [path]
 ```
 
-If `--no-color` is provided, the diff output will not be colorized.
-If `--hash-length N` is provided, displayed short commit hashes will use `N` characters.
-
 `path` is optional — it defaults to the current working directory. If a filename is provided, the app will open its directory and populate the History column for that file on startup.
 
 Configuration
@@ -110,7 +113,13 @@ Example:
 hash-length = 12
 ```
 
-`--hash-length` on the CLI overrides the config value.
+Some of the Options
+-------------------
+
+If `--no-color` is provided, the diff output will not be colorized.
+If `--hash-length N` is provided, displayed short commit hashes will use `N` characters.
+If `--no-add-authors` is provided, author name and email will not be displayed in commit rows.
+The command line options override the config values.
 
 Dependencies
 ------------

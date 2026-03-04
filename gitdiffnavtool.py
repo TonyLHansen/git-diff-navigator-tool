@@ -331,7 +331,6 @@ Invocation:
     file).
 - Run `gitdiffnavtool [-r/--repo-first [--repo-hash hash1] [--repo-hash hash2]] [path]` to open
     the app in repository mode, optionally comparing `hash1` and `hash2`.
-- Use `--hash-length N` to control displayed short-hash width (default: 12).
 
 Basic navigation:
 - Arrow keys: Up / Down / PageUp / PageDown / Home / End move
@@ -378,6 +377,16 @@ Right File Column (Files for selected commit-pair or pseudo refs):
 - Right on a file row: open the file-level diff between the selected
     commit pair (or between index and working-tree when using `STAGED`/`MODS`).
 
+Commit History Format:
+- Each commit row displays: TIMESTAMP ↑ HASH |AUTHOR_NAME EMAIL| SUBJECT
+  where:
+  - TIMESTAMP: ISO 8601 format (e.g., 2026-03-04 14:30:00)
+  - ↑: Up arrow marks unpushed commits; omitted for pushed commits
+  - HASH: Short commit hash (width controlled by --hash-length, default 12 chars)
+  - |AUTHOR_NAME EMAIL|: Author information in pipe-delimited format, showing author's
+    name and email address from git commit metadata. Use --no-add-authors to hide this field.
+  - SUBJECT: First line of the commit message
+
 Diff Column:
 - Shows the textual patch for the current file/commit pair. The first
     line is a one-line header describing the file and the two refs being
@@ -405,9 +414,52 @@ Tips and behavior notes:
     expects (index vs working-tree).
 - The app uses the `git` CLI for its repository operations.
 
-ADD a description of the color options and diff variants here
+Command-line Options:
+- Use `--hash-length N` to control displayed short-hash width (default: 12).
+- Use `--add-authors` or `--no-add-authors` to show/hide author information in commit rows (default: show).
 
-ADD a description of the configuration file here
+Color Schemes:
+- Use `-c SCHEME` or `--color SCHEME` to select a color scheme for diffs.
+- Available schemes: `red-green`, `blue-orange`, `teal-purple`, `style`, `none`.
+- Use `-C` or `--no-color` to disable diff colorization (equivalent to `--color=none`).
+- Color preference can be toggled at runtime with `c` or `C` in the Diff pane.
+
+Diff Variants:
+- Use `--diff VARIANT` to select how diffs are displayed.
+- Different variants show diffs in different formats (e.g., full text diffs, ignore-space variants, patience diff).
+- The selected diff variant can be rotated at runtime with `d` or `D` in the Diff pane.
+- When comparing two commits where a full textual diff is available, variants cycle through
+    configured textual diff options (typically including standard diff, ignore-space-change, and patience).
+
+Configuration File:
+- The `.gitdiffnavtool.ini` file allows you to set default values for command-line options.
+- Location: Searched in current directory first, then `$HOME` directory.
+- File format: INI-style configuration with a `[gitdiffnavtool]` section.
+- CLI options always take precedence over configuration file values.
+- Example configuration (showing all available options with their defaults):
+    ```
+    [gitdiffnavtool]
+    # Display width for short commit hashes (default: 12, must be >= 1)
+    hash-length = 12
+    # Show author name and email in commit rows (default: true)
+    add-authors = true
+    # Color scheme for diffs: red-green, blue-orange, teal-purple, style, none (default: style)
+    color = style    
+    # Diff variant: classic, ignore-spaces, patience, word-diff (default: classic)
+    diff = classic
+    # Start in repository mode instead of file-first mode (default: false)
+    repo-first = false
+    # Show startup welcome popup (default: true)
+    initial-popup = true    
+    # Include ignored files in file lists (default: false)
+    ignored-files = false
+    # Include untracked files in file lists (default: true)
+    untracked-files = true
+    # Use a specific git branch (optional, default: current branch)
+    # branch = main
+    # Enable debug logging to a file (optional, default: disabled)
+    # debug = /tmp/gitdiffnavtool.log
+    ```
 """
 
 
@@ -3614,20 +3666,27 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "HistoryListBase._add_row failed")
 
-    def _format_commit_row(self, ts, h: str | None, msg: str, status: str | None = None) -> str:
+    def _format_commit_row(self, ts, h: str | None, msg: str, status: str | None, author_name: str, author_email: str) -> str:
         """
         Return a formatted commit row string for display.
 
         Centralized so formatting is consistent across preparers.
         When status is 'unpushed', prepends an up arrow (↑) to indicate unpushed commits.
         Display timestamp with space instead of T separator ("2024-03-03 14:30:00").
+        When add_authors is True, includes author name and email in pipe-delimited format.
         """
         try:
             date_stamp = str(ts).replace("T", " ")
             display_hash_length = self.app.hash_length
             short_hash = (h or "")[:display_hash_length]
             push_marker = "↑ " if status == "unpushed" else ""
-            return f"{date_stamp} {push_marker}{short_hash} {msg}".strip()
+            
+            # Include author info if enabled and available
+            author_part = ""
+            if self.app.add_authors and (author_name or author_email):
+                author_part = f" |{author_name} {author_email}|"
+            
+            return f"{date_stamp} {push_marker}{short_hash}{author_part} {msg}".strip()
         except Exception as e:
             self.printException(e, "_format_commit_row failed")
             return f"{h or ''} {msg}".strip()
@@ -3900,12 +3959,12 @@ class FileModeHistoryList(HistoryListBase, RightSideBase):
                 self.printException(_e, "prepFileModeHistoryList: gitRepo.getNormalizedHashListFromFileName failed")
                 entries = []
 
-            # Render returned entries. Expect tuples like (iso, hash, subject, status).
+            # Render returned entries. Expect tuples like (iso, hash, subject, status, author_name, author_email).
             try:
                 first = True
-                for ts_iso, h, subject, status in entries:
+                for ts_iso, h, subject, status, author_name, author_email in entries:
                     try:
-                        text = self._format_commit_row(ts_iso, h, subject, status)
+                        text = self._format_commit_row(ts_iso, h, subject, status, author_name, author_email)
                         # Mark the first appended history row active immediately
                         # so the highlight is present without waiting for refresh.
                         self._add_row(text, h, mark_active=first)
@@ -4097,12 +4156,12 @@ class RepoModeHistoryList(HistoryListBase):
                 entries = []
 
             try:
-                # Entries are tuples (iso, hash, subject, status). Render each as a row
+                # Entries are tuples (iso, hash, subject, status, author_name, author_email). Render each as a row
                 # and mark the first row active for immediate focus.
                 first = True
-                for ts_iso, h, subject, status in entries:
+                for ts_iso, h, subject, status, author_name, author_email in entries:
                     try:
-                        text = self._format_commit_row(ts_iso, h, subject, status)
+                        text = self._format_commit_row(ts_iso, h, subject, status, author_name, author_email)
                         is_active = first
 
                         self._add_row(text, h, mark_active=is_active)
@@ -4801,8 +4860,9 @@ class GitDiffNavTool(AppException, App):
         verbose: int,
         highlight: str | None,
         color_scheme: str | None,
-        diff_variant: str | None = None,
-        hash_length: int = HASH_LENGTH,
+        diff_variant: str | None,
+        hash_length: int,
+        add_authors: bool,
         **kwargs,
     ):
         """
@@ -4853,6 +4913,9 @@ class GitDiffNavTool(AppException, App):
         # Number of characters used when displaying shortened commit hashes.
         # Can be overridden via --hash-length / config.
         self.hash_length = hash_length
+        # Whether to display author name and email in commit rows.
+        # Can be overridden via --add-authors / config.
+        self.add_authors = add_authors
         
         # Optional initial filename basename to highlight when listing a dir
         self.highlight = highlight
@@ -6256,6 +6319,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=HASH_LENGTH,
         help=f"number of characters to display for short hashes (default: {HASH_LENGTH})",
     )
+    # Mutually exclusive group for author display flags
+    author_group = startup_group.add_mutually_exclusive_group()
+    author_group.add_argument(
+        "--add-authors",
+        dest="add_authors",
+        action="store_true",
+        help="display author name and email in commit rows (default)",
+    )
+    author_group.add_argument(
+        "--no-add-authors",
+        dest="no_add_authors",
+        action="store_true",
+        help="hide author name and email in commit rows",
+    )
     startup_group.add_argument(
         "path", nargs="?", default=".", help="git repository or file within it (default: current directory)"
     )
@@ -6354,6 +6431,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     #   branch=<branch-name>
     #   color=true/false
     #   hash-length=<integer >= 1>
+    #   add-authors=true/false
     #   debug=<filename>
     # CLI options always take precedence over config defaults.
     cfg_files = [
@@ -6392,6 +6470,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 ("ignored-files", "no_ignored", lambda x: not bool(x)),
                 ("untracked-files", "no_untracked", lambda x: not bool(x)),
                 ("initial-popup", "no_initial_popup", lambda x: not bool(x)),
+                ("add-authors", "no_add_authors", lambda x: not bool(x)),
             ]
 
             for cfg_key, dest, transform in bool_map:
@@ -6472,7 +6551,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     # Handle CLI flag overrides for initial-popup, ignored-files, untracked-files,
-    # and branch selection:
+    # add-authors, and branch selection:
     # Positive flags (e.g., --initial-popup, --ignored-files) take precedence over
     # negative flags and config defaults.
     if args.initial_popup:
@@ -6481,6 +6560,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         args.no_ignored = False
     if args.untracked_files:
         args.no_untracked = False
+    if args.add_authors:
+        args.no_add_authors = False
     if args.no_branch:
         args.branch = None
 
@@ -6578,6 +6659,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             color_scheme=args.color,
             diff_variant=args.diff,
             hash_length=args.hash_length,
+            add_authors=not args.no_add_authors,
         )
         # Run the textual app (blocks until exit)
         app.run()

@@ -61,13 +61,13 @@ def _safe_name_for_capture(name: str) -> str:
     return urllib.parse.quote_plus(name, safe="")
 
 
-def getHashListSample(repo: GitRepo) -> list[tuple[str, str, str]]:
+def getHashListSample(repo: GitRepo) -> list[tuple[str, str, str, str, str, str]]:
     """
-    Returns a sampled list of commit tuples (iso, hash, subject) in
+    Returns a sampled list of commit tuples (iso, hash, subject, status, author_name, author_email) in
     newest-to-oldest order.
     """
     entire = repo.getHashListEntireRepo()
-    sampleHashes: list[tuple[str, str, str]] = []
+    sampleHashes: list[tuple[str, str, str, str, str, str]] = []
     if len(entire) >= 4:
         sampleHashes.append(entire[0])
         sampleHashes.append(entire[len(entire) // 3])
@@ -82,11 +82,11 @@ def getHashListSample(repo: GitRepo) -> list[tuple[str, str, str]]:
     return sampleHashes
 
 
-def getHashListSamplePlusEnds(repo: GitRepo) -> list[tuple[str, str, str]]:
+def getHashListSamplePlusEnds(repo: GitRepo) -> list[tuple[str, str, str, str, str, str]]:
     """
     Order: MODS, STAGED, sampled commits (newest->oldest), NEWREPO
     """
-    sampleHashes: list[tuple[str, str, str]] = []
+    sampleHashes: list[tuple[str, str, str, str, str, str]] = []
 
     # Put working-tree (MODS) first when present
     mods = repo.getHashListNewChanges()

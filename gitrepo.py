@@ -717,18 +717,18 @@ class GitRepo(AppException):
         # Fallback: use index mtime ISO
         return self.index_mtime_iso()
 
-    def _parse_git_log_output(self, output: str) -> list[tuple[int, str, str]]:
+    def _parse_git_log_output(self, output: str) -> list[tuple[int, str, str, str, str]]:
         """
-        Parse `git log --pretty=format:%ct %H %s` style output into tuples.
+        Parse `git log --pretty=format:%ct %H %an %ae %s` style output into tuples.
 
-        Returns a list of ``(timestamp_int, hash, subject)``.
+        Returns a list of ``(timestamp_int, hash, author_name, author_email, subject)``.
         """
-        results: list[tuple[int, str, str]] = []
+        results: list[tuple[int, str, str, str, str]] = []
         try:
             for line in output.splitlines():
                 if not line:
                     continue
-                parts = line.split(None, 2)
+                parts = line.split(None, 4)
                 if len(parts) < 2:
                     continue
                 try:
@@ -737,8 +737,10 @@ class GitRepo(AppException):
                     self.printException(e, "_parse_git_log_output: parsing timestamp failed")
                     ts = 0
                 h = parts[1].strip()
-                subject = parts[2].strip() if len(parts) >= 3 else ""
-                results.append((ts, h, subject))
+                author_name = parts[2].strip() if len(parts) >= 3 else ""
+                author_email = parts[3].strip() if len(parts) >= 4 else ""
+                subject = parts[4].strip() if len(parts) >= 5 else ""
+                results.append((ts, h, author_name, author_email, subject))
             return results
         except Exception as e:
             self.printException(e, "_parse_git_log_output: unexpected failure")
@@ -1389,7 +1391,7 @@ class GitRepo(AppException):
             self.printException(e, "_get_pushed_hashes: unexpected failure")
             return set()
 
-    def getNormalizedHashListComplete(self) -> list[tuple[str, str, str, str]]:
+    def getNormalizedHashListComplete(self) -> list[tuple[str, str, str, str, str, str]]:
         """Return combined hash entries with pushed/unpushed status."""
         new = self.getHashListNewChanges()
         staged = self.getHashListStagedChanges()
@@ -1397,22 +1399,22 @@ class GitRepo(AppException):
         newrepo = self.getHashListNewRepo()
         return new + staged + entire + newrepo
 
-    def getHashListEntireRepo(self) -> list[tuple[str, str, str, str]]:
+    def getHashListEntireRepo(self) -> list[tuple[str, str, str, str, str, str]]:
         """Return all commit hashes in the configured branch with pushed status."""
         default_ref = self._get_default_ref()
-        output = self._git_run(["git", "log", default_ref, "--pretty=format:%ct %H %s"], text=True)
+        output = self._git_run(["git", "log", default_ref, "--pretty=format:%ct %H %an %ae %s"], text=True)
         pairs = self._parse_git_log_output(output or "")
         pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
         pushed_hashes = self._get_pushed_hashes()
-        formatted: list[tuple[str, str, str, str]] = []
-        for ts, h, subject in pairs:
+        formatted: list[tuple[str, str, str, str, str, str]] = []
+        for ts, h, author_name, author_email, subject in pairs:
             iso = self._epoch_to_iso(ts)
             status = "pushed" if h in pushed_hashes else "unpushed"
-            formatted.append((iso, h, subject, status))
+            formatted.append((iso, h, subject, status, author_name, author_email))
         return formatted
 
-    def getHashListStagedChanges(self) -> list[tuple[str, str, str, str]]:
+    def getHashListStagedChanges(self) -> list[tuple[str, str, str, str, str, str]]:
         """Return staged pseudo-hash entries with pushed status."""
         key = self._make_cache_key("getHashListStagedChanges", self.index_mtime_iso())
         try:
@@ -1427,7 +1429,7 @@ class GitRepo(AppException):
 
             if any(ln.strip() for ln in names_out.splitlines()):
                 iso = self.index_mtime_iso()
-                res = [(iso, self.STAGED, self.STAGED_MESSAGE, "unpushed")]
+                res = [(iso, self.STAGED, self.STAGED_MESSAGE, "unpushed", "", "")]
                 self._cmd_cache[key] = res
                 return res
 
@@ -1437,7 +1439,7 @@ class GitRepo(AppException):
             self.printException(e, "getHashListStagedChanges: failure")
             return []
 
-    def getHashListNewChanges(self) -> list[tuple[str, str, str, str]]:
+    def getHashListNewChanges(self) -> list[tuple[str, str, str, str, str, str]]:
         """Return working-tree "MODS" entry with pushed status."""
         try:
             names_out = self._git_run(["git", "diff", "--name-only"], text=True)
@@ -1453,19 +1455,19 @@ class GitRepo(AppException):
             key = self._make_cache_key("getHashListNewChanges", iso)
             if key in self._cmd_cache:
                 return self._cmd_cache[key]
-            res = [(iso, self.MODS, self.MODS_MESSAGE, "unpushed")]
+            res = [(iso, self.MODS, self.MODS_MESSAGE, "unpushed", "", "")]
             self._cmd_cache[key] = res
             return res
         except Exception as e:
             self.printException(e, "getHashListNewChanges: failure")
             return []
 
-    def getHashListNewRepo(self) -> list[tuple[str, str, str, str]]:
+    def getHashListNewRepo(self) -> list[tuple[str, str, str, str, str, str]]:
         """
         Return the pseudo-hash entry for a newly-created repository.
 
         Returns a single-entry list containing
-        `(iso_timestamp, NEWREPO, NEWREPO_MESSAGE, status)` where status is
+        `(iso_timestamp, NEWREPO, NEWREPO_MESSAGE, status, author_name, author_email)` where status is
         copied from the oldest real commit's pushed status when available.
         """
         try:
@@ -1474,16 +1476,16 @@ class GitRepo(AppException):
             entire = self.getHashListEntireRepo()
             if entire:
                 oldest_status = entire[-1][3]
-            return [(iso, self.NEWREPO, self.NEWREPO_MESSAGE, oldest_status)]
+            return [(iso, self.NEWREPO, self.NEWREPO_MESSAGE, oldest_status, "", "")]
         except Exception as e:
             self.printException(e, "getHashListNewRepo: failure")
-            return [(self.index_mtime_iso(), self.NEWREPO, self.NEWREPO_MESSAGE, "unpushed")]
+            return [(self.index_mtime_iso(), self.NEWREPO, self.NEWREPO_MESSAGE, "unpushed", "", "")]
 
-    def getNormalizedHashListFromFileName(self, file_name: str) -> list[tuple[str, str, str, str]]:
+    def getNormalizedHashListFromFileName(self, file_name: str) -> list[tuple[str, str, str, str, str, str]]:
         """
         Return a list of commit hashes that modified the given file.
 
-        Returns 4-tuples (iso_timestamp, hash, subject, status) where status is
+        Returns 6-tuples (iso_timestamp, hash, subject, status, author_name, author_email) where status is
         'pushed' or 'unpushed'. Uses the git CLI (`git log` + `git status`) with a
         one-time cache per `file_name`. The previous walk/diff implementation has
         been removed for performance consistency.
@@ -1495,18 +1497,18 @@ class GitRepo(AppException):
 
             default_ref = self._get_default_ref()
             output = self._git_run(
-                ["git", "log", default_ref, "--pretty=format:%ct %H %s", "--", file_name], text=True, cache_key=key
+                ["git", "log", default_ref, "--pretty=format:%ct %H %an %ae %s", "--", file_name], text=True, cache_key=key
             )
 
             # Get pushed hashes once for status lookup
             pushed_hashes = self._get_pushed_hashes()
 
-            parsed_entries: list[tuple[str, str, str, str]] = []
+            parsed_entries: list[tuple[str, str, str, str, str, str]] = []
             parsed = self._parse_git_log_output(output or "")
-            for ts, h, subject in parsed:
+            for ts, h, author_name, author_email, subject in parsed:
                 iso = self._epoch_to_iso(ts)
                 status = "pushed" if h in pushed_hashes else "unpushed"
-                parsed_entries.append((iso, h, subject if subject else "", status))
+                parsed_entries.append((iso, h, subject if subject else "", status, author_name, author_email))
 
             # Inspect working-tree/index status for the file and construct
             # explicit pseudo-entries for MODS/STAGED when present. We will
@@ -1531,17 +1533,17 @@ class GitRepo(AppException):
             try:
                 if idx_flag != " ":
                     iso_index = self.index_mtime_iso()
-                    staged_entry = (iso_index, self.STAGED, self.STAGED_MESSAGE, "unpushed")
+                    staged_entry = (iso_index, self.STAGED, self.STAGED_MESSAGE, "unpushed", "", "")
                 if wt_flag != " ":
                     iso_mods = self._paths_mtime_iso([file_name])
-                    mods_entry = (iso_mods, self.MODS, self.MODS_MESSAGE, "unpushed")
+                    mods_entry = (iso_mods, self.MODS, self.MODS_MESSAGE, "unpushed", "", "")
             except Exception as e:
                 self.printException(e, "getNormalizedHashListFromFileName: computing pseudo-entry timestamps failed")
 
             # Assemble final entries in newest->oldest order. Place MODS
             # before STAGED here so that callers that reverse the list
             # (oldest->newest) will see STAGED before MODS.
-            entries: list[tuple[str, str, str, str]] = []
+            entries: list[tuple[str, str, str, str, str, str]] = []
             if mods_entry is not None:
                 entries.append(mods_entry)
             if staged_entry is not None:
