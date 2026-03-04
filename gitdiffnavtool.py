@@ -452,8 +452,10 @@ Configuration File:
     # Show startup welcome popup (default: true)
     initial-popup = true    
     # Include ignored files in file lists (default: false)
-    ignored-files = false
+    # This can be toggled at run time with 'i'/'I' when focused on file lists.
+    ignored-files = true
     # Include untracked files in file lists (default: true)
+    # This can be toggled at run time with 'u'/'U' when focused on file lists.
     untracked-files = true
     # Use a specific git branch (optional, default: current branch)
     # branch = main
@@ -4952,6 +4954,11 @@ class GitDiffNavTool(AppException, App):
         ]
         self.color_scheme = color_scheme
         # Record any requested initial diff variant name for on_mount application
+        logger.debug(
+            "GitDiffNavTool.__init__: diff_variant=%r, DIFF_VARIANT_NAMES=%r",
+            diff_variant,
+            DIFF_VARIANT_NAMES,
+        )
         self.initial_diff_variant = diff_variant
 
     def compose(self):
@@ -5031,6 +5038,12 @@ class GitDiffNavTool(AppException, App):
             self.help_list.prepHelp()
 
             # Apply any requested initial diff variant (from CLI or config)
+            # args.diff is guaranteed to be a valid variant name by main()
+            logger.debug(
+                "on_mount: initial_diff_variant=%r, DIFF_VARIANT_NAMES=%r",
+                self.initial_diff_variant,
+                DIFF_VARIANT_NAMES,
+            )
             self.diff_list.variant = DIFF_VARIANT_NAMES.index(self.initial_diff_variant)
 
             # Populate the canonical left lists and set focus so key handlers
@@ -6643,6 +6656,17 @@ def main(argv: Optional[list[str]] = None) -> int:
             gitrepo.get_repo_root(),
             rel_dir,
             rel_file,
+        )
+
+        # Default diff variant to 'classic' if not specified via CLI or config
+        if not args.diff:
+            args.diff = DIFF_VARIANT_NAMES[0]
+
+        # Log args.diff for debugging
+        logger.debug(
+            "main: creating GitDiffNavTool: args.diff=%r, DIFF_VARIANT_NAMES=%r",
+            args.diff,
+            DIFF_VARIANT_NAMES,
         )
 
         app = GitDiffNavTool(
