@@ -204,9 +204,9 @@ class GitRepo(AppException):
             except CalledProcessError as _use_raise:
                 raise ValueError(
                     f"__init__: branch {self._branch!r} is not valid or does not exist in repository"
-                ) from e
+                ) from _use_raise
             except Exception as _use_raise:
-                raise ValueError(f"__init__: failed to validate branch {self._branch!r}") from e
+                raise ValueError(f"__init__: failed to validate branch {self._branch!r}") from _use_raise
 
     def reset_cache(self) -> None:
         """Reset the per-process command/result cache."""

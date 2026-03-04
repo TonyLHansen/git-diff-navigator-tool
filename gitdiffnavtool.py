@@ -2634,7 +2634,7 @@ class FileModeFileList(FileListBase):
             # Then show files (use marker key and per-status styles)
             for name, status, iso in sorted(slice_node["files"], key=lambda x: x[0]):
                 try:
-                    ts = iso if iso is not None else ""
+                    ts = (iso if iso is not None else "").replace("T", " ")
                     marker = MARKERS.get(status, " ")
                     if status == "conflicted":
                         base_style = STYLE_CONFLICTED
@@ -3620,9 +3620,10 @@ class HistoryListBase(AppBase):
 
         Centralized so formatting is consistent across preparers.
         When status is 'unpushed', prepends an up arrow (↑) to indicate unpushed commits.
+        Display timestamp with space instead of T separator ("2024-03-03 14:30:00").
         """
         try:
-            date_stamp = str(ts)
+            date_stamp = str(ts).replace("T", " ")
             display_hash_length = self.app.hash_length
             short_hash = (h or "")[:display_hash_length]
             push_marker = "↑ " if status == "unpushed" else ""
