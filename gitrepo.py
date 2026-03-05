@@ -800,7 +800,7 @@ class GitRepo(AppException):
             self.printException(e, "_git_cli_parse_name_status_output: unexpected failure")
             return []
 
-    def _git_cli_getCachedFileList(self, key: str, git_args: list) -> list[tuple[str, str]]:
+    def _git_cli_getCachedFileList(self, key: str, git_args: list, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Run the git command in ``git_args``, parse and cache
         the name-status list under `key`.
@@ -808,7 +808,7 @@ class GitRepo(AppException):
         Returns a sorted list of ``(path,status)`` or ``[]`` on failure.
         """
         try:
-            if key in self._cmd_cache:
+            if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
             output = self._git_run(git_args, text=True, cache_key=key)
@@ -904,7 +904,7 @@ class GitRepo(AppException):
             return []
 
     def _git_name_status_dispatch(
-        self, prev: str | None = None, curr: str | None = None, cached: bool = False, key: str | None = None
+        self, prev: str | None = None, curr: str | None = None, cached: bool = False, key: str | None = None, ignorecache: bool = False
     ) -> list[tuple[str, str]]:
         """
         Generalized dispatcher for `git diff --name-status` variants.
@@ -925,12 +925,12 @@ class GitRepo(AppException):
             elif curr is not None:
                 args.append(curr)
             cache_key = key or self._make_cache_key("git_name_status", prev, curr, "cached" if cached else "nocache")
-            return self._git_cli_getCachedFileList(cache_key, args)
+            return self._git_cli_getCachedFileList(cache_key, args, ignorecache=ignorecache)
         except Exception as e:
             self.printException(e, "_git_name_status_dispatch: unexpected failure")
             return []
 
-    def _empty_tree_hash(self) -> str:
+    def _empty_tree_hash(self, ignorecache: bool = False) -> str:
         """
         Return the canonical empty-tree object id for this repository's
         object format. Uses `git rev-parse --show-object-format` to detect
@@ -944,7 +944,7 @@ class GitRepo(AppException):
 
         try:
             cache_key = "_empty_tree_hash"
-            if cache_key in self._cmd_cache:
+            if not ignorecache and cache_key in self._cmd_cache:
                 return self._cmd_cache[cache_key]
 
             # Ask git which object format this repo uses. Example responses:
@@ -971,7 +971,7 @@ class GitRepo(AppException):
     # File Lists
     ################
 
-    def getFileListBetweenNormalizedHashes(self, prev_hash: str, curr_hash: str) -> list[tuple[str, str]]:
+    def getFileListBetweenNormalizedHashes(self, prev_hash: str, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Return a list of `(path, status)` for files changed between `prev_hash` and `curr_hash`.
 
@@ -994,15 +994,15 @@ class GitRepo(AppException):
 
         # If prev is the pseudo-NewRepo token and curr is a normal hash -> new->hash
         if prev_hash == self.NEWREPO and curr_hash not in (self.STAGED, self.MODS):
-            return self.getFileListBetweenNewRepoAndHash(curr_hash)
+            return self.getFileListBetweenNewRepoAndHash(curr_hash, ignorecache=ignorecache)
 
         # If prev is NEWREPO and curr is staged -> initial->staged
         if prev_hash == self.NEWREPO and curr_hash == self.STAGED:
-            return self.getFileListBetweenNewRepoAndStaged()
+            return self.getFileListBetweenNewRepoAndStaged(ignorecache=ignorecache)
 
         # If prev is NEWREPO and curr is working tree (mods) -> initial->mods
         if prev_hash == self.NEWREPO and curr_hash == self.MODS:
-            return self.getFileListBetweenNewRepoAndMods()
+            return self.getFileListBetweenNewRepoAndMods(ignorecache=ignorecache)
 
         # If prev and curr are both normal hashes -> direct commit->commit diff
         if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash not in (
@@ -1010,25 +1010,25 @@ class GitRepo(AppException):
             self.STAGED,
             self.MODS,
         ):
-            return self.getFileListBetweenTwoCommits(prev_hash, curr_hash)
+            return self.getFileListBetweenTwoCommits(prev_hash, curr_hash, ignorecache=ignorecache)
 
         # Hash -> staged
         if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash == self.STAGED:
-            return self.getFileListBetweenHashAndStaged(prev_hash)
+            return self.getFileListBetweenHashAndStaged(prev_hash, ignorecache=ignorecache)
 
         # Hash -> working tree (mods)
         if prev_hash not in (self.NEWREPO, self.STAGED, self.MODS) and curr_hash == self.MODS:
-            return self.getFileListBetweenHashAndCurrentTime(prev_hash)
+            return self.getFileListBetweenHashAndCurrentTime(prev_hash, ignorecache=ignorecache)
 
         # staged -> mods (working tree)
         if prev_hash == self.STAGED and curr_hash == self.MODS:
-            return self.getFileListBetweenStagedAndMods()
+            return self.getFileListBetweenStagedAndMods(ignorecache=ignorecache)
 
         # Fallback: for remaining (likely commit-ish) combos delegate to the
         # explicit two-commit handler rather than the fully generic resolver.
-        return self.getFileListBetweenTwoCommits(prev_hash, curr_hash)
+        return self.getFileListBetweenTwoCommits(prev_hash, curr_hash, ignorecache=ignorecache)
 
-    def getFileListBetweenNewRepoAndTopHash(self) -> list[tuple[str, str]]:
+    def getFileListBetweenNewRepoAndTopHash(self, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Return a list of `(path, status)` for files present in HEAD.
 
@@ -1036,9 +1036,9 @@ class GitRepo(AppException):
         given commit (HEAD).
         """
         # Delegate to the new initial->commit helper to avoid duplication
-        return self.getFileListBetweenNewRepoAndHash(self._get_default_ref())
+        return self.getFileListBetweenNewRepoAndHash(self._get_default_ref(), ignorecache=ignorecache)
 
-    def getFileListBetweenTwoCommits(self, prev_hash: str, curr_hash: str) -> list[tuple[str, str]]:
+    def getFileListBetweenTwoCommits(self, prev_hash: str, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Direct commit->commit diff (both args expected to be commit-ish).
 
@@ -1046,9 +1046,9 @@ class GitRepo(AppException):
         """
         # Use generalized dispatcher for commit->commit diffs
         key = self._make_cache_key("getFileListBetweenTwoCommits", prev_hash, curr_hash)
-        return self._git_name_status_dispatch(prev=prev_hash, curr=curr_hash, cached=False, key=key)
+        return self._git_name_status_dispatch(prev=prev_hash, curr=curr_hash, cached=False, key=key, ignorecache=ignorecache)
 
-    def getFileListBetweenNewRepoAndHash(self, curr_hash: str) -> list[tuple[str, str]]:
+    def getFileListBetweenNewRepoAndHash(self, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Return a list of `(path, status)` for files changed between the beginning and `curr_hash`.
 
@@ -1057,7 +1057,7 @@ class GitRepo(AppException):
         # Git-CLI implementation with a one-time per-hash cache. The
         key = self._make_cache_key("getFileListBetweenNewRepoAndHash", curr_hash)
         try:
-            if key in self._cmd_cache:
+            if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
             output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key)
@@ -1075,7 +1075,7 @@ class GitRepo(AppException):
             self.printException(e, "getFileListBetweenNewRepoAndHash: unexpected failure")
             return []
 
-    def getFileListAtHash(self, curr_hash: str) -> list[tuple[str, str]]:
+    def getFileListAtHash(self, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Return a list of `(path, status)` for files present in `curr_hash`.
 
@@ -1085,7 +1085,7 @@ class GitRepo(AppException):
         """
         key = self._make_cache_key("getFileListAtHash", curr_hash)
         try:
-            if key in self._cmd_cache:
+            if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
             output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key)
@@ -1103,7 +1103,7 @@ class GitRepo(AppException):
             self.printException(e, "getFileListAtHash: unexpected failure")
             return []
 
-    def getFileListBetweenNewRepoAndStaged(self) -> list[tuple[str, str]]:
+    def getFileListBetweenNewRepoAndStaged(self, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Return file list for the initial (empty) tree -> staged index comparison.
 
@@ -1112,65 +1112,65 @@ class GitRepo(AppException):
         """
         # Git-CLI-only implementation cached once per process.
         key = "getFileListBetweenNewRepoAndStaged"
-        return self._git_name_status_dispatch(prev=None, curr=None, cached=True, key=key)
+        return self._git_name_status_dispatch(prev=None, curr=None, cached=True, key=key, ignorecache=ignorecache)
 
-    def getFileListBetweenNewRepoAndMods(self) -> list[tuple[str, str]]:
+    def getFileListBetweenNewRepoAndMods(self, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Specialized handler for initial (empty) -> working tree (mods) comparison.
 
         This implementation is git-CLI-only and mirrors `git diff --name-status`.
         """
         key = "getFileListBetweenNewRepoAndMods"
-        return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
+        return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key, ignorecache=ignorecache)
 
-    def getFileListBetweenTopHashAndCurrentTime(self) -> list[tuple[str, str]]:
+    def getFileListBetweenTopHashAndCurrentTime(self, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Return a list of `(path, status)` for files changed between HEAD and working tree.
 
         Status will reflect the working-tree change type (modified/added/deleted).
         """
         # Delegate to the general handler to avoid duplicating logic
-        return self.getFileListBetweenHashAndCurrentTime(self._get_default_ref())
+        return self.getFileListBetweenHashAndCurrentTime(self._get_default_ref(), ignorecache=ignorecache)
 
-    def getFileListBetweenHashAndCurrentTime(self, hash: str) -> list[tuple[str, str]]:
+    def getFileListBetweenHashAndCurrentTime(self, hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Return `(path,status)` for files changed between `hash` and working tree.
 
         Uses the git CLI plus a one-time cache via `_git_cli_getCachedFileList`.
         """
         key = self._make_cache_key("getFileListBetweenHashAndCurrentTime", hash)
-        return self._git_name_status_dispatch(prev=hash, curr=None, cached=False, key=key)
+        return self._git_name_status_dispatch(prev=hash, curr=None, cached=False, key=key, ignorecache=ignorecache)
 
-    def getFileListBetweenTopHashAndStaged(self) -> list[tuple[str, str]]:
+    def getFileListBetweenTopHashAndStaged(self, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Return a list of `(path, status)` for files changed between HEAD and staged index."""
         # Delegate to the generalized staged-vs-hash implementation to avoid duplication
-        return self.getFileListBetweenHashAndStaged(self._get_default_ref())
+        return self.getFileListBetweenHashAndStaged(self._get_default_ref(), ignorecache=ignorecache)
 
-    def getFileListBetweenHashAndStaged(self, hash: str) -> list[tuple[str, str]]:
+    def getFileListBetweenHashAndStaged(self, hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Return `(path,status)` for files changed between `hash` and the staged index.
 
         Generalization of getFileListBetweenTopHashAndStaged for any commit-ish.
         """
         key = self._make_cache_key("getFileListBetweenHashAndStaged", hash)
-        return self._git_name_status_dispatch(prev=hash, curr=None, cached=True, key=key)
+        return self._git_name_status_dispatch(prev=hash, curr=None, cached=True, key=key, ignorecache=ignorecache)
 
-    def getFileListBetweenStagedAndMods(self) -> list[tuple[str, str]]:
+    def getFileListBetweenStagedAndMods(self, ignorecache: bool = False) -> list[tuple[str, str]]:
         """
         Return a list of `(path, status)` for files changed between staged index and working tree (mods)."""
         # Use git CLI to get the list of files; cache the results once per process
         key = self._make_cache_key("getFileListBetweenStagedAndMods")
-        return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key)
+        return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key, ignorecache=ignorecache)
 
-    def getFileListUntracked(self) -> list[tuple[str, str, str]]:
+    def getFileListUntracked(self, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Return a sorted list of `(path, iso_mtime, 'untracked')` for files that
         are untracked in the working tree.
         """
         try:
             cache_key = self._make_cache_key("getFileListUntracked")
-            if cache_key in self._cmd_cache:
+            if not ignorecache and cache_key in self._cmd_cache:
                 return self._cmd_cache[cache_key]
 
             results: list[tuple[str, str, str]] = []
@@ -1195,14 +1195,14 @@ class GitRepo(AppException):
             self.printException(e, "getFileListUntracked: unexpected failure")
             return []
 
-    def getFileListIgnored(self) -> list[tuple[str, str, str]]:
+    def getFileListIgnored(self, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Return a sorted list of `(path, iso_mtime, 'ignored')` for files that
         are ignored in the working tree.
         """
         try:
             cache_key = self._make_cache_key("getFileListIgnored")
-            if cache_key in self._cmd_cache:
+            if not ignorecache and cache_key in self._cmd_cache:
                 return self._cmd_cache[cache_key]
 
             results: list[tuple[str, str, str]] = []
@@ -1227,7 +1227,7 @@ class GitRepo(AppException):
             self.printException(e, "getFileListIgnored: unexpected failure")
             return []
 
-    def getFileListUntrackedAndIgnored(self) -> list[tuple[str, str, str]]:
+    def getFileListUntrackedAndIgnored(self, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Aggregate untracked and ignored lists into a single sorted list.
 
@@ -1236,11 +1236,11 @@ class GitRepo(AppException):
         """
         try:
             cache_key = self._make_cache_key("getFileListUntrackedAndIgnored")
-            if cache_key in self._cmd_cache:
+            if not ignorecache and cache_key in self._cmd_cache:
                 return self._cmd_cache[cache_key]
 
-            untracked = self.getFileListUntracked() or []
-            ignored = self.getFileListIgnored() or []
+            untracked = self.getFileListUntracked(ignorecache=ignorecache) or []
+            ignored = self.getFileListIgnored(ignorecache=ignorecache) or []
 
             combined: list[tuple[str, str, str]] = []
             seen: set[str] = set()
@@ -1288,7 +1288,7 @@ class GitRepo(AppException):
             self.printException(e, "_entry_rel_path failed")
             return None
 
-    def remove_ignored_files(self, file_list: list[Any] | None) -> list[Any]:
+    def remove_ignored_files(self, file_list: list[Any] | None, ignorecache: bool = False) -> list[Any]:
         """
         Return `file_list` with entries removed when their path is ignored.
 
@@ -1298,7 +1298,7 @@ class GitRepo(AppException):
             if not file_list:
                 return []
 
-            ignored = self.getFileListIgnored() or []
+            ignored = self.getFileListIgnored(ignorecache=ignorecache) or []
             ignored_paths = {
                 os.path.normpath(str(ent[0])) for ent in ignored if isinstance(ent, (list, tuple)) and len(ent) > 0
             }
@@ -1314,7 +1314,7 @@ class GitRepo(AppException):
             self.printException(e, "remove_ignored_files failed")
             return list(file_list or [])
 
-    def remove_untracked_files(self, file_list: list[Any] | None) -> list[Any]:
+    def remove_untracked_files(self, file_list: list[Any] | None, ignorecache: bool = False) -> list[Any]:
         """
         Return `file_list` with entries removed when their path is untracked.
 
@@ -1324,7 +1324,7 @@ class GitRepo(AppException):
             if not file_list:
                 return []
 
-            untracked = self.getFileListUntracked() or []
+            untracked = self.getFileListUntracked(ignorecache=ignorecache) or []
             untracked_paths = {
                 os.path.normpath(str(ent[0])) for ent in untracked if isinstance(ent, (list, tuple)) and len(ent) > 0
             }
@@ -1344,7 +1344,7 @@ class GitRepo(AppException):
     # Hash Lists
     ################
 
-    def getPushedHashes(self) -> set[str]:
+    def getPushedHashes(self, ignorecache: bool = False) -> set[str]:
         """
         Return commit hashes reachable from the active upstream/remote refs.
 
@@ -1354,7 +1354,7 @@ class GitRepo(AppException):
         """
         try:
             cache_key = "getPushedHashes"
-            if cache_key in self._cmd_cache:
+            if not ignorecache and cache_key in self._cmd_cache:
                 cached = self._cmd_cache[cache_key]
                 return cached if isinstance(cached, set) else set()
 
@@ -1391,22 +1391,22 @@ class GitRepo(AppException):
             self.printException(e, "getPushedHashes: unexpected failure")
             return set()
 
-    def getNormalizedHashListComplete(self) -> list[tuple[str, str, str, str, str, str]]:
+    def getNormalizedHashListComplete(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
         """Return combined hash entries with pushed/unpushed status."""
-        new = self.getHashListNewChanges()
-        staged = self.getHashListStagedChanges()
-        entire = self.getHashListEntireRepo()
-        newrepo = self.getHashListNewRepo()
+        new = self.getHashListNewChanges(ignorecache=ignorecache)
+        staged = self.getHashListStagedChanges(ignorecache=ignorecache)
+        entire = self.getHashListEntireRepo(ignorecache=ignorecache)
+        newrepo = self.getHashListNewRepo(ignorecache=ignorecache)
         return new + staged + entire + newrepo
 
-    def getHashListEntireRepo(self) -> list[tuple[str, str, str, str, str, str]]:
+    def getHashListEntireRepo(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
         """Return all commit hashes in the configured branch with pushed status."""
         default_ref = self._get_default_ref()
         output = self._git_run(["git", "log", default_ref, "--pretty=format:%ct %H %an %ae %s"], text=True)
         pairs = self._parse_git_log_output(output or "")
         pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
-        pushed_hashes = self.getPushedHashes()
+        pushed_hashes = self.getPushedHashes(ignorecache=ignorecache)
         formatted: list[tuple[str, str, str, str, str, str]] = []
         for ts, h, author_name, author_email, subject in pairs:
             iso = self._epoch_to_iso(ts)
@@ -1414,11 +1414,11 @@ class GitRepo(AppException):
             formatted.append((iso, h, subject, status, author_name, author_email))
         return formatted
 
-    def getHashListStagedChanges(self) -> list[tuple[str, str, str, str, str, str]]:
+    def getHashListStagedChanges(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
         """Return staged pseudo-hash entries with pushed status."""
         key = self._make_cache_key("getHashListStagedChanges", self.index_mtime_iso())
         try:
-            if key in self._cmd_cache:
+            if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
             names_out = self._git_run(["git", "diff", "--cached", "--name-only"], text=True, cache_key=key)
@@ -1439,7 +1439,7 @@ class GitRepo(AppException):
             self.printException(e, "getHashListStagedChanges: failure")
             return []
 
-    def getHashListNewChanges(self) -> list[tuple[str, str, str, str, str, str]]:
+    def getHashListNewChanges(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
         """Return working-tree "MODS" entry with pushed status."""
         try:
             names_out = self._git_run(["git", "diff", "--name-only"], text=True)
@@ -1453,7 +1453,7 @@ class GitRepo(AppException):
 
             iso = self._paths_mtime_iso(paths)
             key = self._make_cache_key("getHashListNewChanges", iso)
-            if key in self._cmd_cache:
+            if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
             res = [(iso, self.MODS, self.MODS_MESSAGE, "unpushed", "", "")]
             self._cmd_cache[key] = res
@@ -1462,7 +1462,7 @@ class GitRepo(AppException):
             self.printException(e, "getHashListNewChanges: failure")
             return []
 
-    def getHashListNewRepo(self) -> list[tuple[str, str, str, str, str, str]]:
+    def getHashListNewRepo(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
         """
         Return the pseudo-hash entry for a newly-created repository.
 
@@ -1473,7 +1473,7 @@ class GitRepo(AppException):
         try:
             iso = self._newrepo_timestamp_iso()
             oldest_status = "unpushed"
-            entire = self.getHashListEntireRepo()
+            entire = self.getHashListEntireRepo(ignorecache=ignorecache)
             if entire:
                 oldest_status = entire[-1][3]
             return [(iso, self.NEWREPO, self.NEWREPO_MESSAGE, oldest_status, "", "")]
@@ -1481,7 +1481,7 @@ class GitRepo(AppException):
             self.printException(e, "getHashListNewRepo: failure")
             return [(self.index_mtime_iso(), self.NEWREPO, self.NEWREPO_MESSAGE, "unpushed", "", "")]
 
-    def getNormalizedHashListFromFileName(self, file_name: str) -> list[tuple[str, str, str, str, str, str]]:
+    def getNormalizedHashListFromFileName(self, file_name: str, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
         """
         Return a list of commit hashes that modified the given file.
 
@@ -1492,7 +1492,7 @@ class GitRepo(AppException):
         """
         key = self._make_cache_key("getNormalizedHashListFromFileName", file_name)
         try:
-            if key in self._cmd_cache:
+            if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
             default_ref = self._get_default_ref()
@@ -1503,7 +1503,7 @@ class GitRepo(AppException):
             )
 
             # Get pushed hashes once for status lookup
-            pushed_hashes = self.getPushedHashes()
+            pushed_hashes = self.getPushedHashes(ignorecache=ignorecache)
 
             parsed_entries: list[tuple[str, str, str, str, str, str]] = []
             parsed = self._parse_git_log_output(output or "")
