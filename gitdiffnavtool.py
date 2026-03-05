@@ -34,7 +34,7 @@ from rich.panel import Panel
 from textual import events
 from textual.app import App
 from textual.containers import Horizontal, Vertical
-from textual.widgets import ListView, Label, ListItem, Footer, Header
+from textual.widgets import ListView, Label, ListItem, Footer, Header, TextArea
 from textual.screen import ModalScreen
 
 # Repository helpers (extracted): provide printException, AppException, GitRepo
@@ -1773,6 +1773,103 @@ class MessageModal(ModalScreen):
                 printException(e, "MessageModal.on_key: pop_screen failed")
         except Exception as e:
             printException(e, "MessageModal.on_key failed")
+
+
+class EditMessageModal(ModalScreen):
+    """
+    Modal that presents an editable text box for the user to modify content.
+
+    Allows editing multi-line text and returns either the modified text or
+    None if the user cancels the operation.
+    - Ctrl+S or Ctrl+Enter: Save and return the edited text
+    - Escape: Cancel and return None
+    """
+
+    def __init__(self, initial_text: str = "", title: str = "Edit text", **kwargs) -> None:
+        """
+        Initialize the modal with initial text.
+
+        Args:
+            initial_text: The initial text content to display and edit
+            title: Title/prompt to display above the text box
+        """
+        super().__init__(**kwargs)
+        self.initial_text = initial_text
+        self.title = title
+        self.edited_text = initial_text
+
+    def compose(self):
+        """
+        Compose the modal with a text editor and instructions.
+
+        Creates a layout with:
+        - Title/prompt label
+        - TextArea widget for editing
+        - Instructions label for keyboard commands
+        """
+        try:
+            text_area = TextArea(
+                text=self.initial_text,
+                id="edit-text-area",
+                language="text",
+            )
+            yield Vertical(
+                Label(Text(self.title, style="bold"), id="edit-title"),
+                text_area,
+                Label(
+                    Text("Ctrl+S or Ctrl+Enter to save | Escape to cancel", style="dim"),
+                    id="edit-prompt",
+                ),
+                id="edit-modal-wrapper",
+            )
+        except Exception as e:
+            printException(e, "EditMessageModal.compose failed")
+
+    def on_key(self, event: events.Key) -> None:
+        """
+        Handle keyboard input for save and cancel operations.
+
+        - Ctrl+S: Retrieve text from editor and return it
+        - Escape: Cancel and return None
+        """
+        try:
+            key = getattr(event, "key", "")
+
+            # Save on Ctrl+S
+            if key == "ctrl+s":
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+
+                try:
+                    text_area = self.query_one("#edit-text-area", TextArea)
+                    self.edited_text = text_area.text
+                except Exception as e:
+                    printException(e, "EditMessageModal.on_key: retrieving text failed")
+                    self.edited_text = self.initial_text
+
+                try:
+                    self.app.pop_screen()
+                except Exception as e:
+                    printException(e, "EditMessageModal.on_key: pop_screen failed")
+                return
+
+            # Cancel on Escape
+            if key == "escape":
+                try:
+                    event.stop()
+                except Exception:
+                    pass
+
+                try:
+                    self.app.pop_screen()
+                except Exception as e:
+                    printException(e, "EditMessageModal.on_key: pop_screen failed")
+                return
+
+        except Exception as e:
+            printException(e, "EditMessageModal.on_key failed")
 
 
 class RightSideBase(AppBase):
