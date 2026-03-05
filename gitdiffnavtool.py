@@ -1794,7 +1794,7 @@ class RightSideBase(AppBase):
 class FullScreenBase(AppBase):
     """
     Base class for widgets supporting fullscreen/split view toggles.
-    
+
     Provides common key handlers and state management for DiffList and OpenFileList.
     Subclasses should call super().__init__() and can override specific behaviors.
     """
@@ -1824,7 +1824,9 @@ class FullScreenBase(AppBase):
     def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Promote to fullscreen when in a split layout."""
         if not recursive:
-            logger.debug(f"{self.__class__.__name__}.key_right called: key=%r index=%r", getattr(event, "key", None), self.index)
+            logger.debug(
+                f"{self.__class__.__name__}.key_right called: key=%r index=%r", getattr(event, "key", None), self.index
+            )
         try:
             if event is not None:
                 try:
@@ -1835,14 +1837,18 @@ class FullScreenBase(AppBase):
             if current in self._split_layouts:
                 # Save the current layout before going fullscreen
                 self._saved_layout = current
-                self.app.change_state(self._fullscreen_layout, f"#{self._fullscreen_widget_id}", self._fullscreen_footer)
+                self.app.change_state(
+                    self._fullscreen_layout, f"#{self._fullscreen_widget_id}", self._fullscreen_footer
+                )
         except Exception as e:
             self.printException(e, f"{self.__class__.__name__}.key_right failed")
 
     def key_left(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Return from fullscreen to split, or close split view to return to prior state."""
         if not recursive:
-            logger.debug(f"{self.__class__.__name__}.key_left called: key=%r index=%r", getattr(event, "key", None), self.index)
+            logger.debug(
+                f"{self.__class__.__name__}.key_left called: key=%r index=%r", getattr(event, "key", None), self.index
+            )
         try:
             if event is not None:
                 try:
@@ -1878,7 +1884,9 @@ class FullScreenBase(AppBase):
     def key_f(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Toggle fullscreen/split view."""
         if not recursive:
-            logger.debug(f"{self.__class__.__name__}.key_f called: key=%r index=%r", getattr(event, "key", None), self.index)
+            logger.debug(
+                f"{self.__class__.__name__}.key_f called: key=%r index=%r", getattr(event, "key", None), self.index
+            )
         return self.key_enter(event, recursive=True)
 
     def key_F(self, event: events.Key | None = None) -> None:
@@ -1922,7 +1930,9 @@ class FullScreenBase(AppBase):
     def key_enter(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Toggle between fullscreen and split view."""
         if not recursive:
-            logger.debug(f"{self.__class__.__name__}.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index)
+            logger.debug(
+                f"{self.__class__.__name__}.key_enter called: key=%r index=%r", getattr(event, "key", None), self.index
+            )
         try:
             if event is not None:
                 try:
@@ -1937,7 +1947,9 @@ class FullScreenBase(AppBase):
             elif current in self._split_layouts:
                 # Save current and go fullscreen
                 self._saved_layout = current
-                self.app.change_state(self._fullscreen_layout, f"#{self._fullscreen_widget_id}", self._fullscreen_footer)
+                self.app.change_state(
+                    self._fullscreen_layout, f"#{self._fullscreen_widget_id}", self._fullscreen_footer
+                )
         except Exception as e:
             self.printException(e, f"{self.__class__.__name__}.key_enter failed")
 
@@ -3674,7 +3686,9 @@ class HistoryListBase(AppBase):
         except Exception as e:
             self.printException(e, "HistoryListBase._add_row failed")
 
-    def _format_commit_row(self, ts, h: str | None, msg: str, status: str | None, author_name: str, author_email: str) -> str:
+    def _format_commit_row(
+        self, ts, h: str | None, msg: str, status: str | None, author_name: str, author_email: str
+    ) -> str:
         """
         Return a formatted commit row string for display.
 
@@ -3688,12 +3702,12 @@ class HistoryListBase(AppBase):
             display_hash_length = self.app.hash_length
             short_hash = (h or "")[:display_hash_length]
             push_marker = "↑ " if status == "unpushed" else ""
-            
+
             # Include author info if enabled and available
             author_part = ""
             if self.app.add_authors and (author_name or author_email):
                 author_part = f" |{author_name} {author_email}|"
-            
+
             return f"{date_stamp} {push_marker}{short_hash}{author_part} {msg}".strip()
         except Exception as e:
             self.printException(e, "_format_commit_row failed")
@@ -4406,8 +4420,6 @@ class DiffList(FullScreenBase):
         except Exception as e:
             self.printException(e, "DiffList.key_c failed")
 
-
-
     def key_C(self, event: events.Key | None = None) -> None:
         """Alias for `key_c` (Shift-C)."""
         logger.debug("DiffList.key_C called: key=%r", getattr(event, "key", None))
@@ -4826,7 +4838,7 @@ class OpenFileList(FullScreenBase):
     def text_of(self, node: ListItem) -> str:
         """
         Extract file line text from a ListItem in OpenFileList.
-        
+
         Items are structured as ListItem(Label(Text(...))), so we access directly.
         """
         try:
@@ -4924,7 +4936,7 @@ class GitDiffNavTool(AppException, App):
         # Whether to display author name and email in commit rows.
         # Can be overridden via --add-authors / config.
         self.add_authors = add_authors
-        
+
         # Optional initial filename basename to highlight when listing a dir
         self.highlight = highlight
 

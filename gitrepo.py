@@ -1498,7 +1498,9 @@ class GitRepo(AppException):
 
             default_ref = self._get_default_ref()
             output = self._git_run(
-                ["git", "log", default_ref, "--pretty=format:%ct %H %an %ae %s", "--", file_name], text=True, cache_key=key
+                ["git", "log", default_ref, "--pretty=format:%ct %H %an %ae %s", "--", file_name],
+                text=True,
+                cache_key=key,
             )
 
             # Get pushed hashes once for status lookup
@@ -1944,21 +1946,18 @@ class GitRepo(AppException):
             # Use git show -s --format=%B to get the complete commit message
             # %B = raw body (commit message, skipping the subject line)
             # But we want the whole message, so we use %B which includes the full message
-            output = self._git_run(
-                ["git", "-C", self._repoRoot, "show", "-s", "--format=%B", hash_val],
-                text=True
-            )
+            output = self._git_run(["git", "-C", self._repoRoot, "show", "-s", "--format=%B", hash_val], text=True)
 
             # _git_run returns empty string on failure, not None
             if output is None or output == "":
                 self.printException(
                     Exception(f"Failed to retrieve commit message for {hash_val}"),
-                    f"getCompleteCommitMessage: git show failed for {hash_val}"
+                    f"getCompleteCommitMessage: git show failed for {hash_val}",
                 )
                 return None
 
             # Return the trimmed message (remove trailing newline if present)
-            return output.rstrip('\n')
+            return output.rstrip("\n")
 
         except Exception as e:
             self.printException(e, "getCompleteCommitMessage: failed")
@@ -1981,121 +1980,104 @@ class GitRepo(AppException):
             ValueError: If the hash is not found or is pushed
             CalledProcessError: If the git command fails
         """
+        # Verify the hash is unpushed
+        pushed_hashes = self._get_pushed_hashes()
+        if hash_val in pushed_hashes:
+            raise ValueError(f"Cannot amend pushed commit {hash_val}")
+
+        # Get current HEAD hash to determine if this is the top commit
         try:
-            # Verify the hash is unpushed
-            pushed_hashes = self._get_pushed_hashes()
-            if hash_val in pushed_hashes:
-                raise ValueError(f"Cannot amend pushed commit {hash_val}")
+            head_hash_output = self._git_run(["git", "-C", self._repoRoot, "rev-parse", "HEAD"], text=True)
+            head_hash = head_hash_output.strip() if head_hash_output else None
+        except CalledProcessError as e:
+            self.printException(e, "amendCommitMessage: failed to get HEAD hash")
+            raise ValueError("Failed to get HEAD commit")
 
-            # Get current HEAD hash to determine if this is the top commit
+        # Case 1: Amending HEAD directly
+        if head_hash and head_hash.startswith(hash_val):
             try:
-                head_hash_output = self._git_run(["git", "-C", self._repoRoot, "rev-parse", "HEAD"], text=True)
-                head_hash = head_hash_output.strip() if head_hash_output else None
+                self._git_run(["git", "-C", self._repoRoot, "commit", "--amend", "-m", new_message], text=True)
+                logger.debug(f"amendCommitMessage: amended HEAD {hash_val}")
+                return
             except CalledProcessError as e:
-                self.printException(e, "amendCommitMessage: failed to get HEAD hash")
-                raise ValueError("Failed to get HEAD commit")
-
-            # Case 1: Amending HEAD directly
-            if head_hash and head_hash.startswith(hash_val):
-                try:
-                    self._git_run(
-                        ["git", "-C", self._repoRoot, "commit", "--amend", "-m", new_message],
-                        text=True
-                    )
-                    logger.debug(f"amendCommitMessage: amended HEAD {hash_val}")
-                    return
-                except CalledProcessError as e:
-                    self.printException(e, "amendCommitMessage: git commit --amend failed")
-                    raise
-
-            # Case 2: Amending a non-HEAD unpushed commit using rebase
-            # First verify the hash exists
-            verification_output = self._git_run(
-                ["git", "-C", self._repoRoot, "cat-file", "-t", hash_val],
-                text=True
-            )
-            if not verification_output:
-                raise ValueError(f"Commit hash {hash_val} not found in repository")
-
-            # Use git rebase with an exec script to amend the commit
-            # The approach: rebase from the parent of target commit, using a filter script
-            try:
-                # Get the parent of the target commit
-                parent_output = self._git_run(
-                    ["git", "-C", self._repoRoot, "rev-parse", f"{hash_val}^"],
-                    text=True
-                )
-                parent_hash = parent_output.strip() if parent_output else None
-                if not parent_hash:
-                    raise ValueError(f"Cannot find parent of commit {hash_val}")
-
-                # Create a temporary Python script that will be used as the filter
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-                    filter_script = f.name
-                    # Write a script that amends the commit when it matches hash_val
-                    f.write(f"""#!/usr/bin/env python3
-import sys
-import os
-import subprocess
-
-target_hash = "{hash_val}"
-new_message = {repr(new_message)}
-
-# Get current commit hash
-try:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True
-    )
-    current_hash = result.stdout.strip()
-except subprocess.CalledProcessError:
-    sys.exit(1)
-
-# If this is the commit to amend, amend it
-if current_hash.startswith(target_hash):
-    try:
-        subprocess.run(
-            ["git", "commit", "--amend", "-m", new_message],
-            check=True
-        )
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to amend commit: {{e}}", file=sys.stderr)
-        sys.exit(1)
-
-sys.exit(0)
-""")
-
-                # Run git rebase with the filter script
-                try:
-                    # Set the GIT_SEQUENCE_EDITOR to use our Python script
-                    env = os.environ.copy()
-                    env['GIT_SEQUENCE_EDITOR'] = f"python3 {filter_script}"
-
-                    self._git_run(
-                        ["git", "-C", self._repoRoot, "rebase", "-i", f"{parent_hash}^"],
-                        text=True
-                    )
-                    logger.debug(f"amendCommitMessage: amended {hash_val} via rebase")
-                finally:
-                    # Clean up the temporary script
-                    try:
-                        os.unlink(filter_script)
-                    except Exception as e:
-                        self.printException(e, "amendCommitMessage: failed to clean up temporary script")
-
-            except Exception as e:
-                self.printException(e, "amendCommitMessage: rebase with filter script failed")
+                self.printException(e, "amendCommitMessage: git commit --amend failed")
                 raise
 
-        except ValueError as e:
-            # Re-raise ValueError as-is (already has context)
-            self.printException(e, "amendCommitMessage: ValueError during amendment")
+        # Case 2: Amending a non-HEAD unpushed commit using rebase
+        # First verify the hash exists
+        verification_output = self._git_run(["git", "-C", self._repoRoot, "cat-file", "-t", hash_val], text=True)
+        if not verification_output:
+            raise ValueError(f"Commit hash {hash_val} not found in repository")
+
+        # Use git rebase --exec to amend the target commit when replayed.
+        # This avoids interactive todo editing and does not require execute
+        # permissions on the temporary script because it is invoked via
+        # `python3 <script>`.
+        try:
+            # Determine rebase starting point. For non-root commits, rebase
+            # the range after the target's parent. For root commits, use
+            # --root so the target commit is replayed.
+            parent_output = self._git_run(
+                ["git", "-C", self._repoRoot, "rev-parse", f"{hash_val}^"],
+                text=True,
+            )
+            parent_hash = parent_output.strip() if parent_output else None
+
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+                exec_script = f.name
+                f.write(
+                    "\n".join(
+                        [
+                            "import subprocess",
+                            "import sys",
+                            f'target_hash = "{hash_val}"',
+                            f"new_message = {new_message!r}",
+                            "current_hash = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()",
+                            "if current_hash.startswith(target_hash):",
+                            "    subprocess.check_call(['git', 'commit', '--amend', '-m', new_message])",
+                            "sys.exit(0)",
+                        ]
+                    )
+                )
+
+            try:
+                if parent_hash:
+                    rebase_cmd = [
+                        "git",
+                        "-C",
+                        self._repoRoot,
+                        "rebase",
+                        "--exec",
+                        f"python3 {exec_script}",
+                        parent_hash,
+                    ]
+                else:
+                    rebase_cmd = [
+                        "git",
+                        "-C",
+                        self._repoRoot,
+                        "rebase",
+                        "--root",
+                        "--exec",
+                        f"python3 {exec_script}",
+                    ]
+
+                check_output(rebase_cmd, cwd=self._repoRoot, text=True)
+                logger.debug(f"amendCommitMessage: amended {hash_val} via rebase --exec")
+
+            finally:
+                try:
+                    os.unlink(exec_script)
+                except Exception as e:
+                    self.printException(e, "amendCommitMessage: failed to clean up temporary script")
+
+        except CalledProcessError as e:
+            self.printException(e, "amendCommitMessage: git rebase --exec failed")
             raise
+
         except Exception as e:
-            self.printException(e, "amendCommitMessage: unexpected error")
-            raise ValueError(f"Failed to amend commit: {e}")
+            self.printException(e, "amendCommitMessage: rebase --exec setup failed")
+            raise
 
 
 def main(argv=None):
