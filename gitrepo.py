@@ -673,7 +673,7 @@ class GitRepo(AppException):
         git_dir = os.path.join(self._repoRoot, ".git")
         try:
             default_ref = self._get_default_ref()
-            out = self._git_run(["git", "log", default_ref, "--reverse", "--pretty=format:%ct"], text=True, ignorecache=ignorecache)
+            out = self._git_run(["git", "log", default_ref, "--reverse", "--pretty=format:%at"], text=True, ignorecache=ignorecache)
             if out:
                 for line in out.splitlines():
                     line = line.strip()
@@ -720,7 +720,7 @@ class GitRepo(AppException):
 
     def _parse_git_log_output(self, output: str) -> list[tuple[int, str, str, str, str]]:
         """
-        Parse `git log --pretty=format:%ct %H %an %ae %s` style output into tuples.
+        Parse `git log --pretty=format:%at %H %an %ae %s` style output into tuples.
 
         Returns a list of ``(timestamp_int, hash, author_name, author_email, subject)``.
         """
@@ -1402,7 +1402,7 @@ class GitRepo(AppException):
     def getHashListEntireRepo(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
         """Return all commit hashes in the configured branch with pushed status."""
         default_ref = self._get_default_ref()
-        output = self._git_run(["git", "log", default_ref, "--pretty=format:%ct %H %an %ae %s"], text=True, ignorecache=ignorecache)
+        output = self._git_run(["git", "log", default_ref, "--pretty=format:%at %H %an %ae %s"], text=True, ignorecache=ignorecache)
         pairs = self._parse_git_log_output(output or "")
         pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
@@ -1497,7 +1497,7 @@ class GitRepo(AppException):
 
             default_ref = self._get_default_ref()
             output = self._git_run(
-                ["git", "log", default_ref, "--pretty=format:%ct %H %an %ae %s", "--", file_name],
+                ["git", "log", default_ref, "--pretty=format:%at %H %an %ae %s", "--", file_name],
                 text=True,
                 cache_key=key,
                 ignorecache=ignorecache,
