@@ -4090,9 +4090,16 @@ class HistoryListBase(AppBase):
                         if edited and edited != complete_msg:
                             logger.debug("key_e: text was modified, calling amendCommitMessage for hash=%s", short_hash)
                             try:
-                                self.app.gitRepo.amendCommitMessage(hash_val, edited)
-                                logger.debug("key_e: amendCommitMessage succeeded")
+                                new_hash = self.app.gitRepo.amendCommitMessage(hash_val, edited)
+                                logger.debug("key_e: amendCommitMessage succeeded, new_hash=%s", new_hash)
                                 self.error_message(f"Commit {short_hash} amended successfully")
+                                # Refresh the history list to show the updated commit message
+                                try:
+                                    logger.debug("key_e: refreshing history list with ignorecache=True, preserving hash=%s", new_hash)
+                                    # Refresh with new_hash to preserve selection (hash changes after amend)
+                                    self.prepRepoModeHistoryList(curr_hash=new_hash, ignorecache=True)
+                                except Exception as refresh_err:
+                                    self.printException(refresh_err, "HistoryListBase.key_e: refreshing history list failed")
                             except ValueError as ve:
                                 logger.debug("key_e: ValueError during amend: %s", str(ve))
                                 self.error_message(f"Cannot amend: {str(ve)}")
@@ -4319,17 +4326,20 @@ class RepoModeHistoryList(HistoryListBase):
         self,
         prev_hash: str | None = None,
         curr_hash: str | None = None,
+        ignorecache: bool = False,
     ) -> None:
         """
         Prepare the repository-wide commit history view.
 
         `prev_hash` and `curr_hash` may be used to constrain the commit range.
+        `ignorecache` when True forces re-fetching of git data.
         """
         try:
             logger.debug(
-                "prepRepoModeHistoryList: prev_hash=%r curr_hash=%r",
+                "prepRepoModeHistoryList: prev_hash=%r curr_hash=%r ignorecache=%r",
                 prev_hash,
                 curr_hash,
+                ignorecache,
             )
 
             # Clear any stray active classes (defensive) and existing rows
@@ -4344,7 +4354,7 @@ class RepoModeHistoryList(HistoryListBase):
             # pseudo-entries like MODS/STAGED). GitRepo centralizes git CLI
             # invocation and caching so prefer its helpers.
             try:
-                entries = self.app.gitRepo.getNormalizedHashListComplete() or []
+                entries = self.app.gitRepo.getNormalizedHashListComplete(ignorecache=ignorecache) or []
             except Exception as e:
                 self.printException(e, "prepRepoModeHistoryList: gitRepo.getNormalizedHashListComplete failed")
                 entries = []

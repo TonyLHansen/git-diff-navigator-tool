@@ -652,7 +652,7 @@ class GitRepo(AppException):
             return self._epoch_to_iso(max(mtimes))
         return self.index_mtime_iso()
 
-    def _newrepo_timestamp_iso(self) -> str:
+    def _newrepo_timestamp_iso(self, ignorecache: bool = False) -> str:
         """
         Compute an ISO timestamp for the pseudo-`NEWREPO` entry.
 
@@ -673,7 +673,7 @@ class GitRepo(AppException):
         git_dir = os.path.join(self._repoRoot, ".git")
         try:
             default_ref = self._get_default_ref()
-            out = self._git_run(["git", "log", default_ref, "--reverse", "--pretty=format:%ct"], text=True)
+            out = self._git_run(["git", "log", default_ref, "--reverse", "--pretty=format:%ct"], text=True, ignorecache=ignorecache)
             if out:
                 for line in out.splitlines():
                     line = line.strip()
@@ -811,7 +811,7 @@ class GitRepo(AppException):
             if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            output = self._git_run(git_args, text=True, cache_key=key)
+            output = self._git_run(git_args, text=True, cache_key=key, ignorecache=ignorecache)
 
             # Parse the whole output using the consolidated parser
             results = self._git_cli_parse_name_status_output(output or "")
@@ -823,19 +823,19 @@ class GitRepo(AppException):
 
     @overload
     def _git_run(
-        self, args: list, text: Literal[True], cache_key: str | None = None
+        self, args: list, text: Literal[True], cache_key: str | None = None, ignorecache: bool = False
     ) -> str:  # pragma: no cover - typing only
         """Overload: when `text=True` this variant returns a string result."""
         ...
 
     @overload
     def _git_run(
-        self, args: list, text: Literal[False], cache_key: str | None = None
+        self, args: list, text: Literal[False], cache_key: str | None = None, ignorecache: bool = False
     ) -> bytes:  # pragma: no cover - typing only
         """Overload: when `text=False` this variant returns raw bytes."""
         ...
 
-    def _git_run(self, args: list, text: bool = True, cache_key: str | None = None) -> str | bytes:
+    def _git_run(self, args: list, text: bool = True, cache_key: str | None = None, ignorecache: bool = False) -> str | bytes:
         """
         Run a git subprocess and return its output (string or bytes).
 
@@ -852,7 +852,7 @@ class GitRepo(AppException):
         try:
             logger.debug("_git_run(%s)", args)
             internal_key = f"_git_run:{' '.join(args)}:{'text' if text else 'bytes'}"
-            if internal_key in self._cmd_cache:
+            if not ignorecache and internal_key in self._cmd_cache:
                 logger.debug("_git_run cache hit: %s", args)
                 return self._cmd_cache[internal_key]
 
@@ -950,7 +950,7 @@ class GitRepo(AppException):
             # Ask git which object format this repo uses. Example responses:
             #   sha1
             #   sha256
-            out = self._git_run(["git", "rev-parse", "--show-object-format"], text=True) or ""
+            out = self._git_run(["git", "rev-parse", "--show-object-format"], text=True, ignorecache=ignorecache) or ""
             fmt = out.strip().lower()
 
             if fmt == "sha256":
@@ -1060,7 +1060,7 @@ class GitRepo(AppException):
             if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key)
+            output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key, ignorecache=ignorecache)
 
             results: list[tuple[str, str]] = []
             for line in output.splitlines():
@@ -1088,7 +1088,7 @@ class GitRepo(AppException):
             if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key)
+            output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key, ignorecache=ignorecache)
 
             results: list[tuple[str, str]] = []
             for line in output.splitlines():
@@ -1176,7 +1176,7 @@ class GitRepo(AppException):
             results: list[tuple[str, str, str]] = []
             seen: set[str] = set()
 
-            untracked_out = self._git_run(["git", "ls-files", "--others", "--exclude-standard"], text=True) or ""
+            untracked_out = self._git_run(["git", "ls-files", "--others", "--exclude-standard"], text=True, ignorecache=ignorecache) or ""
 
             for line in untracked_out.splitlines():
                 rel = line.strip()
@@ -1208,7 +1208,7 @@ class GitRepo(AppException):
             results: list[tuple[str, str, str]] = []
             seen: set[str] = set()
 
-            ignored_out = self._git_run(["git", "ls-files", "--others", "-i", "--exclude-standard"], text=True) or ""
+            ignored_out = self._git_run(["git", "ls-files", "--others", "-i", "--exclude-standard"], text=True, ignorecache=ignorecache) or ""
 
             for line in ignored_out.splitlines():
                 rel = line.strip()
@@ -1364,7 +1364,7 @@ class GitRepo(AppException):
             upstream_ref = self._get_upstream_ref()
             if upstream_ref:
                 try:
-                    output = self._git_run(["git", "rev-list", upstream_ref], text=True) or ""
+                    output = self._git_run(["git", "rev-list", upstream_ref], text=True, ignorecache=ignorecache) or ""
                     if output:
                         pushed_hashes = {line.strip() for line in output.splitlines() if line.strip()}
                     self._cmd_cache[cache_key] = pushed_hashes
@@ -1373,13 +1373,13 @@ class GitRepo(AppException):
                     self.printException(e, "getPushedHashes: git rev-list for upstream failed")
 
             # Fallback: use all remote-tracking refs when no branch upstream or fallback mode
-            remote_out = self._git_run(["git", "config", "--get", "remote.origin.url"], text=True) or ""
+            remote_out = self._git_run(["git", "config", "--get", "remote.origin.url"], text=True, ignorecache=ignorecache) or ""
             if not remote_out.strip():
                 self._cmd_cache[cache_key] = pushed_hashes
                 return pushed_hashes
 
             try:
-                output = self._git_run(["git", "rev-list", "--remotes"], text=True) or ""
+                output = self._git_run(["git", "rev-list", "--remotes"], text=True, ignorecache=ignorecache) or ""
                 if output:
                     pushed_hashes = {line.strip() for line in output.splitlines() if line.strip()}
             except CalledProcessError as e:
@@ -1402,7 +1402,7 @@ class GitRepo(AppException):
     def getHashListEntireRepo(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
         """Return all commit hashes in the configured branch with pushed status."""
         default_ref = self._get_default_ref()
-        output = self._git_run(["git", "log", default_ref, "--pretty=format:%ct %H %an %ae %s"], text=True)
+        output = self._git_run(["git", "log", default_ref, "--pretty=format:%ct %H %an %ae %s"], text=True, ignorecache=ignorecache)
         pairs = self._parse_git_log_output(output or "")
         pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
@@ -1421,7 +1421,7 @@ class GitRepo(AppException):
             if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            names_out = self._git_run(["git", "diff", "--cached", "--name-only"], text=True, cache_key=key)
+            names_out = self._git_run(["git", "diff", "--cached", "--name-only"], text=True, cache_key=key, ignorecache=ignorecache)
 
             if not names_out:
                 self._cmd_cache[key] = []
@@ -1442,7 +1442,7 @@ class GitRepo(AppException):
     def getHashListNewChanges(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
         """Return working-tree "MODS" entry with pushed status."""
         try:
-            names_out = self._git_run(["git", "diff", "--name-only"], text=True)
+            names_out = self._git_run(["git", "diff", "--name-only"], text=True, ignorecache=ignorecache)
 
             if not names_out:
                 return []
@@ -1471,7 +1471,7 @@ class GitRepo(AppException):
         copied from the oldest real commit's pushed status when available.
         """
         try:
-            iso = self._newrepo_timestamp_iso()
+            iso = self._newrepo_timestamp_iso(ignorecache=ignorecache)
             oldest_status = "unpushed"
             entire = self.getHashListEntireRepo(ignorecache=ignorecache)
             if entire:
@@ -1500,6 +1500,7 @@ class GitRepo(AppException):
                 ["git", "log", default_ref, "--pretty=format:%ct %H %an %ae %s", "--", file_name],
                 text=True,
                 cache_key=key,
+                ignorecache=ignorecache,
             )
 
             # Get pushed hashes once for status lookup
@@ -1518,7 +1519,7 @@ class GitRepo(AppException):
             # deterministic placement for these pseudo-entries so callers
             # that reverse the list (oldest->newest) observe STAGED before
             # MODS.
-            status_out = self._git_run(["git", "status", "--porcelain", "--", file_name], text=True) or ""
+            status_out = self._git_run(["git", "status", "--porcelain", "--", file_name], text=True, ignorecache=ignorecache) or ""
             idx_flag = " "
             wt_flag = " "
             if status_out:
@@ -1962,7 +1963,7 @@ class GitRepo(AppException):
             self.printException(e, "getCompleteCommitMessage: failed")
             return None
 
-    def amendCommitMessage(self, hash_val: str, new_message: str) -> None:
+    def amendCommitMessage(self, hash_val: str, new_message: str) -> str:
         """
         Amend the commit message for a given hash.
 
@@ -1974,6 +1975,9 @@ class GitRepo(AppException):
         Args:
             hash_val: The commit hash to amend (must be unpushed)
             new_message: The new commit message
+
+        Returns:
+            The new commit hash after the amendment (hash changes when message changes)
 
         Raises:
             ValueError: If the hash is not found or is pushed
@@ -1995,9 +1999,13 @@ class GitRepo(AppException):
         # Case 1: Amending HEAD directly
         if head_hash and head_hash.startswith(hash_val):
             try:
-                self._git_run(["git", "-C", self._repoRoot, "commit", "--amend", "-m", new_message], text=True)
+                # Run the amendment command
+                self._git_run(["git", "-C", self._repoRoot, "commit", "--amend", "-m", new_message], text=True, ignorecache=True)
                 logger.debug(f"amendCommitMessage: amended HEAD {hash_val}")
-                return
+                # Get the new hash after amendment
+                new_hash_output = self._git_run(["git", "-C", self._repoRoot, "rev-parse", "HEAD"], text=True, ignorecache=True)
+                new_hash = new_hash_output.strip() if new_hash_output else hash_val
+                return new_hash
             except CalledProcessError as e:
                 self.printException(e, "amendCommitMessage: git commit --amend failed")
                 raise
@@ -2080,6 +2088,21 @@ class GitRepo(AppException):
                         stderr=completed.stderr,
                     )
                 logger.debug(f"amendCommitMessage: amended {hash_val} via rebase --exec")
+                # Get the new hash after rebase by finding the commit with the new message
+                # Search for commits with matching message (use the subject line)
+                subject_line = new_message.split('\n')[0] if new_message else ""
+                log_output = self._git_run(
+                    ["git", "-C", self._repoRoot, "log", "--all", "--pretty=format:%H %s", "-n", "20"],
+                    text=True,
+                    ignorecache=True
+                )
+                new_hash = None
+                for line in (log_output or "").splitlines():
+                    parts = line.split(' ', 1)
+                    if len(parts) == 2 and parts[1] == subject_line:
+                        new_hash = parts[0]
+                        break
+                return new_hash or hash_val  # Fallback to old hash if we can't find new one
 
             finally:
                 try:
