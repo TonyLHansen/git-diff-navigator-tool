@@ -363,7 +363,7 @@ def test_amendCommitMessage(test_repo: GitRepo) -> dict:
             return results
 
         # Get the pushed hashes to identify unpushed commits
-        pushed_hashes = test_repo._get_pushed_hashes()
+        pushed_hashes = test_repo.getPushedHashes()
 
         # Find unpushed commits
         unpushed = [entry for entry in all_commits if entry[3] == "unpushed"]

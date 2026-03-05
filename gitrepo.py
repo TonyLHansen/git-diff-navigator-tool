@@ -1345,7 +1345,7 @@ class GitRepo(AppException):
     # Hash Lists
     ################
 
-    def _get_pushed_hashes(self) -> set[str]:
+    def getPushedHashes(self) -> set[str]:
         """
         Return commit hashes reachable from the active upstream/remote refs.
 
@@ -1354,7 +1354,7 @@ class GitRepo(AppException):
         configured, fall back to all remote-tracking refs.
         """
         try:
-            cache_key = "_get_pushed_hashes"
+            cache_key = "getPushedHashes"
             if cache_key in self._cmd_cache:
                 cached = self._cmd_cache[cache_key]
                 return cached if isinstance(cached, set) else set()
@@ -1371,7 +1371,7 @@ class GitRepo(AppException):
                     self._cmd_cache[cache_key] = pushed_hashes
                     return pushed_hashes
                 except CalledProcessError as e:
-                    self.printException(e, "_get_pushed_hashes: git rev-list for upstream failed")
+                    self.printException(e, "getPushedHashes: git rev-list for upstream failed")
 
             # Fallback: use all remote-tracking refs when no branch upstream or fallback mode
             remote_out = self._git_run(["git", "config", "--get", "remote.origin.url"], text=True) or ""
@@ -1384,12 +1384,12 @@ class GitRepo(AppException):
                 if output:
                     pushed_hashes = {line.strip() for line in output.splitlines() if line.strip()}
             except CalledProcessError as e:
-                self.printException(e, "_get_pushed_hashes: git rev-list failed")
+                self.printException(e, "getPushedHashes: git rev-list failed")
 
             self._cmd_cache[cache_key] = pushed_hashes
             return pushed_hashes
         except Exception as e:
-            self.printException(e, "_get_pushed_hashes: unexpected failure")
+            self.printException(e, "getPushedHashes: unexpected failure")
             return set()
 
     def getNormalizedHashListComplete(self) -> list[tuple[str, str, str, str, str, str]]:
@@ -1407,7 +1407,7 @@ class GitRepo(AppException):
         pairs = self._parse_git_log_output(output or "")
         pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
-        pushed_hashes = self._get_pushed_hashes()
+        pushed_hashes = self.getPushedHashes()
         formatted: list[tuple[str, str, str, str, str, str]] = []
         for ts, h, author_name, author_email, subject in pairs:
             iso = self._epoch_to_iso(ts)
@@ -1504,7 +1504,7 @@ class GitRepo(AppException):
             )
 
             # Get pushed hashes once for status lookup
-            pushed_hashes = self._get_pushed_hashes()
+            pushed_hashes = self.getPushedHashes()
 
             parsed_entries: list[tuple[str, str, str, str, str, str]] = []
             parsed = self._parse_git_log_output(output or "")
@@ -1981,7 +1981,7 @@ class GitRepo(AppException):
             CalledProcessError: If the git command fails
         """
         # Verify the hash is unpushed
-        pushed_hashes = self._get_pushed_hashes()
+        pushed_hashes = self.getPushedHashes()
         if hash_val in pushed_hashes:
             raise ValueError(f"Cannot amend pushed commit {hash_val}")
 

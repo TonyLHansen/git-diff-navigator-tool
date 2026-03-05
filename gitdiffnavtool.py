@@ -1781,7 +1781,7 @@ class EditMessageModal(ModalScreen):
 
     Allows editing multi-line text and returns either the modified text or
     None if the user cancels the operation.
-    - Ctrl+S or Ctrl+Enter: Save and return the edited text
+    - Ctrl+S: Save and return the edited text
     - Escape: Cancel and return None
     """
 
@@ -4044,6 +4044,95 @@ class HistoryListBase(AppBase):
             self._finalize_prep_common(curr_hash=curr_hash, prev_hash=prev_hash, path=path)
         except Exception as e:
             self.printException(e, "HistoryListBase._finalize_historylist_prep failed")
+
+    def key_e(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """
+        Edit the commit message for the currently-selected unpushed commit.
+
+        Retrieves the complete commit message, opens EditMessageModal for
+        editing, and if modified, amends the commit message in the repository.
+        Does nothing for pushed commits.
+        """
+        if not recursive:
+            logger.debug("HistoryListBase.key_e called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "HistoryListBase.key_e: event.stop failed")
+
+            # Get the current hash from the selected row
+            idx = self.index or 0
+            nodes = self.nodes()
+            if not nodes or not (0 <= idx < len(nodes)):
+                return
+
+            hash_val = getattr(nodes[idx], "_hash", None)
+            if not hash_val:
+                return
+
+            # Check if the hash is pushed
+            try:
+                pushed_hashes = self.app.gitRepo.getPushedHashes()
+                if hash_val in pushed_hashes:
+                    self.error_message(f"Cannot edit pushed commit {hash_val[:self.app.hash_length]}")
+                    return
+            except Exception as e:
+                self.printException(e, "HistoryListBase.key_e: checking pushed status failed")
+                return
+
+            # Get the complete commit message
+            try:
+                filepath = self.app.rel_file or ""
+                complete_msg = self.app.gitRepo.getCompleteCommitMessage(filepath, hash_val)
+                if complete_msg is None:
+                    self.error_message(f"Failed to retrieve commit message for {hash_val[:self.app.hash_length]}")
+                    return
+            except Exception as e:
+                self.printException(e, "HistoryListBase.key_e: retrieving commit message failed")
+                self.error_message(f"Error retrieving commit message: {str(e)}")
+                return
+
+            # Open the edit modal
+            try:
+                short_hash = hash_val[:self.app.hash_length]
+                title = f"Edit commit message for {short_hash}"
+                modal = EditMessageModal(initial_text=complete_msg, title=title)
+                self.app.push_screen(modal)
+
+                # After the modal closes, check if the text was modified
+                # We'll use call_later to check after screen pops
+                def check_edit_result():
+                    try:
+                        if modal.edited_text and modal.edited_text != complete_msg:
+                            # Text was modified, amend the commit
+                            try:
+                                self.app.gitRepo.amendCommitMessage(hash_val, modal.edited_text)
+                                self.error_message(f"Commit {short_hash} amended successfully")
+                                # Optionally refresh the history list here if needed
+                            except ValueError as ve:
+                                self.error_message(f"Cannot amend: {str(ve)}")
+                            except Exception as e:
+                                self.printException(e, "HistoryListBase.key_e: amending commit failed")
+                                self.error_message(f"Error amending commit: {str(e)}")
+                    except Exception as e:
+                        self.printException(e, "HistoryListBase.key_e: check_edit_result failed")
+
+                # Schedule the check after the modal pops
+                self.call_later(check_edit_result)
+
+            except Exception as e:
+                self.printException(e, "HistoryListBase.key_e: pushing edit modal failed")
+                self.error_message(f"Error opening edit dialog: {str(e)}")
+
+        except Exception as e:
+            self.printException(e, "HistoryListBase.key_e failed")
+
+    def key_E(self, event: events.Key | None = None) -> None:
+        """Alias for `key_e` used to support Shift-E bindings."""
+        logger.debug("HistoryListBase.key_E called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_e(event, recursive=True)
 
 
 class FileModeHistoryList(HistoryListBase, RightSideBase):
