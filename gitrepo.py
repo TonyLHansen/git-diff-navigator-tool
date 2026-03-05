@@ -19,7 +19,7 @@ import sys
 import tempfile
 import traceback
 from datetime import datetime, timezone
-from subprocess import CalledProcessError, check_output
+from subprocess import CalledProcessError, check_output, run
 from typing import Optional, Any, Dict, List, Tuple, overload, Literal
 import json
 import base64
@@ -858,8 +858,7 @@ class GitRepo(AppException):
 
             try:
                 out = check_output(args, cwd=self._repoRoot, text=text)
-            except CalledProcessError as e:
-                self.printException(e, f"_git_run: git command failed: {' '.join(args)}")
+            except CalledProcessError as _use_logging:
                 logger.debug("_git_run failed: %s", args)
                 # If caller provided a parsed-result cache_key, store an empty
                 # parsed result there so callers can return quickly next time.
@@ -2044,6 +2043,8 @@ class GitRepo(AppException):
                 if parent_hash:
                     rebase_cmd = [
                         "git",
+                        "-c",
+                        "rebase.autoStash=true",
                         "-C",
                         self._repoRoot,
                         "rebase",
@@ -2054,6 +2055,8 @@ class GitRepo(AppException):
                 else:
                     rebase_cmd = [
                         "git",
+                        "-c",
+                        "rebase.autoStash=true",
                         "-C",
                         self._repoRoot,
                         "rebase",
@@ -2062,7 +2065,20 @@ class GitRepo(AppException):
                         f"python3 {exec_script}",
                     ]
 
-                check_output(rebase_cmd, cwd=self._repoRoot, text=True)
+                completed = run(rebase_cmd, cwd=self._repoRoot, text=True, capture_output=True)
+                if completed.returncode != 0:
+                    logger.warning(
+                        "amendCommitMessage: rebase failed rc=%s stdout=%r stderr=%r",
+                        completed.returncode,
+                        completed.stdout,
+                        completed.stderr,
+                    )
+                    raise CalledProcessError(
+                        completed.returncode,
+                        rebase_cmd,
+                        output=completed.stdout,
+                        stderr=completed.stderr,
+                    )
                 logger.debug(f"amendCommitMessage: amended {hash_val} via rebase --exec")
 
             finally:

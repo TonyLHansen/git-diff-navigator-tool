@@ -172,12 +172,12 @@ OPEN_FILE_TITLE = "open-file-title"
 
 # Footer text used when showing the left file list
 # LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
-LEFT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
+LEFT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  ?/h(elp)  ←(prev) ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
 
 # Footer text used when switching to file-history view
 # RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
 RIGHT_HISTORY_FOOTER = Text(
-    "History: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold"
+    "History: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold"
 )
 
 # Footer text used when showing the left history pane
@@ -186,7 +186,7 @@ LEFT_HISTORY_FOOTER = Text("History: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/ Pg
 
 # Footer text used when showing the right file list (file list view)
 # RIGHT_FILE_FOOTER = Text("Files: press Left to return")
-RIGHT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
+RIGHT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close) ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
 
 # Footer text used for help screen
 # HELP_FOOTER = Text("Help: press Enter/␍ to return")
@@ -199,15 +199,15 @@ OPEN_FILE_FOOTER_1 = Text(
 )
 # Footer text used when showing open file content (fullscreen)
 OPEN_FILE_FOOTER_2 = Text(
-    "OpenFile: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ↑/↓/PgUp/PgDn/Home/End  ←/f(ull)", style="bold"
+    "OpenFile: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←/f(ull)  ↑/↓/PgUp/PgDn/Home/End", style="bold"
 )
 # Footer text used when showing the diff for a history/file selection
 # DIFF_FOOTER = Text("Diff: press Left to return to files")
 DIFF_FOOTER_1 = Text(
-    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ← ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)", style="bold"
+    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close)  ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)", style="bold"
 )
 DIFF_FOOTER_2 = Text(
-    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ↑/↓/PgUp/PgDn/Home/End ←/f(ull)  c(olor)  d(iff-type)", style="bold"
+    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←/f(ull)  ↑/↓/PgUp/PgDn/Home/End c(olor)  d(iff-type)", style="bold"
 )
 
 # Supported diff color schemes (used by CLI/config and runtime cycling)
@@ -1785,18 +1785,19 @@ class EditMessageModal(ModalScreen):
     - Escape: Cancel and return None
     """
 
-    def __init__(self, initial_text: str = "", title: str = "Edit text", **kwargs) -> None:
+    def __init__(self, initial_text: str = "", title: str = "Edit text", on_save=None, **kwargs) -> None:
         """
         Initialize the modal with initial text.
-
         Args:
-            initial_text: The initial text content to display and edit
-            title: Title/prompt to display above the text box
+            initial_text: The text to pre-populate the editor with.
+            title: A title or prompt to display above the editor.
+            on_save: Optional callback to invoke after saving (receives edited text).
         """
         super().__init__(**kwargs)
         self.initial_text = initial_text
         self.title = title
         self.edited_text = initial_text
+        self.on_save = on_save
 
     def compose(self):
         """
@@ -1817,7 +1818,7 @@ class EditMessageModal(ModalScreen):
                 Label(Text(self.title, style="bold"), id="edit-title"),
                 text_area,
                 Label(
-                    Text("Ctrl+S or Ctrl+Enter to save | Escape to cancel", style="dim"),
+                    Text("Ctrl+S to save | Escape to cancel", style="dim"),
                     id="edit-prompt",
                 ),
                 id="edit-modal-wrapper",
@@ -1826,17 +1827,13 @@ class EditMessageModal(ModalScreen):
             printException(e, "EditMessageModal.compose failed")
 
     def on_key(self, event: events.Key) -> None:
-        """
-        Handle keyboard input for save and cancel operations.
-
-        - Ctrl+S: Retrieve text from editor and return it
-        - Escape: Cancel and return None
-        """
+        """Handle save/cancel keys for commit-message editing."""
         try:
             key = getattr(event, "key", "")
+            logger.debug(f"EditMessageModal.on_key: key={key!r}")
 
-            # Save on Ctrl+S
             if key == "ctrl+s":
+                logger.debug("EditMessageModal.on_key: save key pressed")
                 try:
                     event.stop()
                 except Exception:
@@ -1845,18 +1842,30 @@ class EditMessageModal(ModalScreen):
                 try:
                     text_area = self.query_one("#edit-text-area", TextArea)
                     self.edited_text = text_area.text
+                    logger.debug("EditMessageModal.on_key: retrieved text, length=%s", len(self.edited_text))
+                    logger.debug("EditMessageModal.on_key: edited_text=%r", self.edited_text)
                 except Exception as e:
                     printException(e, "EditMessageModal.on_key: retrieving text failed")
                     self.edited_text = self.initial_text
+                    logger.debug("EditMessageModal.on_key: exception during text retrieval, using initial_text")
 
                 try:
                     self.app.pop_screen()
+                    logger.debug("EditMessageModal.on_key: pop_screen completed")
                 except Exception as e:
                     printException(e, "EditMessageModal.on_key: pop_screen failed")
+                    return
+
+                if self.on_save:
+                    try:
+                        self.on_save()
+                    except Exception as e:
+                        printException(e, "EditMessageModal.on_key: on_save callback failed")
                 return
 
             # Cancel on Escape
             if key == "escape":
+                logger.debug("EditMessageModal.on_key: cancel key pressed (escape)")
                 try:
                     event.stop()
                 except Exception:
@@ -1864,6 +1873,7 @@ class EditMessageModal(ModalScreen):
 
                 try:
                     self.app.pop_screen()
+                    logger.debug("EditMessageModal.on_key: pop_screen completed")
                 except Exception as e:
                     printException(e, "EditMessageModal.on_key: pop_screen failed")
                 return
@@ -2340,8 +2350,10 @@ class FileListBase(AppBase):
         """
         Append ListItems for each dict in `file_infos`.
 
-        Each dict is expected to have keys: `name`, `full`, `is_dir`, `raw`, `repo_status`.
-        This centralizes the row-creation logic used by file-list preparers.
+        Each dict is expected to have keys: `name`, `is_dir`, `raw`, `repo_status`.
+        - `raw`: repo-relative path for display and storage (required)
+        - `is_dir`: boolean flag indicating directory status
+        - All stored paths (_raw_text) are repo-relative.
         """
         try:
             t_total_start = time.perf_counter()
@@ -2350,9 +2362,8 @@ class FileListBase(AppBase):
             for info in file_infos:
                 try:
                     name = info.get("name")
-                    full = info.get("full")
                     is_dir = info.get("is_dir", False)
-                    raw = info.get("raw", name)
+                    raw = info.get("raw", name)  # Repo-relative path (primary data)
                     repo_status = info.get("repo_status")
 
                     if is_dir:
@@ -2364,15 +2375,10 @@ class FileListBase(AppBase):
                         try:
                             item._is_dir = True
                             item._repo_status = None
-                            try:
-                                # Prefer storing repo-relative raw paths
-                                repo_root_local = self.app.gitRepo.get_repo_root()
-                                item._raw_text = os.path.relpath(full, repo_root_local) if full else name
-                            except Exception as e:
-                                self.printException(e, "_populate_from_file_infos: relpath failed for dir")
-                                item._raw_text = name
+                            # Always store repo-relative path from raw parameter
+                            item._raw_text = raw or name
                             item._filename = name
-                            logger.debug("_populate_from_file_infos: adding dir item for %s", full)
+                            logger.debug("_populate_from_file_infos: adding dir item %s", raw or name)
                             # Determine activation before appending to avoid render races
                             try:
                                 should_activate = False
@@ -2451,12 +2457,8 @@ class FileListBase(AppBase):
                             item = ListItem(Label(display))
                         item._repo_status = repo_status
                         item._is_dir = False
-                        try:
-                            repo_root_local = self.app.gitRepo.get_repo_root()
-                            item._raw_text = os.path.relpath(full, repo_root_local) if full else name
-                        except Exception as e:
-                            self.printException(e, "_populate_from_file_infos: relpath fallback failed")
-                            item._raw_text = name
+                        # Always store repo-relative path from raw parameter
+                        item._raw_text = raw or name
                         item._filename = name
                         # Determine activation before appending to avoid render races
                         try:
@@ -2626,42 +2628,31 @@ class FileModeFileList(FileListBase):
             # First, add committed files from HEAD as tracked_clean baseline
             for entry in committed:
                 try:
-                    p = entry[0] if isinstance(entry, (list, tuple)) and len(entry) > 0 else str(entry)
+                    p, _status = entry
                     register_file(p, "tracked_clean", None)
                 except Exception as e:
                     self.printException(e, "_collect_filemode_nodes: registering committed file failed")
                     continue
 
             # Add untracked entries: (path, iso, status)
-            for entry in untracked:
+            for p, iso, status in untracked:
                 try:
-                    p = entry[0]
-                    iso = entry[1] if len(entry) > 1 else None
-                    status = entry[2] if len(entry) > 2 else "untracked"
                     register_file(p, status, iso)
                 except Exception as e:
                     self.printException(e, "_collect_filemode_nodes: registering untracked file failed")
                     continue
 
             # Add ignored entries: (path, iso, status)
-            for entry in ignored:
+            for p, iso, status in ignored:
                 try:
-                    p = entry[0]
-                    iso = entry[1] if len(entry) > 1 else None
-                    status = entry[2] if len(entry) > 2 else "ignored"
                     register_file(p, status, iso)
                 except Exception as e:
                     self.printException(e, "_collect_filemode_nodes: registering ignored file failed")
                     continue
 
             # Add mods entries: (path, status) - no iso provided; override committed
-            for entry in mods:
+            for p, s in mods:
                 try:
-                    # entry is (path, status)
-                    if isinstance(entry, (list, tuple)) and len(entry) >= 2:
-                        p, s = entry[0], entry[1]
-                    else:
-                        p, s = str(entry), "modified"
                     register_file(p, s, None)
                 except Exception as e:
                     self.printException(e, "_collect_filemode_nodes: registering mod file failed")
@@ -3488,33 +3479,17 @@ class RepoModeFileList(FileListBase, RightSideBase):
                 try:
                     file_infos: list[dict] = []
 
-                    for ent in entries:
+                    for rel_path, status in entries:
                         try:
-                            # Expect (path, status) tuples from GitRepo
-                            if isinstance(ent, (list, tuple)) and len(ent) >= 1:
-                                full = ent[0]
-                                status = ent[1] if len(ent) > 1 else None
-                                display = os.path.normpath(full) if full else ""
-                                is_dir = False
-                            else:
-                                full = str(ent)
-                                status = None
-                                display = os.path.normpath(full) if full else ""
-                                is_dir = False
-
-                            name = display
-                            try:
-                                raw_val = os.path.normpath(full) if full else (name or "")
-                            except Exception as e:
-                                self.printException(e, "prepRepoModeFileList: canonicalizing entry failed")
-                                raw_val = full or name
+                            # GitRepo contract: entries are (repo_relative_path, status)
+                            name = rel_path or ""
+                            is_dir = False
 
                             file_infos.append(
                                 {
                                     "name": name,
-                                    "full": full,
                                     "is_dir": is_dir,
-                                    "raw": raw_val,
+                                    "raw": name,
                                     "repo_status": status,
                                 }
                             )
@@ -3649,7 +3624,7 @@ class RepoModeFileList(FileListBase, RightSideBase):
             except Exception as e:
                 self.printException(e, "RepoModeFileList.key_right: prepDiffList failed")
 
-                self.app.change_state("history_file_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER_1)
+            self.app.change_state("history_file_diff", f"#{DIFF_LIST_ID}", DIFF_FOOTER_1)
         except Exception as e:
             self.printException(e, "RepoModeFileList.key_right failed")
         self._log_visible_items("key_right after processing index change")
@@ -4098,29 +4073,40 @@ class HistoryListBase(AppBase):
             try:
                 short_hash = hash_val[:self.app.hash_length]
                 title = f"Edit commit message for {short_hash}"
-                modal = EditMessageModal(initial_text=complete_msg, title=title)
-                self.app.push_screen(modal)
+                modal: EditMessageModal | None = None
 
-                # After the modal closes, check if the text was modified
-                # We'll use call_later to check after screen pops
-                def check_edit_result():
+                def check_edit_result() -> None:
                     try:
-                        if modal.edited_text and modal.edited_text != complete_msg:
-                            # Text was modified, amend the commit
+                        edited = modal.edited_text if modal is not None else None
+                        logger.debug(
+                            "key_e: check_edit_result callback executing, edited_text len=%s, original len=%s",
+                            len(edited) if edited else 0,
+                            len(complete_msg),
+                        )
+                        logger.debug("key_e: edited_text=%r", edited)
+                        logger.debug("key_e: complete_msg=%r", complete_msg)
+                        logger.debug("key_e: texts equal? %s", edited == complete_msg)
+
+                        if edited and edited != complete_msg:
+                            logger.debug("key_e: text was modified, calling amendCommitMessage for hash=%s", short_hash)
                             try:
-                                self.app.gitRepo.amendCommitMessage(hash_val, modal.edited_text)
+                                self.app.gitRepo.amendCommitMessage(hash_val, edited)
+                                logger.debug("key_e: amendCommitMessage succeeded")
                                 self.error_message(f"Commit {short_hash} amended successfully")
-                                # Optionally refresh the history list here if needed
                             except ValueError as ve:
+                                logger.debug("key_e: ValueError during amend: %s", str(ve))
                                 self.error_message(f"Cannot amend: {str(ve)}")
                             except Exception as e:
                                 self.printException(e, "HistoryListBase.key_e: amending commit failed")
                                 self.error_message(f"Error amending commit: {str(e)}")
+                        else:
+                            logger.debug("key_e: no changes detected or text is empty")
                     except Exception as e:
                         self.printException(e, "HistoryListBase.key_e: check_edit_result failed")
 
-                # Schedule the check after the modal pops
-                self.call_later(check_edit_result)
+                modal = EditMessageModal(initial_text=complete_msg, title=title, on_save=check_edit_result)
+                logger.debug(f"key_e: pushing EditMessageModal for hash={short_hash}")
+                self.app.push_screen(modal)
 
             except Exception as e:
                 self.printException(e, "HistoryListBase.key_e: pushing edit modal failed")
