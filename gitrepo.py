@@ -718,6 +718,21 @@ class GitRepo(AppException):
         # Fallback: use index mtime ISO
         return self.index_mtime_iso()
 
+    def _get_commit_timestamp(self, hash_val: str) -> float | None:
+        """
+        Get the author timestamp (epoch seconds) for a commit hash.
+
+        Returns the epoch seconds as a float, or None if not found.
+        """
+        try:
+            output = self._git_run(["git", "-C", self._repoRoot, "log", "-1", "--format=%at", hash_val], text=True)
+            if output:
+                return float(output.strip())
+            return None
+        except Exception as e:
+            self.printException(e, "_get_commit_timestamp: failed")
+            return None
+
     def _parse_git_log_output(self, output: str) -> list[tuple[int, str, str, str, str]]:
         """
         Parse `git log --pretty=format:%at %H %an %ae %s` style output into tuples.
@@ -749,9 +764,13 @@ class GitRepo(AppException):
 
     def _git_cli_parse_name_status_output(self, output: str) -> list[tuple[str, str]]:
         """
-        Parse git "--name-status" style output into (path,status) pairs.
+        Parse git "--name-status" style output into ``(path, status)`` pairs.
 
-        Returns a sorted list of tuples.
+        This parser is intentionally low-level and returns 2-tuples only.
+        Timestamp enrichment to ``(path, iso_mtime, status)`` is performed by
+        ``_git_cli_getCachedFileList``.
+
+        Returns a path-sorted list of tuples.
         """
         try:
             results: list[tuple[str, str]] = []
@@ -800,12 +819,12 @@ class GitRepo(AppException):
             self.printException(e, "_git_cli_parse_name_status_output: unexpected failure")
             return []
 
-    def _git_cli_getCachedFileList(self, key: str, git_args: list, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def _git_cli_getCachedFileList(self, key: str, git_args: list, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Run the git command in ``git_args``, parse and cache
         the name-status list under `key`.
 
-        Returns a sorted list of ``(path,status)`` or ``[]`` on failure.
+        Returns a sorted list of ``(path, iso_mtime, status)`` or ``[]`` on failure.
         """
         try:
             if not ignorecache and key in self._cmd_cache:
@@ -813,8 +832,16 @@ class GitRepo(AppException):
 
             output = self._git_run(git_args, text=True, cache_key=key, ignorecache=ignorecache)
 
-            # Parse the whole output using the consolidated parser
-            results = self._git_cli_parse_name_status_output(output or "")
+            # Parse the whole output using the consolidated parser.
+            # Note: git only returns path+status and no times, so we will add mtime info in a second pass.
+            results_2tuple = self._git_cli_parse_name_status_output(output or "")
+            # Convert 2-tuples to 3-tuples by adding file mtime timestamp
+            results: list[tuple[str, str, str]] = []
+            for path, status in results_2tuple:
+                mtime = self.safe_mtime(path)
+                iso = self._epoch_to_iso(mtime) if mtime is not None else self.index_mtime_iso()
+                results.append((path, iso, status))
+            
             self._cmd_cache[key] = results
             return results
         except Exception as e:
@@ -905,7 +932,7 @@ class GitRepo(AppException):
 
     def _git_name_status_dispatch(
         self, prev: str | None = None, curr: str | None = None, cached: bool = False, key: str | None = None, ignorecache: bool = False
-    ) -> list[tuple[str, str]]:
+    ) -> list[tuple[str, str, str]]:
         """
         Generalized dispatcher for `git diff --name-status` variants.
 
@@ -971,9 +998,9 @@ class GitRepo(AppException):
     # File Lists
     ################
 
-    def getFileListBetweenNormalizedHashes(self, prev_hash: str, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListBetweenNormalizedHashes(self, prev_hash: str, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
-        Return a list of `(path, status)` for files changed between `prev_hash` and `curr_hash`.
+        Return a list of `(path, iso_mtime, status)` for files changed between `prev_hash` and `curr_hash`.
 
         Status values: `added`, `modified`, `deleted`, `renamed`, `copied`.
         This function expects `prev_hash` and `curr_hash` to be commit-ish values
@@ -1028,9 +1055,9 @@ class GitRepo(AppException):
         # explicit two-commit handler rather than the fully generic resolver.
         return self.getFileListBetweenTwoCommits(prev_hash, curr_hash, ignorecache=ignorecache)
 
-    def getFileListBetweenNewRepoAndTopHash(self, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListBetweenNewRepoAndTopHash(self, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
-        Return a list of `(path, status)` for files present in HEAD.
+        Return a list of `(path, iso_mtime, status)` for files present in HEAD.
 
         Status will be `committed` to indicate file is present in the
         given commit (HEAD).
@@ -1038,7 +1065,7 @@ class GitRepo(AppException):
         # Delegate to the new initial->commit helper to avoid duplication
         return self.getFileListBetweenNewRepoAndHash(self._get_default_ref(), ignorecache=ignorecache)
 
-    def getFileListBetweenTwoCommits(self, prev_hash: str, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListBetweenTwoCommits(self, prev_hash: str, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Direct commit->commit diff (both args expected to be commit-ish).
 
@@ -1048,9 +1075,9 @@ class GitRepo(AppException):
         key = self._make_cache_key("getFileListBetweenTwoCommits", prev_hash, curr_hash)
         return self._git_name_status_dispatch(prev=prev_hash, curr=curr_hash, cached=False, key=key, ignorecache=ignorecache)
 
-    def getFileListBetweenNewRepoAndHash(self, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListBetweenNewRepoAndHash(self, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
-        Return a list of `(path, status)` for files changed between the beginning and `curr_hash`.
+        Return a list of `(path, iso_mtime, status)` for files changed between the beginning and `curr_hash`.
 
         Status values are the same as other diffs (added/modified/etc.).
         """
@@ -1062,12 +1089,16 @@ class GitRepo(AppException):
 
             output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key, ignorecache=ignorecache)
 
-            results: list[tuple[str, str]] = []
+            # Get the commit timestamp once, not for each file
+            commit_ts = self._get_commit_timestamp(curr_hash)
+            iso = self._epoch_to_iso(commit_ts) if commit_ts is not None else self.index_mtime_iso()
+            
+            results: list[tuple[str, str, str]] = []
             for line in output.splitlines():
                 ln = line.strip()
                 if not ln:
                     continue
-                results.append((ln, "added"))
+                results.append((ln, iso, "added"))
             results.sort(key=lambda x: x[0])
             self._cmd_cache[key] = results
             return results
@@ -1075,9 +1106,9 @@ class GitRepo(AppException):
             self.printException(e, "getFileListBetweenNewRepoAndHash: unexpected failure")
             return []
 
-    def getFileListAtHash(self, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListAtHash(self, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
-        Return a list of `(path, status)` for files present in `curr_hash`.
+        Return a list of `(path, iso_mtime, status)` for files present in `curr_hash`.
 
         Uses `git ls-tree -r --name-only <hash>` to list committed files for
         the given tree/commit. Results are cached per-process.
@@ -1090,12 +1121,16 @@ class GitRepo(AppException):
 
             output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key, ignorecache=ignorecache)
 
-            results: list[tuple[str, str]] = []
+            # Get the commit timestamp once, not for each file
+            commit_ts = self._get_commit_timestamp(curr_hash)
+            iso = self._epoch_to_iso(commit_ts) if commit_ts is not None else self.index_mtime_iso()
+            
+            results: list[tuple[str, str, str]] = []
             for line in output.splitlines():
                 ln = line.strip()
                 if not ln:
                     continue
-                results.append((ln, "committed"))
+                results.append((ln, iso, "committed"))
             results.sort(key=lambda x: x[0])
             self._cmd_cache[key] = results
             return results
@@ -1103,7 +1138,7 @@ class GitRepo(AppException):
             self.printException(e, "getFileListAtHash: unexpected failure")
             return []
 
-    def getFileListBetweenNewRepoAndStaged(self, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListBetweenNewRepoAndStaged(self, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Return file list for the initial (empty) tree -> staged index comparison.
 
@@ -1114,7 +1149,7 @@ class GitRepo(AppException):
         key = "getFileListBetweenNewRepoAndStaged"
         return self._git_name_status_dispatch(prev=None, curr=None, cached=True, key=key, ignorecache=ignorecache)
 
-    def getFileListBetweenNewRepoAndMods(self, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListBetweenNewRepoAndMods(self, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Specialized handler for initial (empty) -> working tree (mods) comparison.
 
@@ -1123,7 +1158,7 @@ class GitRepo(AppException):
         key = "getFileListBetweenNewRepoAndMods"
         return self._git_name_status_dispatch(prev=None, curr=None, cached=False, key=key, ignorecache=ignorecache)
 
-    def getFileListBetweenTopHashAndCurrentTime(self, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListBetweenTopHashAndCurrentTime(self, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Return a list of `(path, status)` for files changed between HEAD and working tree.
 
@@ -1132,7 +1167,7 @@ class GitRepo(AppException):
         # Delegate to the general handler to avoid duplicating logic
         return self.getFileListBetweenHashAndCurrentTime(self._get_default_ref(), ignorecache=ignorecache)
 
-    def getFileListBetweenHashAndCurrentTime(self, hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListBetweenHashAndCurrentTime(self, hash: str, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Return `(path,status)` for files changed between `hash` and working tree.
 
@@ -1141,13 +1176,13 @@ class GitRepo(AppException):
         key = self._make_cache_key("getFileListBetweenHashAndCurrentTime", hash)
         return self._git_name_status_dispatch(prev=hash, curr=None, cached=False, key=key, ignorecache=ignorecache)
 
-    def getFileListBetweenTopHashAndStaged(self, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListBetweenTopHashAndStaged(self, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Return a list of `(path, status)` for files changed between HEAD and staged index."""
         # Delegate to the generalized staged-vs-hash implementation to avoid duplication
         return self.getFileListBetweenHashAndStaged(self._get_default_ref(), ignorecache=ignorecache)
 
-    def getFileListBetweenHashAndStaged(self, hash: str, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListBetweenHashAndStaged(self, hash: str, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Return `(path,status)` for files changed between `hash` and the staged index.
 
@@ -1156,7 +1191,7 @@ class GitRepo(AppException):
         key = self._make_cache_key("getFileListBetweenHashAndStaged", hash)
         return self._git_name_status_dispatch(prev=hash, curr=None, cached=True, key=key, ignorecache=ignorecache)
 
-    def getFileListBetweenStagedAndMods(self, ignorecache: bool = False) -> list[tuple[str, str]]:
+    def getFileListBetweenStagedAndMods(self, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
         Return a list of `(path, status)` for files changed between staged index and working tree (mods)."""
         # Use git CLI to get the list of files; cache the results once per process

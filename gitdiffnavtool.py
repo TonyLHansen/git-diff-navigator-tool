@@ -2628,7 +2628,7 @@ class FileModeFileList(FileListBase):
             # First, add committed files from HEAD as tracked_clean baseline
             for entry in committed:
                 try:
-                    p, _status = entry
+                    p, iso, _status = entry
                     register_file(p, "tracked_clean", None)
                 except Exception as e:
                     self.printException(e, "_collect_filemode_nodes: registering committed file failed")
@@ -2650,10 +2650,10 @@ class FileModeFileList(FileListBase):
                     self.printException(e, "_collect_filemode_nodes: registering ignored file failed")
                     continue
 
-            # Add mods entries: (path, status) - no iso provided; override committed
-            for p, s in mods:
+            # Add mods entries: (path, iso, status) - override committed
+            for p, iso, s in mods:
                 try:
-                    register_file(p, s, None)
+                    register_file(p, s, iso)
                 except Exception as e:
                     self.printException(e, "_collect_filemode_nodes: registering mod file failed")
                     continue
@@ -3472,16 +3472,16 @@ class RepoModeFileList(FileListBase, RightSideBase):
             # normalized tokens. `getFileListBetweenNormalizedHashes` will
             # handle pseudo-hashes like NEWREPO/STAGED/MODS and commit hashes.
             try:
-                entries: list[tuple[str, str]] = []
+                entries: list[tuple[str, str, str]] = []
                 entries = self.app.gitRepo.getFileListBetweenNormalizedHashes(prev_hash, curr_hash) or []
 
                 # Normalize entries and delegate row creation to shared helper
                 try:
                     file_infos: list[dict] = []
 
-                    for rel_path, status in entries:
+                    for rel_path, iso_mtime, status in entries:
                         try:
-                            # GitRepo contract: entries are (repo_relative_path, status)
+                            # GitRepo contract: entries are (repo_relative_path, iso_mtime, status)
                             name = rel_path or ""
                             is_dir = False
 

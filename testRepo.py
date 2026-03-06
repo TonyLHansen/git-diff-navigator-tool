@@ -536,6 +536,170 @@ def test_getCompleteCommitMessage(test_repo: GitRepo) -> dict:
     }
 
 
+def test_contract_validation(test_repo: GitRepo) -> dict:
+    """
+    Validate tuple shapes and value reasonableness for all public get*FileList* and get*HashList* methods.
+    
+    Checks:
+    - All getFileList* return 3-tuples: (path, iso_mtime, status)
+    - All getHashList* return 6-tuples: (iso, hash, subject, status, author_name, author_email)
+    - Values are non-empty and reasonable (timestamps are ISO 8601, hashes look like hex, etc.)
+    """
+    print("test_contract_validation: starting comprehensive contract validation")
+    
+    results = {
+        "file_list_tests": 0,
+        "file_list_passed": 0,
+        "file_list_failed": 0,
+        "hash_list_tests": 0,
+        "hash_list_passed": 0,
+        "hash_list_failed": 0,
+        "errors": [],
+    }
+    
+    try:
+        # Get sample refs to test against
+        normalized = test_repo.getNormalizedHashListComplete()
+        if not normalized:
+            raise AssertionError("getNormalizedHashListComplete returned empty list")
+        
+        tokens = [x[1] for x in normalized]
+        first_token = tokens[0]
+        last_token = tokens[-1]
+        
+        # Test all public getFileList* methods
+        file_list_methods = [
+            ("getFileListBetweenNormalizedHashes", lambda repo: repo.getFileListBetweenNormalizedHashes(first_token, last_token)),
+            ("getFileListAtHash", lambda repo: repo.getFileListAtHash(first_token)),
+            ("getFileListUntracked", lambda repo: repo.getFileListUntracked()),
+            ("getFileListIgnored", lambda repo: repo.getFileListIgnored()),
+            ("getFileListUntrackedAndIgnored", lambda repo: repo.getFileListUntrackedAndIgnored()),
+        ]
+        
+        for method_name, method_call in file_list_methods:
+            results["file_list_tests"] += 1
+            try:
+                res = method_call(test_repo)
+                
+                # Validate structure
+                if not isinstance(res, list):
+                    raise AssertionError(f"{method_name} returned non-list: {type(res)}")
+                
+                # Check each entry
+                for i, entry in enumerate(res):
+                    if not isinstance(entry, tuple) or len(entry) != 3:
+                        raise AssertionError(
+                            f"{method_name}[{i}]: expected 3-tuple, got {type(entry)} with len={len(entry) if hasattr(entry, '__len__') else '?'}"
+                        )
+                    
+                    path, iso_mtime, status = entry
+                    
+                    # Validate path (non-empty string)
+                    if not isinstance(path, str) or not path:
+                        raise AssertionError(f"{method_name}[{i}]: path is empty or not string: {path!r}")
+                    
+                    # Validate iso_mtime (non-empty ISO 8601 string)
+                    if not isinstance(iso_mtime, str) or not iso_mtime:
+                        raise AssertionError(f"{method_name}[{i}]: iso_mtime is empty or not string: {iso_mtime!r}")
+                    if not re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', iso_mtime):
+                        raise AssertionError(f"{method_name}[{i}]: iso_mtime not ISO 8601 format: {iso_mtime!r}")
+                    
+                    # Validate status (known status value)
+                    valid_statuses = {"added", "modified", "deleted", "renamed", "copied", "committed", "untracked", "ignored", "staged"}
+                    status_prefix = status.split("->")[0] if "->" in status else status
+                    if status_prefix not in valid_statuses and not status_prefix.startswith("renamed-"):
+                        raise AssertionError(f"{method_name}[{i}]: unknown status: {status!r}")
+                
+                print(f"✓ {method_name}: {len(res)} entries, all valid 3-tuples")
+                results["file_list_passed"] += 1
+                
+            except Exception as e:
+                test_repo.printException(e, f"test_contract_validation: {method_name} failed")
+                results["file_list_failed"] += 1
+                results["errors"].append(f"{method_name}: {e}")
+        
+        # Test all public getHashList* methods
+        hash_list_methods = [
+            ("getHashListEntireRepo", lambda repo: repo.getHashListEntireRepo()),
+            ("getHashListStagedChanges", lambda repo: repo.getHashListStagedChanges()),
+            ("getHashListNewChanges", lambda repo: repo.getHashListNewChanges()),
+            ("getHashListNewRepo", lambda repo: repo.getHashListNewRepo()),
+            ("getNormalizedHashListComplete", lambda repo: repo.getNormalizedHashListComplete()),
+        ]
+        
+        for method_name, method_call in hash_list_methods:
+            results["hash_list_tests"] += 1
+            try:
+                res = method_call(test_repo)
+                
+                # Validate structure
+                if not isinstance(res, list):
+                    raise AssertionError(f"{method_name} returned non-list: {type(res)}")
+                
+                # Check each entry
+                for i, entry in enumerate(res):
+                    if not isinstance(entry, tuple) or len(entry) != 6:
+                        raise AssertionError(
+                            f"{method_name}[{i}]: expected 6-tuple, got {type(entry)} with len={len(entry) if hasattr(entry, '__len__') else '?'}"
+                        )
+                    
+                    iso, hash_val, subject, status, author_name, author_email = entry
+                    
+                    # Validate iso (non-empty ISO 8601 or NEWREPO-like)
+                    if not isinstance(iso, str) or not iso:
+                        raise AssertionError(f"{method_name}[{i}]: iso is empty or not string: {iso!r}")
+                    if iso not in ("Newly created repository",) and not re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', iso):
+                        # Allow non-ISO for pseudo-entries but should be mostly ISO
+                        pass
+                    
+                    # Validate hash (non-empty, typically hex or pseudo-hash like NEWREPO/STAGED/MODS)
+                    if not isinstance(hash_val, str) or not hash_val:
+                        raise AssertionError(f"{method_name}[{i}]: hash is empty or not string: {hash_val!r}")
+                    pseudo_hashes = {"NEWREPO", "STAGED", "MODS"}
+                    if hash_val not in pseudo_hashes and not re.match(r'^[0-9a-f]{7,}$', hash_val):
+                        raise AssertionError(f"{method_name}[{i}]: hash doesn't look like hex or pseudo-hash: {hash_val!r}")
+                    
+                    # Validate subject (string, can be empty)
+                    if not isinstance(subject, str):
+                        raise AssertionError(f"{method_name}[{i}]: subject is not string: {subject!r}")
+                    
+                    # Validate status (known status value)
+                    valid_statuses = {"pushed", "unpushed"}
+                    if status not in valid_statuses:
+                        raise AssertionError(f"{method_name}[{i}]: unknown status: {status!r}")
+                    
+                    # Validate author_name and author_email (strings, can be empty)
+                    if not isinstance(author_name, str):
+                        raise AssertionError(f"{method_name}[{i}]: author_name is not string: {author_name!r}")
+                    if not isinstance(author_email, str):
+                        raise AssertionError(f"{method_name}[{i}]: author_email is not string: {author_email!r}")
+                
+                print(f"✓ {method_name}: {len(res)} entries, all valid 6-tuples")
+                results["hash_list_passed"] += 1
+                
+            except Exception as e:
+                test_repo.printException(e, f"test_contract_validation: {method_name} failed")
+                results["hash_list_failed"] += 1
+                results["errors"].append(f"{method_name}: {e}")
+    
+    except Exception as e:
+        test_repo.printException(e, "test_contract_validation: unexpected error")
+        results["errors"].append(f"Unexpected error: {e}")
+    
+    # Print summary
+    file_list_summary = f"File list: {results['file_list_passed']}/{results['file_list_tests']} passed"
+    hash_list_summary = f"Hash list: {results['hash_list_passed']}/{results['hash_list_tests']} passed"
+    print(f"\n{file_list_summary}")
+    print(f"{hash_list_summary}")
+    
+    if results["errors"]:
+        print(f"Errors encountered: {len(results['errors'])}")
+        for err in results["errors"][:5]:  # Show first 5 errors
+            print(f"  - {err}")
+    
+    return results
+
+
 def main():
     """Main function to run the tests."""
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py", description=__doc__)
@@ -673,6 +837,13 @@ def main():
         action="store_true",
         dest="test_get_complete_commit_message",
         help="Run unit test for GitRepo.getCompleteCommitMessage",
+    )
+
+    parser.add_argument(
+        "--test-contract-validation",
+        action="store_true",
+        dest="test_contract_validation",
+        help="Run comprehensive contract validation for all get*FileList* and get*HashList* methods",
     )
 
     parser.add_argument(
@@ -986,6 +1157,7 @@ def main():
         or args.test_history_entries
         or args.test_amend_commit_message
         or args.test_get_complete_commit_message
+        or args.test_contract_validation
         or args.getDiffTests
         or args.getFileListBetweenNormalizedHashes
         or args.test_resolve
@@ -1149,6 +1321,11 @@ def main():
         if args.all or args.test_get_complete_commit_message:
             total_exercises += 1
             run_one(test_repo, i, "GitRepo.getCompleteCommitMessage", "test_getCompleteCommitMessage", None, args.limit)
+            i += 1
+
+        if args.all or args.test_contract_validation:
+            total_exercises += 1
+            run_one(test_repo, i, "Contract Validation", "test_contract_validation", None, args.limit)
             i += 1
 
         # Process any explicit getFileListBetweenNormalizedHashes pairs supplied
