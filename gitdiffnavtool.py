@@ -4178,7 +4178,9 @@ class FileModeHistoryList(HistoryListBase, RightSideBase):
 
             # Ask GitRepo for the normalized list of hashes touching this file.
             try:
-                entries = self.app.gitRepo.getNormalizedHashListFromFileName(rel_path) or []
+                entries = (
+                    self.app.gitRepo.getNormalizedHashListFromFileName(rel_path, limit=self.app.history_limit) or []
+                )
             except Exception as _e:
                 self.printException(_e, "prepFileModeHistoryList: gitRepo.getNormalizedHashListFromFileName failed")
                 entries = []
@@ -4377,7 +4379,12 @@ class RepoModeHistoryList(HistoryListBase):
             # pseudo-entries like MODS/STAGED). GitRepo centralizes git CLI
             # invocation and caching so prefer its helpers.
             try:
-                entries = self.app.gitRepo.getNormalizedHashListComplete(ignorecache=ignorecache) or []
+                entries = (
+                    self.app.gitRepo.getNormalizedHashListComplete(
+                        ignorecache=ignorecache, limit=self.app.history_limit
+                    )
+                    or []
+                )
             except Exception as e:
                 self.printException(e, "prepRepoModeHistoryList: gitRepo.getNormalizedHashListComplete failed")
                 entries = []
@@ -5167,6 +5174,7 @@ class GitDiffNavTool(AppException, App):
         hash_length: int,
         add_authors: bool,
         unified_context: int,
+        history_limit: int,
         **kwargs,
     ):
         """
@@ -5223,6 +5231,9 @@ class GitDiffNavTool(AppException, App):
         # Number of context lines for unified diffs (git diff -U option).
         # Can be overridden via --unified-context / config.
         self.unified_context = unified_context
+        # Maximum number of history entries to display (0 = unlimited).
+        # Can be overridden via --history-limit / config.
+        self.history_limit = history_limit
 
         # Optional initial filename basename to highlight when listing a dir
         self.highlight = highlight
@@ -6652,6 +6663,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=HASH_LENGTH,
         help=f"number of characters to display for short hashes (default: {HASH_LENGTH})",
     )
+    startup_group.add_argument(
+        "--history-limit",
+        dest="history_limit",
+        metavar="N",
+        type=int,
+        default=0,
+        help="limit number of history entries to display (default: 0 for unlimited)",
+    )
     # Mutually exclusive group for author display flags
     author_group = startup_group.add_mutually_exclusive_group()
     author_group.add_argument(
@@ -6785,6 +6804,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     #   branch=<branch-name>
     #   color=true/false
     #   hash-length=<integer >= 1>
+    #   history-limit=<integer >= 0>
     #   add-authors=true/false
     #   debug=<filename>
     #   trim-debug=true/false
@@ -6912,6 +6932,20 @@ def main(argv: Optional[list[str]] = None) -> int:
                     except Exception as e:
                         printException(e, "invalid unified-context in config")
                         sys.exit(f"invalid unified-context '{raw_context_str}' in config; must be an integer >= 0")
+
+            # Optional integer for history limit.
+            if "history-limit" in src:
+                raw_limit = src.get("history-limit")
+                raw_limit_str = raw_limit if isinstance(raw_limit, str) else str(raw_limit)
+                if raw_limit_str.strip() != "":
+                    try:
+                        cfg_limit = int(raw_limit_str.strip())
+                        if cfg_limit < 0:
+                            raise ValueError("must be >= 0")
+                        defaults["history_limit"] = cfg_limit
+                    except Exception as e:
+                        printException(e, "invalid history-limit in config")
+                        sys.exit(f"invalid history-limit '{raw_limit_str}' in config; must be an integer >= 0")
 
             if defaults:
                 parser.set_defaults(**defaults)
@@ -7058,6 +7092,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             hash_length=args.hash_length,
             add_authors=not args.no_add_authors,
             unified_context=args.unified_context,
+            history_limit=args.history_limit,
         )
         # Run the textual app (blocks until exit)
         app.run()

@@ -1466,14 +1466,20 @@ class GitRepo(AppException):
         new = self.getHashListNewChanges(ignorecache=ignorecache, limit=remaining_limit)
         if limit > 0:
             remaining_limit -= len(new)
+            if remaining_limit <= 0:
+                return new
 
         staged = self.getHashListStagedChanges(ignorecache=ignorecache, limit=remaining_limit)
         if limit > 0:
             remaining_limit -= len(staged)
+            if remaining_limit <= 0:
+                return new + staged
 
         entire = self.getHashListEntireRepo(ignorecache=ignorecache, limit=remaining_limit)
         if limit > 0:
             remaining_limit -= len(entire)
+            if remaining_limit <= 0:
+                return new + staged + entire
 
         newrepo = self.getHashListNewRepo(ignorecache=ignorecache, limit=remaining_limit)
 
