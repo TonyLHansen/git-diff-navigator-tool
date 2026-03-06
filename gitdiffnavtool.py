@@ -31,6 +31,7 @@ from subprocess import check_output, CalledProcessError
 from rich.text import Text
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.console import Console
 from textual import events
 from textual.app import App
 from textual.containers import Horizontal, Vertical
@@ -6583,6 +6584,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     """
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
 
+    # Help option (processed before other options)
+    help_group = parser.add_mutually_exclusive_group()
+    help_group.add_argument(
+        "--show-help",
+        dest="show_help",
+        action="store_true",
+        help="display formatted help text without colors and exit",
+    )
+    help_group.add_argument(
+        "--show-help-color",
+        dest="show_help_color",
+        action="store_true",
+        help="display formatted help text with colors and exit",
+    )
+
     # Startup options group
     startup_group = parser.add_argument_group("Startup Options")
     startup_group.add_argument(
@@ -6904,6 +6920,13 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     args = parser.parse_args(argv)
 
+    # Handle --show-help or --show-help-color: render HELP_TEXT as markdown and exit
+    if args.show_help or args.show_help_color:
+        console = Console(no_color=args.show_help)
+        md = Markdown(HELP_TEXT)
+        console.print(md)
+        return 0
+
     # Handle CLI flag overrides for initial-popup, ignored-files, untracked-files,
     # add-authors, trim-debug, and branch selection:
     # Positive flags (e.g., --initial-popup, --ignored-files) take precedence over
@@ -6944,7 +6967,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         # Truncate debug file if trim-debug is enabled (default: append mode)
         if args.trim_debug:
             try:
-                with open(args.debug, 'w') as f:
+                with open(args.debug, "w") as f:
                     pass  # Truncate the file
             except Exception as e:
                 printException(e, f"could not truncate debug log file {args.debug}")
