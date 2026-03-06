@@ -186,7 +186,9 @@ LEFT_HISTORY_FOOTER = Text("History: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/ Pg
 
 # Footer text used when showing the right file list (file list view)
 # RIGHT_FILE_FOOTER = Text("Files: press Left to return")
-RIGHT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close) ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
+RIGHT_FILE_FOOTER = Text(
+    "File: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close) ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold"
+)
 
 # Footer text used for help screen
 # HELP_FOOTER = Text("Help: press Enter/␍ to return")
@@ -204,10 +206,12 @@ OPEN_FILE_FOOTER_2 = Text(
 # Footer text used when showing the diff for a history/file selection
 # DIFF_FOOTER = Text("Diff: press Left to return to files")
 DIFF_FOOTER_1 = Text(
-    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close)  ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)", style="bold"
+    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close)  ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)  +/-(ctx)",
+    style="bold",
 )
 DIFF_FOOTER_2 = Text(
-    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←/f(ull)  ↑/↓/PgUp/PgDn/Home/End c(olor)  d(iff-type)", style="bold"
+    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←/f(ull)  ↑/↓/PgUp/PgDn/Home/End c(olor)  d(iff-type)  +/-(ctx)",
+    style="bold",
 )
 
 # Supported diff color schemes (used by CLI/config and runtime cycling)
@@ -303,8 +307,17 @@ selection, and press Right or Enter/␍ to either
 From the history view you can navigate the commits and press Right or Enter/␍ again to see the diff for that commit and file.
 (You can also mark a particular commit in the history view with "m" and then navigate to another commit; 
 press Right/Enter/␍ to see the diff between the marked commit and the current selection.)
-While viewing Diff or OpenFile content, Right/Enter/`f` promotes the pane to fullscreen and Left returns to split (or back to the prior pane when already in split).
-Press `o` to open file content in the OpenFile pane.
+
+From the history view, you can also press `o` to open file content in the OpenFile pane.
+
+While viewing Diff or OpenFile content, Right/Enter/`f` promotes the pane to fullscreen and
+Left returns to the split view (or back to the prior pane when already in split).
+
+From the Diff view, you can also press `c` to toggle color on and off,
+`d` to rotate through diff variants (e.g., ignore-space-change), 
+`w` to write a snapshot of the currently visible diff content to a file,
+`t` to toggle between the two paired split layouts (history-file-diff <-> file-history-diff),
+and `+`/`-` to adjust the unified diff context lines.
 
 Alternatively, you can start the program in repository mode (using the `-R`/`--repo-first` flag) that
 initially shows a history view of all commits in the repository. You can then select a commit
@@ -400,6 +413,8 @@ Diff Column:
 - Commands when focused:
     - `d` / `D`: rotate the diff command variant. When a full textual diff is available this cycles through configured textual variants (for example, ignore-space-change and patience).
     - `c` / `C`: toggle colorized diffs on/off.
+    - `+`: increase unified diff context (`git diff -U`) by 1 and re-run the diff.
+    - `-`: decrease unified diff context (`git diff -U`) by 1 (minimum 0) and re-run the diff.
     - `Right` / `Enter` / `f` / `F`: toggle split <-> fullscreen diff view.
     - `t` / `T`: toggle paired split layouts (`history_file_diff` <-> `file_history_diff`).
     - `w` / `W`: write a snapshot of the currently-visible diff (previous docs used the term "save").
@@ -419,10 +434,6 @@ Tips and behavior notes:
 - When diffing between `STAGED` and `MODS` the UI shows the comparison the user
     expects (index vs working-tree).
 - The app uses the `git` CLI for its repository operations.
-
-Command-line Options:
-- Use `--hash-length N` to control displayed short-hash width (default: 12).
-- Use `--add-authors` or `--no-add-authors` to show/hide author information in commit rows (default: show).
 
 Color Schemes:
 - Use `-c SCHEME` or `--color SCHEME` to select a color scheme for diffs.
@@ -453,6 +464,8 @@ Configuration File:
     color = style    
     # Diff variant: classic, ignore-spaces, patience, word-diff (default: classic)
     diff = classic
+    # Unified diff context lines (git diff -U; default: 3, must be >= 0)
+    unified-context = 3
     # Start in repository mode instead of file-first mode (default: false)
     repo-first = false
     # Show startup welcome popup (default: true)
@@ -468,6 +481,11 @@ Configuration File:
     # Enable debug logging to a file (optional, default: disabled)
     # debug = /tmp/gitdiffnavtool.log
     ```
+
+Command-line Options:
+- All of the configuration values can also be specified on the command line, pluse some additional options.
+- Use the `--help` option to see the complete list.
+    
 """
 
 
@@ -4070,7 +4088,7 @@ class HistoryListBase(AppBase):
 
             # Open the edit modal
             try:
-                short_hash = hash_val[:self.app.hash_length]
+                short_hash = hash_val[: self.app.hash_length]
                 title = f"Edit commit message for {short_hash}"
                 modal: EditMessageModal | None = None
 
@@ -4094,11 +4112,16 @@ class HistoryListBase(AppBase):
                                 self.error_message(f"Commit {short_hash} amended successfully")
                                 # Refresh the history list to show the updated commit message
                                 try:
-                                    logger.debug("key_e: refreshing history list with ignorecache=True, preserving hash=%s", new_hash)
+                                    logger.debug(
+                                        "key_e: refreshing history list with ignorecache=True, preserving hash=%s",
+                                        new_hash,
+                                    )
                                     # Refresh with new_hash to preserve selection (hash changes after amend)
                                     self.prepRepoModeHistoryList(curr_hash=new_hash, ignorecache=True)
                                 except Exception as refresh_err:
-                                    self.printException(refresh_err, "HistoryListBase.key_e: refreshing history list failed")
+                                    self.printException(
+                                        refresh_err, "HistoryListBase.key_e: refreshing history list failed"
+                                    )
                             except ValueError as ve:
                                 self.printException(ve, "HistoryListBase.key_e: ValueError during amend")
                                 self.error_message(f"Cannot amend: {str(ve)}")
@@ -4484,7 +4507,7 @@ class DiffList(FullScreenBase):
             self._diff_filename = filename
             self._diff_prev = prev
             self._diff_curr = curr
-            
+
             # Use the app-level `gitRepo` and build the selected variant
             try:
                 gitrepo = self.app.gitRepo
@@ -4533,7 +4556,9 @@ class DiffList(FullScreenBase):
                     header = f"Diff ({variant_name}, color={self.app.color_scheme}, context=-U{self.app.unified_context}) for {filename} between {p_short} and {c_short}"
                 except Exception as e:
                     self.printException(e, "prepDiffList: building header failed")
-                    header = f"Diff (context=-U{self.app.unified_context}) for {filename} between {p_short} and {c_short}"
+                    header = (
+                        f"Diff (context=-U{self.app.unified_context}) for {filename} between {p_short} and {c_short}"
+                    )
             except Exception as e:
                 self.printException(e, "prepDiffList: header preparation failed")
                 header = "Diff"
@@ -4827,7 +4852,7 @@ class DiffList(FullScreenBase):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "DiffList.key_plus: event.stop failed")
-            
+
             # Increment the unified context value and re-run the diff
             try:
                 self.app.unified_context = self.app.unified_context + 1
@@ -4835,7 +4860,7 @@ class DiffList(FullScreenBase):
             except Exception as e:
                 self.printException(e, "DiffList.key_plus: incrementing context failed")
                 return
-            
+
             self.prepDiffList(
                 self._diff_filename,
                 self._diff_prev,
@@ -4860,7 +4885,7 @@ class DiffList(FullScreenBase):
                     event.stop()
                 except Exception as e:
                     self.printException(e, "DiffList.key_minus: event.stop failed")
-            
+
             # Decrement the unified context value (with minimum of 0) and re-run the diff
             try:
                 self.app.unified_context = max(0, self.app.unified_context - 1)
@@ -4868,7 +4893,7 @@ class DiffList(FullScreenBase):
             except Exception as e:
                 self.printException(e, "DiffList.key_minus: decrementing context failed")
                 return
-            
+
             self.prepDiffList(
                 self._diff_filename,
                 self._diff_prev,

@@ -673,7 +673,9 @@ class GitRepo(AppException):
         git_dir = os.path.join(self._repoRoot, ".git")
         try:
             default_ref = self._get_default_ref()
-            out = self._git_run(["git", "log", default_ref, "--reverse", "--pretty=format:%at"], text=True, ignorecache=ignorecache)
+            out = self._git_run(
+                ["git", "log", default_ref, "--reverse", "--pretty=format:%at"], text=True, ignorecache=ignorecache
+            )
             if out:
                 for line in out.splitlines():
                     line = line.strip()
@@ -819,7 +821,9 @@ class GitRepo(AppException):
             self.printException(e, "_git_cli_parse_name_status_output: unexpected failure")
             return []
 
-    def _git_cli_getCachedFileList(self, key: str, git_args: list, ignorecache: bool = False) -> list[tuple[str, str, str]]:
+    def _git_cli_getCachedFileList(
+        self, key: str, git_args: list, ignorecache: bool = False
+    ) -> list[tuple[str, str, str]]:
         """
         Run the git command in ``git_args``, parse and cache
         the name-status list under `key`.
@@ -841,7 +845,7 @@ class GitRepo(AppException):
                 mtime = self.safe_mtime(path)
                 iso = self._epoch_to_iso(mtime) if mtime is not None else self.index_mtime_iso()
                 results.append((path, iso, status))
-            
+
             self._cmd_cache[key] = results
             return results
         except Exception as e:
@@ -862,7 +866,9 @@ class GitRepo(AppException):
         """Overload: when `text=False` this variant returns raw bytes."""
         ...
 
-    def _git_run(self, args: list, text: bool = True, cache_key: str | None = None, ignorecache: bool = False) -> str | bytes:
+    def _git_run(
+        self, args: list, text: bool = True, cache_key: str | None = None, ignorecache: bool = False
+    ) -> str | bytes:
         """
         Run a git subprocess and return its output (string or bytes).
 
@@ -931,7 +937,12 @@ class GitRepo(AppException):
             return []
 
     def _git_name_status_dispatch(
-        self, prev: str | None = None, curr: str | None = None, cached: bool = False, key: str | None = None, ignorecache: bool = False
+        self,
+        prev: str | None = None,
+        curr: str | None = None,
+        cached: bool = False,
+        key: str | None = None,
+        ignorecache: bool = False,
     ) -> list[tuple[str, str, str]]:
         """
         Generalized dispatcher for `git diff --name-status` variants.
@@ -998,7 +1009,9 @@ class GitRepo(AppException):
     # File Lists
     ################
 
-    def getFileListBetweenNormalizedHashes(self, prev_hash: str, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str, str]]:
+    def getFileListBetweenNormalizedHashes(
+        self, prev_hash: str, curr_hash: str, ignorecache: bool = False
+    ) -> list[tuple[str, str, str]]:
         """
         Return a list of `(path, iso_mtime, status)` for files changed between `prev_hash` and `curr_hash`.
 
@@ -1065,7 +1078,9 @@ class GitRepo(AppException):
         # Delegate to the new initial->commit helper to avoid duplication
         return self.getFileListBetweenNewRepoAndHash(self._get_default_ref(), ignorecache=ignorecache)
 
-    def getFileListBetweenTwoCommits(self, prev_hash: str, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str, str]]:
+    def getFileListBetweenTwoCommits(
+        self, prev_hash: str, curr_hash: str, ignorecache: bool = False
+    ) -> list[tuple[str, str, str]]:
         """
         Direct commit->commit diff (both args expected to be commit-ish).
 
@@ -1073,7 +1088,9 @@ class GitRepo(AppException):
         """
         # Use generalized dispatcher for commit->commit diffs
         key = self._make_cache_key("getFileListBetweenTwoCommits", prev_hash, curr_hash)
-        return self._git_name_status_dispatch(prev=prev_hash, curr=curr_hash, cached=False, key=key, ignorecache=ignorecache)
+        return self._git_name_status_dispatch(
+            prev=prev_hash, curr=curr_hash, cached=False, key=key, ignorecache=ignorecache
+        )
 
     def getFileListBetweenNewRepoAndHash(self, curr_hash: str, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
@@ -1087,12 +1104,14 @@ class GitRepo(AppException):
             if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key, ignorecache=ignorecache)
+            output = self._git_run(
+                ["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key, ignorecache=ignorecache
+            )
 
             # Get the commit timestamp once, not for each file
             commit_ts = self._get_commit_timestamp(curr_hash)
             iso = self._epoch_to_iso(commit_ts) if commit_ts is not None else self.index_mtime_iso()
-            
+
             results: list[tuple[str, str, str]] = []
             for line in output.splitlines():
                 ln = line.strip()
@@ -1119,12 +1138,14 @@ class GitRepo(AppException):
             if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            output = self._git_run(["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key, ignorecache=ignorecache)
+            output = self._git_run(
+                ["git", "ls-tree", "-r", "--name-only", curr_hash], text=True, cache_key=key, ignorecache=ignorecache
+            )
 
             # Get the commit timestamp once, not for each file
             commit_ts = self._get_commit_timestamp(curr_hash)
             iso = self._epoch_to_iso(commit_ts) if commit_ts is not None else self.index_mtime_iso()
-            
+
             results: list[tuple[str, str, str]] = []
             for line in output.splitlines():
                 ln = line.strip()
@@ -1211,7 +1232,10 @@ class GitRepo(AppException):
             results: list[tuple[str, str, str]] = []
             seen: set[str] = set()
 
-            untracked_out = self._git_run(["git", "ls-files", "--others", "--exclude-standard"], text=True, ignorecache=ignorecache) or ""
+            untracked_out = (
+                self._git_run(["git", "ls-files", "--others", "--exclude-standard"], text=True, ignorecache=ignorecache)
+                or ""
+            )
 
             for line in untracked_out.splitlines():
                 rel = line.strip()
@@ -1243,7 +1267,12 @@ class GitRepo(AppException):
             results: list[tuple[str, str, str]] = []
             seen: set[str] = set()
 
-            ignored_out = self._git_run(["git", "ls-files", "--others", "-i", "--exclude-standard"], text=True, ignorecache=ignorecache) or ""
+            ignored_out = (
+                self._git_run(
+                    ["git", "ls-files", "--others", "-i", "--exclude-standard"], text=True, ignorecache=ignorecache
+                )
+                or ""
+            )
 
             for line in ignored_out.splitlines():
                 rel = line.strip()
@@ -1408,7 +1437,9 @@ class GitRepo(AppException):
                     self.printException(e, "getPushedHashes: git rev-list for upstream failed")
 
             # Fallback: use all remote-tracking refs when no branch upstream or fallback mode
-            remote_out = self._git_run(["git", "config", "--get", "remote.origin.url"], text=True, ignorecache=ignorecache) or ""
+            remote_out = (
+                self._git_run(["git", "config", "--get", "remote.origin.url"], text=True, ignorecache=ignorecache) or ""
+            )
             if not remote_out.strip():
                 self._cmd_cache[cache_key] = pushed_hashes
                 return pushed_hashes
@@ -1437,7 +1468,9 @@ class GitRepo(AppException):
     def getHashListEntireRepo(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
         """Return all commit hashes in the configured branch with pushed status."""
         default_ref = self._get_default_ref()
-        output = self._git_run(["git", "log", default_ref, "--pretty=format:%at %H %an %ae %s"], text=True, ignorecache=ignorecache)
+        output = self._git_run(
+            ["git", "log", default_ref, "--pretty=format:%at %H %an %ae %s"], text=True, ignorecache=ignorecache
+        )
         pairs = self._parse_git_log_output(output or "")
         pairs.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
@@ -1456,7 +1489,9 @@ class GitRepo(AppException):
             if not ignorecache and key in self._cmd_cache:
                 return self._cmd_cache[key]
 
-            names_out = self._git_run(["git", "diff", "--cached", "--name-only"], text=True, cache_key=key, ignorecache=ignorecache)
+            names_out = self._git_run(
+                ["git", "diff", "--cached", "--name-only"], text=True, cache_key=key, ignorecache=ignorecache
+            )
 
             if not names_out:
                 self._cmd_cache[key] = []
@@ -1516,7 +1551,9 @@ class GitRepo(AppException):
             self.printException(e, "getHashListNewRepo: failure")
             return [(self.index_mtime_iso(), self.NEWREPO, self.NEWREPO_MESSAGE, "unpushed", "", "")]
 
-    def getNormalizedHashListFromFileName(self, file_name: str, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
+    def getNormalizedHashListFromFileName(
+        self, file_name: str, ignorecache: bool = False
+    ) -> list[tuple[str, str, str, str, str, str]]:
         """
         Return a list of commit hashes that modified the given file.
 
@@ -1554,7 +1591,10 @@ class GitRepo(AppException):
             # deterministic placement for these pseudo-entries so callers
             # that reverse the list (oldest->newest) observe STAGED before
             # MODS.
-            status_out = self._git_run(["git", "status", "--porcelain", "--", file_name], text=True, ignorecache=ignorecache) or ""
+            status_out = (
+                self._git_run(["git", "status", "--porcelain", "--", file_name], text=True, ignorecache=ignorecache)
+                or ""
+            )
             idx_flag = " "
             wt_flag = " "
             if status_out:
@@ -1602,7 +1642,9 @@ class GitRepo(AppException):
     # Diff List
     ################
 
-    def getDiff(self, filename: str, hash1: str, hash2: str, variation: list[str] | None = None, unified_context: int = 3) -> list[str]:
+    def getDiff(
+        self, filename: str, hash1: str, hash2: str, variation: list[str] | None = None, unified_context: int = 3
+    ) -> list[str]:
         """
         Return the lines produced by `git diff` for `filename` between `hash1` and `hash2`.
 
@@ -1622,7 +1664,14 @@ class GitRepo(AppException):
             if hash1 is None or hash2 is None:
                 raise ValueError("getDiff: hash1 and hash2 must be specified (not None)")
 
-            logger.debug("getDiff: start filename=%r hash1=%r hash2=%r variation=%r unified_context=%r", filename, hash1, hash2, variation, unified_context)
+            logger.debug(
+                "getDiff: start filename=%r hash1=%r hash2=%r variation=%r unified_context=%r",
+                filename,
+                hash1,
+                hash2,
+                variation,
+                unified_context,
+            )
 
             # return empty diff if both hashes are identical
             if hash1 == hash2:
@@ -2038,10 +2087,14 @@ class GitRepo(AppException):
         if head_hash and head_hash.startswith(hash_val):
             try:
                 # Run the amendment command
-                self._git_run(["git", "-C", self._repoRoot, "commit", "--amend", "-m", new_message], text=True, ignorecache=True)
+                self._git_run(
+                    ["git", "-C", self._repoRoot, "commit", "--amend", "-m", new_message], text=True, ignorecache=True
+                )
                 logger.debug(f"amendCommitMessage: amended HEAD {hash_val}")
                 # Get the new hash after amendment
-                new_hash_output = self._git_run(["git", "-C", self._repoRoot, "rev-parse", "HEAD"], text=True, ignorecache=True)
+                new_hash_output = self._git_run(
+                    ["git", "-C", self._repoRoot, "rev-parse", "HEAD"], text=True, ignorecache=True
+                )
                 new_hash = new_hash_output.strip() if new_hash_output else hash_val
                 return new_hash
             except CalledProcessError as e:
@@ -2128,15 +2181,15 @@ class GitRepo(AppException):
                 logger.debug(f"amendCommitMessage: amended {hash_val} via rebase --exec")
                 # Get the new hash after rebase by finding the commit with the new message
                 # Search for commits with matching message (use the subject line)
-                subject_line = new_message.split('\n')[0] if new_message else ""
+                subject_line = new_message.split("\n")[0] if new_message else ""
                 log_output = self._git_run(
                     ["git", "-C", self._repoRoot, "log", "--all", "--pretty=format:%H %s", "-n", "20"],
                     text=True,
-                    ignorecache=True
+                    ignorecache=True,
                 )
                 new_hash = None
                 for line in (log_output or "").splitlines():
-                    parts = line.split(' ', 1)
+                    parts = line.split(" ", 1)
                     if len(parts) == 2 and parts[1] == subject_line:
                         new_hash = parts[0]
                         break
