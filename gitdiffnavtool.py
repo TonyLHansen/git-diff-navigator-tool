@@ -4445,6 +4445,10 @@ class DiffList(FullScreenBase):
         self.output: list[str] = []
         # Current diff variant index used when re-prepping the diff
         self.variant: int = 0
+        # Store diff parameters for re-running with different context
+        self._diff_filename: str = ""
+        self._diff_prev: str = ""
+        self._diff_curr: str = ""
         # Where to return when leaving the diff view: (state_name, widget_id, footer)
         # Always initialized to a non-None default so callers can rely on it.
         self._go_back: tuple = ("history_file", RIGHT_FILE_LIST_ID, RIGHT_FILE_FOOTER)
@@ -4468,13 +4472,19 @@ class DiffList(FullScreenBase):
         """
         try:
             logger.debug(
-                "DiffList.prepDiffList: filename=%s prev=%s curr=%s variant=%s go_back=%s",
+                "DiffList.prepDiffList: filename=%s prev=%s curr=%s variant=%s go_back=%s unified_context=%s",
                 filename,
                 prev,
                 curr,
                 variant_index,
                 go_back,
+                self.app.unified_context,
             )
+            # Store parameters for re-running with different context values
+            self._diff_filename = filename
+            self._diff_prev = prev
+            self._diff_curr = curr
+            
             # Use the app-level `gitRepo` and build the selected variant
             try:
                 gitrepo = self.app.gitRepo
@@ -4495,7 +4505,7 @@ class DiffList(FullScreenBase):
                     else:
                         variation = [str(variant_arg)]
 
-                out_lines = gitrepo.getDiff(filename, prev, curr, variation)
+                out_lines = gitrepo.getDiff(filename, prev, curr, variation, unified_context=self.app.unified_context)
                 out = "\n".join(out_lines) if out_lines else ""
             except Exception as e:
                 self.printException(e, "prepDiffList: gitRepo.getDiff failed")
@@ -4520,10 +4530,10 @@ class DiffList(FullScreenBase):
                     if not variant_name:
                         variant_name = DIFF_VARIANT_NAMES[0] if DIFF_VARIANT_NAMES else "default"
 
-                    header = f"Diff ({variant_name}, color={self.app.color_scheme}) for {filename} between {p_short} and {c_short}"
+                    header = f"Diff ({variant_name}, color={self.app.color_scheme}, context=-U{self.app.unified_context}) for {filename} between {p_short} and {c_short}"
                 except Exception as e:
                     self.printException(e, "prepDiffList: building header failed")
-                    header = f"Diff for {filename} between {p_short} and {c_short}"
+                    header = f"Diff (context=-U{self.app.unified_context}) for {filename} between {p_short} and {c_short}"
             except Exception as e:
                 self.printException(e, "prepDiffList: header preparation failed")
                 header = "Diff"
@@ -4803,6 +4813,72 @@ class DiffList(FullScreenBase):
         except Exception as e:
             self.printException(e, "DiffList.key_d failed")
 
+    def key_plus(self, event: events.Key | None = None) -> None:
+        """Increment unified context (-U value) and re-run the diff."""
+        logger.debug(
+            "DiffList.key_plus called: key=%r current_context=%r index=%r",
+            getattr(event, "key", None),
+            self.app.unified_context,
+            self.index,
+        )
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "DiffList.key_plus: event.stop failed")
+            
+            # Increment the unified context value and re-run the diff
+            try:
+                self.app.unified_context = self.app.unified_context + 1
+                logger.debug("DiffList.key_plus: incremented context to %s", self.app.unified_context)
+            except Exception as e:
+                self.printException(e, "DiffList.key_plus: incrementing context failed")
+                return
+            
+            self.prepDiffList(
+                self._diff_filename,
+                self._diff_prev,
+                self._diff_curr,
+                self.variant,
+                self._go_back,
+            )
+        except Exception as e:
+            self.printException(e, "DiffList.key_plus failed")
+
+    def key_minus(self, event: events.Key | None = None) -> None:
+        """Decrement unified context (-U value, minimum 0) and re-run the diff."""
+        logger.debug(
+            "DiffList.key_minus called: key=%r current_context=%r index=%r",
+            getattr(event, "key", None),
+            self.app.unified_context,
+            self.index,
+        )
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "DiffList.key_minus: event.stop failed")
+            
+            # Decrement the unified context value (with minimum of 0) and re-run the diff
+            try:
+                self.app.unified_context = max(0, self.app.unified_context - 1)
+                logger.debug("DiffList.key_minus: decremented context to %s", self.app.unified_context)
+            except Exception as e:
+                self.printException(e, "DiffList.key_minus: decrementing context failed")
+                return
+            
+            self.prepDiffList(
+                self._diff_filename,
+                self._diff_prev,
+                self._diff_curr,
+                self.variant,
+                self._go_back,
+            )
+        except Exception as e:
+            self.printException(e, "DiffList.key_minus failed")
+
     def key_D(self, event: events.Key | None = None) -> None:
         """Alias for `key_d` (Shift-D)."""
         logger.debug("DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), self.index)
@@ -5064,6 +5140,7 @@ class GitDiffNavTool(AppException, App):
         diff_variant: str | None,
         hash_length: int,
         add_authors: bool,
+        unified_context: int,
         **kwargs,
     ):
         """
@@ -5117,6 +5194,9 @@ class GitDiffNavTool(AppException, App):
         # Whether to display author name and email in commit rows.
         # Can be overridden via --add-authors / config.
         self.add_authors = add_authors
+        # Number of context lines for unified diffs (git diff -U option).
+        # Can be overridden via --unified-context / config.
+        self.unified_context = unified_context
 
         # Optional initial filename basename to highlight when listing a dir
         self.highlight = highlight
@@ -6575,6 +6655,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         choices=DIFF_VARIANT_NAMES,
         help=f"start with diff variant (one of: {', '.join(DIFF_VARIANT_NAMES)})",
     )
+    diff_group.add_argument(
+        "--unified-context",
+        dest="unified_context",
+        metavar="N",
+        type=int,
+        default=3,
+        help="number of context lines for unified diffs (default: 3, git diff -U option)",
+    )
 
     # File List Options group
     filelist_group = parser.add_argument_group("File List Options")
@@ -6755,6 +6843,20 @@ def main(argv: Optional[list[str]] = None) -> int:
                         printException(e, "invalid hash-length in config")
                         sys.exit(f"invalid hash-length '{raw_hash_len_str}' in config; must be an integer >= 1")
 
+            # Optional integer for unified diff context lines.
+            if "unified-context" in src:
+                raw_context = src.get("unified-context")
+                raw_context_str = raw_context if isinstance(raw_context, str) else str(raw_context)
+                if raw_context_str.strip() != "":
+                    try:
+                        cfg_context = int(raw_context_str.strip())
+                        if cfg_context < 0:
+                            raise ValueError("must be >= 0")
+                        defaults["unified_context"] = cfg_context
+                    except Exception as e:
+                        printException(e, "invalid unified-context in config")
+                        sys.exit(f"invalid unified-context '{raw_context_str}' in config; must be an integer >= 0")
+
             if defaults:
                 parser.set_defaults(**defaults)
         except Exception as e:
@@ -6883,6 +6985,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             diff_variant=args.diff,
             hash_length=args.hash_length,
             add_authors=not args.no_add_authors,
+            unified_context=args.unified_context,
         )
         # Run the textual app (blocks until exit)
         app.run()

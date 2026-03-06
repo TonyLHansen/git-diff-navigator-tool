@@ -1602,7 +1602,7 @@ class GitRepo(AppException):
     # Diff List
     ################
 
-    def getDiff(self, filename: str, hash1: str, hash2: str, variation: list[str] | None = None) -> list[str]:
+    def getDiff(self, filename: str, hash1: str, hash2: str, variation: list[str] | None = None, unified_context: int = 3) -> list[str]:
         """
         Return the lines produced by `git diff` for `filename` between `hash1` and `hash2`.
 
@@ -1611,6 +1611,7 @@ class GitRepo(AppException):
           git commit-ish hashes or the pseudo-hashes `NEWREPO`, `STAGED`, `MODS`.
         - `variation` is an optional list of additional git-diff arguments (e.g.
           ['--ignore-space-change', '--diff-algorithm=patience']).
+        - `unified_context` is the number of context lines for the -U option (default: 3).
 
         Raises ValueError if `filename` is empty or either hash is None. On
         unexpected failures the exception is logged and re-raised.
@@ -1621,7 +1622,7 @@ class GitRepo(AppException):
             if hash1 is None or hash2 is None:
                 raise ValueError("getDiff: hash1 and hash2 must be specified (not None)")
 
-            logger.debug("getDiff: start filename=%r hash1=%r hash2=%r variation=%r", filename, hash1, hash2, variation)
+            logger.debug("getDiff: start filename=%r hash1=%r hash2=%r variation=%r unified_context=%r", filename, hash1, hash2, variation, unified_context)
 
             # return empty diff if both hashes are identical
             if hash1 == hash2:
@@ -1661,6 +1662,8 @@ class GitRepo(AppException):
 
             # If both refs resolve to the special staged marker, map to cached diff
             args: list[str] = ["git", "diff"]
+            # Add unified context option
+            args.append(f"-U{unified_context}")
             args.extend(var_args)
 
             # If either side is staged, use --cached and include the other ref if present
