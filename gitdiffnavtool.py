@@ -5125,6 +5125,14 @@ class DiffList(FullScreenBase):
                 )
                 try:
                     self.index = target_index
+                    # Schedule highlight activation after refresh so visual highlighting
+                    # is correctly applied after layout transitions.
+                    try:
+                        self.call_after_refresh(lambda: self._safe_activate_index(target_index))
+                    except Exception as e:
+                        self.printException(e, "_render_output: scheduling highlight activation failed")
+                        # Fallback to immediate activation if scheduling fails
+                        self._activate_index(target_index)
                 except Exception as e:
                     self.printException(e, "_render_output: restoring index failed")
         except Exception as e:
