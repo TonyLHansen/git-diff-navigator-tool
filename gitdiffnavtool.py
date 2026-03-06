@@ -294,6 +294,9 @@ DIFF_SCHEME_MAP = {
 # Friendly names for diff variants (used by CLI/config)
 DIFF_VARIANT_NAMES = ["classic", "ignore-spaces", "patience", "word-diff", "side-by-side"]
 
+# Minimum terminal width required for side-by-side view (falls back to unified if narrower)
+MIN_SIDE_BY_SIDE_WIDTH = 60
+
 INITIAL_POPUP_TEXT = """
 Welcome to Git Diff Navigator Tool!
 
@@ -5077,9 +5080,44 @@ class DiffList(FullScreenBase):
                     body_lines = self.output[1:]
 
                     if is_side_by_side_variant:
-                        # Convert unified diff to side-by-side format and render
-                        parsed = self._parse_unified_to_side_by_side(body_lines)
-                        rendered_rows = [header_text] + self._render_side_by_side(parsed, self._colorized)
+                        # Check if terminal width is sufficient for side-by-side
+                        current_width = int(self.size.width)
+                        if current_width >= MIN_SIDE_BY_SIDE_WIDTH:
+                            # Convert unified diff to side-by-side format and render
+                            parsed = self._parse_unified_to_side_by_side(body_lines)
+                            rendered_rows = [header_text] + self._render_side_by_side(parsed, self._colorized)
+                            logger.debug(
+                                "_render_output: rendering side-by-side (width=%d >= min=%d)",
+                                current_width,
+                                MIN_SIDE_BY_SIDE_WIDTH,
+                            )
+                        else:
+                            # Terminal too narrow - fall back to unified view
+                            logger.debug(
+                                "_render_output: falling back to unified view (width=%d < min=%d)",
+                                current_width,
+                                MIN_SIDE_BY_SIDE_WIDTH,
+                            )
+                            # Render as classic unified diff with note in header
+                            header_with_note = Text.assemble(
+                                header_text,
+                                (" [terminal too narrow for side-by-side]", "italic dim"),
+                            )
+                            rendered_rows = [header_with_note]
+                            for ln in body_lines:
+                                style = None
+                                if self._colorized:
+                                    scheme = self.app.color_scheme
+                                    mapping = DIFF_SCHEME_MAP.get(scheme, DIFF_SCHEME_MAP[DIFF_COLOR_SCHEMES[0]])
+                                    if ln.startswith("+") and not ln.startswith("+++"):
+                                        style = mapping.get("add_span")
+                                    elif ln.startswith("-") and not ln.startswith("---"):
+                                        style = mapping.get("del_span")
+                                    elif ln.startswith("@@"):
+                                        style = "magenta"
+                                    elif ln.startswith("diff --git") or ln.startswith("index "):
+                                        style = "bold white"
+                                rendered_rows.append(Text(ln, style=style) if style else Text(ln))
                     elif is_porcelain_variant:
                         rendered_rows = [header_text] + self._build_porcelain_rows(body_lines, self._colorized)
                     else:
