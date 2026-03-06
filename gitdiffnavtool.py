@@ -122,6 +122,15 @@ ListView {
     color: white;
 }
 
+/* Focus border classes for active/inactive widgets */
+ListView.focused-white {
+    border: solid white;
+}
+
+ListView.focused-gray {
+    border: solid gray;
+}
+
 /* Centered message modal styling */
 #msg-modal-wrapper {
     align: center middle;
