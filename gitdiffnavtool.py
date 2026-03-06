@@ -1836,8 +1836,8 @@ class EditMessageModal(ModalScreen):
                 logger.debug("EditMessageModal.on_key: save key pressed")
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as ex:
+                    self.printException(ex, "EditMessageModal.on_key: event.stop() failed")
 
                 try:
                     text_area = self.query_one("#edit-text-area", TextArea)
@@ -1868,8 +1868,8 @@ class EditMessageModal(ModalScreen):
                 logger.debug("EditMessageModal.on_key: cancel key pressed (escape)")
                 try:
                     event.stop()
-                except Exception:
-                    pass
+                except Exception as ex:
+                    self.printException(ex, "EditMessageModal.on_key: event.stop() failed")
 
                 try:
                     self.app.pop_screen()
@@ -2626,9 +2626,8 @@ class FileModeFileList(FileListBase):
                     nodes_by_dir[grand]["dirs"].add(os.path.basename(parent))
 
             # First, add committed files from HEAD as tracked_clean baseline
-            for entry in committed:
+            for p, iso, _status in committed:
                 try:
-                    p, iso, _status = entry
                     register_file(p, "tracked_clean", None)
                 except Exception as e:
                     self.printException(e, "_collect_filemode_nodes: registering committed file failed")
@@ -4101,7 +4100,7 @@ class HistoryListBase(AppBase):
                                 except Exception as refresh_err:
                                     self.printException(refresh_err, "HistoryListBase.key_e: refreshing history list failed")
                             except ValueError as ve:
-                                logger.debug("key_e: ValueError during amend: %s", str(ve))
+                                self.printException(ve, "HistoryListBase.key_e: ValueError during amend")
                                 self.error_message(f"Cannot amend: {str(ve)}")
                             except Exception as e:
                                 self.printException(e, "HistoryListBase.key_e: amending commit failed")
