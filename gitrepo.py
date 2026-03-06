@@ -1457,15 +1457,31 @@ class GitRepo(AppException):
             self.printException(e, "getPushedHashes: unexpected failure")
             return set()
 
-    def getNormalizedHashListComplete(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
+    def getNormalizedHashListComplete(
+        self, ignorecache: bool = False, limit: int = 0
+    ) -> list[tuple[str, str, str, str, str, str]]:
         """Return combined hash entries with pushed/unpushed status."""
-        new = self.getHashListNewChanges(ignorecache=ignorecache)
-        staged = self.getHashListStagedChanges(ignorecache=ignorecache)
-        entire = self.getHashListEntireRepo(ignorecache=ignorecache)
-        newrepo = self.getHashListNewRepo(ignorecache=ignorecache)
+        remaining_limit = limit
+
+        new = self.getHashListNewChanges(ignorecache=ignorecache, limit=remaining_limit)
+        if limit > 0:
+            remaining_limit -= len(new)
+
+        staged = self.getHashListStagedChanges(ignorecache=ignorecache, limit=remaining_limit)
+        if limit > 0:
+            remaining_limit -= len(staged)
+
+        entire = self.getHashListEntireRepo(ignorecache=ignorecache, limit=remaining_limit)
+        if limit > 0:
+            remaining_limit -= len(entire)
+
+        newrepo = self.getHashListNewRepo(ignorecache=ignorecache, limit=remaining_limit)
+
         return new + staged + entire + newrepo
 
-    def getHashListEntireRepo(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
+    def getHashListEntireRepo(
+        self, ignorecache: bool = False, limit: int = 0
+    ) -> list[tuple[str, str, str, str, str, str]]:
         """Return all commit hashes in the configured branch with pushed status."""
         default_ref = self._get_default_ref()
         output = self._git_run(
@@ -1480,14 +1496,21 @@ class GitRepo(AppException):
             iso = self._epoch_to_iso(ts)
             status = "pushed" if h in pushed_hashes else "unpushed"
             formatted.append((iso, h, subject, status, author_name, author_email))
+        if limit > 0:
+            formatted = formatted[:limit]
         return formatted
 
-    def getHashListStagedChanges(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
+    def getHashListStagedChanges(
+        self, ignorecache: bool = False, limit: int = 0
+    ) -> list[tuple[str, str, str, str, str, str]]:
         """Return staged pseudo-hash entries with pushed status."""
         key = self._make_cache_key("getHashListStagedChanges", self.index_mtime_iso())
         try:
             if not ignorecache and key in self._cmd_cache:
-                return self._cmd_cache[key]
+                result = self._cmd_cache[key]
+                if limit > 0:
+                    result = result[:limit]
+                return result
 
             names_out = self._git_run(
                 ["git", "diff", "--cached", "--name-only"], text=True, cache_key=key, ignorecache=ignorecache
@@ -1501,6 +1524,8 @@ class GitRepo(AppException):
                 iso = self.index_mtime_iso()
                 res = [(iso, self.STAGED, self.STAGED_MESSAGE, "unpushed", "", "")]
                 self._cmd_cache[key] = res
+                if limit > 0:
+                    res = res[:limit]
                 return res
 
             self._cmd_cache[key] = []
@@ -1509,7 +1534,9 @@ class GitRepo(AppException):
             self.printException(e, "getHashListStagedChanges: failure")
             return []
 
-    def getHashListNewChanges(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
+    def getHashListNewChanges(
+        self, ignorecache: bool = False, limit: int = 0
+    ) -> list[tuple[str, str, str, str, str, str]]:
         """Return working-tree "MODS" entry with pushed status."""
         try:
             names_out = self._git_run(["git", "diff", "--name-only"], text=True, ignorecache=ignorecache)
@@ -1524,15 +1551,22 @@ class GitRepo(AppException):
             iso = self._paths_mtime_iso(paths)
             key = self._make_cache_key("getHashListNewChanges", iso)
             if not ignorecache and key in self._cmd_cache:
-                return self._cmd_cache[key]
+                result = self._cmd_cache[key]
+                if limit > 0:
+                    result = result[:limit]
+                return result
             res = [(iso, self.MODS, self.MODS_MESSAGE, "unpushed", "", "")]
             self._cmd_cache[key] = res
+            if limit > 0:
+                res = res[:limit]
             return res
         except Exception as e:
             self.printException(e, "getHashListNewChanges: failure")
             return []
 
-    def getHashListNewRepo(self, ignorecache: bool = False) -> list[tuple[str, str, str, str, str, str]]:
+    def getHashListNewRepo(
+        self, ignorecache: bool = False, limit: int = 0
+    ) -> list[tuple[str, str, str, str, str, str]]:
         """
         Return the pseudo-hash entry for a newly-created repository.
 
@@ -1546,13 +1580,19 @@ class GitRepo(AppException):
             entire = self.getHashListEntireRepo(ignorecache=ignorecache)
             if entire:
                 oldest_status = entire[-1][3]
-            return [(iso, self.NEWREPO, self.NEWREPO_MESSAGE, oldest_status, "", "")]
+            result = [(iso, self.NEWREPO, self.NEWREPO_MESSAGE, oldest_status, "", "")]
+            if limit > 0:
+                result = result[:limit]
+            return result
         except Exception as e:
             self.printException(e, "getHashListNewRepo: failure")
-            return [(self.index_mtime_iso(), self.NEWREPO, self.NEWREPO_MESSAGE, "unpushed", "", "")]
+            result = [(self.index_mtime_iso(), self.NEWREPO, self.NEWREPO_MESSAGE, "unpushed", "", "")]
+            if limit > 0:
+                result = result[:limit]
+            return result
 
     def getNormalizedHashListFromFileName(
-        self, file_name: str, ignorecache: bool = False
+        self, file_name: str, ignorecache: bool = False, limit: int = 0
     ) -> list[tuple[str, str, str, str, str, str]]:
         """
         Return a list of commit hashes that modified the given file.
@@ -1565,7 +1605,10 @@ class GitRepo(AppException):
         key = self._make_cache_key("getNormalizedHashListFromFileName", file_name)
         try:
             if not ignorecache and key in self._cmd_cache:
-                return self._cmd_cache[key]
+                result = self._cmd_cache[key]
+                if limit > 0:
+                    result = result[:limit]
+                return result
 
             default_ref = self._get_default_ref()
             output = self._git_run(
@@ -1633,6 +1676,8 @@ class GitRepo(AppException):
 
             # Cache and return
             self._cmd_cache[key] = entries
+            if limit > 0:
+                entries = entries[:limit]
             return entries
         except Exception as e:
             self.printException(e, "getNormalizedHashListFromFileName: unexpected failure")
