@@ -68,9 +68,19 @@ Left and Right arrow keys perform differently in each column.
     `Comparing: <old_hash>..<new_hash>`.
   - The order is always the lower list item vs the higher item, so diffs read `older..newer`.
   - A Left Arrow closes fullscreen diff back to split, or returns to the prior pane from split mode.
+  - Diff variants can be cycled with `d` / `D` to view diffs in different formats:
+    - **classic**: standard unified diff
+    - **ignore-spaces**: unified diff ignoring whitespace
+    - **patience**: patience algorithm for better alignment
+    - **word-diff**: word-level differences with machine-parseable output
+    - **side-by-side**: two-column format (left=old, right=new) with dynamic width adjustment
+  - In side-by-side mode, use `[` and `]` to adjust column widths, and `=` to reset to 50/50 split.
   - Commands while focused in the Diff column:
-    - `d` / `D`: rotate the diff command variant. The variants cycle through common textual options (for example: ignore-space-change, patience, and word-diff) when a full textual diff is available.
+    - `d` / `D`: rotate through available diff variants.
     - `c` / `C`: toggle the use of color.
+    - `[`: decrease left panel width in side-by-side mode (5% per keystroke).
+    - `]`: increase left panel width in side-by-side mode (5% per keystroke).
+    - `=`: reset side-by-side split to 50/50.
     - `+`: increase unified diff context (`git diff -U`) by 1 line and re-run the diff.
     - `-`: decrease unified diff context (`git diff -U`) by 1 line (minimum 0) and re-run the diff.
     - `Right` / `Enter` / `f` / `F`: toggle split/fullscreen.

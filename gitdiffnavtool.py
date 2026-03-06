@@ -207,11 +207,11 @@ OPEN_FILE_FOOTER_2 = Text(
 # Footer text used when showing the diff for a history/file selection
 # DIFF_FOOTER = Text("Diff: press Left to return to files")
 DIFF_FOOTER_1 = Text(
-    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close)  ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)  +/-(ctx)",
+    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close)  ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)  [=](width)  +/-(ctx)",
     style="bold",
 )
 DIFF_FOOTER_2 = Text(
-    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←/f(ull)  ↑/↓/PgUp/PgDn/Home/End c(olor)  d(iff-type)  +/-(ctx)",
+    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←/f(ull)  ↑/↓/PgUp/PgDn/Home/End c(olor)  d(iff-type)  [=](width)  +/-(ctx)",
     style="bold",
 )
 
@@ -283,7 +283,7 @@ DIFF_SCHEME_MAP = {
 }
 
 # Friendly names for diff variants (used by CLI/config)
-DIFF_VARIANT_NAMES = ["classic", "ignore-spaces", "patience", "word-diff"]
+DIFF_VARIANT_NAMES = ["classic", "ignore-spaces", "patience", "word-diff", "side-by-side"]
 
 INITIAL_POPUP_TEXT = """
 Welcome to Git Diff Navigator Tool!
@@ -314,11 +314,9 @@ From the history view, you can also press `o` to open file content in the OpenFi
 While viewing Diff or OpenFile content, Right/Enter/`f` promotes the pane to fullscreen and
 Left returns to the split view (or back to the prior pane when already in split).
 
-From the Diff view, you can also press `c` to toggle color on and off,
-`d` to rotate through diff variants (e.g., ignore-space-change), 
-`w` to write a snapshot of the currently visible diff content to a file,
-`t` to toggle between the two paired split layouts (history-file-diff <-> file-history-diff),
-and `+`/`-` to adjust the unified diff context lines.
+From the Diff view, you can toggle color on and off, rotate through diff variants (e.g., ignore-space-change),
+and `+`/`-` to adjust the unified diff context lines. Side-by-side diff mode includes additional commands to 
+adjust the relative widths of the old and new content columns. See the help screen for details on these and other commands.
 
 Alternatively, you can start the program in repository mode (using the `-R`/`--repo-first` flag) that
 initially shows a history view of all commits in the repository. You can then select a commit
@@ -327,11 +325,9 @@ Pressing Right/Enter/␍ on a file in that list will show the diff for that file
 
 Each window will also display a footer with context-sensitive hints for available actions.
 For example, when viewing the file list, the footer will prompt you to press Right to view the file history. 
-When viewing Diff/OpenFile content, the footer shows actions such as fullscreen toggle (`Enter`/`f`), paired-layout toggle (`t`),
-snapshot write (`w`), and (for Diff) color (`c`) and diff variant (`d`).
 
 Remember, you can press "?" at any time to view the help screen with these and additional instructions.
-And of course, you can quit at any time by pressing "q" or "Q".
+And of course, you can quit at any time by pressing "q" or "Q". (Run the program with --show-help to see the help screen on startup.)
 
 If you want to skip this message on future launches, you can edit the configuration file (gitdiffnavtool.ini) 
 and set `initial-popup = false` under the `[gitdiffnavtool]` section.
@@ -412,8 +408,11 @@ Diff Column:
     line is a one-line header describing the file and the two refs being
     compared and is not selectable.
 - Commands when focused:
-    - `d` / `D`: rotate the diff command variant. When a full textual diff is available this cycles through configured textual variants (for example, ignore-space-change and patience).
+    - `d` / `D`: rotate the diff command variant. When a full textual diff is available this cycles through configured textual variants (for example, ignore-space-change, patience, word-diff, and side-by-side).
     - `c` / `C`: toggle colorized diffs on/off.
+    - `[`: decrease left panel width in side-by-side mode (5% increment).
+    - `]`: increase left panel width in side-by-side mode (5% increment).
+    - `=`: reset to 50/50 split in side-by-side mode.
     - `+`: increase unified diff context (`git diff -U`) by 1 and re-run the diff.
     - `-`: decrease unified diff context (`git diff -U`) by 1 (minimum 0) and re-run the diff.
     - `Right` / `Enter` / `f` / `F`: toggle split <-> fullscreen diff view.
@@ -444,10 +443,20 @@ Color Schemes:
 
 Diff Variants:
 - Use `--diff VARIANT` to select how diffs are displayed.
-- Different variants show diffs in different formats (e.g., full text diffs, ignore-space variants, patience diff).
+- Available variants:
+    - `classic`: standard unified diff format
+    - `ignore-spaces`: unified diff ignoring whitespace changes
+    - `patience`: patience algorithm for improved hunk alignment
+    - `word-diff`: word-level diff with machine-parseable output
+    - `side-by-side`: two-column side-by-side format with dynamic width adjustment
 - The selected diff variant can be rotated at runtime with `d` or `D` in the Diff pane.
-- When comparing two commits where a full textual diff is available, variants cycle through
-    configured textual diff options (typically including standard diff, ignore-space-change, and patience).
+- Side-by-side mode displays old content in the left column and new content in the right column, separated by a gutter marker:
+    - ` ` (space): unchanged line
+    - `<`: line only in left (deleted)
+    - `>`: line only in right (added)
+    - `|`: line differs between sides
+- In side-by-side mode, use `[` and `]` to adjust column widths, and `=` to reset to 50/50 split.
+- Long lines are truncated with ellipsis (…) to fit the available space.
 
 Configuration File:
 - The `.gitdiffnavtool.ini` file allows you to set default values for command-line options.
@@ -463,7 +472,7 @@ Configuration File:
     add-authors = true
     # Color scheme for diffs: red-green, blue-orange, teal-purple, style, none (default: style)
     color = style    
-    # Diff variant: classic, ignore-spaces, patience, word-diff (default: classic)
+    # Diff variant: classic, ignore-spaces, patience, word-diff, side-by-side (default: classic)
     diff = classic
     # Unified diff context lines (git diff -U; default: 3, must be >= 0)
     unified-context = 3
@@ -3608,8 +3617,9 @@ class RepoModeFileList(FileListBase, RightSideBase):
             node = nodes[idx]
             filename = getattr(node, "_raw_text", None) or self._child_filename(node)
 
-            # Pass through the app-level commit pair unchanged; variant is fixed for now
-            variant_index = 0
+            # Use the currently-selected diff variant so startup --diff and
+            # runtime d/D selection are honored when opening a diff.
+            variant_index = int(getattr(self.app.diff_list, "variant", 0) or 0)
             try:
                 rel = os.path.normpath(filename)
                 rd, rf = os.path.split(rel)
@@ -4264,11 +4274,12 @@ class FileModeHistoryList(HistoryListBase, RightSideBase):
                 # the file-history view on the right history column. Use the
                 # repository's canonical NEWREPO sentinel when available.
                 p = prev_hash if prev_hash is not None else GitRepo.NEWREPO
+                variant_index = int(getattr(self.app.diff_list, "variant", 0) or 0)
                 self.app.diff_list.prepDiffList(
                     filename,
                     p,
                     curr_hash,
-                    0,
+                    variant_index,
                     ("file_history", RIGHT_HISTORY_LIST_ID, RIGHT_HISTORY_FOOTER),
                 )
             except Exception as e:
@@ -4468,6 +4479,12 @@ class DiffList(FullScreenBase):
     colorize output. Key handlers toggle colorization and expose actions.
     """
 
+    BINDINGS = [
+        ("bracket_left", "left_bracket", "Decrease left pane width (side-by-side)"),
+        ("bracket_right", "right_bracket", "Increase left pane width (side-by-side)"),
+        ("equal", "equal", "Reset to 50/50 split (side-by-side)"),
+    ]
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._colorized = True
@@ -4491,6 +4508,92 @@ class DiffList(FullScreenBase):
         self._fullscreen_widget_id = DIFF_LIST_ID
         self._fullscreen_footer = DIFF_FOOTER_2
         self._split_footer = DIFF_FOOTER_1
+        # Side-by-side rendering configuration
+        self._sbs_left_width_pct = 50  # Left panel percentage (0-100)
+        self._sbs_gutter_width = 3  # Gutter width in characters
+
+    def on_key(self, event: events.Key) -> None:
+        """Handle bracket/equal keys directly for side-by-side width control."""
+        try:
+            k = getattr(event, "key", None)
+            ch = getattr(event, "character", None)
+            logger.debug(
+                "DiffList.on_key: key=%r character=%r variant=%r side_idx=%r split=%r",
+                k,
+                ch,
+                self.variant,
+                self.app.variant_sidebyside_index,
+                self._sbs_left_width_pct,
+            )
+
+            if k in ("bracket_left", "left_square_bracket") or ch == "[":
+                logger.debug("DiffList.on_key: consumed '[' -> action_left_bracket")
+                event.stop()
+                self.action_left_bracket()
+                return
+            if k in ("bracket_right", "right_square_bracket") or ch == "]":
+                logger.debug("DiffList.on_key: consumed ']' -> action_right_bracket")
+                event.stop()
+                self.action_right_bracket()
+                return
+            if k in ("equal", "equals") or ch == "=":
+                logger.debug("DiffList.on_key: consumed '=' -> action_equal")
+                event.stop()
+                self.action_equal()
+                return
+            logger.debug("DiffList.on_key: key not handled")
+        except Exception as e:
+            self.printException(e, "DiffList.on_key failed")
+
+    def _rerender_side_by_side_if_active(self, reason: str) -> None:
+        """Re-render side-by-side output after layout/size changes."""
+        try:
+            if self.output and self.variant == self.app.variant_sidebyside_index:
+                logger.debug(
+                    "DiffList._rerender_side_by_side_if_active: reason=%r size=%r split=%r",
+                    reason,
+                    (self.size.width, self.size.height) if hasattr(self, "size") else None,
+                    self._sbs_left_width_pct,
+                )
+                self._render_output()
+        except Exception as e:
+            self.printException(e, "_rerender_side_by_side_if_active failed")
+
+    def key_right(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Promote to fullscreen and re-render side-by-side after layout settles."""
+        try:
+            super().key_right(event, recursive=recursive)
+            try:
+                self.app.call_later(lambda: self._rerender_side_by_side_if_active("key_right layout change"))
+            except Exception as e:
+                self.printException(e, "DiffList.key_right: call_later re-render failed")
+        except Exception as e:
+            self.printException(e, "DiffList.key_right failed")
+
+    def key_left(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Return from fullscreen/split and re-render side-by-side after layout settles."""
+        try:
+            super().key_left(event, recursive=recursive)
+            try:
+                self.app.call_later(lambda: self._rerender_side_by_side_if_active("key_left layout change"))
+            except Exception as e:
+                self.printException(e, "DiffList.key_left: call_later re-render failed")
+        except Exception as e:
+            self.printException(e, "DiffList.key_left failed")
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Re-render side-by-side output when DiffList is resized."""
+        try:
+            logger.debug(
+                "DiffList.on_resize: size=(%r,%r) virtual=(%r,%r)",
+                getattr(event, "size", None).width if getattr(event, "size", None) else None,
+                getattr(event, "size", None).height if getattr(event, "size", None) else None,
+                getattr(event, "virtual_size", None).width if getattr(event, "virtual_size", None) else None,
+                getattr(event, "virtual_size", None).height if getattr(event, "virtual_size", None) else None,
+            )
+            self._rerender_side_by_side_if_active("on_resize")
+        except Exception as e:
+            self.printException(e, "DiffList.on_resize failed")
 
     def prepDiffList(self, filename: str, prev: str, curr: str, variant_index: int, go_back: tuple) -> None:
         """
@@ -4734,29 +4837,244 @@ class DiffList(FullScreenBase):
             self.printException(e, "_build_porcelain_rows failed")
             return [Text(ln) for ln in body_lines]
 
-    def _render_output(self) -> None:
-        """Clear and render `self.output` honoring `self._colorized`."""
+    def _parse_unified_to_side_by_side(self, lines: list[str]) -> list[tuple[str, str, str]]:
+        """
+        Convert unified diff format to side-by-side (left, gutter, right) tuples.
+
+        This reformats unified diff output (with +/- prefixes) into a paired format
+        where deleted lines appear in the left column and added lines in the right.
+        Unchanged lines appear in both columns. The gutter marker indicates the
+        relationship: space (context), '<' (deleted), '>' (added), '|' (changed).
+        """
         try:
+            result: list[tuple[str, str, str]] = []
+            i = 0
+
+            while i < len(lines):
+                line = lines[i]
+
+                # Pass through headers and hunk markers unchanged (full-width, left column)
+                if (
+                    line.startswith("diff --git")
+                    or line.startswith("index ")
+                    or line.startswith("---")
+                    or line.startswith("+++")
+                    or line.startswith("@@")
+                ):
+                    result.append((line, "", ""))
+                    i += 1
+                    continue
+
+                if not line:
+                    result.append(("", "", ""))
+                    i += 1
+                    continue
+
+                # Unified diff format: first character indicates line type
+                if len(line) >= 1:
+                    prefix = line[0]
+                    content = line[1:] if len(line) > 1 else ""
+
+                    if prefix == " ":
+                        # Context line: same on both sides
+                        result.append((content, " ", content))
+                        i += 1
+                    elif prefix == "-":
+                        # Deleted line: check if next line is an addition for pairing
+                        if i + 1 < len(lines) and len(lines[i + 1]) >= 1 and lines[i + 1][0] == "+":
+                            # Pair with following addition: show as changed
+                            right_content = lines[i + 1][1:] if len(lines[i + 1]) > 1 else ""
+                            result.append((content, "|", right_content))
+                            i += 2  # Skip both - and + lines
+                        else:
+                            # Unpaired deletion
+                            result.append((content, "<", ""))
+                            i += 1
+                    elif prefix == "+":
+                        # Unpaired addition (paired case handled above)
+                        result.append(("", ">", content))
+                        i += 1
+                    else:
+                        # Unknown prefix: pass through as-is
+                        result.append((line, "", ""))
+                        i += 1
+                else:
+                    result.append((line, "", ""))
+                    i += 1
+
+            return result
+        except Exception as e:
+            self.printException(e, "_parse_unified_to_side_by_side failed")
+            # Fallback: return lines as-is in left column
+            return [(line, " ", "") for line in lines]
+
+    def _render_side_by_side(self, parsed_lines: list[tuple[str, str, str]], colorized: bool) -> list[Text]:
+        """
+        Render side-by-side formatted lines with truncation, gutter, and color.
+
+        Layout: [left_panel][gutter][right_panel]
+        - Dynamic width based on self._sbs_left_width_pct
+        - Truncate with ellipsis for long lines
+        - Apply color scheme based on gutter marker:
+          * space: unchanged context
+          * <: deleted line (left only)
+          * >: added line (right only)
+          * |: changed line (both sides differ)
+        - Single vertical cursor stays in left column
+        """
+        try:
+            rendered: list[Text] = []
+
+            # Use the diff widget width (not full app width) so side-by-side
+            # aligns correctly in split/3-pane layouts.
+            try:
+                if hasattr(self, "size") and hasattr(self.size, "width") and self.size.width:
+                    term_width = int(self.size.width)
+                elif hasattr(self.app, "size") and hasattr(self.app.size, "width"):
+                    term_width = int(self.app.size.width)
+                else:
+                    term_width = 120
+            except Exception as e:
+                printException(e, "_render_side_by_side width calculation failed")
+                term_width = 120
+
+            # Calculate panel widths
+            gutter_w = self._sbs_gutter_width
+            # Keep a small safety margin for list/label padding/borders.
+            usable_width = max(20, term_width - gutter_w - 2)
+            left_w = max(10, int(usable_width * (self._sbs_left_width_pct / 100)))
+            right_w = max(8, usable_width - left_w)
+
+            logger.debug(
+                "_render_side_by_side: pane_width=%r usable=%r left_w=%r right_w=%r split=%r",
+                term_width,
+                usable_width,
+                left_w,
+                right_w,
+                self._sbs_left_width_pct,
+            )
+
+            # Get color scheme mapping
+            scheme = self.app.color_scheme if colorized else "none"
+            colors = DIFF_SCHEME_MAP.get(scheme, DIFF_SCHEME_MAP["red-green"])
+
+            for left, gutter, right in parsed_lines:
+                # Handle metadata/header lines (span full width, no gutter).
+                # Important: do NOT treat left-only/right-only diff rows as
+                # headers; those need truncation and gutter rendering.
+                if gutter == "":
+                    style = None
+                    if colorized and (
+                        left.startswith("diff --git") or left.startswith("index ") or left.startswith("@@")
+                    ):
+                        if left.startswith("diff "):
+                            style = "bold white"
+                        else:
+                            style = "magenta"
+                    rendered.append(Text(left, style=style) if style else Text(left))
+                    continue
+
+                # Determine styles based on gutter marker
+                left_style = None
+                right_style = None
+                gutter_style = None
+
+                # Make unchanged rows visually distinct with a white gutter block.
+                if gutter == " ":
+                    gutter_style = "on white"
+
+                if colorized:
+                    if gutter == "<":  # Line only in left (deleted)
+                        left_style = colors.get("del_span")
+                        gutter_style = colors.get("del_span")
+                    elif gutter == ">":  # Line only in right (added)
+                        right_style = colors.get("add_span")
+                        gutter_style = colors.get("add_span")
+                    elif gutter == "|":  # Line differs between sides
+                        left_style = colors.get("del_span")
+                        right_style = colors.get("add_span")
+                        gutter_style = "yellow"
+
+                # Truncate with ellipsis for long lines
+                left_display = left
+                if len(left) > left_w:
+                    left_display = left[: max(1, left_w - 1)] + "…"
+
+                right_display = right
+                if len(right) > right_w:
+                    right_display = right[: max(1, right_w - 1)] + "…"
+
+                # Pad to maintain column alignment
+                left_display = left_display.ljust(left_w)
+                gutter_display = gutter.center(gutter_w)
+                right_display = right_display.ljust(right_w)
+
+                # Build combined Text object with styled segments
+                row = Text()
+                row.append(left_display, style=left_style)
+                if gutter == " " and gutter_w >= 3:
+                    # Only the center separator cell should be highlighted.
+                    side_pad = (gutter_w - 1) // 2
+                    row.append(" " * side_pad)
+                    row.append(" ", style="on white")
+                    row.append(" " * (gutter_w - side_pad - 1))
+                else:
+                    row.append(gutter_display, style=gutter_style)
+                row.append(right_display, style=right_style)
+
+                rendered.append(row)
+
+            return rendered
+        except Exception as e:
+            self.printException(e, "_render_side_by_side failed")
+            # Fallback to plain text with space-separated columns
+            return [Text(f"{left} {gutter} {right}") for left, gutter, right in parsed_lines]
+
+    def _render_output(self) -> None:
+        """Clear and render `self.output` honoring `self._colorized` and variant type."""
+        try:
+            old_index = int(self.index or 0)
+            # Determine variant type
             is_porcelain_variant = False
+            is_side_by_side_variant = False
             try:
                 variant_arg = None
                 if 0 <= int(self.variant or 0) < len(self.app.diff_variants):
                     variant_arg = self.app.diff_variants[int(self.variant or 0)]
+
                 if isinstance(variant_arg, (list, tuple)):
                     is_porcelain_variant = any(str(v).startswith("--word-diff=porcelain") for v in variant_arg)
+                    is_side_by_side_variant = any(str(v) == "--side-by-side" for v in variant_arg)
                 elif isinstance(variant_arg, str):
                     is_porcelain_variant = variant_arg.startswith("--word-diff=porcelain")
+                    is_side_by_side_variant = variant_arg == "--side-by-side"
+
+                # Side-by-side no longer relies on a git flag; variant index/name
+                # are the source of truth.
+                try:
+                    v_idx = int(self.variant or 0)
+                    if 0 <= v_idx < len(DIFF_VARIANT_NAMES):
+                        if DIFF_VARIANT_NAMES[v_idx] == "side-by-side":
+                            is_side_by_side_variant = True
+                except Exception as _e:
+                    self.printException(_e, "_render_output: side-by-side variant-name check failed")
             except Exception as e:
-                self.printException(e, "_render_output: determining porcelain variant failed")
+                self.printException(e, "_render_output: determining variant type failed")
 
             rendered_rows: list[Text] = []
             try:
                 if self.output:
                     header_text = Text(self.output[0])
                     body_lines = self.output[1:]
-                    if is_porcelain_variant:
+
+                    if is_side_by_side_variant:
+                        # Convert unified diff to side-by-side format and render
+                        parsed = self._parse_unified_to_side_by_side(body_lines)
+                        rendered_rows = [header_text] + self._render_side_by_side(parsed, self._colorized)
+                    elif is_porcelain_variant:
                         rendered_rows = [header_text] + self._build_porcelain_rows(body_lines, self._colorized)
                     else:
+                        # Classic unified diff rendering
                         rendered_rows = [header_text]
                         for ln in body_lines:
                             style = None
@@ -4791,6 +5109,24 @@ class DiffList(FullScreenBase):
                     self.append(item)
                 except Exception as e:
                     self.printException(e, "_render_output append failed")
+
+            # Restore prior selection index after re-render so layout toggles
+            # and width updates don't jump the cursor unexpectedly.
+            if rendered_rows:
+                min_idx = int(self._min_index)
+                max_idx = len(rendered_rows) - 1
+                target_index = max(min_idx, min(old_index, max_idx))
+                logger.debug(
+                    "_render_output: restoring index old=%r target=%r min=%r max=%r",
+                    old_index,
+                    target_index,
+                    min_idx,
+                    max_idx,
+                )
+                try:
+                    self.index = target_index
+                except Exception as e:
+                    self.printException(e, "_render_output: restoring index failed")
         except Exception as e:
             self.printException(e, "_render_output failed")
 
@@ -4845,6 +5181,45 @@ class DiffList(FullScreenBase):
                 self.printException(e, "DiffList.key_d: re-prep failed")
         except Exception as e:
             self.printException(e, "DiffList.key_d failed")
+
+    def action_left_bracket(self) -> None:
+        """Decrease left panel width in side-by-side mode ([ key)."""
+        try:
+            # Only adjust if we're in side-by-side variant
+            if self.variant == self.app.variant_sidebyside_index:
+                old_pct = self._sbs_left_width_pct
+                self._sbs_left_width_pct = max(20, self._sbs_left_width_pct - 5)
+                logger.debug("action_left_bracket: split old=%r new=%r", old_pct, self._sbs_left_width_pct)
+                logger.debug(f"DiffList: adjusted left width to {self._sbs_left_width_pct}%")
+                self._render_output()
+        except Exception as e:
+            self.printException(e, "action_left_bracket failed")
+
+    def action_right_bracket(self) -> None:
+        """Increase left panel width in side-by-side mode (] key)."""
+        try:
+            # Only adjust if we're in side-by-side variant
+            if self.variant == self.app.variant_sidebyside_index:
+                old_pct = self._sbs_left_width_pct
+                self._sbs_left_width_pct = min(80, self._sbs_left_width_pct + 5)
+                logger.debug("action_right_bracket: split old=%r new=%r", old_pct, self._sbs_left_width_pct)
+                logger.debug(f"DiffList: adjusted left width to {self._sbs_left_width_pct}%")
+                self._render_output()
+        except Exception as e:
+            self.printException(e, "action_right_bracket failed")
+
+    def action_equal(self) -> None:
+        """Reset to 50/50 split in side-by-side mode (= key)."""
+        try:
+            # Only adjust if we're in side-by-side variant
+            if self.variant == self.app.variant_sidebyside_index:
+                old_pct = self._sbs_left_width_pct
+                self._sbs_left_width_pct = 50
+                logger.debug("action_equal: split old=%r new=%r", old_pct, self._sbs_left_width_pct)
+                logger.debug("DiffList: reset to 50/50 split")
+                self._render_output()
+        except Exception as e:
+            self.printException(e, "action_equal failed")
 
     def key_plus(self, event: events.Key | None = None) -> None:
         """Increment unified context (-U value) and re-run the diff."""
@@ -4916,6 +5291,25 @@ class DiffList(FullScreenBase):
         """Alias for `key_d` (Shift-D)."""
         logger.debug("DiffList.key_D called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_d(event, recursive=True)
+
+    def watch_size(self) -> None:
+        """
+        Re-render side-by-side output when widget size changes (e.g., during layout recalculation).
+
+        This ensures that when DiffList is laid out in 3-pane mode, the side-by-side
+        rendering is recalculated with correct pane widths after the widget receives
+        its final size from the layout engine.
+        """
+        try:
+            # Only re-render if we have output and we're in side-by-side mode
+            if self.output and self.variant == self.app.variant_sidebyside_index:
+                logger.debug(
+                    "DiffList.watch_size triggered: re-rendering side-by-side with new size=%r",
+                    (self.size.width, self.size.height) if hasattr(self, "size") else None,
+                )
+                self._render_output()
+        except Exception as e:
+            self.printException(e, "watch_size failed")
 
 
 #    - `toggle-color` / `c`: toggle colorized diff output.
@@ -5262,18 +5656,27 @@ class GitDiffNavTool(AppException, App):
         # index 1 -> ignore space changes
         # index 2 -> patience algorithm
         # index 3 -> word-diff porcelain (machine-parseable)
+        # index 4 -> side-by-side (internally reformatted from unified diff)
         self.diff_variants: list[Optional[list[str]]] = [
             None,
             ["--ignore-space-change"],
             ["--diff-algorithm=patience"],
             ["--word-diff=porcelain", "--no-color"],
+            None,  # Side-by-side uses unified diff and reformats it
         ]
         self.color_scheme = color_scheme
+        # Compute the index of the side-by-side variant for use in render checks
+        try:
+            self.variant_sidebyside_index = DIFF_VARIANT_NAMES.index("side-by-side")
+        except ValueError as e:
+            printException(e, "variant_sidebyside_index: 'side-by-side' not in DIFF_VARIANT_NAMES")
+            raise RuntimeError("'side-by-side' variant must exist in DIFF_VARIANT_NAMES") from e
         # Record any requested initial diff variant name for on_mount application
         logger.debug(
-            "GitDiffNavTool.__init__: diff_variant=%r, DIFF_VARIANT_NAMES=%r",
+            "GitDiffNavTool.__init__: diff_variant=%r, DIFF_VARIANT_NAMES=%r variant_sidebyside_index=%r",
             diff_variant,
             DIFF_VARIANT_NAMES,
+            self.variant_sidebyside_index,
         )
         self.initial_diff_variant = diff_variant
 
@@ -5445,6 +5848,11 @@ class GitDiffNavTool(AppException, App):
     def on_key(self, event: events.Key) -> None:
         """When MessageModal is active, dismiss it on any key and stop propagation."""
         try:
+            logger.debug(
+                "GitDiffNavTool.on_key: key=%r character=%r",
+                getattr(event, "key", None),
+                getattr(event, "character", None),
+            )
             try:
                 current_screen = self.screen
             except Exception as e:
@@ -5452,6 +5860,7 @@ class GitDiffNavTool(AppException, App):
                 current_screen = None
 
             if isinstance(current_screen, MessageModal):
+                logger.debug("GitDiffNavTool.on_key: MessageModal active, dismissing")
                 try:
                     event.stop()
                 except Exception as e:

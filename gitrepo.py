@@ -890,9 +890,29 @@ class GitRepo(AppException):
                 return self._cmd_cache[internal_key]
 
             try:
-                out = check_output(args, cwd=self._repoRoot, text=text)
+                cp = run(args, cwd=self._repoRoot, text=text, capture_output=True, check=True)
+                out = cp.stdout
             except CalledProcessError as _use_logging:
                 logger.debug("_git_run failed: %s", args)
+                try:
+                    stderr_val = getattr(_use_logging, "stderr", None)
+                    stdout_val = getattr(_use_logging, "stdout", None)
+                    if isinstance(stderr_val, bytes):
+                        stderr_txt = stderr_val.decode("utf-8", errors="replace")
+                    else:
+                        stderr_txt = stderr_val or ""
+                    if isinstance(stdout_val, bytes):
+                        stdout_txt = stdout_val.decode("utf-8", errors="replace")
+                    else:
+                        stdout_txt = stdout_val or ""
+
+                    # Keep debug logs bounded; long git usage/help output can be noisy.
+                    if stderr_txt:
+                        logger.debug("_git_run stderr (truncated): %s", stderr_txt[:2000].strip())
+                    if stdout_txt:
+                        logger.debug("_git_run stdout (truncated): %s", stdout_txt[:2000].strip())
+                except Exception as _log_ex:
+                    self.printException(_log_ex, "_git_run: logging CalledProcessError output failed")
                 # If caller provided a parsed-result cache_key, store an empty
                 # parsed result there so callers can return quickly next time.
                 if cache_key:
