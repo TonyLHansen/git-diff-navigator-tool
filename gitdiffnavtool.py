@@ -6730,6 +6730,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     debug_group.add_argument(
         "-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)"
     )
+    trim_debug_group = debug_group.add_mutually_exclusive_group()
+    trim_debug_group.add_argument(
+        "--trim-debug",
+        dest="trim_debug",
+        action="store_true",
+        help="truncate debug file before writing (overrides config setting)",
+    )
+    trim_debug_group.add_argument(
+        "--no-trim-debug",
+        dest="no_trim_debug",
+        action="store_true",
+        help="do not truncate debug file (append mode)",
+    )
     debug_group.add_argument(
         "-D",
         "--debug-tracing",
@@ -6758,6 +6771,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     #   hash-length=<integer >= 1>
     #   add-authors=true/false
     #   debug=<filename>
+    #   trim-debug=true/false
     # CLI options always take precedence over config defaults.
     cfg_files = [
         os.path.join(os.getcwd(), ".gitdiffnavtool.ini"),
@@ -6796,6 +6810,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 ("untracked-files", "no_untracked", lambda x: not bool(x)),
                 ("initial-popup", "no_initial_popup", lambda x: not bool(x)),
                 ("add-authors", "no_add_authors", lambda x: not bool(x)),
+                ("trim-debug", "trim_debug", lambda x: bool(x)),
             ]
 
             for cfg_key, dest, transform in bool_map:
@@ -6890,7 +6905,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     # Handle CLI flag overrides for initial-popup, ignored-files, untracked-files,
-    # add-authors, and branch selection:
+    # add-authors, trim-debug, and branch selection:
     # Positive flags (e.g., --initial-popup, --ignored-files) take precedence over
     # negative flags and config defaults.
     if args.initial_popup:
@@ -6901,6 +6916,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         args.no_untracked = False
     if args.add_authors:
         args.no_add_authors = False
+    if args.no_trim_debug:
+        args.trim_debug = False
     if args.no_branch:
         args.branch = None
 
@@ -6924,6 +6941,13 @@ def main(argv: Optional[list[str]] = None) -> int:
             os.makedirs(os.path.dirname(args.debug) or "", exist_ok=True)
         except Exception as e:
             printException(e, "could not create directories for debug log file")
+        # Truncate debug file if trim-debug is enabled (default: append mode)
+        if args.trim_debug:
+            try:
+                with open(args.debug, 'w') as f:
+                    pass  # Truncate the file
+            except Exception as e:
+                printException(e, f"could not truncate debug log file {args.debug}")
         logging.basicConfig(
             filename=args.debug,
             level=logging.DEBUG,
