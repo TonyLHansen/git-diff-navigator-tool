@@ -71,6 +71,8 @@ Left and Right arrow keys perform differently in each column.
   - Commands while focused in the Diff column:
     - `d` / `D`: rotate the diff command variant. The variants cycle through common textual options (for example: ignore-space-change, patience, and word-diff) when a full textual diff is available.
     - `c` / `C`: toggle the use of color.
+    - `+`: increase unified diff context (`git diff -U`) by 1 line and re-run the diff.
+    - `-`: decrease unified diff context (`git diff -U`) by 1 line (minimum 0) and re-run the diff.
     - `Right` / `Enter` / `f` / `F`: toggle split/fullscreen.
     - `t` / `T`: toggle paired split layouts (`history→file→diff` <-> `file→history→diff`).
     - `w` / `W`: write a snapshot of the currently-visible diff (previous docs referred to this as "save").
@@ -118,6 +120,7 @@ Some of the Options
 
 If `--no-color` is provided, the diff output will not be colorized.
 If `--hash-length N` is provided, displayed short commit hashes will use `N` characters.
+If `--unified-context N` is provided, diffs will use `N` lines of context (git diff -U option, default 3, minimum 0).
 If `--no-add-authors` is provided, author name and email will not be displayed in commit rows.
 The command line options override the config values.
 
