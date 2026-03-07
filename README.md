@@ -168,14 +168,13 @@ Key Options:
 - `--output-directory DIR`: Directory where snapshot files are written (default: beside source file).
 - `--show-help`: Display the help screen and exit.
 - `--show-initial-popup`: Display the startup popup and exit.
+- `--init-config [cwd|home]`: Write a commented `.gitdiffnavtool.ini` template and exit (default location: `cwd`).
 
 Some of the Options
 -------------------
 
-If `--no-color` is provided, the diff output will not be colorized.
 If `--hash-length N` is provided, displayed short commit hashes will use `N` characters.
 If `--unified-context N` is provided, diffs will use `N` lines of context (git diff -U option, default 3, minimum 0).
-If `--no-add-authors` is provided, author name and email will not be displayed in commit rows.
 If `--output-directory DIR` is provided, all snapshot files will be written to that directory (created if it doesn't exist).
 The command line options override the config values.
 

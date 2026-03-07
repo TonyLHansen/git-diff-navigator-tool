@@ -494,6 +494,8 @@ Configuration File
 - Location: Searched in current directory first, then `$HOME` directory.
 - File format: INI-style configuration with a `[gitdiffnavtool]` section.
 - CLI options always take precedence over configuration file values.
+- Use `--init-config [cwd|home]` to generate a commented `.gitdiffnavtool.ini` template and exit.
+
 - Example configuration (showing all available options with their defaults):
     ```
     [gitdiffnavtool]
@@ -537,6 +539,110 @@ Command-line Options
 - Use the `--show-help` or `--show-help-color` options to see this help information.
 - Use the `--show-initial-popup` or `--show-initial-popup-color` options to see the initial popup help information.
 """
+
+
+def build_default_config_template() -> str:
+    """Build a commented .gitdiffnavtool.ini template with defaults."""
+    lines = [
+        "[gitdiffnavtool]",
+        f"# Display width for short commit hashes (default: {HASH_LENGTH}, must be >= 1)",
+        f"hash-length = {HASH_LENGTH}",
+        "# Show author name and email in commit rows (default: true)",
+        "add-authors = true",
+        "# Color scheme for diffs: red-green, blue-orange, teal-purple, style, none (default: style)",
+        "color = style",
+        "# Diff variant: classic, ignore-spaces, patience, word-diff, side-by-side (default: classic)",
+        "diff = classic",
+        "# Unified diff context lines (git diff -U; default: 3, must be >= 0)",
+        "unified-context = 3",
+        f"# Minimum terminal width for side-by-side view (default: {MIN_SIDE_BY_SIDE_WIDTH}, must be >= 1)",
+        "# If the terminal is narrower than this threshold, side-by-side falls back to unified format.",
+        f"minimum-sidebyside-width = {MIN_SIDE_BY_SIDE_WIDTH}",
+        "# Start in repository mode instead of file-first mode (default: false)",
+        "repo-first = false",
+        "# Show startup welcome popup (default: true)",
+        "initial-popup = true",
+        "# Include ignored files in file lists (default: true)",
+        "ignored-files = true",
+        "# Include untracked files in file lists (default: true)",
+        "untracked-files = true",
+        "# Directory where snapshot files are written (optional, default: beside source file)",
+        "# output-directory = /tmp/snapshots",
+        "# Use a specific git branch (optional, default: current branch)",
+        "# branch = main",
+        "# Enable debug logging to a file (optional, default: disabled)",
+        "# debug = /tmp/gitdiffnavtool.log",
+        "# Truncate debug log before writing (default: false / append mode)",
+        "trim-debug = false",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def build_missing_config_option_comment_block(
+    missing_keys: list[str], has_gitdiffnavtool_section: bool, existing_text: str
+) -> str:
+    """Build a comment-only block describing missing config options."""
+    option_docs: list[tuple[str, str, str]] = [
+        ("repo-first", "Start in repository mode instead of file-first mode.", "repo-first = false"),
+        ("ignored-files", "Include ignored files in file lists.", "ignored-files = true"),
+        ("untracked-files", "Include untracked files in file lists.", "untracked-files = true"),
+        ("initial-popup", "Show startup welcome popup.", "initial-popup = true"),
+        ("add-authors", "Show author name and email in commit rows.", "add-authors = true"),
+        ("trim-debug", "Truncate debug log before writing (false means append mode).", "trim-debug = false"),
+        ("branch", "Use a specific git branch.", "branch = main"),
+        (
+            "color",
+            "Color scheme: red-green, blue-orange, teal-purple, style, none.",
+            "color = style",
+        ),
+        (
+            "diff",
+            "Diff variant: classic, ignore-spaces, patience, word-diff, side-by-side.",
+            "diff = classic",
+        ),
+        ("debug", "Enable debug logging to a file.", "debug = /tmp/gitdiffnavtool.log"),
+        ("output-directory", "Directory where snapshot files are written.", "output-directory = /tmp/snapshots"),
+        ("hash-length", "Display width for short commit hashes (must be >= 1).", f"hash-length = {HASH_LENGTH}"),
+        ("unified-context", "Unified diff context lines (must be >= 0).", "unified-context = 3"),
+        ("history-limit", "Maximum history entries to display (0 means unlimited).", "history-limit = 0"),
+        (
+            "minimum-sidebyside-width",
+            "Minimum terminal width for side-by-side view (must be >= 1).",
+            f"minimum-sidebyside-width = {MIN_SIDE_BY_SIDE_WIDTH}",
+        ),
+    ]
+    missing_key_set = set(missing_keys)
+    lines: list[str] = []
+    if existing_text and not existing_text.endswith("\n"):
+        lines.append("")
+    lines.append("# --- Added by --init-config: missing option hints ---")
+    lines.append("# Uncomment and adjust any options you want to set explicitly.")
+    if not has_gitdiffnavtool_section:
+        lines.append("# NOTE: No [gitdiffnavtool] section was found in this file.")
+        lines.append("# Add the section below and place desired options under it.")
+        lines.append("# [gitdiffnavtool]")
+
+    for key, description, sample in option_docs:
+        if key not in missing_key_set:
+            continue
+        if re.search(rf"(?im)^\s*#\s*{re.escape(key)}\s*=", existing_text):
+            continue
+        lines.append(f"# {description}")
+        lines.append(f"# {sample}")
+
+    if len(lines) <= 2:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
+def build_backup_path(path: str) -> str:
+    """Return a non-conflicting backup filename for path."""
+    candidate = f"{path}.bak"
+    idx = 1
+    while os.path.exists(candidate):
+        candidate = f"{path}.bak.{idx}"
+        idx += 1
+    return candidate
 
 
 # Common styles used across file/history preparers
@@ -7122,13 +7228,88 @@ class GitDiffNavTool(AppException, App):
             self.printException(e, "toggle_diff_fullscreen retrieving saved layout failed")
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def handle_init_config(args) -> int:
     """
-    Command-line entry point for gitdiffnavtool.
+    Handle the --init-config CLI action.
 
-    Parses CLI arguments, locates the repository worktree, configures
-    logging, and launches the `GitDiffNavTool` Textual application.
-    Returns process exit code (0 on success).
+    Writes a commented template when no config exists, or appends a
+    comment-only block for missing/empty known options after creating
+    a non-conflicting backup of the existing config file.
+    Returns an exit code suitable for returning from `main()`.
+    """
+    target_dir = os.getcwd() if args.init_config == "cwd" else os.path.expanduser("~")
+    target_path = os.path.join(target_dir, ".gitdiffnavtool.ini")
+    try:
+        if os.path.exists(target_path):
+            with open(target_path, "r", encoding="utf-8") as fh:
+                existing_text = fh.read()
+            cfg_existing = configparser.ConfigParser()
+            cfg_existing.read(target_path)
+            has_section = "gitdiffnavtool" in cfg_existing
+            src_existing = cfg_existing["gitdiffnavtool"] if has_section else cfg_existing.defaults()
+            known_keys = [
+                "repo-first",
+                "ignored-files",
+                "untracked-files",
+                "initial-popup",
+                "add-authors",
+                "trim-debug",
+                "branch",
+                "color",
+                "diff",
+                "debug",
+                "output-directory",
+                "hash-length",
+                "unified-context",
+                "history-limit",
+                "minimum-sidebyside-width",
+            ]
+            missing_value_keys: list[str] = []
+            for key in known_keys:
+                raw = src_existing.get(key) if key in src_existing else None
+                if raw is None or str(raw).strip() == "":
+                    missing_value_keys.append(key)
+
+            comment_block = build_missing_config_option_comment_block(missing_value_keys, has_section, existing_text)
+            if not comment_block:
+                print(f"config exists and already has values or comment hints for known options: {target_path}")
+                return 0
+
+            appended_option_count = len(re.findall(r"(?im)^\s*#\s*[a-z0-9-]+\s*=", comment_block))
+
+            backup_path = build_backup_path(target_path)
+            try:
+                with open(backup_path, "x", encoding="utf-8") as fh:
+                    fh.write(existing_text)
+            except Exception as e:
+                printException(e, f"failed creating config backup {backup_path}")
+                return 2
+
+            with open(target_path, "a", encoding="utf-8") as fh:
+                fh.write(comment_block)
+            print(
+                "config exists; created backup "
+                f"{backup_path} and appended comment hints for {appended_option_count} "
+                f"missing-value option(s): {target_path}"
+            )
+            return 0
+        with open(target_path, "x", encoding="utf-8") as fh:
+            fh.write(build_default_config_template())
+        print(f"wrote config template: {target_path}")
+        return 0
+    except FileExistsError as e:
+        printException(e, f"config already exists: {target_path}")
+        print(f"config already exists: {target_path}", file=sys.stderr)
+        return 2
+    except Exception as e:
+        printException(e, f"failed writing config template to {target_path}")
+        return 2
+
+
+def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    """
+    Build the argument parser, load config defaults from .gitdiffnavtool.ini,
+    and return the parsed `args` Namespace.
     """
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
 
@@ -7145,6 +7326,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         dest="show_help_color",
         action="store_true",
         help="display formatted help text with colors and exit",
+    )
+    parser.add_argument(
+        "--init-config",
+        dest="init_config",
+        nargs="?",
+        choices=["cwd", "home"],
+        const="cwd",
+        metavar="LOCATION",
+        help="write a commented .gitdiffnavtool.ini template and exit (LOCATION: cwd or home, default: cwd)",
     )
 
     # Initial popup preview options (processed before other options)
@@ -7378,10 +7568,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     #   repo-first=true/false
     #   initial-popup=true/false
     #   branch=<branch-name>
-    #   color=true/false
+    #   color=<scheme> (red-green, blue-orange, teal-purple, style, none)
+    #   diff=<variant> (classic, ignore-spaces, patience, word-diff, side-by-side)
     #   hash-length=<integer >= 1>
+    #   unified-context=<integer >= 0>
     #   history-limit=<integer >= 0>
     #   output-directory=<directory path>
+    #   minimum-sidebyside-width=<integer >= 1>
     #   add-authors=true/false
     #   debug=<filename>
     #   trim-debug=true/false
@@ -7401,6 +7594,13 @@ def main(argv: Optional[list[str]] = None) -> int:
                 src = cfg.defaults()
 
             def _getbool(name: str):
+                """
+                Parse a boolean config value from common truthy/falsy strings.
+
+                Returns True for '1', 'true', 'yes', 'on' (case-insensitive).
+                Returns False for '0', 'false', 'no', 'off' (case-insensitive).
+                Returns None if key not present or value doesn't match.
+                """
                 if name in src:
                     v = src.get(name)
                     if v is None:
@@ -7411,6 +7611,70 @@ def main(argv: Optional[list[str]] = None) -> int:
                     if vs in ("0", "false", "no", "off"):
                         return False
                 return None
+
+            def _match_choice(key: str, allowed: list[str]) -> str | None:
+                """
+                Normalize and validate a choice config value against allowed list.
+
+                Performs case-insensitive matching and returns the canonical value
+                from the allowed list, or None if not found or empty.
+                """
+                raw = src.get(key)
+                if raw is None:
+                    return None
+                v = raw.strip() if isinstance(raw, str) else str(raw).strip()
+                if v == "":
+                    return None
+                vs = v.lower()
+                for s in allowed:
+                    if s.lower() == vs:
+                        return s
+                return None
+
+            def _get_choice(key: str, cfg_key_name: str, allowed: list[str]) -> str | None:
+                """Get and validate a choice config value against allowed list."""
+                match = _match_choice(key, allowed)
+                if match:
+                    return match
+                raw = _get_string(key)
+                if raw:
+                    sys.exit(f"invalid {cfg_key_name} '{raw}' in config; must be one of: {', '.join(allowed)}")
+                return None
+
+            def _get_string(key: str) -> str | None:
+                """Get and strip a string config value."""
+                if key not in src:
+                    return None
+                raw = src.get(key)
+                s = raw.strip() if isinstance(raw, str) else str(raw).strip()
+                return s if s else None
+
+            def _get_int(key: str, cfg_key_name: str, min_val: int | None, max_val: int | None) -> int | None:
+                """Get and validate an integer config value with optional min/max constraints."""
+                if key not in src:
+                    return None
+                raw = src.get(key)
+                raw_str = raw if isinstance(raw, str) else str(raw)
+                s = raw_str.strip()
+                if not s:
+                    return None
+                try:
+                    val = int(s)
+                    if min_val is not None and val < min_val:
+                        raise ValueError(f"must be >= {min_val}")
+                    if max_val is not None and val > max_val:
+                        raise ValueError(f"must be <= {max_val}")
+                    return val
+                except Exception as e:
+                    printException(e, f"invalid {cfg_key_name} in config")
+                    constraint = ""
+                    if min_val is not None and max_val is not None:
+                        constraint = f" >= {min_val} and <= {max_val}"
+                    elif min_val is not None:
+                        constraint = f" >= {min_val}"
+                    elif max_val is not None:
+                        constraint = f" <= {max_val}"
+                    sys.exit(f"invalid {cfg_key_name} '{raw_str}' in config; must be an integer{constraint}")
 
             defaults = {}
 
@@ -7437,120 +7701,62 @@ def main(argv: Optional[list[str]] = None) -> int:
                 if branch:
                     defaults["branch"] = branch
 
-            # Normalize and validate simple named-choice config keys.
-            def _match_choice(key: str, allowed: list[str]) -> str | None:
-                raw = src.get(key)
-                if raw is None:
-                    return None
-                v = raw.strip() if isinstance(raw, str) else str(raw).strip()
-                if v == "":
-                    return None
-                vs = v.lower()
-                for s in allowed:
-                    if s.lower() == vs:
-                        return s
-                return None
+            # Load choice-based config values
+            color_val = _get_choice("color", "color scheme", DIFF_COLOR_SCHEMES)
+            if color_val:
+                defaults["color"] = color_val
 
-            # `color` must be a scheme name from DIFF_COLOR_SCHEMES (blank = leave alone).
-            if "color" in src:
-                match = _match_choice("color", DIFF_COLOR_SCHEMES)
-                if match:
-                    defaults["color"] = match
-                else:
-                    raw = src.get("color")
-                    raw_str = raw if isinstance(raw, str) else str(raw)
-                    if raw_str.strip() != "":
-                        sys.exit(
-                            f"invalid color scheme '{raw_str}' in config; must be one of: {', '.join(DIFF_COLOR_SCHEMES)}"
-                        )
+            diff_val = _get_choice("diff", "diff variant", DIFF_VARIANT_NAMES)
+            if diff_val:
+                defaults["diff"] = diff_val
 
-            # `diff` must be a variant name from DIFF_VARIANT_NAMES (blank = leave alone).
-            if "diff" in src:
-                match = _match_choice("diff", DIFF_VARIANT_NAMES)
-                if match:
-                    defaults["diff"] = match
-                else:
-                    raw = src.get("diff")
-                    raw_str = raw if isinstance(raw, str) else str(raw)
-                    if raw_str.strip() != "":
-                        sys.exit(
-                            f"invalid diff variant '{raw_str}' in config; must be one of: {', '.join(DIFF_VARIANT_NAMES)}"
-                        )
+            # Load string-based config values
+            debug_val = _get_string("debug")
+            if debug_val:
+                defaults["debug"] = debug_val
 
-            if "debug" in src:
-                dbg = (src.get("debug") or "").strip()
-                if dbg:
-                    defaults["debug"] = dbg
+            output_dir = _get_string("output-directory")
+            if output_dir:
+                defaults["output_directory"] = output_dir
 
-            # Optional integer display width for short commit hashes.
-            if "hash-length" in src:
-                raw_hash_len = src.get("hash-length")
-                raw_hash_len_str = raw_hash_len if isinstance(raw_hash_len, str) else str(raw_hash_len)
-                if raw_hash_len_str.strip() != "":
-                    try:
-                        cfg_hash_len = int(raw_hash_len_str.strip())
-                        if cfg_hash_len < 1:
-                            raise ValueError("must be >= 1")
-                        defaults["hash_length"] = cfg_hash_len
-                    except Exception as e:
-                        printException(e, "invalid hash-length in config")
-                        sys.exit(f"invalid hash-length '{raw_hash_len_str}' in config; must be an integer >= 1")
+            # Load integer config values with min/max constraints
+            hash_len = _get_int("hash-length", "hash-length", 1, None)
+            if hash_len is not None:
+                defaults["hash_length"] = hash_len
 
-            # Optional integer for unified diff context lines.
-            if "unified-context" in src:
-                raw_context = src.get("unified-context")
-                raw_context_str = raw_context if isinstance(raw_context, str) else str(raw_context)
-                if raw_context_str.strip() != "":
-                    try:
-                        cfg_context = int(raw_context_str.strip())
-                        if cfg_context < 0:
-                            raise ValueError("must be >= 0")
-                        defaults["unified_context"] = cfg_context
-                    except Exception as e:
-                        printException(e, "invalid unified-context in config")
-                        sys.exit(f"invalid unified-context '{raw_context_str}' in config; must be an integer >= 0")
+            unified_ctx = _get_int("unified-context", "unified-context", 0, None)
+            if unified_ctx is not None:
+                defaults["unified_context"] = unified_ctx
 
-            # Optional integer for history limit.
-            if "history-limit" in src:
-                raw_limit = src.get("history-limit")
-                raw_limit_str = raw_limit if isinstance(raw_limit, str) else str(raw_limit)
-                if raw_limit_str.strip() != "":
-                    try:
-                        cfg_limit = int(raw_limit_str.strip())
-                        if cfg_limit < 0:
-                            raise ValueError("must be >= 0")
-                        defaults["history_limit"] = cfg_limit
-                    except Exception as e:
-                        printException(e, "invalid history-limit in config")
-                        sys.exit(f"invalid history-limit '{raw_limit_str}' in config; must be an integer >= 0")
+            history_lim = _get_int("history-limit", "history-limit", 0, None)
+            if history_lim is not None:
+                defaults["history_limit"] = history_lim
 
-            # Optional directory for snapshot output files.
-            if "output-directory" in src:
-                raw_outdir = src.get("output-directory")
-                raw_outdir_str = raw_outdir if isinstance(raw_outdir, str) else str(raw_outdir)
-                if raw_outdir_str.strip() != "":
-                    defaults["output_directory"] = raw_outdir_str.strip()
-
-            # Optional integer for minimum side-by-side width.
-            if "minimum-sidebyside-width" in src:
-                raw_width = src.get("minimum-sidebyside-width")
-                raw_width_str = raw_width if isinstance(raw_width, str) else str(raw_width)
-                if raw_width_str.strip() != "":
-                    try:
-                        cfg_width = int(raw_width_str.strip())
-                        if cfg_width < 1:
-                            raise ValueError("must be >= 1")
-                        defaults["minimum_sidebyside_width"] = cfg_width
-                    except Exception as e:
-                        printException(e, "invalid minimum-sidebyside-width in config")
-                        sys.exit(f"invalid minimum-sidebyside-width '{raw_width_str}' in config; must be an integer >= 1")
+            min_width = _get_int("minimum-sidebyside-width", "minimum-sidebyside-width", 1, None)
+            if min_width is not None:
+                defaults["minimum_sidebyside_width"] = min_width
 
             if defaults:
                 parser.set_defaults(**defaults)
         except Exception as e:
             printException(e, f"failed reading config files {read_files}")
 
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    """
+    Command-line entry point for gitdiffnavtool.
+
+    Parses CLI arguments, locates the repository worktree, configures
+    logging, and launches the `GitDiffNavTool` Textual application.
+    Returns process exit code (0 on success).
+    """
+    args = parse_cli_and_config(argv)
+
+    # Handle --init-config and exit
+    if args.init_config:
+        return handle_init_config(args)
 
     # Handle --show-help or --show-help-color: render HELP_TEXT as markdown and exit
     if args.show_help or args.show_help_color:
