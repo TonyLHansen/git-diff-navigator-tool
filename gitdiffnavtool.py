@@ -518,11 +518,12 @@ Configuration File
 
 Command-line Options
 --------------------
-- All of the configuration values can also be specified on the command line, pluse some additional options.
+- All of the configuration values can also be specified on the command line, plus some additional options.
 - Any boolean configuration options also has a `--no-` variation to turn off the value should it be set
   in the configuration file. For example, use `--no-add-authors` to turn displaying the author information.
 - Use the `--help` option to see the complete list.
 - Use the `--show-help` or `--show-help-color` options to see this help information.
+- Use the `--show-initial-popup` or `--show-initial-popup-color` options to see the initial popup help information.
 """
 
 
@@ -7108,6 +7109,21 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="display formatted help text with colors and exit",
     )
 
+    # Initial popup preview options (processed before other options)
+    popup_preview_group = parser.add_mutually_exclusive_group()
+    popup_preview_group.add_argument(
+        "--show-initial-popup",
+        dest="show_initial_popup",
+        action="store_true",
+        help="display startup popup text without colors and exit",
+    )
+    popup_preview_group.add_argument(
+        "--show-initial-popup-color",
+        dest="show_initial_popup_color",
+        action="store_true",
+        help="display startup popup text with colors and exit",
+    )
+
     # Startup options group
     startup_group = parser.add_argument_group("Startup Options")
     startup_group.add_argument(
@@ -7486,6 +7502,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.show_help or args.show_help_color:
         console = Console(no_color=args.show_help)
         md = Markdown(HELP_TEXT)
+        console.print(md)
+        return 0
+
+    # Handle --show-initial-popup or --show-initial-popup-color:
+    # render INITIAL_POPUP_TEXT as markdown and exit.
+    if args.show_initial_popup or args.show_initial_popup_color:
+        console = Console(no_color=args.show_initial_popup)
+        md = Markdown(INITIAL_POPUP_TEXT)
         console.print(md)
         return 0
 
