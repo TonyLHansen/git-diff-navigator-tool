@@ -497,6 +497,9 @@ Configuration File
     diff = classic
     # Unified diff context lines (git diff -U; default: 3, must be >= 0)
     unified-context = 3
+    # Minimum terminal width for side-by-side view (default: 60, must be >= 1)
+    # If the terminal is narrower than this threshold, the side-by-side diff falls back to unified format even if side-by-side is selected.
+    minimum-sidebyside-width = 60
     # Start in repository mode instead of file-first mode (default: false)
     repo-first = false
     # Show startup welcome popup (default: true)
@@ -770,15 +773,27 @@ class AppBase(AppException, ListView):
             fname = getattr(node, "_filename", None)
             if fname:
                 return fname
-            lbl = node.query_one(Label)
-            if hasattr(lbl, "text") and getattr(lbl, "text"):
-                return lbl.text
-            renderable = getattr(lbl, "renderable", None)
-            if isinstance(renderable, Text):
-                return renderable.plain
-            if renderable is not None:
-                return str(renderable)
-            return str(lbl)
+            # Try to query for a Label child, but handle the case where none exists
+            try:
+                lbl = node.query_one(Label)
+                if hasattr(lbl, "text") and getattr(lbl, "text"):
+                    return lbl.text
+                renderable = getattr(lbl, "renderable", None)
+                if isinstance(renderable, Text):
+                    return renderable.plain
+                if renderable is not None:
+                    return str(renderable)
+                return str(lbl)
+            except Exception as _no_logging:
+                # No Label found or query failed - try to get text from node directly
+                if hasattr(node, "renderable"):
+                    renderable = getattr(node, "renderable", None)
+                    if isinstance(renderable, Text):
+                        return renderable.plain
+                    if renderable is not None:
+                        return str(renderable)
+                # Last resort: stringify the node
+                return str(node)
         except Exception as e:
             self.printException(e, "extracting text")
             return str(node)
@@ -5094,21 +5109,22 @@ class DiffList(FullScreenBase):
                     if is_side_by_side_variant:
                         # Check if terminal width is sufficient for side-by-side
                         current_width = int(self.size.width)
-                        if current_width >= MIN_SIDE_BY_SIDE_WIDTH:
+                        min_width = self.app.minimum_sidebyside_width
+                        if current_width >= min_width:
                             # Convert unified diff to side-by-side format and render
                             parsed = self._parse_unified_to_side_by_side(body_lines)
                             rendered_rows = [header_text] + self._render_side_by_side(parsed, self._colorized)
                             logger.debug(
                                 "_render_output: rendering side-by-side (width=%d >= min=%d)",
                                 current_width,
-                                MIN_SIDE_BY_SIDE_WIDTH,
+                                min_width,
                             )
                         else:
                             # Terminal too narrow - fall back to unified view
                             logger.debug(
                                 "_render_output: falling back to unified view (width=%d < min=%d)",
                                 current_width,
-                                MIN_SIDE_BY_SIDE_WIDTH,
+                                min_width,
                             )
                             # Render as classic unified diff with note in header
                             header_with_note = Text.assemble(
@@ -5636,6 +5652,7 @@ class GitDiffNavTool(AppException, App):
         add_authors: bool,
         unified_context: int,
         history_limit: int,
+        minimum_sidebyside_width: int,
         **kwargs,
     ):
         """
@@ -5695,6 +5712,9 @@ class GitDiffNavTool(AppException, App):
         # Maximum number of history entries to display (0 = unlimited).
         # Can be overridden via --history-limit / config.
         self.history_limit = history_limit
+        # Minimum terminal width required for side-by-side view.
+        # Can be overridden via --minimum-sidebyside-width / config.
+        self.minimum_sidebyside_width = minimum_sidebyside_width
 
         # Optional initial filename basename to highlight when listing a dir
         self.highlight = highlight
@@ -7205,6 +7225,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=3,
         help="number of context lines for unified diffs (default: 3, git diff -U option)",
     )
+    diff_group.add_argument(
+        "--minimum-sidebyside-width",
+        dest="minimum_sidebyside_width",
+        metavar="N",
+        type=int,
+        default=MIN_SIDE_BY_SIDE_WIDTH,
+        help=f"minimum terminal width for side-by-side view (default: {MIN_SIDE_BY_SIDE_WIDTH})",
+    )
 
     # File List Options group
     filelist_group = parser.add_argument_group("File List Options")
@@ -7431,6 +7459,20 @@ def main(argv: Optional[list[str]] = None) -> int:
                         printException(e, "invalid history-limit in config")
                         sys.exit(f"invalid history-limit '{raw_limit_str}' in config; must be an integer >= 0")
 
+            # Optional integer for minimum side-by-side width.
+            if "minimum-sidebyside-width" in src:
+                raw_width = src.get("minimum-sidebyside-width")
+                raw_width_str = raw_width if isinstance(raw_width, str) else str(raw_width)
+                if raw_width_str.strip() != "":
+                    try:
+                        cfg_width = int(raw_width_str.strip())
+                        if cfg_width < 1:
+                            raise ValueError("must be >= 1")
+                        defaults["minimum_sidebyside_width"] = cfg_width
+                    except Exception as e:
+                        printException(e, "invalid minimum-sidebyside-width in config")
+                        sys.exit(f"invalid minimum-sidebyside-width '{raw_width_str}' in config; must be an integer >= 1")
+
             if defaults:
                 parser.set_defaults(**defaults)
         except Exception as e:
@@ -7577,6 +7619,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             add_authors=not args.no_add_authors,
             unified_context=args.unified_context,
             history_limit=args.history_limit,
+            minimum_sidebyside_width=args.minimum_sidebyside_width,
         )
         # Run the textual app (blocks until exit)
         app.run()
