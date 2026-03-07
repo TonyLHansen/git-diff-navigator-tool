@@ -294,7 +294,7 @@ INITIAL_POPUP_TEXT = """
 Welcome to Git Diff Navigator Tool!
 
 This tool helps you explore git repositories and their histories with a focus on navigating diffs and file changes.
-You may type a "q" (or "Q") to quit at any time. Press "Enter/␍" to dismiss this message and get started, or "?" for help.
+You may type a `q` (or `Q`) to quit at any time. Press `Enter/␍` to dismiss this message and get started, or `?` for help.
 
 The basic navigation keys are:
 
@@ -311,7 +311,7 @@ selection, and press Right or Enter/␍ to either
 2) switch to the history view (using Right arrow or Enter/␍) to see all of the commits associated with the chosen file.
 
 From the history view you can navigate the commits and press Right or Enter/␍ again to see the diff for that commit and file.
-(You can also mark a particular commit in the history view with "m" and then navigate to another commit; 
+(You can also mark a particular commit in the history view with `m` and then navigate to another commit; 
 press Right/Enter/␍ to see the diff between the marked commit and the current selection.)
 
 From the history view, you can also press `o` to open the file content in the OpenFile pane.
@@ -331,8 +331,8 @@ Pressing Right/Enter/␍ on a file in that list will show the diff for that file
 Each window will also display a footer with context-sensitive hints for available actions.
 For example, when viewing the file list, the footer will prompt you to press Right to view the file history. 
 
-Remember, you can press "?" at any time to view the help screen with these and additional instructions.
-And of course, you can quit at any time by pressing "q" or "Q". (Run the program with --show-help to see the help screen on startup.)
+Remember, you can press `?` at any time to view the help screen with these and additional instructions.
+And of course, you can quit at any time by pressing `q` or `Q`. (Run the program with `--show-help` to see the help screen on startup.)
 
 If you want to skip this message on future launches, you can edit the configuration file (gitdiffnavtool.ini) 
 and set `initial-popup = false` under the `[gitdiffnavtool]` section.
@@ -1805,11 +1805,13 @@ class MessageModal(ModalScreen):
 
         The main message is shown inside a Rich `Panel` to provide a
         visible box; a dim prompt label is shown below instructing the
-        user to press any key to continue.
+        user to press any key to continue. The message is rendered as
+        Markdown.
         """
         try:
             # Main boxed message (Panel handles the box drawing)
-            boxed = Panel(Text(self.message, style="bold"), expand=False)
+            # Render the message as Markdown for rich formatting
+            boxed = Panel(Markdown(self.message), expand=False)
             # Wrap the boxed message in centering containers so it appears
             # in the middle of the screen.
             yield Vertical(
