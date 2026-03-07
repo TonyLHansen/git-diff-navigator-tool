@@ -81,6 +81,8 @@ Left and Right arrow keys perform differently in each column.
     - `[`: decrease left panel width in side-by-side mode (5% per keystroke).
     - `]`: increase left panel width in side-by-side mode (5% per keystroke).
     - `=`: reset side-by-side split to 50/50.
+    - `{`: scroll side-by-side view left by 10 columns.
+    - `}`: scroll side-by-side view right by 10 columns.
     - `+`: increase unified diff context (`git diff -U`) by 1 line and re-run the diff.
     - `-`: decrease unified diff context (`git diff -U`) by 1 line (minimum 0) and re-run the diff.
     - `Right` / `Enter` / `f` / `F`: toggle split/fullscreen.
@@ -166,6 +168,7 @@ Key Options:
 - `--minimum-sidebyside-width N`: Minimum terminal width before side-by-side falls back to unified (default: 60).
 - `--no-add-authors`: Hide author name and email in commit rows.
 - `--output-directory DIR`: Directory where snapshot files are written (default: beside source file).
+- `--blank-before-hunk`: Insert a blank line before each hunk header (lines starting with `@@`).
 - `--show-help`: Display the help screen and exit.
 - `--show-initial-popup`: Display the startup popup and exit.
 - `--init-config [cwd|home]`: Write a commented `.gitdiffnavtool.ini` template and exit (default location: `cwd`).

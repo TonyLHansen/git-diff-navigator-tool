@@ -209,11 +209,11 @@ OPEN_FILE_FOOTER_2 = Text(
 )
 # Footer text used when showing the diff for a history/file selection
 DIFF_FOOTER_1 = Text(
-    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close)  ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)  [=](width)  +/-(ctx)",
+    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close)  ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)  [=](width)  +/-(ctx)  {}(hscroll)",
     style="bold",
 )
 DIFF_FOOTER_2 = Text(
-    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←/f(ull)  ↑/↓/PgUp/PgDn/Home/End c(olor)  d(iff-type)  [=](width)  +/-(ctx)",
+    "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←/f(ull)  ↑/↓/PgUp/PgDn/Home/End c(olor)  d(iff-type)  [=](width)  +/-(ctx)  {}(hscroll)",
     style="bold",
 )
 
@@ -326,7 +326,8 @@ adjust the relative widths of the old and new content columns. See the help scre
 Alternatively, you can start the program in repository mode (using the `-R`/`--repo-first` flag) that
 initially shows a history view of all commits in the repository. You can then select a commit
 and press Right arrow to see the file list for that commit (or that commit and a marked commit when using "m" to mark a commit).
-Pressing Right/Enter/␍ on a file in that list will show the diff for that file and commit. Press `o` to open file content in the OpenFile pane.
+Pressing Right/Enter/␍ on a file in that list will show the diff for that file and commit.
+Press `o` to open file content in the OpenFile pane.
 
 Each window will also display a footer with context-sensitive hints for available actions.
 For example, when viewing the file list, the footer will prompt you to press Right to view the file history. 
@@ -433,6 +434,8 @@ Diff Column:
     - `[`: decrease left panel width in side-by-side mode (5% increment).
     - `]`: increase left panel width in side-by-side mode (5% increment).
     - `=`: reset to 50/50 split in side-by-side mode.
+    - `{`: scroll side-by-side view left by 10 columns.
+    - `}`: scroll side-by-side view right by 10 columns.
     - `+`: increase unified diff context (`git diff -U`) by 1 and re-run the diff.
     - `-`: decrease unified diff context (`git diff -U`) by 1 (minimum 0) and re-run the diff.
     - `Right` / `Enter` / `f` / `F`: toggle split <-> fullscreen diff view.
@@ -727,7 +730,7 @@ class AppBase(AppException, ListView):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Safe defaults so other code can access these attributes early
-        self._min_index = 0
+        self._min_index = 1
         self._populated = False
         self.current_diff_file = None
         # When True the next watch_index-triggered scroll should animate
@@ -2299,6 +2302,10 @@ class FileListBase(AppBase):
         # Mark this base as a file-list so AppBase.watch_index can act
         # conservatively based on widget type flags instead of isinstance.
         self.is_file_list = 1
+        # File lists are selectable from the first data row by default.
+        # Ensure subclasses inherit an explicit _min_index of 0 so they
+        # can override if they prepend non-selectable header rows.
+        self._min_index = 0
         # Program-managed preselection marker used by render/keypress flow.
         # Initialize here so static checks know the attribute exists.
         self._preselected_filename = None
@@ -3917,6 +3924,8 @@ class HistoryListBase(AppBase):
         self.highlight_bg_style = HIGHLIGHT_REPOLIST_BG
         # Mark as history list for flag-based checks in AppBase.watch_index
         self.is_history_list = 1
+        # History lists are selectable from the first data row (index 0).
+        self._min_index = 0
 
     def _add_row(self, text: str, commit_hash: str | None, mark_active: bool = False) -> None:
         """
@@ -4693,6 +4702,9 @@ class DiffList(FullScreenBase):
         # Side-by-side rendering configuration
         self._sbs_left_width_pct = 50  # Left panel percentage (0-100)
         self._sbs_gutter_width = 3  # Gutter width in characters
+        # Horizontal scroll offset for side-by-side panels (columns)
+        # Measured in characters from the left of each panel.
+        self._sbs_hscroll = 0
 
     def on_key(self, event: events.Key) -> None:
         """Handle bracket/equal keys directly for side-by-side width control."""
@@ -4708,6 +4720,16 @@ class DiffList(FullScreenBase):
                 self._sbs_left_width_pct,
             )
 
+            if ch == "{":
+                logger.debug("DiffList.on_key: consumed '{' -> action_hscroll_left")
+                event.stop()
+                self.action_hscroll_left()
+                return
+            if ch == "}":
+                logger.debug("DiffList.on_key: consumed '}' -> action_hscroll_right")
+                event.stop()
+                self.action_hscroll_right()
+                return
             if k in ("bracket_left", "left_square_bracket") or ch == "[":
                 logger.debug("DiffList.on_key: consumed '[' -> action_left_bracket")
                 event.stop()
@@ -4974,6 +4996,10 @@ class DiffList(FullScreenBase):
                 # flush accumulated inline row before rendering patch metadata
                 if is_patch_header(ln):
                     flush_current(force_empty=False)
+                    # Optionally insert a blank line before hunk headers
+                    if ln.startswith("@@") and self.app.blank_before_hunk:
+                        rows.append(Text(""))
+
                     style = None
                     if colorized:
                         if ln.startswith("@@"):
@@ -5153,6 +5179,11 @@ class DiffList(FullScreenBase):
                             style = "bold white"
                         else:
                             style = "magenta"
+
+                    # Optionally insert a blank line before hunk headers
+                    if left.startswith("@@") and self.app.blank_before_hunk:
+                        rendered.append(Text(""))
+
                     rendered.append(Text(left, style=style) if style else Text(left))
                     continue
 
@@ -5177,14 +5208,40 @@ class DiffList(FullScreenBase):
                         right_style = colors.get("add_span")
                         gutter_style = "yellow"
 
-                # Truncate with ellipsis for long lines
-                left_display = left
-                if len(left) > left_w:
-                    left_display = left[: max(1, left_w - 1)] + "…"
+                # Truncate with ellipsis for long lines, applying horizontal
+                # scroll offset so the user can pan left/right across long
+                # lines. When scrolled, show leading/trailing ellipses as
+                # appropriate.
+                def _windowed(text: str, width: int) -> str:
+                    o = max(0, int(self._sbs_hscroll))
+                    if width <= 0:
+                        return ""
+                    # No left offset: simple leading/trailing ellipsis
+                    if o == 0:
+                        if len(text) > width:
+                            if width > 1:
+                                return text[: max(1, width - 1)] + "…"
+                            return text[:width]
+                        return text
 
-                right_display = right
-                if len(right) > right_w:
-                    right_display = right[: max(1, right_w - 1)] + "…"
+                    # Left offset present: show leading ellipsis
+                    # Determine if there's content beyond the right edge
+                    if len(text) > o + width:
+                        # Both sides elided: use leading+trailing ellipses
+                        if width > 2:
+                            mid = text[o : o + width - 2]
+                            return "…" + mid + "…"
+                        # Very narrow width: fill with ellipses
+                        return "…" * width
+                    else:
+                        # Only leading elided
+                        if width > 1:
+                            mid = text[o : o + width - 1]
+                            return "…" + mid
+                        return "…"
+
+                left_display = _windowed(left, left_w)
+                right_display = _windowed(right, right_w)
 
                 # Pad to maintain column alignment
                 left_display = left_display.ljust(left_w)
@@ -5276,6 +5333,9 @@ class DiffList(FullScreenBase):
                             )
                             rendered_rows = [header_with_note]
                             for ln in body_lines:
+                                # Optionally insert blank line before hunk headers
+                                if ln.startswith("@@") and self.app.blank_before_hunk:
+                                    rendered_rows.append(Text(""))
                                 style = None
                                 if self._colorized:
                                     scheme = self.app.color_scheme
@@ -5295,6 +5355,9 @@ class DiffList(FullScreenBase):
                         # Classic unified diff rendering
                         rendered_rows = [header_text]
                         for ln in body_lines:
+                            # Optionally insert blank line before hunk headers
+                            if ln.startswith("@@") and self.app.blank_before_hunk:
+                                rendered_rows.append(Text(""))
                             style = None
                             if self._colorized:
                                 scheme = self.app.color_scheme
@@ -5447,6 +5510,28 @@ class DiffList(FullScreenBase):
         except Exception as e:
             self.printException(e, "action_equal failed")
 
+    def action_hscroll_left(self) -> None:
+        """Scroll side-by-side view left by 10 columns ({ key)."""
+        try:
+            if self.variant == self.app.variant_sidebyside_index:
+                old = self._sbs_hscroll
+                self._sbs_hscroll = max(0, self._sbs_hscroll - 10)
+                logger.debug("action_hscroll_left: old=%r new=%r", old, self._sbs_hscroll)
+                self._render_output()
+        except Exception as e:
+            self.printException(e, "action_hscroll_left failed")
+
+    def action_hscroll_right(self) -> None:
+        """Scroll side-by-side view right by 10 columns (} key)."""
+        try:
+            if self.variant == self.app.variant_sidebyside_index:
+                old = self._sbs_hscroll
+                self._sbs_hscroll = max(0, self._sbs_hscroll + 10)
+                logger.debug("action_hscroll_right: old=%r new=%r", old, self._sbs_hscroll)
+                self._render_output()
+        except Exception as e:
+            self.printException(e, "action_hscroll_right failed")
+
     def key_plus(self, event: events.Key | None = None) -> None:
         """Increment unified context (-U value) and re-run the diff."""
         logger.debug(
@@ -5554,6 +5639,8 @@ class HelpList(AppBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.highlight_bg_style = HIGHLIGHT_HELP_BG
+        # Help lists are selectable from the first block/row (index 0).
+        self._min_index = 0
 
     def prepHelp(self) -> None:
         """
@@ -5628,6 +5715,8 @@ class OpenFileList(FullScreenBase):
         self._fullscreen_layout = "open_file_fullscreen"
         self._fullscreen_widget_id = OPEN_FILE_LIST_ID
         self._fullscreen_footer = OPEN_FILE_FOOTER_2
+        # Open file views are selectable from the first content line (index 0).
+        self._min_index = 0
         self._split_footer = OPEN_FILE_FOOTER_1
         # Where to return when leaving the open-file view: (state_name, widget_id, footer)
         # Set when file is opened; allows consistent navigation regardless of split layout.
@@ -5796,6 +5885,7 @@ class GitDiffNavTool(AppException, App):
         unified_context: int,
         history_limit: int,
         minimum_sidebyside_width: int,
+        blank_before_hunk: bool,
         output_directory: str | None,
         **kwargs,
     ):
@@ -5859,6 +5949,8 @@ class GitDiffNavTool(AppException, App):
         # Minimum terminal width required for side-by-side view.
         # Can be overridden via --minimum-sidebyside-width / config.
         self.minimum_sidebyside_width = minimum_sidebyside_width
+        # Whether to insert a blank line before each hunk header (@@)
+        self.blank_before_hunk = bool(blank_before_hunk)
         # Optional output directory used by snapshot writes from w/W.
         # When unset, snapshots are written beside the source file (legacy behavior).
         self.output_directory = os.path.abspath(output_directory) if output_directory else None
@@ -7490,6 +7582,20 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
         default=3,
         help="number of context lines for unified diffs (default: 3, git diff -U option)",
     )
+    blank_group = diff_group.add_mutually_exclusive_group()
+    blank_group.add_argument(
+        "--blank-before-hunk",
+        dest="blank_before_hunk",
+        action="store_true",
+        default=True,
+        help="insert a blank line before each diff hunk header (lines starting with @@)",
+    )
+    blank_group.add_argument(
+        "--no-blank-before-hunk",
+        dest="no_blank_before_hunk",
+        action="store_true",
+        help="do not insert blank lines before diff hunk headers",
+    )
     diff_group.add_argument(
         "--minimum-sidebyside-width",
         dest="minimum_sidebyside_width",
@@ -7586,6 +7692,7 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
     #   history-limit=<integer >= 0>
     #   output-directory=<directory path>
     #   minimum-sidebyside-width=<integer >= 1>
+    #   blank-before-hunk=true/false
     #   add-authors=true/false
     #   debug=<filename>
     #   trim-debug=true/false
@@ -7706,6 +7813,7 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
                 ("initial-popup", "no_initial_popup", lambda x: not bool(x)),
                 ("add-authors", "no_add_authors", lambda x: not bool(x)),
                 ("trim-debug", "trim_debug", lambda x: bool(x)),
+                ("blank-before-hunk", "blank_before_hunk", lambda x: bool(x)),
             ]
 
             for cfg_key, dest, transform in bool_map:
@@ -7846,6 +7954,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         args.trim_debug = False
     if args.no_branch:
         args.branch = None
+    if getattr(args, "no_blank_before_hunk", False):
+        args.blank_before_hunk = False
 
     # Validate --highlight is a bare basename (no path elements)
     if args.highlight:
@@ -7939,6 +8049,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             unified_context=args.unified_context,
             history_limit=args.history_limit,
             minimum_sidebyside_width=args.minimum_sidebyside_width,
+            blank_before_hunk=args.blank_before_hunk,
             output_directory=args.output_directory,
         )
         # Run the textual app (blocks until exit)
