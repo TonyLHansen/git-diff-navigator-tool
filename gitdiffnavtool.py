@@ -7744,6 +7744,18 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
     return parser.parse_args(argv)
 
 
+def print_and_exit(text: str, show_color: bool) -> int:
+    """Render markdown `text` to the console then return exit code 0.
+
+    `show_color` enables colorized output when True; otherwise output is
+    rendered without colors.
+    """
+    console = Console(no_color=not show_color)
+    md = Markdown(text)
+    console.print(md)
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """
     Command-line entry point for gitdiffnavtool.
@@ -7760,18 +7772,12 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     # Handle --show-help or --show-help-color: render HELP_TEXT as markdown and exit
     if args.show_help or args.show_help_color:
-        console = Console(no_color=args.show_help)
-        md = Markdown(HELP_TEXT)
-        console.print(md)
-        return 0
+        return print_and_exit(HELP_TEXT, args.show_help_color)
 
     # Handle --show-initial-popup or --show-initial-popup-color:
     # render INITIAL_POPUP_TEXT as markdown and exit.
     if args.show_initial_popup or args.show_initial_popup_color:
-        console = Console(no_color=args.show_initial_popup)
-        md = Markdown(INITIAL_POPUP_TEXT)
-        console.print(md)
-        return 0
+        return print_and_exit(INITIAL_POPUP_TEXT, args.show_initial_popup_color)
 
     # Handle CLI flag overrides for initial-popup, ignored-files, untracked-files,
     # add-authors, trim-debug, and branch selection:
