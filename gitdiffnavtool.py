@@ -7313,6 +7313,24 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
     """
     parser = argparse.ArgumentParser(prog="gitdiffnavtool.py")
 
+    parser.add_argument(
+        "--init-config",
+        dest="init_config",
+        nargs="?",
+        choices=["cwd", "home"],
+        const="cwd",
+        metavar="LOCATION",
+        help="write a commented .gitdiffnavtool.ini template and exit (LOCATION: cwd or home, default: cwd)",
+    )
+
+    parser.add_argument(
+        "-c",
+        "--config",
+        dest="config",
+        metavar="FILE",
+        help="use the specified config FILE instead of searching cwd and $HOME for .gitdiffnavtool.ini",
+    )
+
     # Help option (processed before other options)
     help_group = parser.add_mutually_exclusive_group()
     help_group.add_argument(
@@ -7326,15 +7344,6 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
         dest="show_help_color",
         action="store_true",
         help="display formatted help text with colors and exit",
-    )
-    parser.add_argument(
-        "--init-config",
-        dest="init_config",
-        nargs="?",
-        choices=["cwd", "home"],
-        const="cwd",
-        metavar="LOCATION",
-        help="write a commented .gitdiffnavtool.ini template and exit (LOCATION: cwd or home, default: cwd)",
     )
 
     # Initial popup preview options (processed before other options)
@@ -7401,22 +7410,6 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
     )
 
     startup_group.add_argument(
-        "--hash-length",
-        dest="hash_length",
-        metavar="N",
-        type=int,
-        default=HASH_LENGTH,
-        help=f"number of characters to display for short hashes (default: {HASH_LENGTH})",
-    )
-    startup_group.add_argument(
-        "--history-limit",
-        dest="history_limit",
-        metavar="N",
-        type=int,
-        default=0,
-        help="limit number of history entries to display (default: 0 for unlimited)",
-    )
-    startup_group.add_argument(
         "-o",
         "--output-directory",
         dest="output_directory",
@@ -7425,8 +7418,27 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
         help="directory where w/W snapshot files are written (default: beside source file)",
     )
 
-    # Mutually exclusive group for author display flags
-    author_group = startup_group.add_mutually_exclusive_group()
+    # History List Options: options affecting history list rendering/behavior
+    history_group = parser.add_argument_group("History List Options")
+    history_group.add_argument(
+        "--hash-length",
+        dest="hash_length",
+        metavar="N",
+        type=int,
+        default=HASH_LENGTH,
+        help=f"number of characters to display for short hashes (default: {HASH_LENGTH})",
+    )
+    history_group.add_argument(
+        "--history-limit",
+        dest="history_limit",
+        metavar="N",
+        type=int,
+        default=0,
+        help="limit number of history entries to display (default: 0 for unlimited)",
+    )
+
+    # Mutually exclusive group for author display flags (history related)
+    author_group = history_group.add_mutually_exclusive_group()
     author_group.add_argument(
         "--add-authors",
         dest="add_authors",
@@ -7449,7 +7461,6 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
     # Mutually-exclusive color options within diff group
     color_group = diff_group.add_mutually_exclusive_group()
     color_group.add_argument(
-        "-c",
         "--color",
         dest="color",
         metavar="SCHEME",
@@ -7579,10 +7590,17 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
     #   debug=<filename>
     #   trim-debug=true/false
     # CLI options always take precedence over config defaults.
-    cfg_files = [
-        os.path.join(os.getcwd(), ".gitdiffnavtool.ini"),
-        os.path.join(os.path.expanduser("~"), ".gitdiffnavtool.ini"),
-    ]
+    # Allow the user to specify an explicit config path via --config; when
+    # provided, only that file (if present) will be used. Otherwise search
+    # current directory then $HOME for `.gitdiffnavtool.ini`.
+    parsed_args, _ = parser.parse_known_args(argv)
+    if getattr(parsed_args, "config", None):
+        cfg_files = [parsed_args.config]
+    else:
+        cfg_files = [
+            os.path.join(os.getcwd(), ".gitdiffnavtool.ini"),
+            os.path.join(os.path.expanduser("~"), ".gitdiffnavtool.ini"),
+        ]
     cfg = configparser.ConfigParser()
     read_files = [p for p in cfg_files if os.path.exists(p)]
     if read_files:
