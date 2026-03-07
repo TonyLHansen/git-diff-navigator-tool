@@ -342,7 +342,8 @@ and set `initial-popup = false` under the `[gitdiffnavtool]` section.
 HELP_TEXT = """
 # gitdiffnavtool help
 
-Overview:
+Overview
+--------
 - gitdiffnavtool is a terminal UI for exploring a Git repository with
     file lists, per-file and repo history lists, a diff pane, and an
     open-file content pane. It uses the `git` CLI for status and history operations.
@@ -367,34 +368,45 @@ Global actions:
 - `t`: toggle between file-first and repo-first views.
 - `w`: prompt to write snapshot files for the current file/hash combination.
 
-Column-specific information and commands:
+Column-specific information and commands
+----------------------------------------
 
 Left File Column (Files):
 - Shows directory tree or file list for the working tree path.
 - Right on a directory: enter that directory.
 - Right on a tracked file: open the file's history in the right-side
     history column.
-#### add note on markers (A/M/D...)
+- File rows include a one-character status marker before the filename:
+    - `'\u00a0'`: tracked and currently clean (present in `HEAD`, no detected local change)
+    - `M`: modified in the working tree
+    - `A`: staged (index differs from `HEAD` for that path)
+    - `D`: deleted in the working tree
+    - `U`: untracked (present in working tree, not tracked by git)
+    - `I`: ignored (matched by ignore rules and shown when ignored files are enabled)
+    - `!`: conflicted (reserved marker; displayed if a path is classified as conflicted)
+- Press `i` to toggle showing ignored files; press `u` to toggle showing untracked files.
 
-Left History Column (File History for left pane):
+
+Right History Column (File History for left pane):
 - Shows commits affecting the file selected in the left file pane.
 - Mark a row with `m` to select it as the `prev` commit; navigate to a
     second row and press Right to diff between the two marked rows.
 - Right on a row: open the diff for that file between the selected
     commit pair.
-#### add note on special pseudo-rows
 
-Right History Column (Repository History):
+Left History Column (Repository History):
 - Shows repository-wide commits (newest first). Use this to pick commit
     ranges to inspect repository-wide changes.
 - Press `m` on a row to mark it (acts as one side of a commit pair).
 - With a commit pair selected, press Right to populate the Right File
     Column with the files changed between those commits.
+- The pseudo-hash names MODS, STAGED and NEWREPO are displayed 
+  when there are unstaged modifications, staged changes, or the new 
+  repository state, respectively.
 
 Right File Column (Files for selected commit-pair or pseudo refs):
-#### check the markers A/M/D... against reality
 - When populated from a repo commit pair you will see per-file status
-    markers (A/M/D/U/!) followed by the filename.
+    markers (A/M/D/U/I/!) followed by the filename.
 - Special pseudo-rows: `MODS` and `STAGED` appear at the top when the
     selected refs are the working tree/index. Expanding `MODS` shows the
     modified (unstaged) files; expanding `STAGED` shows staged changes.
@@ -466,7 +478,8 @@ Diff Variants:
 - In side-by-side mode, use `[` and `]` to adjust column widths, and `=` to reset to 50/50 split.
 - Long lines are truncated with ellipsis (…) to fit the available space.
 
-Configuration File:
+Configuration File
+------------------
 - The `.gitdiffnavtool.ini` file allows you to set default values for command-line options.
 - Location: Searched in current directory first, then `$HOME` directory.
 - File format: INI-style configuration with a `[gitdiffnavtool]` section.
@@ -500,7 +513,8 @@ Configuration File:
     # debug = /tmp/gitdiffnavtool.log
     ```
 
-Command-line Options:
+Command-line Options
+--------------------
 - All of the configuration values can also be specified on the command line, pluse some additional options.
 - Any boolean configuration options also has a `--no-` variation to turn off the value should it be set
   in the configuration file. For example, use `--no-add-authors` to turn displaying the author information.
@@ -4767,7 +4781,7 @@ class DiffList(FullScreenBase):
         Convert `git diff --word-diff=porcelain` body lines into render rows.
 
         Porcelain uses prefixed runs:
-        - `' '` context run
+        - `'\u00a0'` context run
         - `'+'` added run
         - `'-'` removed run
         - `'~'` newline marker
