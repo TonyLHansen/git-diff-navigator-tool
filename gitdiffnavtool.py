@@ -75,82 +75,81 @@ MARKERS = {
 # Inline CSS used by the Textual App (can be edited in-place)
 INLINE_CSS = (
     """
-/* gitdiffnavtool inline CSS */
+    /* gitdiffnavtool inline CSS */
 
-/* Title labels */
-#left-file-title, #left-history-title, #right-history-title, #right-file-title, #diff-title, #help-title {
-    padding: 0 1;
-    background: $surface;
-    color: $text;
-}
+    /* Title labels */
+    #left-file-title, #left-history-title, #right-history-title, #right-file-title, #diff-title, #help-title {
+        padding: 0 1;
+        background: $surface;
+        color: $text;
+    }
 
-.title.active {
-    background: $accent-darken-1;
-    color: white;
-    text-style: bold;
-}
+    .title.active {
+        background: $accent-darken-1;
+        color: white;
+        text-style: bold;
+    }
 
-/* Simple column spacing */
-ListView {
-    padding: 0 1;
-}
+    /* Simple column spacing */
+    ListView {
+        padding: 0 1;
+    }
 
-/* Highlight active list item per widget so colors are deterministic. */
-/* File lists */
-#left-file-list ListItem.active,
-#right-file-list ListItem.active {
-    background: [[HIGHLIGHT_FILELIST_BG]];
-    color: white;
-}
+    /* Highlight active list item per widget so colors are deterministic. */
+    /* File lists */
+    #left-file-list ListItem.active,
+    #right-file-list ListItem.active {
+        background: [[HIGHLIGHT_FILELIST_BG]];
+        color: white;
+    }
 
-/* History (repo) lists */
-#left-history-list ListItem.active,
-#right-history-list ListItem.active {
-    background: [[HIGHLIGHT_REPOLIST_BG]];
-    color: white;
-}
+    /* History (repo) lists */
+    #left-history-list ListItem.active,
+    #right-history-list ListItem.active {
+        background: [[HIGHLIGHT_REPOLIST_BG]];
+        color: white;
+    }
 
-/* Diff list */
-#diff-list ListItem.active {
-    background: [[HIGHLIGHT_DIFF_BG]];
-    color: white;
-}
+    /* Diff list */
+    #diff-list ListItem.active {
+        background: [[HIGHLIGHT_DIFF_BG]];
+        color: white;
+    }
 
-/* Help list */
-#help-list ListItem.active {
-    background: [[HIGHLIGHT_HELP_BG]];
-    color: white;
-}
+    /* Help list */
+    #help-list ListItem.active {
+        background: [[HIGHLIGHT_HELP_BG]];
+        color: white;
+    }
 
-/* Focus border classes for active/inactive widgets */
-ListView.focused-white {
-    border: solid white;
-}
+    /* Focus border classes for active/inactive widgets */
+    ListView.focused-white {
+        border: solid white;
+    }
 
-ListView.focused-gray {
-    border: solid gray;
-}
+    ListView.focused-gray {
+        border: solid gray;
+    }
 
-/* Centered message modal styling */
-#msg-modal-wrapper {
-    align: center middle;
-    height: 100%;
-    width: 100%;
-}
+    /* Centered message modal styling */
+    #msg-modal-wrapper {
+        align: center middle;
+        height: 100%;
+        width: 100%;
+    }
 
-#msg-modal {
-    content-align: center middle;
-}
+    #msg-modal {
+        content-align: center middle;
+    }
 
-#msg-modal-row {
-    align: center middle;
-}
+    #msg-modal-row {
+        align: center middle;
+    }
 
-#msg-modal-prompt {
-    align: center middle;
-    padding-top: 1;
-}
-
+    #msg-modal-prompt {
+        align: center middle;
+        padding-top: 1;
+    }
 """.replace("[[HIGHLIGHT_FILELIST_BG]]", HIGHLIGHT_FILELIST_BG)
     .replace("[[HIGHLIGHT_REPOLIST_BG]]", HIGHLIGHT_REPOLIST_BG)
     .replace("[[HIGHLIGHT_DIFF_BG]]", HIGHLIGHT_DIFF_BG)
@@ -181,27 +180,22 @@ OPEN_FILE_LIST_ID = "open-file-list"
 OPEN_FILE_TITLE = "open-file-title"
 
 # Footer text used when showing the left file list
-# LEFT_FILE_FOOTER = Text("Files: press Right to open file history")
 LEFT_FILE_FOOTER = Text("File: q(uit)  t(oggle)  ?/h(elp)  ←(prev) ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold")
 
 # Footer text used when switching to file-history view
-# RIGHT_HISTORY_FOOTER = Text("File history: press Left to return")
 RIGHT_HISTORY_FOOTER = Text(
     "History: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold"
 )
 
 # Footer text used when showing the left history pane
-# LEFT_HISTORY_FOOTER = Text("History: press Right to open file list")
 LEFT_HISTORY_FOOTER = Text("History: q(uit)  t(oggle)  ?/h(elp)  ← ↑/↓/ PgUp/PgDn/Home/End  →/␍   m(ark)", style="bold")
 
 # Footer text used when showing the right file list (file list view)
-# RIGHT_FILE_FOOTER = Text("Files: press Left to return")
 RIGHT_FILE_FOOTER = Text(
     "File: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close) ↑/↓/PgUp/PgDn/Home/End  →/␍ ", style="bold"
 )
 
 # Footer text used for help screen
-# HELP_FOOTER = Text("Help: press Enter/␍ to return")
 HELP_FOOTER = Text("Help: q(uit)  ↑/↓/PgUp/PgDn/Home/End  Press Enter/␍ to return", style="bold")
 # Text("Help: q(uit)  ↑/↓/PgUp/PgDn  Press any key to return", style="bold")
 
@@ -214,7 +208,6 @@ OPEN_FILE_FOOTER_2 = Text(
     "OpenFile: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←/f(ull)  ↑/↓/PgUp/PgDn/Home/End", style="bold"
 )
 # Footer text used when showing the diff for a history/file selection
-# DIFF_FOOTER = Text("Diff: press Left to return to files")
 DIFF_FOOTER_1 = Text(
     "Diff: q(uit)  t(oggle)  w(rite)  ?/h(elp)  ←(close)  ↑/↓/PgUp/PgDn/Home/End →/f(ull)  c(olor)  d(iff-type)  [=](width)  +/-(ctx)",
     style="bold",
@@ -321,7 +314,7 @@ From the history view you can navigate the commits and press Right or Enter/␍ 
 (You can also mark a particular commit in the history view with "m" and then navigate to another commit; 
 press Right/Enter/␍ to see the diff between the marked commit and the current selection.)
 
-From the history view, you can also press `o` to open file content in the OpenFile pane.
+From the history view, you can also press `o` to open the file content in the OpenFile pane.
 
 While viewing Diff or OpenFile content, Right/Enter/`f` promotes the pane to fullscreen and
 Left returns to the split view (or back to the prior pane when already in split).
@@ -381,6 +374,7 @@ Left File Column (Files):
 - Right on a directory: enter that directory.
 - Right on a tracked file: open the file's history in the right-side
     history column.
+#### add note on markers (A/M/D...)
 
 Left History Column (File History for left pane):
 - Shows commits affecting the file selected in the left file pane.
@@ -388,6 +382,7 @@ Left History Column (File History for left pane):
     second row and press Right to diff between the two marked rows.
 - Right on a row: open the diff for that file between the selected
     commit pair.
+#### add note on special pseudo-rows
 
 Right History Column (Repository History):
 - Shows repository-wide commits (newest first). Use this to pick commit
@@ -397,6 +392,7 @@ Right History Column (Repository History):
     Column with the files changed between those commits.
 
 Right File Column (Files for selected commit-pair or pseudo refs):
+#### check the markers A/M/D... against reality
 - When populated from a repo commit pair you will see per-file status
     markers (A/M/D/U/!) followed by the filename.
 - Special pseudo-rows: `MODS` and `STAGED` appear at the top when the
@@ -411,8 +407,8 @@ Commit History Format:
   - TIMESTAMP: ISO 8601 format (e.g., 2026-03-04 14:30:00)
   - ↑: Up arrow marks unpushed commits; omitted for pushed commits
   - HASH: Short commit hash (width controlled by --hash-length, default 12 chars)
-  - |AUTHOR_NAME EMAIL|: Author information in pipe-delimited format, showing author's
-    name and email address from git commit metadata. Use --no-add-authors to hide this field.
+  - |AUTHOR_NAME EMAIL|: Author information surrounded by pipes, showing author's
+    name and email address.
   - SUBJECT: First line of the commit message
 
 Diff Column:
@@ -506,8 +502,10 @@ Configuration File:
 
 Command-line Options:
 - All of the configuration values can also be specified on the command line, pluse some additional options.
+- Any boolean configuration options also has a `--no-` variation to turn off the value should it be set
+  in the configuration file. For example, use `--no-add-authors` to turn displaying the author information.
 - Use the `--help` option to see the complete list.
-    
+- Use the `--show-help` or `--show-help-color` options to see this help information.
 """
 
 
@@ -7087,6 +7085,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         metavar="HASH",
         help="specify a repo commit hash; may be provided up to two times (implies --repo-first)",
     )
+
     # Mutually exclusive group for initial-popup flags
     popup_group = startup_group.add_mutually_exclusive_group()
     popup_group.add_argument(
@@ -7103,6 +7102,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="disable the startup popup",
     )
+
     # Mutually exclusive group for branch flags
     branch_group = startup_group.add_mutually_exclusive_group()
     branch_group.add_argument(
@@ -7119,6 +7119,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="disable branch configuration (overrides config setting)",
     )
+
     startup_group.add_argument(
         "--hash-length",
         dest="hash_length",
@@ -7135,6 +7136,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=0,
         help="limit number of history entries to display (default: 0 for unlimited)",
     )
+
     # Mutually exclusive group for author display flags
     author_group = startup_group.add_mutually_exclusive_group()
     author_group.add_argument(
@@ -7149,6 +7151,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="hide author name and email in commit rows",
     )
+
     startup_group.add_argument(
         "path", nargs="?", default=".", help="git repository or file within it (default: current directory)"
     )
@@ -7172,6 +7175,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="same as `--color=none` with diff colorization off",
     )
+
     diff_group.add_argument(
         "--diff",
         dest="diff",
@@ -7229,6 +7233,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     debug_group.add_argument(
         "-d", "--debug", dest="debug", metavar="FILE", help="write debug log to FILE (enables debug logging)"
     )
+
     trim_debug_group = debug_group.add_mutually_exclusive_group()
     trim_debug_group.add_argument(
         "--trim-debug",
@@ -7242,6 +7247,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="do not truncate debug file (append mode)",
     )
+
     debug_group.add_argument(
         "-D",
         "--debug-tracing",
