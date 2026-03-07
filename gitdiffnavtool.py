@@ -7744,8 +7744,9 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
     return parser.parse_args(argv)
 
 
-def print_and_exit(text: str, show_color: bool) -> int:
-    """Render markdown `text` to the console then return exit code 0.
+def print_md_and_exit(text: str, show_color: bool) -> int:
+    """
+    Render markdown `text` to the console then return exit code 0.
 
     `show_color` enables colorized output when True; otherwise output is
     rendered without colors.
@@ -7756,61 +7757,10 @@ def print_and_exit(text: str, show_color: bool) -> int:
     return 0
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def set_debugging(args) -> None:
     """
-    Command-line entry point for gitdiffnavtool.
-
-    Parses CLI arguments, locates the repository worktree, configures
-    logging, and launches the `GitDiffNavTool` Textual application.
-    Returns process exit code (0 on success).
+    Configure debug logging based on parsed `args`.
     """
-    args = parse_cli_and_config(argv)
-
-    # Handle --init-config and exit
-    if args.init_config:
-        return handle_init_config(args)
-
-    # Handle --show-help or --show-help-color: render HELP_TEXT as markdown and exit
-    if args.show_help or args.show_help_color:
-        return print_and_exit(HELP_TEXT, args.show_help_color)
-
-    # Handle --show-initial-popup or --show-initial-popup-color:
-    # render INITIAL_POPUP_TEXT as markdown and exit.
-    if args.show_initial_popup or args.show_initial_popup_color:
-        return print_and_exit(INITIAL_POPUP_TEXT, args.show_initial_popup_color)
-
-    # Handle CLI flag overrides for initial-popup, ignored-files, untracked-files,
-    # add-authors, trim-debug, and branch selection:
-    # Positive flags (e.g., --initial-popup, --ignored-files) take precedence over
-    # negative flags and config defaults.
-    if args.initial_popup:
-        args.no_initial_popup = False
-    if args.ignored_files:
-        args.no_ignored = False
-    if args.untracked_files:
-        args.no_untracked = False
-    if args.add_authors:
-        args.no_add_authors = False
-    if args.no_trim_debug:
-        args.trim_debug = False
-    if args.no_branch:
-        args.branch = None
-
-    # Validate --highlight is a bare basename (no path elements)
-    try:
-        if args.highlight:
-            hl = args.highlight
-            if os.path.isabs(hl) or os.path.basename(hl) != hl:
-                printException(ValueError("--highlight must be a basename (no path elements)"), "argument error")
-                return 2
-        if int(args.hash_length) < 1:
-            printException(ValueError("--hash-length must be >= 1"), "argument error")
-            return 2
-    except Exception as e:
-        printException(e, "argument parsing/validation failed")
-        return 2
-
-    # Configure logging if debug file requested
     if args.debug:
         try:
             os.makedirs(os.path.dirname(args.debug) or "", exist_ok=True)
@@ -7837,6 +7787,65 @@ def main(argv: Optional[list[str]] = None) -> int:
         # When verbosity is low, silence verbose debug from markdown-it
         if args.verbose < 3:
             logging.getLogger("markdown_it").setLevel(logging.WARNING)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    """
+    Command-line entry point for gitdiffnavtool.
+
+    Parses CLI arguments, locates the repository worktree, configures
+    logging, and launches the `GitDiffNavTool` Textual application.
+    Returns process exit code (0 on success).
+    """
+    args = parse_cli_and_config(argv)
+
+    # Handle --init-config and exit
+    if args.init_config:
+        return handle_init_config(args)
+
+    # Handle --show-help or --show-help-color: render HELP_TEXT as markdown and exit
+    if args.show_help or args.show_help_color:
+        return print_md_and_exit(HELP_TEXT, args.show_help_color)
+
+    # Handle --show-initial-popup or --show-initial-popup-color:
+    # render INITIAL_POPUP_TEXT as markdown and exit.
+    if args.show_initial_popup or args.show_initial_popup_color:
+        return print_md_and_exit(INITIAL_POPUP_TEXT, args.show_initial_popup_color)
+
+    # Handle CLI flag overrides for initial-popup, ignored-files, untracked-files,
+    # add-authors, trim-debug, and branch selection:
+    # Positive flags (e.g., --initial-popup, --ignored-files) take precedence over
+    # negative flags and config defaults.
+    if args.initial_popup:
+        args.no_initial_popup = False
+    if args.ignored_files:
+        args.no_ignored = False
+    if args.untracked_files:
+        args.no_untracked = False
+    if args.add_authors:
+        args.no_add_authors = False
+    if args.no_trim_debug:
+        args.trim_debug = False
+    if args.no_branch:
+        args.branch = None
+
+    # Validate --highlight is a bare basename (no path elements)
+    if args.highlight:
+        hl = args.highlight
+        try:
+            if os.path.isabs(hl) or os.path.basename(hl) != hl:
+                printException(ValueError("--highlight must be a basename (no path elements)"), "argument error")
+                return 2
+        except Exception as e:
+            printException(e, "argument parsing/validation failed")
+            return 2
+
+    if int(args.hash_length) < 1:
+        printException(ValueError("--hash-length must be >= 1"), "argument error")
+        return 2
+
+    # Configure logging if debug file requested
+    set_debugging(args)
 
     try:
         # If repo-hash provided, validate count and imply repo-first
