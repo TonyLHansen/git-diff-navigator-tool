@@ -447,6 +447,16 @@ Open File Column:
     - `Left`: close/open-file navigation back toward the originating list.
     - `w` / `W`: write a snapshot for the current file/hash.
 
+Snapshot Writing:
+- Pressing `w` or `W` in the Diff or Open File columns writes a snapshot (copy) of the currently-visible content
+  to a file in the snapshot output directory.
+- By default, snapshots are written beside the source file with names like `filename.hash.ext` where `ext`
+  is the source file extension and `hash` is the commit hash.
+- Use `--output-directory DIR` (or `output-directory = DIR` in config) to specify an alternate directory
+  where all snapshot files will be written. The app will create the directory if it doesn't exist.
+- Snapshot files preserve the repository-relative path structure when written to an output directory
+  (e.g., a snapshot of `src/main.py` at hash `abc123` would become `output-directory/src/main.py.abc123.py`).
+
 Tips and behavior notes:
 - Short commit hashes are shown using the configured hash length (`--hash-length` / `hash-length` in config).
 - `MODS` lists working-tree modifications (unstaged).
@@ -510,6 +520,8 @@ Configuration File
     # Include untracked files in file lists (default: true)
     # This can be toggled at run time with 'u'/'U' when focused on file lists.
     untracked-files = true
+    # Directory where snapshot files are written (optional, default: beside source file)
+    # output-directory = /tmp/snapshots
     # Use a specific git branch (optional, default: current branch)
     # branch = main
     # Enable debug logging to a file (optional, default: disabled)
@@ -521,7 +533,7 @@ Command-line Options
 - All of the configuration values can also be specified on the command line, plus some additional options.
 - Any boolean configuration options also has a `--no-` variation to turn off the value should it be set
   in the configuration file. For example, use `--no-add-authors` to turn displaying the author information.
-- Use the `--help` option to see the complete list.
+- Use the `--help` option to see the complete list of options.
 - Use the `--show-help` or `--show-help-color` options to see this help information.
 - Use the `--show-initial-popup` or `--show-initial-popup-color` options to see the initial popup help information.
 """
@@ -1737,7 +1749,29 @@ class SaveSnapshotModal(AppException, ModalScreen):
             self.printException(e, "SaveSnapshotModal._save: computing reldir/relfile failed")
             reldir, relfile = os.path.dirname(relpath), os.path.basename(relpath)
 
-        target_path = f"{self.filepath}.{hashval}"
+        # Build target path from app-level output_directory when configured.
+        # Keep snapshots under that directory while preserving repo-relative
+        # path structure to avoid basename collisions.
+        target_path: str
+        outdir = self.app.output_directory
+        if outdir:
+            try:
+                os.makedirs(outdir, exist_ok=True)
+            except Exception as e:
+                self.printException(e, f"SaveSnapshotModal._save: creating output-directory failed ({outdir})")
+                return
+
+            try:
+                safe_rel = os.path.normpath(relpath)
+                if os.path.isabs(safe_rel) or safe_rel == ".." or safe_rel.startswith(f"..{os.sep}"):
+                    safe_rel = os.path.basename(self.filepath)
+            except Exception as e:
+                self.printException(e, "SaveSnapshotModal._save: normalizing relpath for output-directory failed")
+                safe_rel = os.path.basename(self.filepath)
+
+            target_path = os.path.join(outdir, f"{safe_rel}.{hashval}")
+        else:
+            target_path = f"{self.filepath}.{hashval}"
 
         # Helper to write bytes to target
         def _write_bytes(bdata: bytes) -> None:
@@ -5656,6 +5690,7 @@ class GitDiffNavTool(AppException, App):
         unified_context: int,
         history_limit: int,
         minimum_sidebyside_width: int,
+        output_directory: str | None,
         **kwargs,
     ):
         """
@@ -5718,6 +5753,9 @@ class GitDiffNavTool(AppException, App):
         # Minimum terminal width required for side-by-side view.
         # Can be overridden via --minimum-sidebyside-width / config.
         self.minimum_sidebyside_width = minimum_sidebyside_width
+        # Optional output directory used by snapshot writes from w/W.
+        # When unset, snapshots are written beside the source file (legacy behavior).
+        self.output_directory = os.path.abspath(output_directory) if output_directory else None
 
         # Optional initial filename basename to highlight when listing a dir
         self.highlight = highlight
@@ -7188,6 +7226,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=0,
         help="limit number of history entries to display (default: 0 for unlimited)",
     )
+    startup_group.add_argument(
+        "-o",
+        "--output-directory",
+        dest="output_directory",
+        metavar="DIR",
+        default=None,
+        help="directory where w/W snapshot files are written (default: beside source file)",
+    )
 
     # Mutually exclusive group for author display flags
     author_group = startup_group.add_mutually_exclusive_group()
@@ -7335,6 +7381,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     #   color=true/false
     #   hash-length=<integer >= 1>
     #   history-limit=<integer >= 0>
+    #   output-directory=<directory path>
     #   add-authors=true/false
     #   debug=<filename>
     #   trim-debug=true/false
@@ -7476,6 +7523,13 @@ def main(argv: Optional[list[str]] = None) -> int:
                     except Exception as e:
                         printException(e, "invalid history-limit in config")
                         sys.exit(f"invalid history-limit '{raw_limit_str}' in config; must be an integer >= 0")
+
+            # Optional directory for snapshot output files.
+            if "output-directory" in src:
+                raw_outdir = src.get("output-directory")
+                raw_outdir_str = raw_outdir if isinstance(raw_outdir, str) else str(raw_outdir)
+                if raw_outdir_str.strip() != "":
+                    defaults["output_directory"] = raw_outdir_str.strip()
 
             # Optional integer for minimum side-by-side width.
             if "minimum-sidebyside-width" in src:
@@ -7646,6 +7700,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             unified_context=args.unified_context,
             history_limit=args.history_limit,
             minimum_sidebyside_width=args.minimum_sidebyside_width,
+            output_directory=args.output_directory,
         )
         # Run the textual app (blocks until exit)
         app.run()

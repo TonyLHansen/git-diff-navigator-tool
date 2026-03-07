@@ -118,12 +118,56 @@ Configuration
 -------------
 You can set defaults in `.gitdiffnavtool.ini` (current directory or `$HOME`) under `[gitdiffnavtool]`.
 
-Example:
+Example (comprehensive configuration with all available options):
 
 ```ini
 [gitdiffnavtool]
+# Display width for short commit hashes (default: 12, must be >= 1)
 hash-length = 12
+# Show author name and email in commit rows (default: true)
+add-authors = true
+# Color scheme for diffs: red-green, blue-orange, teal-purple, style, none (default: style)
+color = style
+# Diff variant: classic, ignore-spaces, patience, word-diff, side-by-side (default: classic)
+diff = classic
+# Unified diff context lines (git diff -U; default: 3, must be >= 0)
+unified-context = 3
+# Minimum terminal width for side-by-side view (default: 60, must be >= 1)
+# If terminal width is less than this, side-by-side falls back to unified format
+minimum-sidebyside-width = 60
+# Start in repository mode instead of file-first mode (default: false)
+repo-first = false
+# Show startup welcome popup (default: true)
+initial-popup = true
+# Include ignored files in file lists (default: false)
+ignored-files = false
+# Include untracked files in file lists (default: true)
+untracked-files = true
+# Directory where snapshot files are written (optional, default: beside source file)
+# output-directory = /tmp/snapshots
+# Use a specific git branch (optional, default: current branch)
+# branch = main
+# Enable debug logging to a file (optional, default: disabled)
+# debug = /tmp/gitdiffnavtool.log
 ```
+
+Command-line and Configuration Options
+---------------------------------------
+
+- All configuration values can be specified on the command line as well (use `--help` to see all options).
+- Command-line options override configuration file values.
+- Boolean options have `--no-` variations (e.g., `--no-add-authors` to disable author display).
+
+Key Options:
+- `--color SCHEME`: Set diff colorization (red-green, blue-orange, teal-purple, style, none).
+- `-C` or `--no-color`: Disable diff colorization.
+- `--hash-length N`: Display short commit hashes using N characters (default: 12).
+- `--unified-context N`: Use N lines of context in diffs (default: 3, minimum 0).
+- `--minimum-sidebyside-width N`: Minimum terminal width before side-by-side falls back to unified (default: 60).
+- `--no-add-authors`: Hide author name and email in commit rows.
+- `--output-directory DIR`: Directory where snapshot files are written (default: beside source file).
+- `--show-help`: Display the help screen and exit.
+- `--show-initial-popup`: Display the startup popup and exit.
 
 Some of the Options
 -------------------
@@ -132,6 +176,7 @@ If `--no-color` is provided, the diff output will not be colorized.
 If `--hash-length N` is provided, displayed short commit hashes will use `N` characters.
 If `--unified-context N` is provided, diffs will use `N` lines of context (git diff -U option, default 3, minimum 0).
 If `--no-add-authors` is provided, author name and email will not be displayed in commit rows.
+If `--output-directory DIR` is provided, all snapshot files will be written to that directory (created if it doesn't exist).
 The command line options override the config values.
 
 Dependencies
