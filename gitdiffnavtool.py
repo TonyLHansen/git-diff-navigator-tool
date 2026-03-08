@@ -35,8 +35,9 @@ from rich.console import Console
 from textual import events
 from textual.app import App
 from textual.containers import Horizontal, Vertical
-from textual.widgets import ListView, Label, ListItem, Footer, Header, TextArea
+from textual.widgets import ListView, Label, ListItem, Footer, Header, TextArea, Input, Static
 from textual.screen import ModalScreen
+from textual.css.query import NoMatches
 
 # Repository helpers (extracted): provide printException, AppException, GitRepo
 from gitrepo import printException, AppException, GitRepo
@@ -108,6 +109,33 @@ INLINE_CSS = (
     #right-history-list ListItem.active {
         background: [[HIGHLIGHT_REPOLIST_BG]];
         color: white;
+    }
+    
+    /* Non-modal find overlay: single line input with layer positioning */
+    #find-input {
+        layer: overlay;
+        dock: top;
+        height: 1;
+        width: 100%;
+        border: none;
+        background: $boost;
+        color: $text;
+    }
+
+    /* Make modal screens transparent so the find modal doesn't blank the UI */
+    ModalScreen {
+        background: transparent;
+    }
+
+    /* The overlay root is a pre-composed Static container that will host
+       floating overlays. Keep it full-width and transparent; runtime
+       code will set absolute positioning on mounted overlays. */
+    #overlay-root {
+        width: 100%;
+        height: 0;
+        background: transparent;
+        padding: 0;
+        display: none;
     }
 
     /* Diff list */
@@ -749,6 +777,8 @@ class AppBase(AppException, ListView):
         # Rely on ListView to provide `children`, `_nodes`, `index`, and `app`.
         # Per-widget highlight background; subclasses override with specific backgrounds
         self.highlight_bg_style = HIGHLIGHT_DEFAULT_BG
+        # Last interactive search string for repeated '>'/'<' searches
+        self._last_search: str | None = None
 
     def _log_visible_items(self, msg: str) -> None:
         """
@@ -1262,6 +1292,107 @@ class AppBase(AppException, ListView):
             self._highlight_top()
         except Exception as e:
             self.printException(e, "_highlight_match failed")
+
+    def _find_and_activate(self, query: str, forward: bool = True) -> bool:
+        """
+        Find the next (or previous if forward=False) node whose visible
+        text contains `query` (case-insensitive). If found, activate its
+        index and return True. Otherwise return False.
+        """
+        try:
+            if not query:
+                return False
+            nodes = self.nodes()
+            if not nodes:
+                return False
+            total = len(nodes)
+            start = int(getattr(self, "index", 0) or 0)
+            logger.debug("_find_and_activate: query=%r forward=%r start=%r total=%r", query, forward, start, total)
+            # Record last search even if no match found so repeated keys re-use it
+            self._last_search = query
+            q = query.casefold()
+
+            # Build ordered index sequence depending on direction
+            if forward:
+                seq = list(range(start + 1, total)) + list(range(0, start + 1))
+            else:
+                seq = list(range(start - 1, -1, -1)) + list(range(total - 1, start - 1, -1))
+
+            for i in seq:
+                try:
+                    node = nodes[i]
+                    # Prefer an explicit search text attached at render time.
+                    st = getattr(node, "_search_text", None)
+                    if st is not None:
+                        txt = st
+                    else:
+                        txt = self.text_of(node)
+                    if txt is None:
+                        continue
+                    logger.debug("_find_and_activate: checking idx=%d text=%r", i, txt)
+                    if q in str(txt).casefold():
+                        logger.debug("_find_and_activate: match at idx=%d text=%r", i, txt)
+                        self._last_search = query
+                        self._activate_index(i)
+                        return True
+                    # Fallback: attempt to extract text from children/renderables
+                    try:
+                        alt_parts: list[str] = []
+                        raw = getattr(node, "_raw_text", None)
+                        if raw:
+                            alt_parts.append(str(raw))
+                        fname = getattr(node, "_filename", None)
+                        if fname:
+                            alt_parts.append(str(fname))
+
+                        # If node itself is a Label, prefer its text/renderable
+                        try:
+                            if isinstance(node, Label):
+                                if getattr(node, "text", None):
+                                    alt_parts.append(str(node.text))
+                                else:
+                                    rend = getattr(node, "renderable", None)
+                                    if isinstance(rend, Text):
+                                        alt_parts.append(rend.plain)
+                        except Exception as e:
+                            self.printException(e, "_find_and_activate: node text/renderable extraction failed")
+
+                        # Inspect children for Label or Text renderables
+                        ch = getattr(node, "children", None) or []
+                        for c in ch:
+                            try:
+                                if isinstance(c, Label):
+                                    if getattr(c, "text", None):
+                                        alt_parts.append(str(c.text))
+                                        continue
+                                    rend = getattr(c, "renderable", None)
+                                    if isinstance(rend, Text):
+                                        alt_parts.append(rend.plain)
+                                        continue
+                                # Generic renderable on child
+                                rend = getattr(c, "renderable", None)
+                                if isinstance(rend, Text):
+                                    alt_parts.append(rend.plain)
+                            except Exception as e:
+                                self.printException(e, "_find_and_activate: child node text/renderable extraction failed")
+
+                        alt = " ".join([p for p in alt_parts if p])
+                        logger.debug("_find_and_activate: fallback combined alt for idx=%d -> %r", i, alt)
+                        if alt:
+                            if q in alt.casefold():
+                                logger.debug("_find_and_activate: fallback match at idx=%d text=%r", i, alt)
+                                self._last_search = query
+                                self._activate_index(i)
+                                return True
+                    except Exception as e:
+                        self.printException(e, "_find_and_activate: fallback extraction failed")
+                except Exception as e:
+                    self.printException(e, "_find_and_activate: checking node failed")
+            logger.debug("_find_and_activate: no match for %r", query)
+            return False
+        except Exception as e:
+            self.printException(e, "_find_and_activate failed")
+            return False
 
     def _highlight_top(self) -> None:
         """
@@ -1812,24 +1943,32 @@ class SaveSnapshotModal(AppException, ModalScreen):
         try:
             key = getattr(event, "key", "")
             try:
-                if key not in ("q", "Q"):  # let q/Q pass through to allow quick cancel without logging
+                if key not in ("q", "Q"):
+                    # Prevent further handling unless user pressed q/Q to cancel
                     event.stop()
             except Exception as e:
                 self.printException(e, "SaveSnapshotModal.on_key: event.stop failed")
 
-            # Map keys to actions
             try:
+                # Older (prev_hash)
                 if key in ("o", "O"):
                     if self.prev_hash:
                         self._save(self.prev_hash)
-                elif key in ("n", "N"):
+                    return
+
+                # Newer (curr_hash)
+                if key in ("n", "N"):
                     if self.curr_hash:
                         self._save(self.curr_hash)
-                elif key in ("b", "B"):
+                    return
+
+                # Both
+                if key in ("b", "B"):
                     if self.prev_hash:
                         self._save(self.prev_hash)
                     if self.curr_hash:
                         self._save(self.curr_hash)
+                    return
             except Exception as e:
                 self.printException(e, "SaveSnapshotModal.on_key: _save failed")
 
@@ -2090,9 +2229,84 @@ class EditMessageModal(ModalScreen):
                 except Exception as e:
                     printException(e, "EditMessageModal.on_key: pop_screen failed")
                 return
-
         except Exception as e:
-            printException(e, "EditMessageModal.on_key failed")
+            self.printException(e, "EditMessageModal.on_key failed")
+
+
+class FindModal(ModalScreen):
+    """
+    Modal that prompts the user for a single-line search string.
+
+    Submits the value via `on_submit(text)` when Enter is pressed.
+    """
+
+    def __init__(self, initial_text: str = "", title: str = "Find", on_submit=None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.initial_text = initial_text or ""
+        self.title = title
+        self.on_submit = on_submit
+
+    def compose(self):
+        """Compose a single-line Input docked at top for quick searches."""
+        try:
+            inp = Input(value=self.initial_text, id="find-input")
+            yield Vertical(
+                Horizontal(Label(Text(self.title, style="bold"), id="find-title"), inp),
+                id="find-modal-wrapper",
+            )
+        except Exception as e:
+            self.printException(e, "FindModal.compose failed")
+
+    def on_mount(self) -> None:
+        """Focus the input when the modal is shown."""
+        try:
+            inp = self.query_one("#find-input", Input)
+            inp.focus()
+            logger.debug("FindModal.on_mount: focused input id=%r initial_text=%r", "#find-input", self.initial_text)
+        except Exception as e:
+            self.printException(e, "FindModal.on_mount failed")
+
+        # Ensure the modal background is transparent so the rest of the
+        # UI remains visible when the find modal is shown. Some Textual
+        # backends render a solid overlay for ModalScreen; enforce
+        # transparency on the screen and wrapper at mount time.
+        try:
+            try:
+                self.styles.background = "transparent"
+            except Exception as e:
+                self.printException(e, "FindModal.on_mount: setting screen background failed")
+            try:
+                wrapper = self.query_one("#find-modal-wrapper")
+                wrapper.styles.background = "transparent"
+            except Exception as e:
+                self.printException(e, "FindModal.on_mount: setting wrapper background failed")
+                pass
+        except Exception as e:
+            self.printException(e, "FindModal.on_mount: setting transparent background failed")
+
+    def on_input_submitted(self, message: Input.Submitted) -> None:
+        """Handle Input submit (Enter) and call on_submit callback."""
+        try:
+            try:
+                val = message.value
+            except Exception as e:
+                self.printException(e, "FindModal.on_input_submitted: reading value failed")
+                val = ""
+
+            logger.debug("FindModal.on_input_submitted: value=%r", val)
+
+            try:
+                self.app.pop_screen()
+            except Exception as e:
+                self.printException(e, "FindModal.on_input_submitted: pop_screen failed")
+
+            if self.on_submit:
+                try:
+                    self.on_submit(val)
+                except Exception as e:
+                    self.printException(e, "FindModal.on_input_submitted: on_submit callback failed")
+        except Exception as e:
+            self.printException(e, "FindModal.on_input_submitted failed")
 
 
 class RightSideBase(AppBase):
@@ -2317,6 +2531,35 @@ class FileListBase(AppBase):
                 self.index = self._min_index or 0
         except Exception as e:
             self.printException(e, "FileListBase.on_focus")
+
+    def on_key(self, event: events.Key) -> None:
+        """Handle '>' and '<' to prompt for forward/backward finds (case-insensitive).
+
+        This base implementation allows all file-list subclasses to inherit
+        the same behavior for find shortcuts without duplicating logic.
+        """
+        try:
+            k = getattr(event, "key", None)
+            ch = getattr(event, "character", None)
+            logger.debug("FileListBase.on_key: key=%r character=%r", k, ch)
+
+            if ch == ">" or ch == "<":
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "FileListBase.on_key: event.stop failed")
+                try:
+                    init = getattr(self, "_last_search", "") or ""
+                    forward = ch == ">"
+                    try:
+                        self.app.show_find_overlay(init, ("Find (forward)" if forward else "Find (backward)"), lambda v, s=self: s._find_and_activate(v, forward))
+                    except Exception as e:
+                        self.printException(e, "FileListBase.on_key: show_find_overlay failed")
+                except Exception as e:
+                    self.printException(e, "FileListBase.on_key: push FindModal failed")
+                return
+        except Exception as e:
+            self.printException(e, "FileListBase.on_key failed")
 
     def _ensure_index_visible(self) -> None:
         """
@@ -2768,6 +3011,7 @@ class FileModeFileList(FileListBase):
         self._last_child_by_dir: dict[str, str] = {}
         # Per-widget highlight background style.
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
+
 
     def _collect_filemode_nodes(self) -> None:
         """
@@ -3926,6 +4170,8 @@ class HistoryListBase(AppBase):
         self.is_history_list = 1
         # History lists are selectable from the first data row (index 0).
         self._min_index = 0
+        # Last search string for repeated forward/backward searches
+        self._last_search = None
 
     def _add_row(self, text: str, commit_hash: str | None, mark_active: bool = False) -> None:
         """
@@ -4351,6 +4597,41 @@ class HistoryListBase(AppBase):
         logger.debug("HistoryListBase.key_E called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_e(event, recursive=True)
 
+    def on_key(self, event: events.Key) -> None:
+        """Handle '>' and '<' to prompt for forward/backward finds (case-insensitive)."""
+        try:
+            ch = getattr(event, "character", None)
+            if ch == ">":
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "HistoryListBase.on_key: event.stop failed")
+                try:
+                    init = self._last_search or ""
+                    try:
+                        self.app.show_find_overlay(init, "Find (forward)", lambda v, s=self: s._find_and_activate(v, True))
+                    except Exception as e:
+                        self.printException(e, "DiffList.on_key: show_find_overlay failed")
+                except Exception as e:
+                    self.printException(e, "HistoryListBase.on_key: push FindModal failed")
+                return
+            if ch == "<":
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "HistoryListBase.on_key: event.stop failed")
+                try:
+                    init = self._last_search or ""
+                    try:
+                        self.app.show_find_overlay(init, "Find (backward)", lambda v, s=self: s._find_and_activate(v, False))
+                    except Exception as e:
+                        self.printException(e, "DiffList.on_key: show_find_overlay failed")
+                except Exception as e:
+                    self.printException(e, "HistoryListBase.on_key: push FindModal failed")
+                return
+        except Exception as e:
+            self.printException(e, "HistoryListBase.on_key failed")
+
 
 class FileModeHistoryList(HistoryListBase, RightSideBase):
     """History list for a single file's history. Stubbed prep method."""
@@ -4705,6 +4986,8 @@ class DiffList(FullScreenBase):
         # Horizontal scroll offset for side-by-side panels (columns)
         # Measured in characters from the left of each panel.
         self._sbs_hscroll = 0
+        # Last search term for repeated '>'/'<' searches
+        self._last_search = None
 
     def on_key(self, event: events.Key) -> None:
         """Handle bracket/equal keys directly for side-by-side width control."""
@@ -4724,6 +5007,33 @@ class DiffList(FullScreenBase):
                 logger.debug("DiffList.on_key: consumed '{' -> action_hscroll_left")
                 event.stop()
                 self.action_hscroll_left()
+                return
+            if ch == ">":
+                logger.debug("DiffList.on_key: consumed '>' -> forward search")
+                event.stop()
+                # If we have a previous search, repeat it; otherwise prompt
+                try:
+                    init = self._last_search or ""
+                    try:
+                        self.app.show_find_overlay(init, "Find (forward)", lambda v, s=self: s._find_and_activate(v, True))
+                    except Exception as e:
+                        self.printException(e, "HistoryListBase.on_key: show_find_overlay failed")
+                    logger.debug("DiffList.on_key: pushed FindModal (forward) init=%r", init)
+                except Exception as e:
+                    self.printException(e, "DiffList.on_key: push FindModal failed")
+                return
+            if ch == "<":
+                logger.debug("DiffList.on_key: consumed '<' -> backward search")
+                event.stop()
+                try:
+                    init = self._last_search or ""
+                    try:
+                        self.app.show_find_overlay(init, "Find (backward)", lambda v, s=self: s._find_and_activate(v, False))
+                    except Exception as e:
+                        self.printException(e, "HistoryListBase.on_key: show_find_overlay failed")
+                    logger.debug("DiffList.on_key: pushed FindModal (backward) init=%r", init)
+                except Exception as e:
+                    self.printException(e, "DiffList.on_key: push FindModal failed")
                 return
             if ch == "}":
                 logger.debug("DiffList.on_key: consumed '}' -> action_hscroll_right")
@@ -5378,15 +5688,39 @@ class DiffList(FullScreenBase):
             self.clear()
             for i, txt in enumerate(rendered_rows):
                 try:
+                    # Compute a plain-text search representation for the row so
+                    # find/search logic can operate on a stable string regardless
+                    # of how the Label stores renderables internally.
+                    try:
+                        if hasattr(txt, "plain"):
+                            search_text = str(txt.plain or "")
+                        else:
+                            search_text = str(txt)
+                    except Exception as e:
+                        self.printException(e, "_render_output: computing search_text failed")
+                        search_text = str(txt)
+
                     item = ListItem(Label(txt))
+                    # Attach a search-friendly text attribute used by _find_and_activate
+                    try:
+                        setattr(item, "_search_text", search_text)
+                    except Exception as _ex:
+                        self.printException(_ex, "_render_output: setting _search_text failed")
+
                     # Make the first line (our diff header) unselectable so
                     # navigation/highlight skips it.
                     try:
                         if i == 0:
                             item._selectable = False
                             item._diff_header = True
+                            # Keep header search text empty so it isn't matched by finds
+                            try:
+                                item._search_text = ""
+                            except Exception as e:
+                                self.printException(e, "_render_output: setting header search_text failed")
                     except Exception as _ex:
                         self.printException(_ex, "_render_output: setting header metadata failed")
+
                     self.append(item)
                 except Exception as e:
                     self.printException(e, "_render_output append failed")
@@ -5717,6 +6051,8 @@ class OpenFileList(FullScreenBase):
         self._fullscreen_footer = OPEN_FILE_FOOTER_2
         # Open file views are selectable from the first content line (index 0).
         self._min_index = 0
+        # Last search term for repeated '>'/'<' searches
+        self._last_search = None
         self._split_footer = OPEN_FILE_FOOTER_1
         # Where to return when leaving the open-file view: (state_name, widget_id, footer)
         # Set when file is opened; allows consistent navigation regardless of split layout.
@@ -5854,6 +6190,41 @@ class OpenFileList(FullScreenBase):
         except Exception as e:
             self.printException(e, "OpenFileList.text_of failed")
             return str(node)
+
+    def on_key(self, event: events.Key) -> None:
+        """Handle simple inline keys for searching '>' (forward) and '<' (backward)."""
+        try:
+            ch = getattr(event, "character", None)
+            if ch == ">":
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "OpenFileList.on_key: event.stop failed")
+                try:
+                    init = self._last_search or ""
+                    try:
+                        self.app.show_find_overlay(init, "Find (forward)", lambda v, s=self: s._find_and_activate(v, True))
+                    except Exception as e:
+                        self.printException(e, "OpenFileList.on_key: show_find_overlay failed")
+                except Exception as e:
+                    self.printException(e, "OpenFileList.on_key: push FindModal failed")
+                return
+            if ch == "<":
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "OpenFileList.on_key: event.stop failed")
+                try:
+                    init = self._last_search or ""
+                    try:
+                        self.app.show_find_overlay(init, "Find (backward)", lambda v, s=self: s._find_and_activate(v, False))
+                    except Exception as e:
+                        self.printException(e, "OpenFileList.on_key: show_find_overlay failed")
+                except Exception as e:
+                    self.printException(e, "OpenFileList.on_key: push FindModal failed")
+                return
+        except Exception as e:
+            self.printException(e, "OpenFileList.on_key failed")
 
 
 class GitDiffNavTool(AppException, App):
@@ -6015,6 +6386,8 @@ class GitDiffNavTool(AppException, App):
         """
         # Compose the canonical six-column layout using Vertical columns
         yield Header()
+        # Dedicated overlay root for non-modal overlays (find input, etc.)
+        yield Static(id="overlay-root")
         with Horizontal(id="main"):
             with Vertical(id="left-file-column"):
                 yield Label(Text("Files"), id=LEFT_FILE_TITLE)
@@ -6081,6 +6454,32 @@ class GitDiffNavTool(AppException, App):
 
             # Ensure help content is prepared so help is immediately available
             self.help_list.prepHelp()
+
+            # Ensure an overlay-root exists and cache it to avoid repeated
+            # query_one calls which can raise NoMatches and spam logs.
+            try:
+                try:
+                    self._overlay_root = self.query_one("#overlay-root")
+                except Exception as e:
+                    self.printException(e, "on_mount: overlay-root query failed")
+                    # If overlay-root is not present in composition, create
+                    # a transparent Static and mount it at the app/screen
+                    # so floating overlays have a stable parent.
+                    try:
+                        from textual.widgets import Static
+
+                        root = Static(id="overlay-root")
+                        scr = getattr(self, "screen", None)
+                        if scr is not None:
+                            scr.mount(root)
+                        else:
+                            self.mount(root)
+                        self._overlay_root = root
+                    except Exception as _e:
+                        self.printException(_e, "on_mount: creating overlay-root failed")
+                        self._overlay_root = None
+            except Exception as e:
+                self.printException(e, "on_mount: overlay-root setup failed")
 
             # Apply any requested initial diff variant (from CLI or config)
             # args.diff is guaranteed to be a valid variant name by main()
@@ -6171,6 +6570,122 @@ class GitDiffNavTool(AppException, App):
         except Exception as e:
             self.printException(e, "on_mount failed")
 
+    # -- Non-modal find overlay helpers ---------------------------------
+    def show_find_overlay(self, initial_text: str, title: str, on_submit: Callable[[str], None]) -> None:
+        """Show a non-modal, top-docked find input overlay.
+
+        The overlay is mounted into the app DOM with id `find-overlay` and
+        contains an Input with id `find-input`. Submission is handled by
+        `on_input_submitted` which delegates to the provided `on_submit`.
+        """
+        try:
+            # Remove any existing overlay widget we cached
+            try:
+                existing = getattr(self, "_find_overlay_widget", None)
+                if existing is not None:
+                    try:
+                        existing.remove()
+                    except Exception as e:
+                        # ignore removal errors; we'll replace it below
+                        self.printException(e, "show_find_overlay: existing.remove failed")
+                    self._find_overlay_widget = None
+            except Exception as e:
+                self.printException(e, "show_find_overlay: clearing cached overlay failed")
+
+            self._find_overlay_callback = on_submit
+
+            # Just mount the input directly - no containers
+            inp = Input(value=initial_text or "", placeholder=title, id="find-input")
+
+            # Mount directly to screen
+            try:
+                scr = getattr(self, "screen", None)
+                if scr is not None:
+                    try:
+                        scr.mount(inp)
+                    except Exception as e:
+                        self.printException(e, "show_find_overlay: screen.mount failed")
+                        self.mount(inp)
+                else:
+                    self.mount(inp)
+
+                # Cache the widget
+                self._find_overlay_widget = inp
+            except Exception as e:
+                self.printException(e, "show_find_overlay: mount/fallback failed")
+
+            # Focus the input after mount (direct reference avoids query)
+            try:
+                self.call_later(lambda: inp.focus())
+            except Exception as e:
+                self.printException(e, "show_find_overlay: focus input failed")
+        except Exception as e:
+            self.printException(e, "show_find_overlay failed")
+
+    def hide_find_overlay(self) -> None:
+        try:
+            # If we cached the mounted overlay widget, remove it directly
+            try:
+                cached = getattr(self, "_find_overlay_widget", None)
+                if cached is not None:
+                    try:
+                        cached.remove()
+                    except Exception as e:
+                        self.printException(e, "hide_find_overlay: removing cached overlay failed")
+                    finally:
+                        self._find_overlay_widget = None
+                    self._find_overlay_callback = None
+                    return
+            except Exception as e:
+                self.printException(e, "hide_find_overlay: clearing cached overlay failed")
+
+            # Fallback: try removing by selector from screen/app
+            scr = getattr(self, "screen", None)
+            if scr is not None:
+                try:
+                    existing = scr.query_one("#find-input")
+                    existing.remove()
+                except Exception as e:
+                    self.printException(e, "hide_find_overlay: removing overlay from screen failed")
+            else:
+                try:
+                    existing = self.query_one("#find-input")
+                    existing.remove()
+                except Exception as e:
+                    self.printException(e, "hide_find_overlay: removing overlay from self failed")
+            self._find_overlay_callback = None
+        except Exception as e:
+            self.printException(e, "hide_find_overlay failed")
+
+    def on_input_submitted(self, message: Input.Submitted) -> None:
+        """Handle submission from the non-modal find input."""
+        try:
+            try:
+                inp = message.input
+                if getattr(inp, "id", None) != "find-input":
+                    return
+                val = message.value
+            except Exception as e:
+                self.printException(e, "on_input_submitted: reading find input failed")
+                val = ""
+
+            # Hide the overlay and invoke callback
+            try:
+                self.hide_find_overlay()
+            except Exception as e:
+                self.printException(e, "on_input_submitted: hide_find_overlay failed")
+
+            if getattr(self, "_find_overlay_callback", None):
+                try:
+                    cb = self._find_overlay_callback
+                    # Clear before calling to avoid reentrancy issues
+                    self._find_overlay_callback = None
+                    cb(val)
+                except Exception as e:
+                    self.printException(e, "on_input_submitted: callback failed")
+        except Exception as e:
+            self.printException(e, "on_input_submitted failed")
+
     def on_key(self, event: events.Key) -> None:
         """When MessageModal is active, dismiss it on any key and stop propagation."""
         try:
@@ -6184,6 +6699,87 @@ class GitDiffNavTool(AppException, App):
             except Exception as e:
                 self.printException(e, "on_key: reading current screen failed")
                 current_screen = None
+            # If the non-modal find overlay is visible, handle Enter/Escape here
+            try:
+                scr = getattr(self, "screen", None)
+                # Prefer checking the cached overlay widget to avoid noisy
+                # query_one exceptions. Fall back to a lightweight screen
+                # query only if no cached widget is present.
+                overlay_present = getattr(self, "_find_overlay_widget", None) is not None
+                if not overlay_present:
+                    try:
+                        if scr is not None:
+                            try:
+                                scr.query_one("#find-input")
+                                overlay_present = True
+                            except NoMatches as _no_logging:
+                                # Expected when overlay not present
+                                overlay_present = False
+                            except Exception as e:
+                                self.printException(e, "on_key: querying find overlay failed")
+                                overlay_present = False
+                        else:
+                            try:
+                                self.query_one("#find-input")
+                                overlay_present = True
+                            except NoMatches as _no_logging:
+                                # Expected when overlay not present
+                                overlay_present = False
+                            except Exception as e:
+                                self.printException(e, "on_key: querying find overlay failed")
+                                overlay_present = False
+                    except Exception as e:
+                        self.printException(e, "on_key: querying find overlay failed")
+                        overlay_present = False
+                if overlay_present:
+                    key = getattr(event, "key", "")
+                    ch = getattr(event, "character", None)
+                    # Enter/Return: submit
+                    if key in ("enter",) or ch == "\r":
+                        try:
+                            event.stop()
+                        except Exception as e:
+                            self.printException(e, "on_key: event.stop failed for find submit")
+                        try:
+                            inp = None
+                            try:
+                                inp = scr.query_one("#find-input", Input)
+                            except Exception as e:
+                                self.printException(e, "on_key: querying find input failed")
+                                try:
+                                    inp = self.query_one("#find-input", Input)
+                                except Exception as e:
+                                    self.printException(e, "on_key: querying find input failed")
+                                    inp = None
+                            val = inp.value if (inp is not None and hasattr(inp, "value")) else ""
+                            cb = getattr(self, "_find_overlay_callback", None)
+                            try:
+                                self.hide_find_overlay()
+                            except Exception as e:
+                                self.printException(e, "on_key: hide_find_overlay failed")
+                            if cb:
+                                try:
+                                    self._find_overlay_callback = None
+                                    cb(val)
+                                except Exception as e:
+                                    self.printException(e, "on_key: find callback failed")
+                        except Exception as e:
+                            self.printException(e, "on_key: handling find submit failed")
+                        return
+                    # Escape: cancel
+                    if key == "escape":
+                        try:
+                            event.stop()
+                        except Exception as e:
+                            self.printException(e, "on_key: event.stop failed for find cancel")
+                        try:
+                            self.hide_find_overlay()
+                        except Exception as e:
+                            self.printException(e, "on_key: hide_find_overlay failed for escape")
+                        return
+
+            except Exception as e:
+                self.printException(e, "on_key: overlay handling failed")
 
             if isinstance(current_screen, MessageModal):
                 logger.debug("GitDiffNavTool.on_key: MessageModal active, dismissing")
