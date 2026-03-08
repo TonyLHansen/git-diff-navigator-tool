@@ -112,14 +112,28 @@ INLINE_CSS = (
     }
     
     /* Non-modal find overlay: single line input with layer positioning */
-    #find-input {
+    #find-container {
         layer: overlay;
         dock: top;
         height: 1;
         width: 100%;
         border: none;
         background: $boost;
+        layout: horizontal;
+    }
+
+    #find-label {
+        width: auto;
+        background: $accent;
         color: $text;
+        padding: 0 1;
+    }
+
+    #find-input {
+        width: 1fr;
+        background: $boost;
+        color: $text;
+        border: none;
     }
 
     /* Make modal screens transparent so the find modal doesn't blank the UI */
@@ -1007,10 +1021,34 @@ class AppBase(AppException, ListView):
                 # the current view from authoritative data rather than
                 # mutating styles after the fact.
                 self.apply_index_change(old, new_index)
+                # Final defensive pass: ensure the selected row has the
+                # `active` class even if render/update races occurred.
+                try:
+                    self._enforce_active_class_for_index(new_index)
+                except Exception as _e:
+                    self.printException(_e, "_activate_index: enforcing active class failed")
             except Exception as e:
                 self.printException(e, "_activate_index: failed to set index and apply changes")
         except Exception as e:
             self.printException(e, "_activate_index failed")
+
+    def _enforce_active_class_for_index(self, idx: int | None) -> None:
+        """Set `active` class on exactly one visible node for deterministic highlight."""
+        try:
+            nodes = self.nodes()
+            if not nodes:
+                return
+            for i, node in enumerate(nodes):
+                try:
+                    node.set_class(i == idx, "active")
+                except Exception as e:
+                    self.printException(e, "_enforce_active_class_for_index: node.set_class failed")
+                try:
+                    node.refresh()
+                except Exception as e:
+                    self.printException(e, "_enforce_active_class_for_index: node.refresh failed")
+        except Exception as e:
+            self.printException(e, "_enforce_active_class_for_index failed")
 
     def apply_index_change(self, old: int | None, new: int | None):
         """
@@ -1088,6 +1126,47 @@ class AppBase(AppException, ListView):
                     return new_node
             except Exception as e:
                 self.printException(e, "apply_index_change: fast-path toggle failed")
+
+            # File-mode in-place path: for index-only changes (including
+            # non-adjacent jumps from search), update classes directly
+            # instead of re-rendering. This keeps highlight deterministic
+            # and avoids duplicate-row races.
+            try:
+                if (
+                    hasattr(self, "_nodes_by_dir")
+                    and bool(getattr(self, "_nodes_by_dir", None))
+                    and old is not None
+                    and new is not None
+                ):
+                    nodes_local = self.nodes()
+                    if nodes_local and 0 <= new < len(nodes_local):
+                        old_node = nodes_local[old] if 0 <= old < len(nodes_local) else None
+                        new_node = nodes_local[new]
+                        if old_node is not None:
+                            try:
+                                old_node.set_class(False, "active")
+                                old_node.refresh()
+                            except Exception as _e:
+                                self.printException(_e, "apply_index_change: filemode in-place clear old failed")
+                        try:
+                            new_node.set_class(True, "active")
+                            new_node.refresh()
+                        except Exception as _e:
+                            self.printException(_e, "apply_index_change: filemode in-place set new failed")
+                        try:
+                            if hasattr(self, "_ensure_index_visible"):
+                                self._ensure_index_visible()
+                        except Exception as _e:
+                            self.printException(_e, "apply_index_change: filemode in-place ensure visible failed")
+                        logger.debug(
+                            "apply_index_change: filemode in-place toggle old=%r new=%r nodes=%d",
+                            old,
+                            new,
+                            len(nodes_local),
+                        )
+                        return new_node
+            except Exception as e:
+                self.printException(e, "apply_index_change: filemode in-place toggle failed")
 
             # Authoritative re-render when we have node data available.
             try:
@@ -3011,6 +3090,8 @@ class FileModeFileList(FileListBase):
         self._last_child_by_dir: dict[str, str] = {}
         # Per-widget highlight background style.
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
+        # Guard against overlapping render passes that can duplicate rows.
+        self._render_filemode_in_progress: bool = False
 
 
     def _collect_filemode_nodes(self) -> None:
@@ -3133,6 +3214,10 @@ class FileModeFileList(FileListBase):
         change downstream logic.
         """
         try:
+            if self._render_filemode_in_progress:
+                return
+            self._render_filemode_in_progress = True
+
             # Prepare the widget for fresh rendering: clear existing rows
             # and insert the canonical key legend header.
             # Capture current index before clearing children; clearing the
@@ -3452,7 +3537,7 @@ class FileModeFileList(FileListBase):
                         try:
                             self.clear()
                         except Exception as e_clear:
-                            self.printException(e_clear, "_render_filemode_display: clear() failed")
+                            self.printException(e_clear, "_render_filemode_display: clear() before append failed")
                         for it in new_items:
                             try:
                                 self.append(it)
@@ -3495,6 +3580,11 @@ class FileModeFileList(FileListBase):
 
         except Exception as e:
             self.printException(e, "_render_filemode_display failed")
+        finally:
+            try:
+                self._render_filemode_in_progress = False
+            except Exception as _e:
+                self.printException(_e, "_render_filemode_display: resetting in-progress flag failed")
 
     def prepFileModeFileList(self, highlight: str | None = None) -> None:
         """
@@ -6151,7 +6241,13 @@ class OpenFileList(FullScreenBase):
             for i in range(start_idx, end_idx):
                 line = lines[i]
                 display_line = f"{i+1:6d}:  {line}"
-                self.append(ListItem(Label(Text(display_line))))
+                item = ListItem(Label(Text(display_line)))
+                # Keep a stable plain-text representation for find logic.
+                try:
+                    item._search_text = display_line
+                except Exception as e:
+                    self.printException(e, "_render_file_chunk: setting _search_text failed")
+                self.append(item)
 
             logger.debug("prepOpenFileList: rendered lines %d-%d", start_idx, end_idx)
 
@@ -6593,24 +6689,27 @@ class GitDiffNavTool(AppException, App):
                 self.printException(e, "show_find_overlay: clearing cached overlay failed")
 
             self._find_overlay_callback = on_submit
+            self._find_overlay_title = title
 
-            # Just mount the input directly - no containers
-            inp = Input(value=initial_text or "", placeholder=title, id="find-input")
+            # Create container with label and input
+            label = Label(title, id="find-label")
+            inp = Input(value=initial_text or "", id="find-input")
+            container = Horizontal(label, inp, id="find-container")
 
-            # Mount directly to screen
+            # Mount container to screen
             try:
                 scr = getattr(self, "screen", None)
                 if scr is not None:
                     try:
-                        scr.mount(inp)
+                        scr.mount(container)
                     except Exception as e:
                         self.printException(e, "show_find_overlay: screen.mount failed")
-                        self.mount(inp)
+                        self.mount(container)
                 else:
-                    self.mount(inp)
+                    self.mount(container)
 
                 # Cache the widget
-                self._find_overlay_widget = inp
+                self._find_overlay_widget = container
             except Exception as e:
                 self.printException(e, "show_find_overlay: mount/fallback failed")
 
@@ -6621,6 +6720,59 @@ class GitDiffNavTool(AppException, App):
                 self.printException(e, "show_find_overlay: focus input failed")
         except Exception as e:
             self.printException(e, "show_find_overlay failed")
+
+    def _set_find_overlay_label(self, text: str) -> None:
+        """Update the visible find prompt label if the overlay exists."""
+        try:
+            scr = getattr(self, "screen", None)
+            label = None
+            if scr is not None:
+                try:
+                    label = scr.query_one("#find-label", Label)
+                except Exception as e:
+                    self.printException(e, "_set_find_overlay_label: query_one on screen failed")
+                    label = None
+            if label is None:
+                try:
+                    label = self.query_one("#find-label", Label)
+                except Exception as e:
+                    self.printException(e, "_set_find_overlay_label: query_one on self failed")
+                    label = None
+            if label is not None:
+                label.update(text)
+        except Exception as e:
+            self.printException(e, "_set_find_overlay_label failed")
+
+    def _submit_find_overlay(self, value: str) -> None:
+        """Submit the current find value and keep overlay visible on no match."""
+        try:
+            cb = getattr(self, "_find_overlay_callback", None)
+            if not cb:
+                try:
+                    self.hide_find_overlay()
+                except Exception as e:
+                    self.printException(e, "_submit_find_overlay: hide_find_overlay without callback failed")
+                return
+
+            matched = True
+            try:
+                result = cb(value)
+                if result is False:
+                    matched = False
+            except Exception as e:
+                self.printException(e, "_submit_find_overlay: callback failed")
+                matched = False
+
+            if matched:
+                try:
+                    self.hide_find_overlay()
+                except Exception as e:
+                    self.printException(e, "_submit_find_overlay: hide_find_overlay on success failed")
+            else:
+                base = getattr(self, "_find_overlay_title", "Find (forward)")
+                self._set_find_overlay_label(f"{base} - not found. ESC to return")
+        except Exception as e:
+            self.printException(e, "_submit_find_overlay failed")
 
     def hide_find_overlay(self) -> None:
         try:
@@ -6635,6 +6787,7 @@ class GitDiffNavTool(AppException, App):
                     finally:
                         self._find_overlay_widget = None
                     self._find_overlay_callback = None
+                    self._find_overlay_title = None
                     return
             except Exception as e:
                 self.printException(e, "hide_find_overlay: clearing cached overlay failed")
@@ -6643,17 +6796,18 @@ class GitDiffNavTool(AppException, App):
             scr = getattr(self, "screen", None)
             if scr is not None:
                 try:
-                    existing = scr.query_one("#find-input")
+                    existing = scr.query_one("#find-container")
                     existing.remove()
                 except Exception as e:
                     self.printException(e, "hide_find_overlay: removing overlay from screen failed")
             else:
                 try:
-                    existing = self.query_one("#find-input")
+                    existing = self.query_one("#find-container")
                     existing.remove()
                 except Exception as e:
                     self.printException(e, "hide_find_overlay: removing overlay from self failed")
             self._find_overlay_callback = None
+            self._find_overlay_title = None
         except Exception as e:
             self.printException(e, "hide_find_overlay failed")
 
@@ -6669,20 +6823,7 @@ class GitDiffNavTool(AppException, App):
                 self.printException(e, "on_input_submitted: reading find input failed")
                 val = ""
 
-            # Hide the overlay and invoke callback
-            try:
-                self.hide_find_overlay()
-            except Exception as e:
-                self.printException(e, "on_input_submitted: hide_find_overlay failed")
-
-            if getattr(self, "_find_overlay_callback", None):
-                try:
-                    cb = self._find_overlay_callback
-                    # Clear before calling to avoid reentrancy issues
-                    self._find_overlay_callback = None
-                    cb(val)
-                except Exception as e:
-                    self.printException(e, "on_input_submitted: callback failed")
+            self._submit_find_overlay(val)
         except Exception as e:
             self.printException(e, "on_input_submitted failed")
 
@@ -6710,7 +6851,7 @@ class GitDiffNavTool(AppException, App):
                     try:
                         if scr is not None:
                             try:
-                                scr.query_one("#find-input")
+                                scr.query_one("#find-container")
                                 overlay_present = True
                             except NoMatches as _no_logging:
                                 # Expected when overlay not present
@@ -6720,7 +6861,7 @@ class GitDiffNavTool(AppException, App):
                                 overlay_present = False
                         else:
                             try:
-                                self.query_one("#find-input")
+                                self.query_one("#find-container")
                                 overlay_present = True
                             except NoMatches as _no_logging:
                                 # Expected when overlay not present
@@ -6745,24 +6886,14 @@ class GitDiffNavTool(AppException, App):
                             try:
                                 inp = scr.query_one("#find-input", Input)
                             except Exception as e:
-                                self.printException(e, "on_key: querying find input failed")
+                                self.printException(e, "on_key: querying find input failed via scr")
                                 try:
                                     inp = self.query_one("#find-input", Input)
                                 except Exception as e:
-                                    self.printException(e, "on_key: querying find input failed")
+                                    self.printException(e, "on_key: querying find input failed via self")
                                     inp = None
                             val = inp.value if (inp is not None and hasattr(inp, "value")) else ""
-                            cb = getattr(self, "_find_overlay_callback", None)
-                            try:
-                                self.hide_find_overlay()
-                            except Exception as e:
-                                self.printException(e, "on_key: hide_find_overlay failed")
-                            if cb:
-                                try:
-                                    self._find_overlay_callback = None
-                                    cb(val)
-                                except Exception as e:
-                                    self.printException(e, "on_key: find callback failed")
+                            self._submit_find_overlay(val)
                         except Exception as e:
                             self.printException(e, "on_key: handling find submit failed")
                         return
