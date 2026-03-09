@@ -113,13 +113,9 @@ INLINE_CSS = (
     
     /* Non-modal find overlay: single line input with layer positioning */
     #find-container {
-        layer: overlay;
-        dock: top;
-        height: 1;
-        width: 100%;
-        border: none;
         background: $boost;
         layout: horizontal;
+        border: none;
     }
 
     #find-label {
@@ -535,10 +531,11 @@ Diff Variants:
 
 Configuration File
 ------------------
-- The `.gitdiffnavtool.ini` file allows you to set default values for command-line options.
-- Location: Searched in current directory first, then `$HOME` directory.
+- An optional configuration file allows you to set default values for the command-line options.
+- `--config/-c` can be specified, or the file `.gitdiffnavtool.ini` will be looked for
+  in the current directory first, then `$HOME` directory.
 - File format: INI-style configuration with a `[gitdiffnavtool]` section.
-- CLI options always take precedence over configuration file values.
+- Command-line options always take precedence over configuration file values.
 - Use `--init-config [cwd|home]` to generate a commented `.gitdiffnavtool.ini` template and exit.
 
 - Example configuration (showing all available options with their defaults):
@@ -578,8 +575,8 @@ Configuration File
 Command-line Options
 --------------------
 - All of the configuration values can also be specified on the command line, plus some additional options.
-- Any boolean configuration options also has a `--no-` variation to turn off the value should it be set
-  in the configuration file. For example, use `--no-add-authors` to turn displaying the author information.
+- All boolean configuration options also have a `--no-` variation to turn off the value should it be set
+  in the configuration file. For example, use `--no-add-authors` to turn off displaying the author information.
 - Use the `--help` option to see the complete list of options.
 - Use the `--show-help` or `--show-help-color` options to see this help information.
 - Use the `--show-initial-popup` or `--show-initial-popup-color` options to see the initial popup help information.
@@ -1583,9 +1580,17 @@ class AppBase(AppException, ListView):
     def on_key(self, event: events.Key) -> None:
         """Handle common find shortcuts ('>' forward, '<' backward)."""
         try:
+            k = getattr(event, "key", None)
             ch = getattr(event, "character", None)
+            logger.debug(
+                f"{self.__class__.__name__}.on_key(AppBase): key=%r character=%r",
+                k,
+                ch,
+            )
             if ch not in (">", "<"):
+                logger.debug(f"{self.__class__.__name__}.on_key(AppBase): skipping (not find key)")
                 return
+            logger.debug(f"{self.__class__.__name__}.on_key(AppBase): handling find key %r", ch)
             try:
                 event.stop()
             except Exception as e:
@@ -1595,6 +1600,11 @@ class AppBase(AppException, ListView):
                 init = getattr(self, "_last_search", "") or ""
                 forward = ch == ">"
                 title = "Find (forward)" if forward else "Find (backward)"
+                logger.debug(
+                    f"{self.__class__.__name__}.on_key(AppBase): calling show_find_overlay init=%r forward=%r",
+                    init,
+                    forward,
+                )
                 self.app.show_find_overlay(init, title, lambda v, s=self, f=forward: s._find_and_activate(v, f))
             except Exception as e:
                 self.printException(e, "AppBase.on_key: show_find_overlay failed")
@@ -6574,6 +6584,7 @@ class GitDiffNavTool(AppException, App):
         contains an Input with id `find-input`. Submission is handled by
         `on_input_submitted` which delegates to the provided `on_submit`.
         """
+        logger.debug("show_find_overlay: initial_text=%r title=%r", initial_text, title)
         try:
             # Remove any existing overlay widget we cached
             try:
@@ -6588,6 +6599,26 @@ class GitDiffNavTool(AppException, App):
             except Exception as e:
                 self.printException(e, "show_find_overlay: clearing cached overlay failed")
 
+            # Also remove any existing mounted find container by selector.
+            # This handles races where a previous remove hasn't updated our
+            # cache yet but the widget still exists in the DOM.
+            try:
+                scr = getattr(self, "screen", None)
+                if scr is not None:
+                    try:
+                        existing = scr.query_one("#find-container")
+                        existing.remove()
+                    except NoMatches as _no_logging:
+                        pass
+                else:
+                    try:
+                        existing = self.query_one("#find-container")
+                        existing.remove()
+                    except NoMatches as _no_logging:
+                        pass
+            except Exception as e:
+                self.printException(e, "show_find_overlay: removing pre-existing find container failed")
+
             self._find_overlay_callback = on_submit
             self._find_overlay_title = title
 
@@ -6595,21 +6626,61 @@ class GitDiffNavTool(AppException, App):
             label = Label(title, id="find-label")
             inp = Input(value=initial_text or "", id="find-input")
             container = Horizontal(label, inp, id="find-container")
+            
+            # Set absolute positioning to prevent layout disruption
+            try:
+                container.styles.position = "absolute"
+                container.styles.top = 0
+                container.styles.left = 0
+                container.styles.width = "100%"
+                container.styles.height = 1
+                container.styles.layer = "overlay"
+                logger.debug(
+                    "show_find_overlay: set container styles position=%r top=%r width=%r height=%r",
+                    container.styles.position,
+                    container.styles.top,
+                    container.styles.width,
+                    container.styles.height,
+                )
+            except Exception as e:
+                self.printException(e, "show_find_overlay: setting container styles failed")
 
             # Mount container to screen
             try:
                 scr = getattr(self, "screen", None)
+                logger.debug("show_find_overlay: scr=%r", scr)
                 if scr is not None:
                     try:
+                        logger.debug("show_find_overlay: attempting scr.mount(container)")
                         scr.mount(container)
+                        logger.debug("show_find_overlay: scr.mount succeeded")
                     except Exception as e:
-                        self.printException(e, "show_find_overlay: screen.mount failed")
-                        self.mount(container)
+                        # Benign race: existing find container still mounted.
+                        # Reuse it instead of logging noisy warnings.
+                        if "find-container" in str(e) and "already exists" in str(e):
+                            logger.debug("show_find_overlay: duplicate find-container, reusing existing")
+                            try:
+                                existing = scr.query_one("#find-container")
+                                self._find_overlay_widget = existing
+                                inp_existing = scr.query_one("#find-input", Input)
+                                if initial_text:
+                                    inp_existing.value = initial_text
+                                inp = inp_existing
+                            except Exception as e2:
+                                self.printException(e2, "show_find_overlay: resolving duplicate find container failed")
+                        else:
+                            self.printException(e, "show_find_overlay: screen.mount failed")
+                            logger.debug("show_find_overlay: falling back to self.mount")
+                            self.mount(container)
+                            logger.debug("show_find_overlay: self.mount succeeded")
                 else:
+                    logger.debug("show_find_overlay: no screen, using self.mount")
                     self.mount(container)
+                    logger.debug("show_find_overlay: self.mount succeeded")
 
                 # Cache the widget
                 self._find_overlay_widget = container
+                logger.debug("show_find_overlay: cached widget, attempting focus")
             except Exception as e:
                 self.printException(e, "show_find_overlay: mount/fallback failed")
 

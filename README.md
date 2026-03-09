@@ -168,7 +168,7 @@ Key Options:
 - `--minimum-sidebyside-width N`: Minimum terminal width before side-by-side falls back to unified (default: 60).
 - `--no-add-authors`: Hide author name and email in commit rows.
 - `--output-directory DIR`: Directory where snapshot files are written (default: beside source file).
-- `--blank-before-hunk`: Insert a blank line before each hunk header (lines starting with `@@`).
+- `--blank-before-hunk`: Insert a blank line before each diff hunk header (lines starting with `@@`).
 - `--show-help`: Display the help screen and exit.
 - `--show-initial-popup`: Display the startup popup and exit.
 - `--init-config [cwd|home]`: Write a commented `.gitdiffnavtool.ini` template and exit (default location: `cwd`).

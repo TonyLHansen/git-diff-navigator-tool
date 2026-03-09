@@ -16,7 +16,7 @@
 - Run `python -m py_compile` on all `.py` files; fix any syntax/parse errors.
 - Detect redundant nested `try`/`except` where an outer `try` contains a single inner `try` and both have handlers.
 
-# Functional Axioms for Contributors
+# Functional Axioms for Co-Pilot
 - After making changes, always run `python -m py_compile` to verify that the changes compile.
 - Run `scripts/check_axioms.py` locally before committing to ensure your changes conform to the repository's style and safety checks.
 
