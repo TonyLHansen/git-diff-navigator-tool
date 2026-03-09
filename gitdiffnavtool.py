@@ -1579,9 +1579,31 @@ class AppBase(AppException, ListView):
         except Exception as e:
             self.printException(e, "_finalize_prep_common: app state sync failed")
 
-    # Key handlers: prefer `key_` methods on widgets instead of an `on_key` dispatcher.
-    # Implement navigation handlers as `key_*` methods so subclasses may override
-    # them individually and keep key logic co-located with widget state.
+    # Common key handler for list widgets.
+    def on_key(self, event: events.Key) -> None:
+        """Handle common find shortcuts ('>' forward, '<' backward)."""
+        try:
+            ch = getattr(event, "character", None)
+            if ch not in (">", "<"):
+                return
+            try:
+                event.stop()
+            except Exception as e:
+                self.printException(e, "AppBase.on_key: event.stop failed")
+
+            try:
+                init = getattr(self, "_last_search", "") or ""
+                forward = ch == ">"
+                title = "Find (forward)" if forward else "Find (backward)"
+                self.app.show_find_overlay(init, title, lambda v, s=self, f=forward: s._find_and_activate(v, f))
+            except Exception as e:
+                self.printException(e, "AppBase.on_key: show_find_overlay failed")
+        except Exception as e:
+            self.printException(e, "AppBase.on_key failed")
+
+    # Key handlers: implement navigation as `key_*` methods so subclasses
+    # may override them individually and keep key logic co-located with
+    # widget state.
 
     def key_up(self, event: events.Key | None = None) -> None:
         """Move the selection up by one item, honoring `event.stop()` if provided."""
@@ -2610,35 +2632,6 @@ class FileListBase(AppBase):
                 self.index = self._min_index or 0
         except Exception as e:
             self.printException(e, "FileListBase.on_focus")
-
-    def on_key(self, event: events.Key) -> None:
-        """Handle '>' and '<' to prompt for forward/backward finds (case-insensitive).
-
-        This base implementation allows all file-list subclasses to inherit
-        the same behavior for find shortcuts without duplicating logic.
-        """
-        try:
-            k = getattr(event, "key", None)
-            ch = getattr(event, "character", None)
-            logger.debug("FileListBase.on_key: key=%r character=%r", k, ch)
-
-            if ch == ">" or ch == "<":
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "FileListBase.on_key: event.stop failed")
-                try:
-                    init = getattr(self, "_last_search", "") or ""
-                    forward = ch == ">"
-                    try:
-                        self.app.show_find_overlay(init, ("Find (forward)" if forward else "Find (backward)"), lambda v, s=self: s._find_and_activate(v, forward))
-                    except Exception as e:
-                        self.printException(e, "FileListBase.on_key: show_find_overlay failed")
-                except Exception as e:
-                    self.printException(e, "FileListBase.on_key: push FindModal failed")
-                return
-        except Exception as e:
-            self.printException(e, "FileListBase.on_key failed")
 
     def _ensure_index_visible(self) -> None:
         """
@@ -4687,41 +4680,6 @@ class HistoryListBase(AppBase):
         logger.debug("HistoryListBase.key_E called: key=%r index=%r", getattr(event, "key", None), self.index)
         return self.key_e(event, recursive=True)
 
-    def on_key(self, event: events.Key) -> None:
-        """Handle '>' and '<' to prompt for forward/backward finds (case-insensitive)."""
-        try:
-            ch = getattr(event, "character", None)
-            if ch == ">":
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "HistoryListBase.on_key: event.stop failed")
-                try:
-                    init = self._last_search or ""
-                    try:
-                        self.app.show_find_overlay(init, "Find (forward)", lambda v, s=self: s._find_and_activate(v, True))
-                    except Exception as e:
-                        self.printException(e, "DiffList.on_key: show_find_overlay failed")
-                except Exception as e:
-                    self.printException(e, "HistoryListBase.on_key: push FindModal failed")
-                return
-            if ch == "<":
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "HistoryListBase.on_key: event.stop failed")
-                try:
-                    init = self._last_search or ""
-                    try:
-                        self.app.show_find_overlay(init, "Find (backward)", lambda v, s=self: s._find_and_activate(v, False))
-                    except Exception as e:
-                        self.printException(e, "DiffList.on_key: show_find_overlay failed")
-                except Exception as e:
-                    self.printException(e, "HistoryListBase.on_key: push FindModal failed")
-                return
-        except Exception as e:
-            self.printException(e, "HistoryListBase.on_key failed")
-
 
 class FileModeHistoryList(HistoryListBase, RightSideBase):
     """History list for a single file's history. Stubbed prep method."""
@@ -5098,33 +5056,6 @@ class DiffList(FullScreenBase):
                 event.stop()
                 self.action_hscroll_left()
                 return
-            if ch == ">":
-                logger.debug("DiffList.on_key: consumed '>' -> forward search")
-                event.stop()
-                # If we have a previous search, repeat it; otherwise prompt
-                try:
-                    init = self._last_search or ""
-                    try:
-                        self.app.show_find_overlay(init, "Find (forward)", lambda v, s=self: s._find_and_activate(v, True))
-                    except Exception as e:
-                        self.printException(e, "HistoryListBase.on_key: show_find_overlay failed")
-                    logger.debug("DiffList.on_key: pushed FindModal (forward) init=%r", init)
-                except Exception as e:
-                    self.printException(e, "DiffList.on_key: push FindModal failed")
-                return
-            if ch == "<":
-                logger.debug("DiffList.on_key: consumed '<' -> backward search")
-                event.stop()
-                try:
-                    init = self._last_search or ""
-                    try:
-                        self.app.show_find_overlay(init, "Find (backward)", lambda v, s=self: s._find_and_activate(v, False))
-                    except Exception as e:
-                        self.printException(e, "HistoryListBase.on_key: show_find_overlay failed")
-                    logger.debug("DiffList.on_key: pushed FindModal (backward) init=%r", init)
-                except Exception as e:
-                    self.printException(e, "DiffList.on_key: push FindModal failed")
-                return
             if ch == "}":
                 logger.debug("DiffList.on_key: consumed '}' -> action_hscroll_right")
                 event.stop()
@@ -5145,7 +5076,7 @@ class DiffList(FullScreenBase):
                 event.stop()
                 self.action_equal()
                 return
-            logger.debug("DiffList.on_key: key not handled")
+            super().on_key(event)
         except Exception as e:
             self.printException(e, "DiffList.on_key failed")
 
@@ -6089,12 +6020,16 @@ class HelpList(AppBase):
                         # Add a spacer row between each block to provide visual
                         # separation when rendered in the ListView.
                         if sep is not None:
-                            self.append(ListItem(Label(Text(sep))))
+                            sep_item = ListItem(Label(Text(sep)))
+                            sep_item._search_text = ""
+                            self.append(sep_item)
                         else:
                             sep = ""
                         # Render each block using Markdown; allow the renderer
                         # to determine spacing/formatting (including H1).
-                        self.append(ListItem(Label(Markdown(blk))))
+                        block_item = ListItem(Label(Markdown(blk)))
+                        block_item._search_text = str(blk)
+                        self.append(block_item)
                     except Exception as e:
                         self.printException(e, "prepHelp append failed for Markdown block")
             except Exception as e:
@@ -6286,41 +6221,6 @@ class OpenFileList(FullScreenBase):
         except Exception as e:
             self.printException(e, "OpenFileList.text_of failed")
             return str(node)
-
-    def on_key(self, event: events.Key) -> None:
-        """Handle simple inline keys for searching '>' (forward) and '<' (backward)."""
-        try:
-            ch = getattr(event, "character", None)
-            if ch == ">":
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "OpenFileList.on_key: event.stop failed")
-                try:
-                    init = self._last_search or ""
-                    try:
-                        self.app.show_find_overlay(init, "Find (forward)", lambda v, s=self: s._find_and_activate(v, True))
-                    except Exception as e:
-                        self.printException(e, "OpenFileList.on_key: show_find_overlay failed")
-                except Exception as e:
-                    self.printException(e, "OpenFileList.on_key: push FindModal failed")
-                return
-            if ch == "<":
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "OpenFileList.on_key: event.stop failed")
-                try:
-                    init = self._last_search or ""
-                    try:
-                        self.app.show_find_overlay(init, "Find (backward)", lambda v, s=self: s._find_and_activate(v, False))
-                    except Exception as e:
-                        self.printException(e, "OpenFileList.on_key: show_find_overlay failed")
-                except Exception as e:
-                    self.printException(e, "OpenFileList.on_key: push FindModal failed")
-                return
-        except Exception as e:
-            self.printException(e, "OpenFileList.on_key failed")
 
 
 class GitDiffNavTool(AppException, App):
