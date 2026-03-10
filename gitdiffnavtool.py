@@ -1590,6 +1590,33 @@ class AppBase(AppException, ListView):
             if ch not in (">", "<"):
                 logger.debug(f"{self.__class__.__name__}.on_key(AppBase): skipping (not find key)")
                 return
+
+            # If the non-modal find overlay is already visible, do not
+            # re-open/remount it. This avoids duplicate handling when the
+            # terminal emits back-to-back events for a single key press.
+            try:
+                overlay_present = getattr(self.app, "_find_overlay_widget", None) is not None
+            except Exception as e:
+                self.printException(e, "AppBase.on_key: reading find overlay cache failed")
+                overlay_present = False
+            if overlay_present:
+                logger.debug(f"{self.__class__.__name__}.on_key(AppBase): find overlay already visible; ignoring reopen")
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "AppBase.on_key: event.stop failed for existing find overlay")
+                try:
+                    scr = getattr(self.app, "screen", None)
+                    inp = None
+                    if scr is not None:
+                        inp = scr.query_one("#find-input", Input)
+                    else:
+                        inp = self.app.query_one("#find-input", Input)
+                    if inp is not None:
+                        self.app.call_later(lambda: inp.focus())
+                except Exception as e:
+                    self.printException(e, "AppBase.on_key: refocusing existing find overlay failed")
+                return
             logger.debug(f"{self.__class__.__name__}.on_key(AppBase): handling find key %r", ch)
             try:
                 event.stop()
@@ -6630,11 +6657,16 @@ class GitDiffNavTool(AppException, App):
             # Set absolute positioning to prevent layout disruption
             try:
                 container.styles.position = "absolute"
-                container.styles.top = 0
+                # Keep overlay below app chrome (Header + title row) so it
+                # is visible even when top rows are occupied.
+                container.styles.top = 2
                 container.styles.left = 0
                 container.styles.width = "100%"
                 container.styles.height = 1
-                container.styles.layer = "overlay"
+                # Use a known high layer so the overlay renders above list
+                # content and pane chrome.
+                container.styles.layer = "above"
+                container.styles.display = "block"
                 logger.debug(
                     "show_find_overlay: set container styles position=%r top=%r width=%r height=%r",
                     container.styles.position,
@@ -6645,9 +6677,11 @@ class GitDiffNavTool(AppException, App):
             except Exception as e:
                 self.printException(e, "show_find_overlay: setting container styles failed")
 
-            # Mount container to screen
+            # Mount container directly on the current screen to avoid
+            # clipping/visibility issues from intermediate overlay parents.
             try:
                 scr = getattr(self, "screen", None)
+                mounted_widget = container
                 logger.debug("show_find_overlay: scr=%r", scr)
                 if scr is not None:
                     try:
@@ -6661,7 +6695,7 @@ class GitDiffNavTool(AppException, App):
                             logger.debug("show_find_overlay: duplicate find-container, reusing existing")
                             try:
                                 existing = scr.query_one("#find-container")
-                                self._find_overlay_widget = existing
+                                mounted_widget = existing
                                 inp_existing = scr.query_one("#find-input", Input)
                                 if initial_text:
                                     inp_existing.value = initial_text
@@ -6679,7 +6713,7 @@ class GitDiffNavTool(AppException, App):
                     logger.debug("show_find_overlay: self.mount succeeded")
 
                 # Cache the widget
-                self._find_overlay_widget = container
+                self._find_overlay_widget = mounted_widget
                 logger.debug("show_find_overlay: cached widget, attempting focus")
             except Exception as e:
                 self.printException(e, "show_find_overlay: mount/fallback failed")
@@ -6769,14 +6803,32 @@ class GitDiffNavTool(AppException, App):
                 try:
                     existing = scr.query_one("#find-container")
                     existing.remove()
+                except NoMatches as _no_logging:
+                    pass
                 except Exception as e:
                     self.printException(e, "hide_find_overlay: removing overlay from screen failed")
             else:
                 try:
                     existing = self.query_one("#find-container")
                     existing.remove()
+                except NoMatches as _no_logging:
+                    pass
                 except Exception as e:
                     self.printException(e, "hide_find_overlay: removing overlay from self failed")
+
+            # Also attempt removal from overlay-root parent if present.
+            try:
+                parent = getattr(self, "_overlay_root", None)
+                if parent is not None:
+                    try:
+                        existing = parent.query_one("#find-container")
+                        existing.remove()
+                    except NoMatches as _no_logging:
+                        pass
+                    except Exception as e:
+                        self.printException(e, "hide_find_overlay: removing overlay from overlay-root failed")
+            except Exception as e:
+                self.printException(e, "hide_find_overlay: overlay-root cleanup failed")
             self._find_overlay_callback = None
             self._find_overlay_title = None
         except Exception as e:
