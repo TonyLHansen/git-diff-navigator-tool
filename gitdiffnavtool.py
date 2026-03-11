@@ -113,9 +113,13 @@ INLINE_CSS = (
     
     /* Non-modal find overlay: single line input with layer positioning */
     #find-container {
+        layer: overlay;
+        dock: top;
+        height: 1;
+        width: 100%;
+        border: none;
         background: $boost;
         layout: horizontal;
-        border: none;
     }
 
     #find-label {
@@ -1580,44 +1584,9 @@ class AppBase(AppException, ListView):
     def on_key(self, event: events.Key) -> None:
         """Handle common find shortcuts ('>' forward, '<' backward)."""
         try:
-            k = getattr(event, "key", None)
             ch = getattr(event, "character", None)
-            logger.debug(
-                f"{self.__class__.__name__}.on_key(AppBase): key=%r character=%r",
-                k,
-                ch,
-            )
             if ch not in (">", "<"):
-                logger.debug(f"{self.__class__.__name__}.on_key(AppBase): skipping (not find key)")
                 return
-
-            # If the non-modal find overlay is already visible, do not
-            # re-open/remount it. This avoids duplicate handling when the
-            # terminal emits back-to-back events for a single key press.
-            try:
-                overlay_present = getattr(self.app, "_find_overlay_widget", None) is not None
-            except Exception as e:
-                self.printException(e, "AppBase.on_key: reading find overlay cache failed")
-                overlay_present = False
-            if overlay_present:
-                logger.debug(f"{self.__class__.__name__}.on_key(AppBase): find overlay already visible; ignoring reopen")
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "AppBase.on_key: event.stop failed for existing find overlay")
-                try:
-                    scr = getattr(self.app, "screen", None)
-                    inp = None
-                    if scr is not None:
-                        inp = scr.query_one("#find-input", Input)
-                    else:
-                        inp = self.app.query_one("#find-input", Input)
-                    if inp is not None:
-                        self.app.call_later(lambda: inp.focus())
-                except Exception as e:
-                    self.printException(e, "AppBase.on_key: refocusing existing find overlay failed")
-                return
-            logger.debug(f"{self.__class__.__name__}.on_key(AppBase): handling find key %r", ch)
             try:
                 event.stop()
             except Exception as e:
@@ -1627,11 +1596,6 @@ class AppBase(AppException, ListView):
                 init = getattr(self, "_last_search", "") or ""
                 forward = ch == ">"
                 title = "Find (forward)" if forward else "Find (backward)"
-                logger.debug(
-                    f"{self.__class__.__name__}.on_key(AppBase): calling show_find_overlay init=%r forward=%r",
-                    init,
-                    forward,
-                )
                 self.app.show_find_overlay(init, title, lambda v, s=self, f=forward: s._find_and_activate(v, f))
             except Exception as e:
                 self.printException(e, "AppBase.on_key: show_find_overlay failed")
@@ -6611,7 +6575,6 @@ class GitDiffNavTool(AppException, App):
         contains an Input with id `find-input`. Submission is handled by
         `on_input_submitted` which delegates to the provided `on_submit`.
         """
-        logger.debug("show_find_overlay: initial_text=%r title=%r", initial_text, title)
         try:
             # Remove any existing overlay widget we cached
             try:
@@ -6626,26 +6589,6 @@ class GitDiffNavTool(AppException, App):
             except Exception as e:
                 self.printException(e, "show_find_overlay: clearing cached overlay failed")
 
-            # Also remove any existing mounted find container by selector.
-            # This handles races where a previous remove hasn't updated our
-            # cache yet but the widget still exists in the DOM.
-            try:
-                scr = getattr(self, "screen", None)
-                if scr is not None:
-                    try:
-                        existing = scr.query_one("#find-container")
-                        existing.remove()
-                    except NoMatches as _no_logging:
-                        pass
-                else:
-                    try:
-                        existing = self.query_one("#find-container")
-                        existing.remove()
-                    except NoMatches as _no_logging:
-                        pass
-            except Exception as e:
-                self.printException(e, "show_find_overlay: removing pre-existing find container failed")
-
             self._find_overlay_callback = on_submit
             self._find_overlay_title = title
 
@@ -6653,68 +6596,21 @@ class GitDiffNavTool(AppException, App):
             label = Label(title, id="find-label")
             inp = Input(value=initial_text or "", id="find-input")
             container = Horizontal(label, inp, id="find-container")
-            
-            # Set absolute positioning to prevent layout disruption
-            try:
-                container.styles.position = "absolute"
-                # Keep overlay below app chrome (Header + title row) so it
-                # is visible even when top rows are occupied.
-                container.styles.top = 2
-                container.styles.left = 0
-                container.styles.width = "100%"
-                container.styles.height = 1
-                # Use a known high layer so the overlay renders above list
-                # content and pane chrome.
-                container.styles.layer = "above"
-                container.styles.display = "block"
-                logger.debug(
-                    "show_find_overlay: set container styles position=%r top=%r width=%r height=%r",
-                    container.styles.position,
-                    container.styles.top,
-                    container.styles.width,
-                    container.styles.height,
-                )
-            except Exception as e:
-                self.printException(e, "show_find_overlay: setting container styles failed")
 
-            # Mount container directly on the current screen to avoid
-            # clipping/visibility issues from intermediate overlay parents.
+            # Mount container to screen
             try:
                 scr = getattr(self, "screen", None)
-                mounted_widget = container
-                logger.debug("show_find_overlay: scr=%r", scr)
                 if scr is not None:
                     try:
-                        logger.debug("show_find_overlay: attempting scr.mount(container)")
                         scr.mount(container)
-                        logger.debug("show_find_overlay: scr.mount succeeded")
                     except Exception as e:
-                        # Benign race: existing find container still mounted.
-                        # Reuse it instead of logging noisy warnings.
-                        if "find-container" in str(e) and "already exists" in str(e):
-                            logger.debug("show_find_overlay: duplicate find-container, reusing existing")
-                            try:
-                                existing = scr.query_one("#find-container")
-                                mounted_widget = existing
-                                inp_existing = scr.query_one("#find-input", Input)
-                                if initial_text:
-                                    inp_existing.value = initial_text
-                                inp = inp_existing
-                            except Exception as e2:
-                                self.printException(e2, "show_find_overlay: resolving duplicate find container failed")
-                        else:
-                            self.printException(e, "show_find_overlay: screen.mount failed")
-                            logger.debug("show_find_overlay: falling back to self.mount")
-                            self.mount(container)
-                            logger.debug("show_find_overlay: self.mount succeeded")
+                        self.printException(e, "show_find_overlay: screen.mount failed")
+                        self.mount(container)
                 else:
-                    logger.debug("show_find_overlay: no screen, using self.mount")
                     self.mount(container)
-                    logger.debug("show_find_overlay: self.mount succeeded")
 
                 # Cache the widget
-                self._find_overlay_widget = mounted_widget
-                logger.debug("show_find_overlay: cached widget, attempting focus")
+                self._find_overlay_widget = container
             except Exception as e:
                 self.printException(e, "show_find_overlay: mount/fallback failed")
 
@@ -6803,32 +6699,14 @@ class GitDiffNavTool(AppException, App):
                 try:
                     existing = scr.query_one("#find-container")
                     existing.remove()
-                except NoMatches as _no_logging:
-                    pass
                 except Exception as e:
                     self.printException(e, "hide_find_overlay: removing overlay from screen failed")
             else:
                 try:
                     existing = self.query_one("#find-container")
                     existing.remove()
-                except NoMatches as _no_logging:
-                    pass
                 except Exception as e:
                     self.printException(e, "hide_find_overlay: removing overlay from self failed")
-
-            # Also attempt removal from overlay-root parent if present.
-            try:
-                parent = getattr(self, "_overlay_root", None)
-                if parent is not None:
-                    try:
-                        existing = parent.query_one("#find-container")
-                        existing.remove()
-                    except NoMatches as _no_logging:
-                        pass
-                    except Exception as e:
-                        self.printException(e, "hide_find_overlay: removing overlay from overlay-root failed")
-            except Exception as e:
-                self.printException(e, "hide_find_overlay: overlay-root cleanup failed")
             self._find_overlay_callback = None
             self._find_overlay_title = None
         except Exception as e:
