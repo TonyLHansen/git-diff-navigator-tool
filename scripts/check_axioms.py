@@ -2392,7 +2392,7 @@ def main(argv: List[str] | None = None) -> int:
     parsed_args, _ = parser.parse_known_args(argv)
     
     # Determine config files to use
-    if getattr(parsed_args, "config", None):
+    if parsed_args.config:
         cfg_files = [Path(parsed_args.config)]
     else:
         cfg_files = [Path.cwd() / ".check_axioms.ini", Path.home() / ".check_axioms.ini"]
