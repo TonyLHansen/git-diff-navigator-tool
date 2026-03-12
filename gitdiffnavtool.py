@@ -2006,16 +2006,42 @@ class AppBase(AppException, ListView):
             try:
                 # Prefer asking the GitRepo for the canonical repo root
                 repo_root_val = self.app.gitRepo.get_repo_root()
-
-                msg = (
-                    f"Create {os.path.basename(filepath)}.HASH.\n\n"
-                    "Do you wish to write the (o)lder file, the (n)ewer file, or (b)oth?\n\n"
-                    "(Any other key to cancel.)"
+                relpath = os.path.normpath(
+                    os.path.join(getattr(self.app, "rel_dir", "") or "", getattr(self.app, "rel_file", "") or "")
                 )
+
+                # Compute the full ordered list of hashes (newest→oldest) so
+                # the modal can offer the "all" option when there are
+                # intermediate commits between the two boundary hashes.
+                try:
+                    all_hashes = self.app.gitRepo.get_hashes_between(relpath, prev_hash, curr_hash)
+                except Exception as e:
+                    self.printException(e, "key_w_helper: get_hashes_between failed")
+                    all_hashes = []
+
+                has_intermediates = len(all_hashes) > 2
+                if has_intermediates:
+                    msg = (
+                        f"Create {os.path.basename(filepath)}.HASH.\n\n"
+                        "Do you wish to write the (o)lder file, the (n)ewer file, (b)oth,\n"
+                        f"or (a)ll {len(all_hashes)} versions (old to new and in between)?\n\n"
+                        "(Any other key to cancel.)"
+                    )
+                else:
+                    msg = (
+                        f"Create {os.path.basename(filepath)}.HASH.\n\n"
+                        "Do you wish to write the (o)lder file, the (n)ewer file, or (b)oth?\n\n"
+                        "(Any other key to cancel.)"
+                    )
                 logger.debug("%s.key_w_helper: presenting SaveSnapshotModal for %r", type(self).__name__, filepath)
                 self.app.push_screen(
                     SaveSnapshotModal(
-                        msg, filepath=filepath, prev_hash=prev_hash, curr_hash=curr_hash, repo_root=repo_root_val
+                        msg,
+                        filepath=filepath,
+                        prev_hash=prev_hash,
+                        curr_hash=curr_hash,
+                        repo_root=repo_root_val,
+                        all_hashes=all_hashes if has_intermediates else None,
                     )
                 )
             except Exception as e:
@@ -2030,7 +2056,8 @@ class SaveSnapshotModal(AppException, ModalScreen):
 
     The modal handles the key press and writes the requested snapshots
     to files named '<filepath>.<hash>'. Supported keys: o/O (older),
-    n/N (newer), b/B (both). Any other key cancels.
+    n/N (newer), b/B (both), a/A (all, when intermediates exist). Any
+    other key cancels.
     """
 
     def __init__(
@@ -2040,6 +2067,7 @@ class SaveSnapshotModal(AppException, ModalScreen):
         prev_hash: str | None = None,
         curr_hash: str | None = None,
         repo_root: str | None = None,
+        all_hashes: list[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -2048,6 +2076,9 @@ class SaveSnapshotModal(AppException, ModalScreen):
         self.prev_hash = prev_hash
         self.curr_hash = curr_hash
         self.repo_root = repo_root
+        # Full ordered list (newest→oldest) when there are intermediates;
+        # None means the "a" option is not available.
+        self.all_hashes = all_hashes
 
     def compose(self):
         """Compose the modal contents (a single Label with the message)."""
@@ -2121,6 +2152,13 @@ class SaveSnapshotModal(AppException, ModalScreen):
                 if key in ("b", "B"):
                     _attempt_save("older", self.prev_hash)
                     _attempt_save("newer", self.curr_hash)
+                    return
+
+                # All versions (only available when intermediates exist)
+                if key in ("a", "A") and self.all_hashes:
+                    for i, h in enumerate(self.all_hashes):
+                        label = f"version {i + 1} of {len(self.all_hashes)} ({h[:8]})"
+                        _attempt_save(label, h)
                     return
             except Exception as e:
                 self.printException(e, "SaveSnapshotModal.on_key: _save failed")

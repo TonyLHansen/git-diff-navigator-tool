@@ -1,6 +1,7 @@
 import types
 
 from gitdiffnavtool import AppBase, RepoModeFileList, SaveSnapshotModal
+from gitrepo import GitRepo
 
 
 class FakeEvent:
@@ -149,6 +150,9 @@ def test_find_and_activate_returns_false_when_not_found():
 
 
 class _FakeGitRepoForSnapshots:
+    def __init__(self):
+        self.hashes_between_calls = []
+
     def abs_path_for(self, rel_dir, rel_file):
         base = "/tmp/repo"
         if rel_dir:
@@ -157,6 +161,10 @@ class _FakeGitRepoForSnapshots:
 
     def get_repo_root(self):
         return "/tmp/repo"
+
+    def get_hashes_between(self, file_name, prev_hash, curr_hash, ignorecache=False):
+        self.hashes_between_calls.append((file_name, prev_hash, curr_hash, ignorecache))
+        return ["selected_curr", "mid_1", "mid_2", "selected_prev"]
 
 
 class HarnessForKeyWHelper:
@@ -196,6 +204,31 @@ def test_key_w_helper_uses_selected_pair_hashes_when_available():
     assert isinstance(modal, SaveSnapshotModal)
     assert modal.prev_hash == "selected_prev"
     assert modal.curr_hash == "selected_curr"
+    assert modal.all_hashes == ["selected_curr", "mid_1", "mid_2", "selected_prev"]
+    assert "(a)ll 4 versions" in modal.message
+    assert h.app.gitRepo.hashes_between_calls == [("README.md", "selected_prev", "selected_curr", False)]
+
+
+def test_get_hashes_between_uses_file_history_slice_only():
+    repo = GitRepo.__new__(GitRepo)
+    calls = []
+
+    def fake_get_history(file_name, ignorecache=False, limit=0):
+        calls.append((file_name, ignorecache, limit))
+        return [
+            ("2026-03-11T10:00:00", "0f0ca1075fb9", "newest", "unpushed", "", ""),
+            ("2026-03-11T09:00:00", "55cbd38079f2", "mid1", "unpushed", "", ""),
+            ("2026-03-11T08:00:00", "6d9ffe6e662e", "mid2", "unpushed", "", ""),
+            ("2026-03-11T07:00:00", "3e0be488de9f", "oldest", "unpushed", "", ""),
+        ]
+
+    repo.getNormalizedHashListFromFileName = fake_get_history
+    repo.printException = lambda *_args, **_kwargs: None
+
+    hashes = GitRepo.get_hashes_between(repo, "gitdiffnavtool.py", "3e0be488de9f", "0f0ca1075fb9")
+
+    assert hashes == ["0f0ca1075fb9", "55cbd38079f2", "6d9ffe6e662e", "3e0be488de9f"]
+    assert calls == [("gitdiffnavtool.py", False, 0)]
 
 
 class HarnessForRepoModeKeyW:

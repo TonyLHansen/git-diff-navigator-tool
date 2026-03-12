@@ -1526,6 +1526,35 @@ class GitRepo(AppException):
             formatted = formatted[:limit]
         return formatted
 
+    def get_hashes_between(
+        self, file_name: str, prev_hash: str, curr_hash: str, ignorecache: bool = False
+    ) -> list[str]:
+        """Return file-specific history entries between two selected hashes, inclusive.
+
+        The returned list preserves the ordering from
+        `getNormalizedHashListFromFileName`, which is newest first. Only hashes
+        that appear in the selected file's history are included, so commits that
+        did not touch `file_name` are excluded.
+        """
+        if not file_name or not prev_hash or not curr_hash:
+            return []
+
+        try:
+            entries = self.getNormalizedHashListFromFileName(file_name, ignorecache=ignorecache)
+            hashes = [entry[1] for entry in entries if isinstance(entry, (tuple, list)) and len(entry) > 1 and entry[1]]
+
+            if curr_hash not in hashes or prev_hash not in hashes:
+                return []
+
+            curr_index = hashes.index(curr_hash)
+            prev_index = hashes.index(prev_hash)
+            start = min(curr_index, prev_index)
+            end = max(curr_index, prev_index)
+            return hashes[start : end + 1]
+        except Exception as e:
+            self.printException(e, "get_hashes_between failed")
+            return []
+
     def getHashListStagedChanges(
         self, ignorecache: bool = False, limit: int = 0
     ) -> list[tuple[str, str, str, str, str, str]]:
