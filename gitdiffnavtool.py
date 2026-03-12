@@ -1592,6 +1592,19 @@ class AppBase(AppException, ListView):
             except Exception as e:
                 self.printException(e, "AppBase.on_key: event.stop failed")
 
+            # If overlay is already present, do not recreate it; just refocus
+            # the existing input so repeated '>' or '<' behaves predictably.
+            try:
+                if getattr(self.app, "_find_overlay_widget", None) is not None:
+                    try:
+                        inp = self.app.screen.query_one("#find-input", Input)
+                    except Exception:
+                        inp = self.app.query_one("#find-input", Input)
+                    self.app.call_later(lambda: inp.focus())
+                    return
+            except Exception as e:
+                self.printException(e, "AppBase.on_key: refocus existing overlay failed")
+
             try:
                 init = getattr(self, "_last_search", "") or ""
                 forward = ch == ">"
@@ -6576,21 +6589,45 @@ class GitDiffNavTool(AppException, App):
         `on_input_submitted` which delegates to the provided `on_submit`.
         """
         try:
-            # Remove any existing overlay widget we cached
-            try:
-                existing = getattr(self, "_find_overlay_widget", None)
-                if existing is not None:
-                    try:
-                        existing.remove()
-                    except Exception as e:
-                        # ignore removal errors; we'll replace it below
-                        self.printException(e, "show_find_overlay: existing.remove failed")
-                    self._find_overlay_widget = None
-            except Exception as e:
-                self.printException(e, "show_find_overlay: clearing cached overlay failed")
-
             self._find_overlay_callback = on_submit
             self._find_overlay_title = title
+
+            # Reuse an existing overlay if present to avoid duplicate-id races
+            # when multiple key handlers fire for the same keypress.
+            existing_container = getattr(self, "_find_overlay_widget", None)
+            if existing_container is None:
+                scr = getattr(self, "screen", None)
+                if scr is not None:
+                    try:
+                        existing_container = scr.query_one("#find-container", Horizontal)
+                    except Exception:
+                        existing_container = None
+                if existing_container is None:
+                    try:
+                        existing_container = self.query_one("#find-container", Horizontal)
+                    except Exception:
+                        existing_container = None
+
+            if existing_container is not None:
+                try:
+                    self._find_overlay_widget = existing_container
+                    existing_container.display = True
+                except Exception as e:
+                    self.printException(e, "show_find_overlay: making existing container visible failed")
+
+                try:
+                    lbl = existing_container.query_one("#find-label", Label)
+                    lbl.update(title)
+                except Exception as e:
+                    self.printException(e, "show_find_overlay: updating existing label failed")
+
+                try:
+                    inp = existing_container.query_one("#find-input", Input)
+                    inp.value = initial_text or ""
+                    self.call_later(lambda: inp.focus())
+                except Exception as e:
+                    self.printException(e, "show_find_overlay: focusing existing input failed")
+                return
 
             # Create container with label and input
             label = Label(title, id="find-label")

@@ -35,11 +35,11 @@ def _make_temp_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _build_app(repo_path: Path) -> GitDiffNavTool:
+def _build_app(repo_path: Path, rel_file: str = "") -> GitDiffNavTool:
     return GitDiffNavTool(
         gitRepo=GitRepo(str(repo_path)),
         rel_dir="",
-        rel_file="",
+        rel_file=rel_file,
         repo_first=False,
         repo_hashes=[],
         no_ignored=True,
@@ -74,7 +74,11 @@ def _find_visible(app: GitDiffNavTool) -> bool:
         app.screen.query_one("#find-container")
         return True
     except NoMatches:
-        return False
+        try:
+            app.query_one("#find-container")
+            return True
+        except Exception:
+            return False
 
 
 def _diff_body_snapshot(app: GitDiffNavTool) -> tuple:
@@ -141,7 +145,7 @@ def test_find_overlay_visible_with_less_and_enter_keeps_diff_body(tmp_path: Path
             await pilot.pause()
 
             assert _find_visible(app)
-            assert getattr(app, "_find_overlay_title", "") == "Find (backward)"
+            assert getattr(app, "_find_overlay_title", "") == "Find (reverse)"
             assert _diff_body_snapshot(app) == before
 
             find_input = app.screen.query_one("#find-input", Input)
@@ -182,6 +186,139 @@ def test_find_overlay_appears_in_file_list_view():
             assert _find_visible(app)
             assert getattr(app, "_find_overlay_title", "") == "Find (forward)"
             assert "Find (forward)" in after_plain
+
+            find_input = app.screen.query_one("#find-input", Input)
+            assert app.focused is find_input
+
+    asyncio.run(_scenario())
+
+
+def test_find_overlay_two_pane_mode_with_greater(tmp_path: Path):
+    """Open filemode with filename (two-pane mode) and verify > shows Find (forward)."""
+    repo_path = _make_temp_repo(tmp_path)
+    app = _build_app(repo_path, rel_file="a.txt")
+
+    async def _scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Verify we're in two-pane mode (not file-list mode)
+            before_svg = app.export_screenshot()
+            _save_svg_artifact("twoPane-before-find-greater", before_svg)
+
+            assert not _find_visible(app)
+
+            await pilot.press(">")
+            await pilot.pause()
+
+            after_svg = app.export_screenshot()
+            _save_svg_artifact("twoPane-after-find-greater", after_svg)
+            after_plain = svg_plain_text(after_svg)
+
+            assert _find_visible(app)
+            assert getattr(app, "_find_overlay_title", "") == "Find (forward)"
+            assert "Find (forward)" in after_plain
+
+            find_input = app.screen.query_one("#find-input", Input)
+            assert app.focused is find_input
+
+    asyncio.run(_scenario())
+
+
+def test_find_overlay_two_pane_mode_with_less(tmp_path: Path):
+    """Open filemode with filename (two-pane mode) and verify < shows Find (reverse)."""
+    repo_path = _make_temp_repo(tmp_path)
+    app = _build_app(repo_path, rel_file="a.txt")
+
+    async def _scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            before_svg = app.export_screenshot()
+            _save_svg_artifact("twoPane-before-find-less", before_svg)
+
+            assert not _find_visible(app)
+
+            await pilot.press("<")
+            await pilot.pause()
+
+            after_svg = app.export_screenshot()
+            _save_svg_artifact("twoPane-after-find-less", after_svg)
+            after_plain = svg_plain_text(after_svg)
+
+            assert _find_visible(app)
+            assert getattr(app, "_find_overlay_title", "") == "Find (reverse)"
+            assert "Find (reverse)" in after_plain
+
+            find_input = app.screen.query_one("#find-input", Input)
+            assert app.focused is find_input
+
+    asyncio.run(_scenario())
+
+
+def test_find_overlay_after_opening_diff_pane_with_greater(tmp_path: Path):
+    """Open filemode with filename, press right arrow to open diff pane, verify > shows Find (forward)."""
+    repo_path = _make_temp_repo(tmp_path)
+    app = _build_app(repo_path, rel_file="a.txt")
+
+    async def _scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Open the diff pane with right arrow
+            await pilot.press("right")
+            await pilot.pause()
+
+            before_svg = app.export_screenshot()
+            _save_svg_artifact("diffPane-before-find-greater", before_svg)
+
+            assert not _find_visible(app)
+
+            await pilot.press(">")
+            await pilot.pause()
+
+            after_svg = app.export_screenshot()
+            _save_svg_artifact("diffPane-after-find-greater", after_svg)
+            after_plain = svg_plain_text(after_svg)
+
+            assert _find_visible(app)
+            assert getattr(app, "_find_overlay_title", "") == "Find (forward)"
+            assert "Find (forward)" in after_plain
+
+            find_input = app.screen.query_one("#find-input", Input)
+            assert app.focused is find_input
+
+    asyncio.run(_scenario())
+
+
+def test_find_overlay_after_opening_diff_pane_with_less(tmp_path: Path):
+    """Open filemode with filename, press right arrow to open diff pane, verify < shows Find (reverse)."""
+    repo_path = _make_temp_repo(tmp_path)
+    app = _build_app(repo_path, rel_file="a.txt")
+
+    async def _scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Open the diff pane with right arrow
+            await pilot.press("right")
+            await pilot.pause()
+
+            before_svg = app.export_screenshot()
+            _save_svg_artifact("diffPane-before-find-less", before_svg)
+
+            assert not _find_visible(app)
+
+            await pilot.press("<")
+            await pilot.pause()
+
+            after_svg = app.export_screenshot()
+            _save_svg_artifact("diffPane-after-find-less", after_svg)
+            after_plain = svg_plain_text(after_svg)
+
+            assert _find_visible(app)
+            assert getattr(app, "_find_overlay_title", "") == "Find (reverse)"
+            assert "Find (reverse)" in after_plain
 
             find_input = app.screen.query_one("#find-input", Input)
             assert app.focused is find_input
