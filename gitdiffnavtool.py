@@ -1608,7 +1608,7 @@ class AppBase(AppException, ListView):
             try:
                 init = getattr(self, "_last_search", "") or ""
                 forward = ch == ">"
-                title = "Find (forward)" if forward else "Find (backward)"
+                title = "Find (forward)" if forward else "Find (reverse)"
                 self.app.show_find_overlay(init, title, lambda v, s=self, f=forward: s._find_and_activate(v, f))
             except Exception as e:
                 self.printException(e, "AppBase.on_key: show_find_overlay failed")
@@ -1973,10 +1973,31 @@ class AppBase(AppException, ListView):
                 except Exception as e:
                     self.printException(e, "key_w_helper: event.stop failed")
 
-            # Build an absolute filepath from app rel_dir/rel_file when available
-            filepath = self.app.gitRepo.abs_path_for(self.app.rel_dir, self.app.rel_file)
+            # In history views, recompute the selected commit pair so snapshot
+            # writes follow the currently highlighted row, not stale app hashes.
             prev_hash = self.app.previous_hash
             curr_hash = self.app.current_hash
+            try:
+                if hasattr(self, "_compute_selected_pair"):
+                    pair = self._compute_selected_pair()
+                    if isinstance(pair, tuple) and len(pair) == 2:
+                        prev_hash, curr_hash = pair
+            except Exception as e:
+                self.printException(e, "key_w_helper: _compute_selected_pair failed")
+
+            # Build an absolute filepath from app rel_dir/rel_file when available
+            filepath = self.app.gitRepo.abs_path_for(self.app.rel_dir, self.app.rel_file)
+
+            logger.debug(
+                "%s.key_w_helper: rel_dir=%r rel_file=%r filepath=%r prev_hash=%r curr_hash=%r output_directory=%r",
+                type(self).__name__,
+                getattr(self.app, "rel_dir", None),
+                getattr(self.app, "rel_file", None),
+                filepath,
+                prev_hash,
+                curr_hash,
+                getattr(self.app, "output_directory", None),
+            )
 
             # If filepath appears to be a directory, keep it as-is
             if filepath and os.path.isdir(filepath):
@@ -1991,6 +2012,7 @@ class AppBase(AppException, ListView):
                     "Do you wish to write the (o)lder file, the (n)ewer file, or (b)oth?\n\n"
                     "(Any other key to cancel.)"
                 )
+                logger.debug("%s.key_w_helper: presenting SaveSnapshotModal for %r", type(self).__name__, filepath)
                 self.app.push_screen(
                     SaveSnapshotModal(
                         msg, filepath=filepath, prev_hash=prev_hash, curr_hash=curr_hash, repo_root=repo_root_val
@@ -2055,8 +2077,28 @@ class SaveSnapshotModal(AppException, ModalScreen):
 
     def on_key(self, event: events.Key) -> None:
         """Handle a single key press: o/O -> older, n/N -> newer, b/B -> both."""
+        saved_paths: list[str] = []
+        failed_saves: list[tuple[str, str]] = []
+
+        def _attempt_save(label: str, hashval: str | None) -> None:
+            if not hashval:
+                failed_saves.append((label, "missing hash value"))
+                return
+            out_path, err = self._save(hashval)
+            if out_path:
+                saved_paths.append(out_path)
+                return
+            failed_saves.append((label, err or f"save failed for hash {hashval}"))
+
         try:
             key = getattr(event, "key", "")
+            logger.debug(
+                "SaveSnapshotModal.on_key: key=%r filepath=%r prev_hash=%r curr_hash=%r",
+                key,
+                self.filepath,
+                self.prev_hash,
+                self.curr_hash,
+            )
             try:
                 if key not in ("q", "Q"):
                     # Prevent further handling unless user pressed q/Q to cancel
@@ -2067,22 +2109,18 @@ class SaveSnapshotModal(AppException, ModalScreen):
             try:
                 # Older (prev_hash)
                 if key in ("o", "O"):
-                    if self.prev_hash:
-                        self._save(self.prev_hash)
+                    _attempt_save("older", self.prev_hash)
                     return
 
                 # Newer (curr_hash)
                 if key in ("n", "N"):
-                    if self.curr_hash:
-                        self._save(self.curr_hash)
+                    _attempt_save("newer", self.curr_hash)
                     return
 
                 # Both
                 if key in ("b", "B"):
-                    if self.prev_hash:
-                        self._save(self.prev_hash)
-                    if self.curr_hash:
-                        self._save(self.curr_hash)
+                    _attempt_save("older", self.prev_hash)
+                    _attempt_save("newer", self.curr_hash)
                     return
             except Exception as e:
                 self.printException(e, "SaveSnapshotModal.on_key: _save failed")
@@ -2093,10 +2131,26 @@ class SaveSnapshotModal(AppException, ModalScreen):
             except Exception as e:
                 self.printException(e, "SaveSnapshotModal.on_key: pop_screen failed")
 
-    def _save(self, hashval: str | None) -> None:
+            # Show a confirmation popup for each successfully written snapshot.
+            for saved_path in saved_paths:
+                try:
+                    logger.debug("SaveSnapshotModal.on_key: showing success modal for %r", saved_path)
+                    self.app.push_screen(MessageModal(f"Snapshot written:\n\n{saved_path}"))
+                except Exception as e:
+                    self.printException(e, "SaveSnapshotModal.on_key: push success modal failed")
+
+            for label, reason in failed_saves:
+                try:
+                    logger.debug("SaveSnapshotModal.on_key: showing failure modal label=%r reason=%r", label, reason)
+                    self.app.push_screen(MessageModal(f"Snapshot save failed ({label}):\n\n{reason}"))
+                except Exception as e:
+                    self.printException(e, "SaveSnapshotModal.on_key: push failure modal failed")
+
+    def _save(self, hashval: str | None) -> tuple[str | None, str | None]:
         """Write the file content for the given hash into a target snapshot file."""
         if not hashval or not self.filepath:
-            return
+            logger.debug("SaveSnapshotModal._save: skipped (hashval=%r filepath=%r)", hashval, self.filepath)
+            return None, "missing hash or filepath"
 
         try:
             relpath = os.path.relpath(self.filepath, self.repo_root)
@@ -2122,7 +2176,7 @@ class SaveSnapshotModal(AppException, ModalScreen):
                 os.makedirs(outdir, exist_ok=True)
             except Exception as e:
                 self.printException(e, f"SaveSnapshotModal._save: creating output-directory failed ({outdir})")
-                return
+                return None, f"could not create output directory: {outdir}"
 
             try:
                 safe_rel = os.path.normpath(relpath)
@@ -2136,8 +2190,17 @@ class SaveSnapshotModal(AppException, ModalScreen):
         else:
             target_path = f"{self.filepath}.{hashval}"
 
+        logger.debug(
+            "SaveSnapshotModal._save: hash=%r relpath=%r reldir=%r relfile=%r target=%r",
+            hashval,
+            relpath,
+            reldir,
+            relfile,
+            target_path,
+        )
+
         # Helper to write bytes to target
-        def _write_bytes(bdata: bytes) -> None:
+        def _write_bytes(bdata: bytes) -> bool:
             try:
                 ddir = os.path.dirname(target_path)
                 if ddir and not os.path.exists(ddir):
@@ -2146,45 +2209,67 @@ class SaveSnapshotModal(AppException, ModalScreen):
                     except Exception as e:
                         self.printException(e, "SaveSnapshotModal._save: makedirs failed")
 
+                logger.debug(
+                    "SaveSnapshotModal._save: writing %d bytes to %r",
+                    len(bdata),
+                    target_path,
+                )
                 with open(target_path, "wb") as out:
                     out.write(bdata)
+                logger.info("SaveSnapshotModal._save: wrote snapshot %s", target_path)
+                return True
             except Exception as e:
                 self.printException(e, f"SaveSnapshotModal._write failed for {target_path}")
+                logger.debug("SaveSnapshotModal._save: write failed for %r", target_path)
+                return False
 
         # Different strategies based on hash semantics
         if hashval == "MODS":
             # Working tree (unstaged) version
             try:
+                logger.debug("SaveSnapshotModal._save: source=working-tree path=%r", self.filepath)
                 with open(self.filepath, "rb") as f:
                     data = f.read()
-                _write_bytes(data)
-                return
+                if _write_bytes(data):
+                    return target_path, None
+                return None, f"write failed: {target_path}"
             except Exception as e:
                 self.printException(e, "SaveSnapshotModal._save read working-tree failed")
-                return
+                return None, f"working-tree read failed: {self.filepath}"
 
         if hashval == "STAGED":
             # Read from index via git show :<relpath>
             try:
+                logger.debug("SaveSnapshotModal._save: source=STAGED reldir=%r relfile=%r", reldir, relfile)
                 gitrepo = self.app.gitRepo
                 data = gitrepo.getFileContents("STAGED", reldir, relfile)
                 if data is None:
                     raise Exception("git show STAGED failed")
-                _write_bytes(data)
-                return
+                if _write_bytes(data):
+                    return target_path, None
+                return None, f"write failed: {target_path}"
             except Exception as e:
                 self.printException(e, "SaveSnapshotModal._save STAGED failed")
-                return
+                return None, f"STAGED read failed: {relpath}"
 
         # Otherwise treat as commit-ish hash: git show <hash>:<relpath>
         try:
+            logger.debug(
+                "SaveSnapshotModal._save: source=commit hash=%r reldir=%r relfile=%r",
+                hashval,
+                reldir,
+                relfile,
+            )
             gitrepo = self.app.gitRepo
             data = gitrepo.getFileContents(hashval, reldir, relfile)
             if data is None:
                 raise Exception("git show failed")
-            _write_bytes(data)
+            if _write_bytes(data):
+                return target_path, None
+            return None, f"write failed: {target_path}"
         except Exception as e:
             self.printException(e, "SaveSnapshotModal._save commit show failed")
+            return None, f"commit read failed for {hashval}: {relpath}"
 
 
 # Top-level modal so callers can push it via `self.app.push_screen(_TBDModal(...))`
@@ -2604,7 +2689,16 @@ class FullScreenBase(AppBase):
 
     def key_w(self, event: events.Key | None = None) -> None:
         """Prompt to save snapshot files for the current content."""
-        logger.debug(f"{self.__class__.__name__}.key_w called: key=%r", getattr(event, "key", None))
+        logger.debug(
+            "%s.key_w called: key=%r layout=%r rel_dir=%r rel_file=%r prev_hash=%r curr_hash=%r",
+            self.__class__.__name__,
+            getattr(event, "key", None),
+            getattr(self.app, "_current_layout", None),
+            getattr(self.app, "rel_dir", None),
+            getattr(self.app, "rel_file", None),
+            getattr(self.app, "previous_hash", None),
+            getattr(self.app, "current_hash", None),
+        )
         if event is not None:
             try:
                 event.stop()
@@ -4201,7 +4295,7 @@ class RepoModeFileList(FileListBase, RightSideBase):
                 event.stop()
             except Exception as e:
                 self.printException(e, "RepoModeFileList.key_w: event.stop failed")
-                self.key_w_helper(event)
+        self.key_w_helper(event)
         self._log_visible_items("key_w after processing index change")
 
     def key_W(self, event: events.Key | None = None) -> None:
@@ -4758,7 +4852,7 @@ class FileModeHistoryList(HistoryListBase, RightSideBase):
                 event.stop()
             except Exception as e:
                 self.printException(e, "FileModeHistoryList.key_w: event.stop failed")
-            self.key_w_helper(event)
+        self.key_w_helper(event)
 
     def key_W(self, event: events.Key | None = None) -> None:
         """Alias for key_w to support uppercase 'W' as well."""

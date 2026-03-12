@@ -1,6 +1,6 @@
 import types
 
-from gitdiffnavtool import AppBase
+from gitdiffnavtool import AppBase, RepoModeFileList, SaveSnapshotModal
 
 
 class FakeEvent:
@@ -146,3 +146,80 @@ def test_find_and_activate_returns_false_when_not_found():
     assert found is False
     assert h.activated == []
     assert h._last_search == "zzz"
+
+
+class _FakeGitRepoForSnapshots:
+    def abs_path_for(self, rel_dir, rel_file):
+        base = "/tmp/repo"
+        if rel_dir:
+            return f"{base}/{rel_dir}/{rel_file}"
+        return f"{base}/{rel_file}"
+
+    def get_repo_root(self):
+        return "/tmp/repo"
+
+
+class HarnessForKeyWHelper:
+    def __init__(self):
+        self.errors = []
+        self.pushed = []
+        self.app = types.SimpleNamespace(
+            rel_dir="",
+            rel_file="README.md",
+            previous_hash="top_prev",
+            current_hash="top_curr",
+            output_directory=None,
+            gitRepo=_FakeGitRepoForSnapshots(),
+            push_screen=self._push_screen,
+        )
+
+    def _push_screen(self, modal):
+        self.pushed.append(modal)
+
+    def printException(self, exc, context=None):
+        self.errors.append((exc, context))
+
+    def _compute_selected_pair(self):
+        # Simulate a non-top current selection in history mode.
+        self.app.previous_hash = "selected_prev"
+        self.app.current_hash = "selected_curr"
+        return ("selected_prev", "selected_curr")
+
+
+def test_key_w_helper_uses_selected_pair_hashes_when_available():
+    h = HarnessForKeyWHelper()
+
+    AppBase.key_w_helper(h, None)
+
+    assert len(h.pushed) == 1
+    modal = h.pushed[0]
+    assert isinstance(modal, SaveSnapshotModal)
+    assert modal.prev_hash == "selected_prev"
+    assert modal.curr_hash == "selected_curr"
+
+
+class HarnessForRepoModeKeyW:
+    def __init__(self):
+        self.index = 0
+        self.errors = []
+        self.helper_calls = 0
+        self.app = types.SimpleNamespace()
+
+    def printException(self, exc, context=None):
+        self.errors.append((exc, context))
+
+    def key_w_helper(self, _event=None):
+        self.helper_calls += 1
+
+    def _log_visible_items(self, _msg):
+        pass
+
+
+def test_repo_mode_key_w_always_calls_helper():
+    h = HarnessForRepoModeKeyW()
+    event = FakeEvent(key="w", character="w")
+
+    RepoModeFileList.key_w(h, event)
+
+    assert event.stopped is True
+    assert h.helper_calls == 1
