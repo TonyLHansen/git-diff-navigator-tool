@@ -1526,7 +1526,7 @@ class GitRepo(AppException):
             formatted = formatted[:limit]
         return formatted
 
-    def get_hashes_between(
+    def getHashesBetween(
         self, file_name: str, prev_hash: str, curr_hash: str, ignorecache: bool = False
     ) -> list[str]:
         """Return file-specific history entries between two selected hashes, inclusive.
@@ -1552,7 +1552,7 @@ class GitRepo(AppException):
             end = max(curr_index, prev_index)
             return hashes[start : end + 1]
         except Exception as e:
-            self.printException(e, "get_hashes_between failed")
+            self.printException(e, "getHashesBetween failed")
             return []
 
     def getHashListStagedChanges(

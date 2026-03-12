@@ -2014,9 +2014,9 @@ class AppBase(AppException, ListView):
                 # the modal can offer the "all" option when there are
                 # intermediate commits between the two boundary hashes.
                 try:
-                    all_hashes = self.app.gitRepo.get_hashes_between(relpath, prev_hash, curr_hash)
+                    all_hashes = self.app.gitRepo.getHashesBetween(relpath, prev_hash, curr_hash)
                 except Exception as e:
-                    self.printException(e, "key_w_helper: get_hashes_between failed")
+                    self.printException(e, "key_w_helper: getHashesBetween failed")
                     all_hashes = []
 
                 has_intermediates = len(all_hashes) > 2
