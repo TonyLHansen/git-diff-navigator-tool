@@ -2000,6 +2000,74 @@ def run_py_compile(py_files: List[Path]) -> List[Tuple[Path, str]]:
     return failures
 
 
+def build_default_config_template() -> str:
+    """Build a commented .check_axioms.ini template with defaults."""
+    lines = [
+        "[check]",
+        "# check_axioms configuration file",
+        "# Boolean options (true/false, yes/no, 1/0, on/off)",
+        "",
+        "# Bare except checks",
+        "bare-excepts = true",
+        "check-global-excepts = false",
+        "",
+        "# Exception handling checks",
+        "except-as-print = true",
+        "logger-in-try = true",
+        "printexception-in-try = true",
+        "",
+        "# Attribute and initialization checks",
+        "prefer-no-direct-hasattrs = true",
+        "prefer-direct-attrs = true",
+        "getattr-not-initialized = true",
+        "check-getattr-methods = true",
+        "",
+        "# Code quality checks",
+        "py-compile = true",
+        "nested-try-except = true",
+        "pass-check = true",
+        "check-imports = true",
+        "check-docstrings = true",
+        "multiline-starts-with-newline = true",
+        "check-repeat = true",
+        "check-init-first = true",
+        "",
+        "# Swallowing exception callers",
+        "swallowing-caller-check = true",
+        "",
+        "# Other options",
+        "print = false",
+        "verbose = 0",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def handle_init_config(location: str) -> int:
+    """
+    Handle the --init-config action.
+
+    Writes a commented template to .check_axioms.ini in the specified location.
+    Returns an exit code suitable for returning from main().
+    """
+    target_dir = os.getcwd() if location == "cwd" else os.path.expanduser("~")
+    target_path = os.path.join(target_dir, ".check_axioms.ini")
+    try:
+        if os.path.exists(target_path):
+            print(f"config already exists: {target_path}", file=sys.stderr)
+            return 2
+        with open(target_path, "x", encoding="utf-8") as fh:
+            fh.write(build_default_config_template())
+        print(f"wrote config template: {target_path}")
+        return 0
+    except FileExistsError as e:
+        printException(e, f"config already exists: {target_path}")
+        print(f"config already exists: {target_path}", file=sys.stderr)
+        return 2
+    except Exception as e:
+        printException(e, f"failed writing config template to {target_path}")
+        return 2
+
+
 def main(argv: List[str] | None = None) -> int:
     """
     Command-line entry point for the axiom checker.
@@ -2008,6 +2076,21 @@ def main(argv: List[str] | None = None) -> int:
     Returns exit code 0 on success, 1 on violations.
     """
     parser = argparse.ArgumentParser(prog="check_axioms.py")
+    parser.add_argument(
+        "--init-config",
+        dest="init_config",
+        nargs="?",
+        choices=["cwd", "home"],
+        const="cwd",
+        metavar="LOCATION",
+        help="write a commented .check_axioms.ini template and exit (LOCATION: cwd or home, default: cwd)",
+    )
+    parser.add_argument(
+        "--config",
+        dest="config",
+        metavar="FILE",
+        help="use the specified config FILE instead of searching cwd and $HOME for .check_axioms.ini",
+    )
     parser.add_argument("--root", "-r", default=str(ROOT), help="Project root to scan")
     parser.add_argument("--compile-only", action="store_true", help="Only run py_compile checks")
 
@@ -2305,7 +2388,14 @@ def main(argv: List[str] | None = None) -> int:
     # Load optional configuration from .check_axioms.ini (cwd then $HOME).
     # Config keys are the long-option names without leading dashes; e.g.
     # "prefer-no-direct-hasattrs = false" maps to `--no-prefer-no-direct-hasattrs`.
-    cfg_files = [Path.cwd() / ".check_axioms.ini", Path.home() / ".check_axioms.ini"]
+    # Parse early to get --config if provided
+    parsed_args, _ = parser.parse_known_args(argv)
+    
+    # Determine config files to use
+    if getattr(parsed_args, "config", None):
+        cfg_files = [Path(parsed_args.config)]
+    else:
+        cfg_files = [Path.cwd() / ".check_axioms.ini", Path.home() / ".check_axioms.ini"]
     cfg = configparser.ConfigParser()
     read_files = [str(p) for p in cfg_files if p.exists()]
     if read_files:
@@ -2407,6 +2497,10 @@ def main(argv: List[str] | None = None) -> int:
             logger.warning("failed reading config files %s: %s", read_files, e)
 
     args = parser.parse_args(argv)
+
+    # Handle --init-config and exit early
+    if args.init_config is not None:
+        return handle_init_config(args.init_config)
 
     root = Path(args.root)
 
