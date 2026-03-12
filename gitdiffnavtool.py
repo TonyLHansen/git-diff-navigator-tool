@@ -495,12 +495,12 @@ Open File Column:
 Snapshot Writing:
 - Pressing `w` or `W` in the Diff or Open File columns writes a snapshot (copy) of the currently-visible content
   to a file in the snapshot output directory.
-- By default, snapshots are written beside the source file with names like `filename.hash.ext` where `ext`
-  is the source file extension and `hash` is the commit hash.
-- Use `--output-directory DIR` (or `output-directory = DIR` in config) to specify an alternate directory
+- By default, snapshots are written beside the source file with names like `filename.hash` where `hash` is the commit hash.
+- With `--write-add-timestamps` enabled, snapshot files will include a timestamp in their name (e.g., `filename.timestamp.hash`).
+- Use `--write-output-directory DIR` (or `write-output-directory = DIR` in config) to specify an alternate directory
   where all snapshot files will be written. The app will create the directory if it doesn't exist.
 - Snapshot files preserve the repository-relative path structure when written to an output directory
-  (e.g., a snapshot of `src/main.py` at hash `abc123` would become `output-directory/src/main.py.abc123.py`).
+    (e.g., a snapshot of `src/main.py` at hash `abc123` would become `write-output-directory/src/main.py.abc123`).
 
 Tips and behavior notes:
 - Short commit hashes are shown using the configured hash length (`--hash-length` / `hash-length` in config).
@@ -569,7 +569,13 @@ Configuration File
     # This can be toggled at run time with 'u'/'U' when focused on file lists.
     untracked-files = true
     # Directory where snapshot files are written (optional, default: beside source file)
-    # output-directory = /tmp/snapshots
+    # write-output-directory = /tmp/snapshots
+    # Include commit timestamp in snapshot filenames when using w/W key (default: false)
+    write-adds-timestamps = false
+    # Number of hash characters used in snapshot filenames (0 means full hash; default: 12)
+    write-hash-length = 12
+    # Reset mtime of snapshot files to commit timestamp (default: true)
+    write-uses-mtime = true
     # Use a specific git branch (optional, default: current branch)
     # branch = main
     # Enable debug logging to a file (optional, default: disabled)
@@ -613,7 +619,7 @@ def build_default_config_template() -> str:
         "# Include untracked files in file lists (default: true)",
         "untracked-files = true",
         "# Directory where snapshot files are written (optional, default: beside source file)",
-        "# output-directory = /tmp/snapshots",
+        "# write-output-directory = /tmp/snapshots",
         "# Use a specific git branch (optional, default: current branch)",
         "# branch = main",
         "# Enable debug logging to a file (optional, default: disabled)",
@@ -624,6 +630,8 @@ def build_default_config_template() -> str:
         "write-adds-timestamps = false",
         "# Number of hash characters used in snapshot filenames (0 means full hash; default: 12)",
         "write-hash-length = 12",
+        "# Reset mtime of snapshot files to commit timestamp (default: true)",
+        "write-uses-mtime = true",
     ]
     return "\n".join(lines) + "\n"
 
@@ -651,7 +659,11 @@ def build_missing_config_option_comment_block(
             "diff = classic",
         ),
         ("debug", "Enable debug logging to a file.", "debug = /tmp/gitdiffnavtool.log"),
-        ("output-directory", "Directory where snapshot files are written.", "output-directory = /tmp/snapshots"),
+        (
+            "write-output-directory",
+            "Directory where snapshot files are written.",
+            "write-output-directory = /tmp/snapshots",
+        ),
         ("hash-length", "Display width for short commit hashes (must be >= 1).", f"hash-length = {HASH_LENGTH}"),
         ("unified-context", "Unified diff context lines (must be >= 0).", "unified-context = 3"),
         ("history-limit", "Maximum history entries to display (0 means unlimited).", "history-limit = 0"),
@@ -669,6 +681,11 @@ def build_missing_config_option_comment_block(
             "write-hash-length",
             "Number of hash characters used in snapshot filenames (0 means full hash).",
             "write-hash-length = 12",
+        ),
+        (
+            "write-uses-mtime",
+            "Reset mtime of snapshot files to commit timestamp.",
+            "write-uses-mtime = true",
         ),
     ]
     missing_key_set = set(missing_keys)
@@ -2058,6 +2075,7 @@ class AppBase(AppException, ListView):
                         all_hashes=all_hashes if has_intermediates else None,
                         write_adds_timestamps=getattr(self.app, "write_adds_timestamps", False),
                         write_hash_length=getattr(self.app, "write_hash_length", 12),
+                        write_uses_mtime=getattr(self.app, "write_uses_mtime", True),
                     )
                 )
             except Exception as e:
@@ -2086,6 +2104,7 @@ class SaveSnapshotModal(AppException, ModalScreen):
         all_hashes: list[str] | None,
         write_adds_timestamps: bool,
         write_hash_length: int,
+        write_uses_mtime: bool,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -2101,6 +2120,8 @@ class SaveSnapshotModal(AppException, ModalScreen):
         self.write_adds_timestamps = bool(write_adds_timestamps)
         # Number of hash chars to use in snapshot filenames (0 => full hash).
         self.write_hash_length = int(write_hash_length)
+        # Whether to reset mtime of snapshot files to commit timestamp.
+        self.write_uses_mtime = bool(write_uses_mtime)
 
     def compose(self):
         """Compose the modal contents (a single Label with the message)."""
@@ -2311,29 +2332,58 @@ class SaveSnapshotModal(AppException, ModalScreen):
                 logger.debug("SaveSnapshotModal._save: write failed for %r", target_path)
                 return False
 
+        # Helper to set file mtime based on hash timestamp
+        def _set_mtime() -> bool:
+            """Set target file's mtime to the time associated with the hash."""
+            if not self.write_uses_mtime or not os.path.exists(target_path):
+                return True  # Success if mtime-setting is disabled or file doesn't exist
+            try:
+                epoch: float | None = None
+                if hashval == GitRepo.MODS:
+                    if self.filepath and os.path.exists(self.filepath):
+                        epoch = os.path.getmtime(self.filepath)
+                elif hashval == GitRepo.STAGED:
+                    epoch = self.app.gitRepo.getIndexMtime()
+                else:
+                    epoch = self.app.gitRepo.getCommitTimestamp(hashval)
+                
+                if epoch is not None:
+                    os.utime(target_path, (epoch, epoch))
+                    logger.debug("SaveSnapshotModal._save: set mtime of %r to %s", target_path, epoch)
+                    return True
+                else:
+                    logger.debug("SaveSnapshotModal._save: could not determine timestamp for hash=%r", hashval)
+                    return True  # Don't fail if we can't determine timestamp
+            except Exception as e:
+                self.printException(e, "SaveSnapshotModal._save: setting mtime failed")
+                logger.debug("SaveSnapshotModal._save: mtime-setting failed for %r", target_path)
+                return True  # Don't fail the whole snapshot write just because mtime-setting failed
+
         # Different strategies based on hash semantics
-        if hashval == "MODS":
+        if hashval == GitRepo.MODS:
             # Working tree (unstaged) version
             try:
                 logger.debug("SaveSnapshotModal._save: source=working-tree path=%r", self.filepath)
                 with open(self.filepath, "rb") as f:
                     data = f.read()
                 if _write_bytes(data):
+                    _set_mtime()
                     return target_path, None
                 return None, f"write failed: {target_path}"
             except Exception as e:
                 self.printException(e, "SaveSnapshotModal._save read working-tree failed")
                 return None, f"working-tree read failed: {self.filepath}"
 
-        if hashval == "STAGED":
+        if hashval == GitRepo.STAGED:
             # Read from index via git show :<relpath>
             try:
                 logger.debug("SaveSnapshotModal._save: source=STAGED reldir=%r relfile=%r", reldir, relfile)
                 gitrepo = self.app.gitRepo
-                data = gitrepo.getFileContents("STAGED", reldir, relfile)
+                data = gitrepo.getFileContents(GitRepo.STAGED, reldir, relfile)
                 if data is None:
                     raise Exception("git show STAGED failed")
                 if _write_bytes(data):
+                    _set_mtime()
                     return target_path, None
                 return None, f"write failed: {target_path}"
             except Exception as e:
@@ -2353,6 +2403,7 @@ class SaveSnapshotModal(AppException, ModalScreen):
             if data is None:
                 raise Exception("git show failed")
             if _write_bytes(data):
+                _set_mtime()
                 return target_path, None
             return None, f"write failed: {target_path}"
         except Exception as e:
@@ -3328,7 +3379,7 @@ class FileModeFileList(FileListBase):
 
             # Gather working-tree modifications (MODS): list of (path,status)
             try:
-                mods = gitrepo.getFileListBetweenNormalizedHashes("HEAD", "MODS")
+                mods = gitrepo.getFileListBetweenNormalizedHashes("HEAD", GitRepo.MODS)
             except Exception as e:
                 self.printException(e, "_collect_filemode_nodes: getFileListBetweenNormalizedHashes failed")
                 mods = []
@@ -6452,6 +6503,7 @@ class GitDiffNavTool(AppException, App):
         output_directory: str | None,
         write_adds_timestamps: bool,
         write_hash_length: int,
+        write_uses_mtime: bool,
         **kwargs,
     ):
         """
@@ -6523,6 +6575,8 @@ class GitDiffNavTool(AppException, App):
         self.write_adds_timestamps = bool(write_adds_timestamps)
         # Number of hash chars to use in snapshot filenames (0 => full hash).
         self.write_hash_length = max(0, int(write_hash_length))
+        # Whether to reset mtime of snapshot files to commit timestamp.
+        self.write_uses_mtime = bool(write_uses_mtime)
 
         # Optional initial filename basename to highlight when listing a dir
         self.highlight = highlight
@@ -8203,13 +8257,14 @@ def handle_init_config(args) -> int:
                 "color",
                 "diff",
                 "debug",
-                "output-directory",
+                "write-output-directory",
                 "hash-length",
                 "unified-context",
                 "history-limit",
                 "minimum-sidebyside-width",
                 "write-adds-timestamps",
                 "write-hash-length",
+                "write-uses-mtime",
             ]
             missing_value_keys: list[str] = []
             for key in known_keys:
@@ -8356,40 +8411,6 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
         help="disable branch configuration (overrides config setting)",
     )
 
-    # Write options group
-    write_group = parser.add_argument_group("Write Options")
-    write_group.add_argument(
-        "-o",
-        "--output-directory",
-        dest="output_directory",
-        metavar="DIR",
-        default=None,
-        help="directory where w/W snapshot files are written (default: beside source file)",
-    )
-
-    write_ts_group = write_group.add_mutually_exclusive_group()
-    write_ts_group.add_argument(
-        "--write-adds-timestamps",
-        dest="write_adds_timestamps",
-        action="store_true",
-        default=False,
-        help="include commit timestamp in snapshot filenames (e.g. file.2026-03-08_15:07:25.HASH)",
-    )
-    write_ts_group.add_argument(
-        "--no-write-adds-timestamps",
-        dest="write_adds_timestamps",
-        action="store_false",
-        help="do not include timestamp in snapshot filenames (default)",
-    )
-    write_group.add_argument(
-        "--write-hash-length",
-        dest="write_hash_length",
-        metavar="N",
-        type=int,
-        default=12,
-        help="hash length used in snapshot filenames (default: 12, use 0 for full hash)",
-    )
-
     # History List Options: options affecting history list rendering/behavior
     history_group = parser.add_argument_group("History List Options")
     history_group.add_argument(
@@ -8521,6 +8542,55 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
         help="exclude untracked files from file-mode listings",
     )
 
+    # Write options group
+    write_group = parser.add_argument_group("Write Options")
+    write_group.add_argument(
+        "-o",
+        "--write-output-directory",
+        dest="output_directory",
+        metavar="DIR",
+        default=None,
+        help="directory where w/W snapshot files are written (default: beside source file)",
+    )
+
+    write_ts_group = write_group.add_mutually_exclusive_group()
+    write_ts_group.add_argument(
+        "--write-adds-timestamps",
+        dest="write_adds_timestamps",
+        action="store_true",
+        default=False,
+        help="include commit timestamp in snapshot filenames (e.g. file.2026-03-08_15:07:25.HASH)",
+    )
+    write_ts_group.add_argument(
+        "--no-write-adds-timestamps",
+        dest="write_adds_timestamps",
+        action="store_false",
+        help="do not include timestamp in snapshot filenames (default)",
+    )
+    write_group.add_argument(
+        "--write-hash-length",
+        dest="write_hash_length",
+        metavar="N",
+        type=int,
+        default=12,
+        help="hash length used in snapshot filenames (default: 12, use 0 for full hash)",
+    )
+
+    write_mtime_group = write_group.add_mutually_exclusive_group()
+    write_mtime_group.add_argument(
+        "--write-uses-mtime",
+        dest="write_uses_mtime",
+        action="store_true",
+        default=True,
+        help="reset mtime of snapshot files to commit timestamp (default)",
+    )
+    write_mtime_group.add_argument(
+        "--no-write-uses-mtime",
+        dest="write_uses_mtime",
+        action="store_false",
+        help="do not reset mtime of snapshot files",
+    )
+
     # Debug options group
     debug_group = parser.add_argument_group("Debug Options")
     debug_group.add_argument(
@@ -8570,8 +8640,10 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
     #   hash-length=<integer >= 1>
     #   unified-context=<integer >= 0>
     #   history-limit=<integer >= 0>
-    #   output-directory=<directory path>
+    #   write-output-directory=<directory path>
+    #   write-adds-timestamps=true/false
     #   write-hash-length=<integer >= 0>
+    #   write-uses-mtime=true/false
     #   minimum-sidebyside-width=<integer >= 1>
     #   blank-before-hunk=true/false
     #   add-authors=true/false
@@ -8696,6 +8768,7 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
                 ("trim-debug", "trim_debug", lambda x: bool(x)),
                 ("blank-before-hunk", "blank_before_hunk", lambda x: bool(x)),
                 ("write-adds-timestamps", "write_adds_timestamps", lambda x: bool(x)),
+                ("write-uses-mtime", "write_uses_mtime", lambda x: bool(x)),
             ]
 
             for cfg_key, dest, transform in bool_map:
@@ -8723,7 +8796,7 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
             if debug_val:
                 defaults["debug"] = debug_val
 
-            output_dir = _get_string("output-directory")
+            output_dir = _get_string("write-output-directory")
             if output_dir:
                 defaults["output_directory"] = output_dir
 
@@ -8939,6 +9012,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             output_directory=args.output_directory,
             write_adds_timestamps=args.write_adds_timestamps,
             write_hash_length=args.write_hash_length,
+            write_uses_mtime=args.write_uses_mtime,
         )
         # Run the textual app (blocks until exit)
         app.run()

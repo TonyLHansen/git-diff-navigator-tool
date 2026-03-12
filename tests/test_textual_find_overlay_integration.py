@@ -58,6 +58,7 @@ def _build_app(repo_path: Path, rel_file: str = "") -> GitDiffNavTool:
         output_directory=None,
         write_adds_timestamps=False,
         write_hash_length=12,
+        write_uses_mtime=True,
     )
 
 
