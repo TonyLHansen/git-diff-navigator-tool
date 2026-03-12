@@ -825,6 +825,8 @@ class AppBase(AppException, ListView):
         self.highlight_bg_style = HIGHLIGHT_DEFAULT_BG
         # Last interactive search string for repeated '>'/'<' searches
         self._last_search: str | None = None
+        # File-mode cache keyed by repo-relative directory.
+        self._nodes_by_dir: dict = {}
 
     def _log_visible_items(self, msg: str) -> None:
         """
@@ -1055,10 +1057,7 @@ class AppBase(AppException, ListView):
                 self.apply_index_change(old, new_index)
                 # Final defensive pass: ensure the selected row has the
                 # `active` class even if render/update races occurred.
-                try:
-                    self._enforce_active_class_for_index(new_index)
-                except Exception as _e:
-                    self.printException(_e, "_activate_index: enforcing active class failed")
+                self._enforce_active_class_for_index(new_index)
             except Exception as e:
                 self.printException(e, "_activate_index: failed to set index and apply changes")
         except Exception as e:
@@ -1099,7 +1098,7 @@ class AppBase(AppException, ListView):
             logger.debug(
                 "apply_index_change enter: nodes=%d has_nodes_by_dir=%r index=%r",
                 len(nodes),
-                (bool(self._nodes_by_dir) if hasattr(self, "_nodes_by_dir") else False),
+                bool(self._nodes_by_dir),
                 getattr(self, "index", None),
             )
             if not nodes:
@@ -1164,12 +1163,7 @@ class AppBase(AppException, ListView):
             # instead of re-rendering. This keeps highlight deterministic
             # and avoids duplicate-row races.
             try:
-                if (
-                    hasattr(self, "_nodes_by_dir")
-                    and bool(getattr(self, "_nodes_by_dir", None))
-                    and old is not None
-                    and new is not None
-                ):
+                if self._nodes_by_dir and old is not None and new is not None:
                     nodes_local = self.nodes()
                     if nodes_local and 0 <= new < len(nodes_local):
                         old_node = nodes_local[old] if 0 <= old < len(nodes_local) else None
@@ -1202,7 +1196,7 @@ class AppBase(AppException, ListView):
 
             # Authoritative re-render when we have node data available.
             try:
-                if hasattr(self, "_nodes_by_dir") and self._nodes_by_dir and hasattr(self, "_render_filemode_display"):
+                if self._nodes_by_dir and hasattr(self, "_render_filemode_display"):
                     # Focus handoff frequently invokes apply_index_change(None, idx)
                     # with the same current index on startup. Re-rendering in
                     # that case can duplicate rows because clear/append run in
@@ -1626,10 +1620,11 @@ class AppBase(AppException, ListView):
             # If overlay is already present, do not recreate it; just refocus
             # the existing input so repeated '>' or '<' behaves predictably.
             try:
-                if getattr(self.app, "_find_overlay_widget", None) is not None:
+                if self.app._find_overlay_widget is not None:
                     try:
                         inp = self.app.screen.query_one("#find-input", Input)
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "AppBase.on_key: query find-input via screen failed")
                         inp = self.app.query_one("#find-input", Input)
                     self.app.call_later(lambda: inp.focus())
                     return
@@ -1637,7 +1632,7 @@ class AppBase(AppException, ListView):
                 self.printException(e, "AppBase.on_key: refocus existing overlay failed")
 
             try:
-                init = getattr(self, "_last_search", "") or ""
+                init = self._last_search or ""
                 forward = ch == ">"
                 title = "Find (forward)" if forward else "Find (reverse)"
                 self.app.show_find_overlay(init, title, lambda v, s=self, f=forward: s._find_and_activate(v, f))
@@ -2022,12 +2017,12 @@ class AppBase(AppException, ListView):
             logger.debug(
                 "%s.key_w_helper: rel_dir=%r rel_file=%r filepath=%r prev_hash=%r curr_hash=%r output_directory=%r",
                 type(self).__name__,
-                getattr(self.app, "rel_dir", None),
-                getattr(self.app, "rel_file", None),
+                self.app.rel_dir,
+                self.app.rel_file,
                 filepath,
                 prev_hash,
                 curr_hash,
-                getattr(self.app, "output_directory", None),
+                self.app.output_directory,
             )
 
             # If filepath appears to be a directory, keep it as-is
@@ -2036,10 +2031,8 @@ class AppBase(AppException, ListView):
 
             try:
                 # Prefer asking the GitRepo for the canonical repo root
-                repo_root_val = self.app.gitRepo.get_repo_root()
-                relpath = os.path.normpath(
-                    os.path.join(getattr(self.app, "rel_dir", "") or "", getattr(self.app, "rel_file", "") or "")
-                )
+                repo_root_val = self.app.gitRepo.get_repo_root() # ????
+                relpath = os.path.normpath(os.path.join(self.app.rel_dir or "", self.app.rel_file or ""))
 
                 # Compute the full ordered list of hashes (newest→oldest) so
                 # the modal can offer the "all" option when there are
@@ -2073,9 +2066,9 @@ class AppBase(AppException, ListView):
                         curr_hash=curr_hash,
                         repo_root=repo_root_val,
                         all_hashes=all_hashes if has_intermediates else None,
-                        write_adds_timestamps=getattr(self.app, "write_adds_timestamps", False),
-                        write_hash_length=getattr(self.app, "write_hash_length", 12),
-                        write_uses_mtime=getattr(self.app, "write_uses_mtime", True),
+                        write_adds_timestamps=self.app.write_adds_timestamps,
+                        write_hash_length=self.app.write_hash_length,
+                        write_uses_mtime=self.app.write_uses_mtime,
                     )
                 )
             except Exception as e:
@@ -2619,7 +2612,6 @@ class FindModal(ModalScreen):
                 wrapper.styles.background = "transparent"
             except Exception as e:
                 self.printException(e, "FindModal.on_mount: setting wrapper background failed")
-                pass
         except Exception as e:
             self.printException(e, "FindModal.on_mount: setting transparent background failed")
 
@@ -2832,11 +2824,11 @@ class FullScreenBase(AppBase):
             "%s.key_w called: key=%r layout=%r rel_dir=%r rel_file=%r prev_hash=%r curr_hash=%r",
             self.__class__.__name__,
             getattr(event, "key", None),
-            getattr(self.app, "_current_layout", None),
-            getattr(self.app, "rel_dir", None),
-            getattr(self.app, "rel_file", None),
-            getattr(self.app, "previous_hash", None),
-            getattr(self.app, "current_hash", None),
+            self.app._current_layout,
+            self.app.rel_dir,
+            self.app.rel_file,
+            self.app.previous_hash,
+            self.app.current_hash,
         )
         if event is not None:
             try:
@@ -6577,6 +6569,11 @@ class GitDiffNavTool(AppException, App):
         self.write_hash_length = max(0, int(write_hash_length))
         # Whether to reset mtime of snapshot files to commit timestamp.
         self.write_uses_mtime = bool(write_uses_mtime)
+        # Overlay-related state is initialized here for direct attribute access.
+        self._find_overlay_widget = None
+        self._find_overlay_callback = None
+        self._find_overlay_title = None
+        self._overlay_root = None
 
         # Optional initial filename basename to highlight when listing a dir
         self.highlight = highlight
@@ -6710,28 +6707,27 @@ class GitDiffNavTool(AppException, App):
             # Ensure an overlay-root exists and cache it to avoid repeated
             # query_one calls which can raise NoMatches and spam logs.
             try:
-                try:
-                    self._overlay_root = self.query_one("#overlay-root")
-                except Exception as e:
-                    self.printException(e, "on_mount: overlay-root query failed")
-                    # If overlay-root is not present in composition, create
-                    # a transparent Static and mount it at the app/screen
-                    # so floating overlays have a stable parent.
-                    try:
-                        from textual.widgets import Static
-
-                        root = Static(id="overlay-root")
-                        scr = getattr(self, "screen", None)
-                        if scr is not None:
-                            scr.mount(root)
-                        else:
-                            self.mount(root)
-                        self._overlay_root = root
-                    except Exception as _e:
-                        self.printException(_e, "on_mount: creating overlay-root failed")
-                        self._overlay_root = None
+                self._overlay_root = self.query_one("#overlay-root")
             except Exception as e:
-                self.printException(e, "on_mount: overlay-root setup failed")
+                self.printException(e, "on_mount: overlay-root query failed")
+                # If overlay-root is not present in composition, create
+                # a transparent Static and mount it at the app/screen
+                # so floating overlays have a stable parent.
+                try:
+                    root = Static(id="overlay-root")
+                    try:
+                        scr = self.screen
+                    except Exception as e:
+                        self.printException(e, "on_mount: reading screen failed")
+                        scr = None
+                    if scr is not None:
+                        scr.mount(root)
+                    else:
+                        self.mount(root)
+                    self._overlay_root = root
+                except Exception as _e:
+                    self.printException(_e, "on_mount: creating overlay-root failed")
+                    self._overlay_root = None
 
             # Apply any requested initial diff variant (from CLI or config)
             # args.diff is guaranteed to be a valid variant name by main()
@@ -6824,7 +6820,8 @@ class GitDiffNavTool(AppException, App):
 
     # -- Non-modal find overlay helpers ---------------------------------
     def show_find_overlay(self, initial_text: str, title: str, on_submit: Callable[[str], None]) -> None:
-        """Show a non-modal, top-docked find input overlay.
+        """
+        Show a non-modal, top-docked find input overlay.
 
         The overlay is mounted into the app DOM with id `find-overlay` and
         contains an Input with id `find-input`. Submission is handled by
@@ -6836,18 +6833,24 @@ class GitDiffNavTool(AppException, App):
 
             # Reuse an existing overlay if present to avoid duplicate-id races
             # when multiple key handlers fire for the same keypress.
-            existing_container = getattr(self, "_find_overlay_widget", None)
+            existing_container = self._find_overlay_widget
             if existing_container is None:
-                scr = getattr(self, "screen", None)
+                try:
+                    scr = self.screen
+                except Exception as e:
+                    self.printException(e, "show_find_overlay: reading screen failed")
+                    scr = None
                 if scr is not None:
                     try:
                         existing_container = scr.query_one("#find-container", Horizontal)
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "show_find_overlay: query existing container on screen failed")
                         existing_container = None
                 if existing_container is None:
                     try:
                         existing_container = self.query_one("#find-container", Horizontal)
-                    except Exception:
+                    except Exception as e:
+                        self.printException(e, "show_find_overlay: query existing container on app failed")
                         existing_container = None
 
             if existing_container is not None:
@@ -6878,7 +6881,11 @@ class GitDiffNavTool(AppException, App):
 
             # Mount container to screen
             try:
-                scr = getattr(self, "screen", None)
+                try:
+                    scr = self.screen
+                except Exception as e:
+                    self.printException(e, "show_find_overlay: reading screen for mount failed")
+                    scr = None
                 if scr is not None:
                     try:
                         scr.mount(container)
@@ -6904,7 +6911,11 @@ class GitDiffNavTool(AppException, App):
     def _set_find_overlay_label(self, text: str) -> None:
         """Update the visible find prompt label if the overlay exists."""
         try:
-            scr = getattr(self, "screen", None)
+            try:
+                scr = self.screen
+            except Exception as e:
+                self.printException(e, "_set_find_overlay_label: reading screen failed")
+                scr = None
             label = None
             if scr is not None:
                 try:
@@ -6926,12 +6937,9 @@ class GitDiffNavTool(AppException, App):
     def _submit_find_overlay(self, value: str) -> None:
         """Submit the current find value and keep overlay visible on no match."""
         try:
-            cb = getattr(self, "_find_overlay_callback", None)
+            cb = self._find_overlay_callback
             if not cb:
-                try:
-                    self.hide_find_overlay()
-                except Exception as e:
-                    self.printException(e, "_submit_find_overlay: hide_find_overlay without callback failed")
+                self.hide_find_overlay()
                 return
 
             matched = True
@@ -6944,21 +6952,19 @@ class GitDiffNavTool(AppException, App):
                 matched = False
 
             if matched:
-                try:
-                    self.hide_find_overlay()
-                except Exception as e:
-                    self.printException(e, "_submit_find_overlay: hide_find_overlay on success failed")
+                self.hide_find_overlay()
             else:
-                base = getattr(self, "_find_overlay_title", "Find (forward)")
+                base = self._find_overlay_title or "Find (forward)"
                 self._set_find_overlay_label(f"{base} - not found. ESC to return")
         except Exception as e:
             self.printException(e, "_submit_find_overlay failed")
 
     def hide_find_overlay(self) -> None:
+        """Remove the non-modal find overlay and clear callback/title state."""
         try:
             # If we cached the mounted overlay widget, remove it directly
             try:
-                cached = getattr(self, "_find_overlay_widget", None)
+                cached = self._find_overlay_widget
                 if cached is not None:
                     try:
                         cached.remove()
@@ -6973,7 +6979,11 @@ class GitDiffNavTool(AppException, App):
                 self.printException(e, "hide_find_overlay: clearing cached overlay failed")
 
             # Fallback: try removing by selector from screen/app
-            scr = getattr(self, "screen", None)
+            try:
+                scr = self.screen
+            except Exception as e:
+                self.printException(e, "hide_find_overlay: reading screen failed")
+                scr = None
             if scr is not None:
                 try:
                     existing = scr.query_one("#find-container")
@@ -7022,11 +7032,15 @@ class GitDiffNavTool(AppException, App):
                 current_screen = None
             # If the non-modal find overlay is visible, handle Enter/Escape here
             try:
-                scr = getattr(self, "screen", None)
+                try:
+                    scr = self.screen
+                except Exception as e:
+                    self.printException(e, "on_key: reading screen for overlay handling failed")
+                    scr = None
                 # Prefer checking the cached overlay widget to avoid noisy
                 # query_one exceptions. Fall back to a lightweight screen
                 # query only if no cached widget is present.
-                overlay_present = getattr(self, "_find_overlay_widget", None) is not None
+                overlay_present = self._find_overlay_widget is not None
                 if not overlay_present:
                     try:
                         if scr is not None:
@@ -7083,10 +7097,7 @@ class GitDiffNavTool(AppException, App):
                             event.stop()
                         except Exception as e:
                             self.printException(e, "on_key: event.stop failed for find cancel")
-                        try:
-                            self.hide_find_overlay()
-                        except Exception as e:
-                            self.printException(e, "on_key: hide_find_overlay failed for escape")
+                        self.hide_find_overlay()
                         return
 
             except Exception as e:
