@@ -290,6 +290,24 @@ class GitRepo(AppException):
         """Return the resolved repository root path for this GitRepo instance."""
         return self._repoRoot
 
+    def getCommitTimestamp(self, hashval: str) -> float | None:
+        """Return the author timestamp (epoch seconds) for a commit hash, or None if unavailable."""
+        return self._get_commit_timestamp(hashval)
+
+    def getIndexMtime(self) -> float | None:
+        """Return the git index modification time as epoch seconds, or None if unavailable."""
+        idx_candidates = [
+            os.path.join(self._repoRoot, ".git", "index"),
+            os.path.join(self._repoRoot, "index"),
+        ]
+        for p in idx_candidates:
+            try:
+                if os.path.exists(p):
+                    return os.path.getmtime(p)
+            except Exception as e:
+                self.printException(e, "getIndexMtime: stat failed")
+        return None
+
     def cwd_plus_path_to_reldir_relfile(self, query_path: str) -> tuple[str, str]:
         """
         reldir, relfile = GitRepo.cwd_plus_path_to_reldir_relfile(query_path)

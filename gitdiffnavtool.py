@@ -620,6 +620,10 @@ def build_default_config_template() -> str:
         "# debug = /tmp/gitdiffnavtool.log",
         "# Truncate debug log before writing (default: false / append mode)",
         "trim-debug = false",
+        "# Include commit timestamp in snapshot filenames when using w/W key (default: false)",
+        "write-adds-timestamps = false",
+        "# Number of hash characters used in snapshot filenames (0 means full hash; default: 12)",
+        "write-hash-length = 12",
     ]
     return "\n".join(lines) + "\n"
 
@@ -655,6 +659,16 @@ def build_missing_config_option_comment_block(
             "minimum-sidebyside-width",
             "Minimum terminal width for side-by-side view (must be >= 1).",
             f"minimum-sidebyside-width = {MIN_SIDE_BY_SIDE_WIDTH}",
+        ),
+        (
+            "write-adds-timestamps",
+            "Include commit timestamp in snapshot filenames when using w/W key.",
+            "write-adds-timestamps = false",
+        ),
+        (
+            "write-hash-length",
+            "Number of hash characters used in snapshot filenames (0 means full hash).",
+            "write-hash-length = 12",
         ),
     ]
     missing_key_set = set(missing_keys)
@@ -2042,6 +2056,8 @@ class AppBase(AppException, ListView):
                         curr_hash=curr_hash,
                         repo_root=repo_root_val,
                         all_hashes=all_hashes if has_intermediates else None,
+                        write_adds_timestamps=getattr(self.app, "write_adds_timestamps", False),
+                        write_hash_length=getattr(self.app, "write_hash_length", 12),
                     )
                 )
             except Exception as e:
@@ -2062,12 +2078,14 @@ class SaveSnapshotModal(AppException, ModalScreen):
 
     def __init__(
         self,
-        message: str | None = None,
-        filepath: str | None = None,
-        prev_hash: str | None = None,
-        curr_hash: str | None = None,
-        repo_root: str | None = None,
-        all_hashes: list[str] | None = None,
+        message: str | None,
+        filepath: str | None,
+        prev_hash: str | None,
+        curr_hash: str | None,
+        repo_root: str | None,
+        all_hashes: list[str] | None,
+        write_adds_timestamps: bool,
+        write_hash_length: int,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -2079,6 +2097,10 @@ class SaveSnapshotModal(AppException, ModalScreen):
         # Full ordered list (newest→oldest) when there are intermediates;
         # None means the "a" option is not available.
         self.all_hashes = all_hashes
+        # Whether to embed the commit timestamp in snapshot filenames.
+        self.write_adds_timestamps = bool(write_adds_timestamps)
+        # Number of hash chars to use in snapshot filenames (0 => full hash).
+        self.write_hash_length = int(write_hash_length)
 
     def compose(self):
         """Compose the modal contents (a single Label with the message)."""
@@ -2204,6 +2226,34 @@ class SaveSnapshotModal(AppException, ModalScreen):
             self.printException(e, "SaveSnapshotModal._save: computing reldir/relfile failed")
             reldir, relfile = os.path.dirname(relpath), os.path.basename(relpath)
 
+        # Compute optional timestamp segment inserted between the base name and hash.
+        # Format: "2026-03-08_15:07:25." so the final suffix becomes .TIMESTAMP.HASH
+        ts_segment = ""
+        if self.write_adds_timestamps:
+            try:
+                epoch: float | None = None
+                if hashval == GitRepo.MODS:
+                    if self.filepath and os.path.exists(self.filepath):
+                        epoch = os.path.getmtime(self.filepath)
+                elif hashval == GitRepo.STAGED:
+                    epoch = self.app.gitRepo.getIndexMtime()
+                else:
+                    epoch = self.app.gitRepo.getCommitTimestamp(hashval)
+                if epoch is not None:
+                    ts_str = datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%d_%H:%M:%S")
+                    ts_segment = ts_str + "."
+            except Exception as e:
+                self.printException(e, "SaveSnapshotModal._save: computing timestamp failed")
+
+        # Derive filename hash segment according to write_hash_length.
+        hash_suffix = hashval
+        try:
+            out_hash_length = max(0, int(self.write_hash_length))
+            if out_hash_length > 0 and len(hash_suffix) > out_hash_length:
+                hash_suffix = hash_suffix[:out_hash_length]
+        except Exception as e:
+            self.printException(e, "SaveSnapshotModal._save: invalid write_hash_length")
+
         # Build target path from app-level output_directory when configured.
         # Keep snapshots under that directory while preserving repo-relative
         # path structure to avoid basename collisions.
@@ -2224,9 +2274,9 @@ class SaveSnapshotModal(AppException, ModalScreen):
                 self.printException(e, "SaveSnapshotModal._save: normalizing relpath for output-directory failed")
                 safe_rel = os.path.basename(self.filepath)
 
-            target_path = os.path.join(outdir, f"{safe_rel}.{hashval}")
+            target_path = os.path.join(outdir, f"{safe_rel}.{ts_segment}{hash_suffix}")
         else:
-            target_path = f"{self.filepath}.{hashval}"
+            target_path = f"{self.filepath}.{ts_segment}{hash_suffix}"
 
         logger.debug(
             "SaveSnapshotModal._save: hash=%r relpath=%r reldir=%r relfile=%r target=%r",
@@ -6400,6 +6450,8 @@ class GitDiffNavTool(AppException, App):
         minimum_sidebyside_width: int,
         blank_before_hunk: bool,
         output_directory: str | None,
+        write_adds_timestamps: bool,
+        write_hash_length: int,
         **kwargs,
     ):
         """
@@ -6467,6 +6519,10 @@ class GitDiffNavTool(AppException, App):
         # Optional output directory used by snapshot writes from w/W.
         # When unset, snapshots are written beside the source file (legacy behavior).
         self.output_directory = os.path.abspath(output_directory) if output_directory else None
+        # Whether to include the commit timestamp in snapshot filenames.
+        self.write_adds_timestamps = bool(write_adds_timestamps)
+        # Number of hash chars to use in snapshot filenames (0 => full hash).
+        self.write_hash_length = max(0, int(write_hash_length))
 
         # Optional initial filename basename to highlight when listing a dir
         self.highlight = highlight
@@ -8152,6 +8208,8 @@ def handle_init_config(args) -> int:
                 "unified-context",
                 "history-limit",
                 "minimum-sidebyside-width",
+                "write-adds-timestamps",
+                "write-hash-length",
             ]
             missing_value_keys: list[str] = []
             for key in known_keys:
@@ -8298,13 +8356,38 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
         help="disable branch configuration (overrides config setting)",
     )
 
-    startup_group.add_argument(
+    # Write options group
+    write_group = parser.add_argument_group("Write Options")
+    write_group.add_argument(
         "-o",
         "--output-directory",
         dest="output_directory",
         metavar="DIR",
         default=None,
         help="directory where w/W snapshot files are written (default: beside source file)",
+    )
+
+    write_ts_group = write_group.add_mutually_exclusive_group()
+    write_ts_group.add_argument(
+        "--write-adds-timestamps",
+        dest="write_adds_timestamps",
+        action="store_true",
+        default=False,
+        help="include commit timestamp in snapshot filenames (e.g. file.2026-03-08_15:07:25.HASH)",
+    )
+    write_ts_group.add_argument(
+        "--no-write-adds-timestamps",
+        dest="write_adds_timestamps",
+        action="store_false",
+        help="do not include timestamp in snapshot filenames (default)",
+    )
+    write_group.add_argument(
+        "--write-hash-length",
+        dest="write_hash_length",
+        metavar="N",
+        type=int,
+        default=12,
+        help="hash length used in snapshot filenames (default: 12, use 0 for full hash)",
     )
 
     # History List Options: options affecting history list rendering/behavior
@@ -8488,6 +8571,7 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
     #   unified-context=<integer >= 0>
     #   history-limit=<integer >= 0>
     #   output-directory=<directory path>
+    #   write-hash-length=<integer >= 0>
     #   minimum-sidebyside-width=<integer >= 1>
     #   blank-before-hunk=true/false
     #   add-authors=true/false
@@ -8611,6 +8695,7 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
                 ("add-authors", "no_add_authors", lambda x: not bool(x)),
                 ("trim-debug", "trim_debug", lambda x: bool(x)),
                 ("blank-before-hunk", "blank_before_hunk", lambda x: bool(x)),
+                ("write-adds-timestamps", "write_adds_timestamps", lambda x: bool(x)),
             ]
 
             for cfg_key, dest, transform in bool_map:
@@ -8658,6 +8743,10 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
             min_width = _get_int("minimum-sidebyside-width", "minimum-sidebyside-width", 1, None)
             if min_width is not None:
                 defaults["minimum_sidebyside_width"] = min_width
+
+            write_hash_length = _get_int("write-hash-length", "write-hash-length", 0, None)
+            if write_hash_length is not None:
+                defaults["write_hash_length"] = write_hash_length
 
             if defaults:
                 parser.set_defaults(**defaults)
@@ -8848,6 +8937,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             minimum_sidebyside_width=args.minimum_sidebyside_width,
             blank_before_hunk=args.blank_before_hunk,
             output_directory=args.output_directory,
+            write_adds_timestamps=args.write_adds_timestamps,
+            write_hash_length=args.write_hash_length,
         )
         # Run the textual app (blocks until exit)
         app.run()

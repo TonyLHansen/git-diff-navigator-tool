@@ -56,6 +56,8 @@ def _build_app(repo_path: Path, rel_file: str = "") -> GitDiffNavTool:
         minimum_sidebyside_width=60,
         blank_before_hunk=False,
         output_directory=None,
+        write_adds_timestamps=False,
+        write_hash_length=12,
     )
 
 
