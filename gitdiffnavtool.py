@@ -562,7 +562,7 @@ Configuration File
     repo-first = false
     # Show startup welcome popup (default: true)
     initial-popup = true    
-    # Include ignored files in file lists (default: false)
+    # Include ignored files in file lists (default: true)
     # This can be toggled at run time with 'i'/'I' when focused on file lists.
     ignored-files = true
     # Include untracked files in file lists (default: true)
@@ -580,6 +580,10 @@ Configuration File
     # branch = main
     # Enable debug logging to a file (optional, default: disabled)
     # debug = /tmp/gitdiffnavtool.log
+    # Verbosity level equivalent to repeating -v (default: 0)
+    verbose = 0
+    # Truncate debug log before writing (default: false / append mode)
+    trim-debug = false
     ```
 
 Command-line Options
@@ -624,6 +628,8 @@ def build_default_config_template() -> str:
         "# branch = main",
         "# Enable debug logging to a file (optional, default: disabled)",
         "# debug = /tmp/gitdiffnavtool.log",
+        "# Verbosity level equivalent to repeating -v (default: 0)",
+        "verbose = 0",
         "# Truncate debug log before writing (default: false / append mode)",
         "trim-debug = false",
         "# Include commit timestamp in snapshot filenames when using w/W key (default: false)",
@@ -659,6 +665,7 @@ def build_missing_config_option_comment_block(
             "diff = classic",
         ),
         ("debug", "Enable debug logging to a file.", "debug = /tmp/gitdiffnavtool.log"),
+        ("verbose", "Verbosity level equivalent to repeating -v.", "verbose = 0"),
         (
             "write-output-directory",
             "Directory where snapshot files are written.",
@@ -8832,6 +8839,10 @@ def parse_cli_and_config(argv: Optional[list[str]] = None) -> argparse.Namespace
             if write_hash_length is not None:
                 defaults["write_hash_length"] = write_hash_length
 
+            verbose_val = _get_int("verbose", "verbose", 0, None)
+            if verbose_val is not None:
+                defaults["verbose"] = verbose_val
+
             if defaults:
                 parser.set_defaults(**defaults)
         except Exception as e:
@@ -8996,9 +9007,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         # Log args.diff for debugging
         logger.debug(
-            "main: creating GitDiffNavTool: args.diff=%r, DIFF_VARIANT_NAMES=%r",
+            "main: creating GitDiffNavTool: args.diff=%r, args.verbose=%r",
             args.diff,
-            DIFF_VARIANT_NAMES,
+            args.verbose,
         )
 
         GitRepo.setVerbosity(args.verbose)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Extract normalized visible text from SVG <text> nodes.
+"""
+Extract normalized visible text from SVG <text> nodes.
 
 This utility is useful when renderers split visible words across multiple
 adjacent <text> elements and encode non-breaking spaces as HTML entities.
@@ -23,12 +24,14 @@ def svg_plain_text(svg_text: str) -> str:
 
 
 def _parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the SVG text extraction utility."""
     parser = argparse.ArgumentParser(description="Extract plain text from an SVG file")
     parser.add_argument("svg_file", help="Path to SVG file")
     return parser.parse_args()
 
 
 def main() -> int:
+    """Run the CLI utility and print normalized text from the requested SVG file."""
     args = _parse_args()
     in_path = Path(args.svg_file)
     if not in_path.is_file():

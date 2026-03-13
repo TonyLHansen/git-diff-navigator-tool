@@ -190,9 +190,9 @@ def path_matches_glob(p: Path, pat: str, root: Path) -> bool:
         candidates.add(rel_str)
         candidates.add(rel_posix)
         candidates.add(f"./{rel_posix}")
-    except Exception:
+    except Exception as e:
+        printException(e, f"relative path resolution failed for {p}")
         # Path is not under root; absolute candidates are still useful.
-        pass
 
     for candidate in candidates:
         try:

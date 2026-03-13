@@ -180,11 +180,6 @@ class GitRepo(AppException):
     MODS_MESSAGE = "Unstaged modifications"
     verbose = 0
 
-    @classmethod
-    def setVerbosity(cls, level: int) -> None:
-        """Set the class-wide debug verbosity level."""
-        cls.verbose = max(0, int(level))
-
     def __init__(self, repoRoot: str, branch: str | None = None):
         # One-time per-process cache for git CLI command results
         self._cmd_cache: Dict[str, Any] = {}
@@ -214,6 +209,11 @@ class GitRepo(AppException):
                 ) from _use_raise
             except Exception as _use_raise:
                 raise ValueError(f"__init__: failed to validate branch {self._branch!r}") from _use_raise
+
+    @classmethod
+    def setVerbosity(cls, level: int) -> None:
+        """Set the class-wide debug verbosity level."""
+        cls.verbose = max(0, int(level))
 
     def reset_cache(self) -> None:
         """Reset the per-process command/result cache."""
@@ -1565,7 +1565,8 @@ class GitRepo(AppException):
     def getHashesBetween(
         self, file_name: str, prev_hash: str, curr_hash: str, ignorecache: bool = False
     ) -> list[str]:
-        """Return file-specific history entries between two selected hashes, inclusive.
+        """
+        Return file-specific history entries between two selected hashes, inclusive.
 
         The returned list preserves the ordering from
         `getNormalizedHashListFromFileName`, which is newest first. Only hashes

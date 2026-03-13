@@ -141,16 +141,28 @@ minimum-sidebyside-width = 60
 repo-first = false
 # Show startup welcome popup (default: true)
 initial-popup = true
-# Include ignored files in file lists (default: false)
-ignored-files = false
+# Include ignored files in file lists (default: true)
+ignored-files = true
 # Include untracked files in file lists (default: true)
 untracked-files = true
+# Maximum history entries to display (default: 0 = unlimited)
+history-limit = 0
 # Directory where snapshot files are written (optional, default: beside source file)
-# output-directory = /tmp/snapshots
+# write-output-directory = /tmp/snapshots
+# Include commit timestamp in snapshot filenames when using w/W key (default: false)
+write-adds-timestamps = false
+# Number of hash characters used in snapshot filenames (0 means full hash; default: 12)
+write-hash-length = 12
+# Reset mtime of snapshot files to commit timestamp (default: true)
+write-uses-mtime = true
 # Use a specific git branch (optional, default: current branch)
 # branch = main
 # Enable debug logging to a file (optional, default: disabled)
 # debug = /tmp/gitdiffnavtool.log
+# Verbosity level equivalent to repeating -v (default: 0)
+verbose = 0
+# Truncate debug log before writing (default: false / append mode)
+trim-debug = false
 ```
 
 Command-line and Configuration Options
@@ -167,7 +179,7 @@ Key Options:
 - `--unified-context N`: Use N lines of context in diffs (default: 3, minimum 0).
 - `--minimum-sidebyside-width N`: Minimum terminal width before side-by-side falls back to unified (default: 60).
 - `--no-add-authors`: Hide author name and email in commit rows.
-- `--output-directory DIR`: Directory where snapshot files are written (default: beside source file).
+- `--write-output-directory DIR`: Directory where snapshot files are written (default: beside source file).
 - `--blank-before-hunk`: Insert a blank line before each diff hunk header (lines starting with `@@`).
 - `--show-help`: Display the help screen and exit.
 - `--show-initial-popup`: Display the startup popup and exit.
@@ -178,7 +190,7 @@ Some of the Options
 
 If `--hash-length N` is provided, displayed short commit hashes will use `N` characters.
 If `--unified-context N` is provided, diffs will use `N` lines of context (git diff -U option, default 3, minimum 0).
-If `--output-directory DIR` is provided, all snapshot files will be written to that directory (created if it doesn't exist).
+If `--write-output-directory DIR` is provided, all snapshot files will be written to that directory (created if it doesn't exist).
 The command line options override the config values.
 
 Dependencies
