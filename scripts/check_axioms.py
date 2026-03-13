@@ -173,6 +173,36 @@ def is_python_file(p: Path) -> bool:
     return False
 
 
+def path_matches_glob(p: Path, pat: str, root: Path) -> bool:
+    """Return True when `pat` matches basename, absolute path, or root-relative path."""
+    candidates: set[str] = set()
+    try:
+        candidates.add(p.name)
+        candidates.add(str(p))
+        candidates.add(p.as_posix())
+    except Exception as e:
+        printException(e, f"building path candidates for {p}")
+
+    try:
+        rel = p.relative_to(root)
+        rel_str = str(rel)
+        rel_posix = rel.as_posix()
+        candidates.add(rel_str)
+        candidates.add(rel_posix)
+        candidates.add(f"./{rel_posix}")
+    except Exception:
+        # Path is not under root; absolute candidates are still useful.
+        pass
+
+    for candidate in candidates:
+        try:
+            if fnmatch.fnmatch(candidate, pat):
+                return True
+        except Exception as e:
+            printException(e, f"invalid glob candidate={candidate!r} pattern={pat!r}")
+    return False
+
+
 def _find_bare_except_locations(path: Path, text: str, tree: ast.AST) -> List[tuple[int, bool]]:
     """
     Return list of (lineno, in_class) for bare `except:` handlers in AST.
@@ -1898,7 +1928,7 @@ def check_unused_symbols(patterns: List[str], all_py_files: List[Path], root: Pa
         for p in all_py_files:
             for pat in patterns:
                 try:
-                    if fnmatch.fnmatch(p.name, pat) or fnmatch.fnmatch(str(p), pat):
+                    if path_matches_glob(p, pat, root):
                         targets.append(p)
                         break
                 except Exception as e:
@@ -2039,7 +2069,7 @@ def build_default_config_template() -> str:
         "# getattr-not-initialized: Check for getattr() calls on uninitialized attributes",
         "getattr-not-initialized = true",
         "",
-        "# check-getattr-methods: Flag direct calls like getattr(...)(...)",
+        "# check-getattr-methods: Check for direct calls like getattr(...)(...)",
         "# and suggest calling the method directly instead",
         "check-getattr-methods = true",
         "",
@@ -2659,7 +2689,7 @@ def main(argv: List[str] | None = None) -> int:
                 skip = False
                 for pat in patterns:
                     try:
-                        if fnmatch.fnmatch(p.name, pat) or fnmatch.fnmatch(str(p), pat):
+                        if path_matches_glob(p, pat, root):
                             skip = True
                             break
                     except Exception as e:
