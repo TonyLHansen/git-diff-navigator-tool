@@ -9001,6 +9001,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             DIFF_VARIANT_NAMES,
         )
 
+        GitRepo.setVerbosity(args.verbose)
+
         app = GitDiffNavTool(
             gitRepo=gitrepo,
             rel_dir=rel_dir,

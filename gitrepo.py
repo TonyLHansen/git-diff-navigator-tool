@@ -178,6 +178,12 @@ class GitRepo(AppException):
     NEWREPO_MESSAGE = "Newly created repository"
     STAGED_MESSAGE = "Staged changes"
     MODS_MESSAGE = "Unstaged modifications"
+    verbose = 0
+
+    @classmethod
+    def setVerbosity(cls, level: int) -> None:
+        """Set the class-wide debug verbosity level."""
+        cls.verbose = max(0, int(level))
 
     def __init__(self, repoRoot: str, branch: str | None = None):
         # One-time per-process cache for git CLI command results
@@ -260,18 +266,23 @@ class GitRepo(AppException):
                 raise e
             return (None, e)
         cur_dir = os.path.abspath(path)
-        logger.debug("resolve_repo_top: input path=%r computed cur=%r", path, cur_dir)
+        if GitRepo.verbose > 0:
+            logger.debug("resolve_repo_top: input path=%r computed cur=%r", path, cur_dir)
         if os.path.isfile(cur_dir):
             cur_dir = os.path.dirname(cur_dir)
-            logger.debug("resolve_repo_top: path is a file, using parent dir cur=%r", cur_dir)
+            if GitRepo.verbose > 0:
+                logger.debug("resolve_repo_top: path is a file, using parent dir cur=%r", cur_dir)
         cmd = ["git", "rev-parse", "--show-toplevel"]
-        logger.debug("resolve_repo_top: running git command %r in cwd=%r", cmd, cur_dir)
+        if GitRepo.verbose > 0:
+            logger.debug("resolve_repo_top: running git command %r in cwd=%r", cmd, cur_dir)
         try:
             out = check_output(cmd, cwd=cur_dir, text=True)
             # log raw output before stripping to aid diagnosis of unexpected extra lines
-            logger.debug("resolve_repo_top: raw output=%r", out)
+            if GitRepo.verbose > 0:
+                logger.debug("resolve_repo_top: raw output=%r", out)
             out = out.strip()
-            logger.debug("resolve_repo_top: stripped output=%r", out)
+            if GitRepo.verbose > 0:
+                logger.debug("resolve_repo_top: stripped output=%r", out)
             return (out, None)
         except FileNotFoundError as _use_raise:
             if raise_on_missing:
@@ -901,17 +912,20 @@ class GitRepo(AppException):
           so identical subprocess calls are cheap.
         """
         try:
-            logger.debug("_git_run(%s)", args)
+            if GitRepo.verbose > 0:
+                logger.debug("_git_run(%s)", args)
             internal_key = f"_git_run:{' '.join(args)}:{'text' if text else 'bytes'}"
             if not ignorecache and internal_key in self._cmd_cache:
-                logger.debug("_git_run cache hit: %s", args)
+                if GitRepo.verbose > 0:
+                    logger.debug("_git_run cache hit: %s", args)
                 return self._cmd_cache[internal_key]
 
             try:
                 cp = run(args, cwd=self._repoRoot, text=text, capture_output=True, check=True)
                 out = cp.stdout
             except CalledProcessError as _use_logging:
-                logger.debug("_git_run failed: %s", args)
+                if GitRepo.verbose > 0:
+                    logger.debug("_git_run failed: %s", args)
                 try:
                     stderr_val = getattr(_use_logging, "stderr", None)
                     stdout_val = getattr(_use_logging, "stdout", None)
@@ -925,12 +939,16 @@ class GitRepo(AppException):
                         stdout_txt = stdout_val or ""
 
                     # Keep debug logs bounded; long git usage/help output can be noisy.
-                    if stderr_txt:
+                    if stderr_txt and GitRepo.verbose > 0:
                         logger.debug("_git_run stderr (truncated): %s", stderr_txt[:2000].strip())
                     if stdout_txt:
-                        logger.debug("_git_run stdout (truncated): %s", stdout_txt[:2000].strip())
+                        if GitRepo.verbose > 1:
+                            logger.debug("_git_run stdout (truncated): %s", stdout_txt.strip())
+                        else:
+                            logger.debug("_git_run stdout (truncated): %s", stdout_txt[:2000].strip())
                 except Exception as _log_ex:
                     self.printException(_log_ex, "_git_run: logging CalledProcessError output failed")
+
                 # If caller provided a parsed-result cache_key, store an empty
                 # parsed result there so callers can return quickly next time.
                 if cache_key:
@@ -1782,14 +1800,15 @@ class GitRepo(AppException):
             if hash1 is None or hash2 is None:
                 raise ValueError("getDiff: hash1 and hash2 must be specified (not None)")
 
-            logger.debug(
-                "getDiff: start filename=%r hash1=%r hash2=%r variation=%r unified_context=%r",
-                filename,
-                hash1,
-                hash2,
-                variation,
-                unified_context,
-            )
+            if GitRepo.verbose > 0:
+                logger.debug(
+                    "getDiff: start filename=%r hash1=%r hash2=%r variation=%r unified_context=%r",
+                    filename,
+                    hash1,
+                    hash2,
+                    variation,
+                    unified_context,
+                )
 
             # return empty diff if both hashes are identical
             if hash1 == hash2:
@@ -1825,7 +1844,8 @@ class GitRepo(AppException):
 
             ref1 = token_to_ref(hash1)
             ref2 = token_to_ref(hash2)
-            logger.debug("getDiff: normalized refs ref1=%r ref2=%r empty_tree=%r", ref1, ref2, EMPTY_TREE)
+            if GitRepo.verbose > 0:
+                logger.debug("getDiff: normalized refs ref1=%r ref2=%r empty_tree=%r", ref1, ref2, EMPTY_TREE)
 
             # If both refs resolve to the special staged marker, map to cached diff
             args: list[str] = ["git", "diff"]
@@ -1851,12 +1871,14 @@ class GitRepo(AppException):
 
             # Append separator and filename
             args += ["--", filename]
-            logger.debug("getDiff: textual diff cmd=%r", args)
+            if GitRepo.verbose > 0:
+                logger.debug("getDiff: textual diff cmd=%r", args)
 
             out = self._git_run(args, text=True)
             # If textual diff is empty, attempt metadata summary fallback
             if not (out and out.strip()):
-                logger.debug("getDiff: textual diff empty for filename=%r; entering metadata fallback", filename)
+                if GitRepo.verbose > 0:
+                    logger.debug("getDiff: textual diff empty for filename=%r; entering metadata fallback", filename)
                 try:
                     # Determine whether metadata diff should use --cached.
                     # Use normalized refs so NEWREPO maps to empty-tree hash
@@ -1878,16 +1900,19 @@ class GitRepo(AppException):
                         meta_cmd.append(ref2)
                     if filename:
                         meta_cmd += ["--", filename]
-                    logger.debug("getDiff: metadata cmd=%r", meta_cmd)
+                    if GitRepo.verbose > 0:
+                        logger.debug("getDiff: metadata cmd=%r", meta_cmd)
                     meta_out = self._git_run(meta_cmd, text=True)
                     if meta_out and meta_out.strip():
-                        logger.debug("getDiff: metadata fallback produced output (len=%d)", len(meta_out.splitlines()))
+                        if GitRepo.verbose > 0:
+                            logger.debug("getDiff: metadata fallback produced output (len=%d)", len(meta_out.splitlines()))
                         out = meta_out
                     else:
-                        logger.debug(
-                            "getDiff: metadata fallback empty for filename=%r; probing unfiltered rename status",
-                            filename,
-                        )
+                        if GitRepo.verbose > 0:
+                            logger.debug(
+                                "getDiff: metadata fallback empty for filename=%r; probing unfiltered rename status",
+                                filename,
+                            )
                         # Path-limited metadata can be empty for renames when
                         # the selected filename exists only on one side of the
                         # comparison. Probe unfiltered name-status and provide
@@ -1902,10 +1927,12 @@ class GitRepo(AppException):
                                 probe_cmd.append(ref1)
                             if ref2 is not None and ref2 != self.STAGED:
                                 probe_cmd.append(ref2)
-                            logger.debug("getDiff: rename probe cmd=%r", probe_cmd)
+                            if GitRepo.verbose > 0:
+                                logger.debug("getDiff: rename probe cmd=%r", probe_cmd)
 
                             probe_out = self._git_run(probe_cmd, text=True) or ""
-                            logger.debug("getDiff: rename probe output lines=%d", len(probe_out.splitlines()))
+                            if GitRepo.verbose > 0:
+                                logger.debug("getDiff: rename probe output lines=%d", len(probe_out.splitlines()))
 
                             def _path_match(p: str) -> bool:
                                 try:
@@ -1925,14 +1952,15 @@ class GitRepo(AppException):
                                 newp = parts[2].strip()
                                 old_match = _path_match(oldp)
                                 new_match = _path_match(newp)
-                                logger.debug(
-                                    "getDiff: rename candidate code=%r old=%r new=%r old_match=%r new_match=%r",
-                                    code,
-                                    oldp,
-                                    newp,
-                                    old_match,
-                                    new_match,
-                                )
+                                if GitRepo.verbose > 0:
+                                    logger.debug(
+                                        "getDiff: rename candidate code=%r old=%r new=%r old_match=%r new_match=%r",
+                                        code,
+                                        oldp,
+                                        newp,
+                                        old_match,
+                                        new_match,
+                                    )
                                 if old_match or new_match:
                                     rename_msg = f"(file renamed: {oldp} -> {newp}; no textual changes)"
                                     break
@@ -1957,13 +1985,15 @@ class GitRepo(AppException):
                                         "--find-renames",
                                         commit_ref,
                                     ]
-                                    logger.debug("getDiff: commit-rename probe cmd=%r", show_cmd)
+                                    if GitRepo.verbose > 0:
+                                        logger.debug("getDiff: commit-rename probe cmd=%r", show_cmd)
                                     show_out = self._git_run(show_cmd, text=True) or ""
-                                    logger.debug(
-                                        "getDiff: commit-rename probe output lines=%d for commit=%r",
-                                        len(show_out.splitlines()),
-                                        commit_ref,
-                                    )
+                                    if GitRepo.verbose > 0:
+                                        logger.debug(
+                                            "getDiff: commit-rename probe output lines=%d for commit=%r",
+                                            len(show_out.splitlines()),
+                                            commit_ref,
+                                        )
                                     for ln in show_out.splitlines():
                                         parts = ln.split("\t")
                                         if len(parts) < 3:
@@ -1975,14 +2005,15 @@ class GitRepo(AppException):
                                         newp = parts[2].strip()
                                         old_match = _path_match(oldp)
                                         new_match = _path_match(newp)
-                                        logger.debug(
-                                            "getDiff: commit-rename candidate code=%r old=%r new=%r old_match=%r new_match=%r",
-                                            code,
-                                            oldp,
-                                            newp,
-                                            old_match,
-                                            new_match,
-                                        )
+                                        if GitRepo.verbose > 0:
+                                            logger.debug(
+                                                "getDiff: commit-rename candidate code=%r old=%r new=%r old_match=%r new_match=%r",
+                                                code,
+                                                oldp,
+                                                newp,
+                                                old_match,
+                                                new_match,
+                                            )
                                         if old_match or new_match:
                                             rename_msg = (
                                                 f"(file renamed in commit {commit_ref[:12]}: {oldp} -> {newp}; "
@@ -1994,7 +2025,8 @@ class GitRepo(AppException):
                         except Exception as e:
                             self.printException(e, "getDiff: rename probe failed")
 
-                        logger.debug("getDiff: rename probe result rename_msg=%r", rename_msg)
+                        if GitRepo.verbose > 0:
+                            logger.debug("getDiff: rename probe result rename_msg=%r", rename_msg)
                         out = rename_msg or "(no textual changes for this file)"
                 except Exception as e:
                     self.printException(e, "getDiff: metadata diff failed")
@@ -2208,7 +2240,8 @@ class GitRepo(AppException):
                 self._git_run(
                     ["git", "-C", self._repoRoot, "commit", "--amend", "-m", new_message], text=True, ignorecache=True
                 )
-                logger.debug(f"amendCommitMessage: amended HEAD {hash_val}")
+                if GitRepo.verbose > 0:
+                    logger.debug(f"amendCommitMessage: amended HEAD {hash_val}")
                 # Get the new hash after amendment
                 new_hash_output = self._git_run(
                     ["git", "-C", self._repoRoot, "rev-parse", "HEAD"], text=True, ignorecache=True
@@ -2296,7 +2329,8 @@ class GitRepo(AppException):
                         output=completed.stdout,
                         stderr=completed.stderr,
                     )
-                logger.debug(f"amendCommitMessage: amended {hash_val} via rebase --exec")
+                if GitRepo.verbose > 0:
+                    logger.debug(f"amendCommitMessage: amended {hash_val} via rebase --exec")
                 # Get the new hash after rebase by finding the commit with the new message
                 # Search for commits with matching message (use the subject line)
                 subject_line = new_message.split("\n")[0] if new_message else ""
