@@ -923,6 +923,15 @@ class GitRepo(AppException):
             try:
                 cp = run(args, cwd=self._repoRoot, text=text, capture_output=True, check=True)
                 out = cp.stdout
+                if GitRepo.verbose > 1:
+                    try:
+                        if isinstance(out, bytes):
+                            out_txt = out.decode("utf-8", errors="replace")
+                        else:
+                            out_txt = str(out)
+                        logger.debug("_git_run response BEGIN<<<\n%s>>>END _git_run response", out_txt)
+                    except Exception as e:
+                        self.printException(e, "_git_run: logging response failed")
             except CalledProcessError as _use_logging:
                 if GitRepo.verbose > 0:
                     logger.debug("_git_run failed: %s", args)
@@ -938,14 +947,10 @@ class GitRepo(AppException):
                     else:
                         stdout_txt = stdout_val or ""
 
-                    # Keep debug logs bounded; long git usage/help output can be noisy.
                     if stderr_txt and GitRepo.verbose > 0:
-                        logger.debug("_git_run stderr (truncated): %s", stderr_txt[:2000].strip())
-                    if stdout_txt:
-                        if GitRepo.verbose > 1:
-                            logger.debug("_git_run stdout (truncated): %s", stdout_txt.strip())
-                        else:
-                            logger.debug("_git_run stdout (truncated): %s", stdout_txt[:2000].strip())
+                        logger.debug("_git_run stderr BEGIN<<<\n%s>>>END _git_run stderr", stderr_txt)
+                    if GitRepo.verbose > 1:
+                        logger.debug("_git_run stdout BEGIN<<<\n%s>>>END _git_run stdout", stdout_txt)
                 except Exception as _log_ex:
                     self.printException(_log_ex, "_git_run: logging CalledProcessError output failed")
 
