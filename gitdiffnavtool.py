@@ -1592,8 +1592,8 @@ class AppBase(AppException, ListView):
                 try:
                     rel = os.path.normpath(path)
                     rd, rf = os.path.split(rel)
-                    self.app.rel_dir = rd or ""
-                    self.app.rel_file = rf or ""
+                    self.app.rel_dir = rd or self.app.NO_DIR
+                    self.app.rel_file = rf or self.app.NO_FILE
                 except Exception as _ex:
                     self.printException(_ex, "_finalize_prep_common: setting app.rel_dir/rel_file failed")
 
@@ -2025,7 +2025,12 @@ class AppBase(AppException, ListView):
                 pass
 
             try:
-                relpath = os.path.normpath(os.path.join(self.app.rel_dir or "", self.app.rel_file or ""))
+                relpath = os.path.normpath(
+                    os.path.join(
+                        self.app.rel_dir or self.app.NO_DIR,
+                        self.app.rel_file or self.app.NO_FILE,
+                    )
+                )
 
                 # Compute the full ordered list of hashes (newest→oldest) so
                 # the modal can offer the "all" option when there are
@@ -3830,7 +3835,9 @@ class FileModeFileList(FileListBase):
                     # currently selected, use it as the preselected filename
                     # which helps initialize the highlight history display.
                     try:
-                        if highlight and (self.app.rel_file or "") == "":
+                        if highlight and (
+                            self.app.rel_file or self.app.NO_FILE
+                        ) == self.app.NO_FILE:
                             # Only accept basenames here; defensive check
                             if os.path.basename(highlight) == highlight:
                                 self._preselected_filename = highlight
@@ -3839,7 +3846,7 @@ class FileModeFileList(FileListBase):
 
                     if self._highlight_history is not None:
                         if not self._highlight_history and self.app.rel_dir:
-                            comps = [p for p in (self.app.rel_dir or "").split(os.sep) if p]
+                            comps = [p for p in (self.app.rel_dir or self.app.NO_DIR).split(os.sep) if p]
                             # Populate history left-to-right and set position to
                             # the current (deepest) directory so upward navigation
                             # can restore the most-recent child.
@@ -3956,11 +3963,11 @@ class FileModeFileList(FileListBase):
 
                     # Compute and set new repository-relative directory
                     try:
-                        cur_rel = self.app.rel_dir or ""
+                        cur_rel = self.app.rel_dir or self.app.NO_DIR
                         new_rel = self.app.gitRepo.reldir_plus_dirname_to_reldir(cur_rel, name)
                         self.app.rel_dir = new_rel
                         # Clear any selected file when entering a directory
-                        self.app.rel_file = ""
+                        self.app.rel_file = self.app.NO_FILE
                     except Exception as _e:
                         self.printException(_e, "_activate_or_open: computing new rel_dir failed")
 
@@ -4008,7 +4015,7 @@ class FileModeFileList(FileListBase):
                 # invoke its preparer so the UI shows the file's history.
                 # Record this selection as the last child for the current dir
                 try:
-                    cur_rel = self.app.rel_dir or ""
+                    cur_rel = self.app.rel_dir or self.app.NO_DIR
                     sel_name = getattr(item, "_filename", None) or getattr(item, "_raw_text", None)
                     if sel_name:
                         self._last_child_by_dir[cur_rel] = sel_name
@@ -4042,8 +4049,8 @@ class FileModeFileList(FileListBase):
                         raw_rel = getattr(item, "_raw_text", None) or sel_name or ""
                         raw_rel = os.path.normpath(raw_rel)
                         rd, rf = os.path.split(raw_rel)
-                        self.app.rel_dir = rd or ""
-                        self.app.rel_file = rf or ""
+                        self.app.rel_dir = rd or self.app.NO_DIR
+                        self.app.rel_file = rf or self.app.NO_FILE
                     except Exception as _e:
                         self.printException(_e, "_activate_or_open: setting app.rel_dir/rel_file failed")
                 except Exception as _e:
@@ -4100,7 +4107,7 @@ class FileModeFileList(FileListBase):
                     # Record the currently-selected child for the current
                     # directory so re-entering that directory can restore
                     # the same child highlight.
-                    cur_rel = self.app.rel_dir or ""
+                    cur_rel = self.app.rel_dir or self.app.NO_DIR
                     try:
                         cur_rel = os.path.normpath(cur_rel)
                     except Exception as e:
@@ -4201,6 +4208,11 @@ class RepoModeFileList(FileListBase, RightSideBase):
     Provides a `prepRepoModeFileList` stub and navigation handlers.
     """
 
+    # Sentinel for "no active file selection" in optional-path locals.
+    # Distinct from NO_FILE (app state sentinel) — here None means
+    # "skip filename highlight and fall through to _highlight_top()".
+    NO_SELECTION = None
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.highlight_bg_style = HIGHLIGHT_FILELIST_BG
@@ -4273,7 +4285,9 @@ class RepoModeFileList(FileListBase, RightSideBase):
                     active_raw = None
                     active_idx = 0
                     selected_rel = (
-                        os.path.join(self.app.rel_dir or "", self.app.rel_file) if self.app.rel_file else None
+                        os.path.join(self.app.rel_dir or self.app.NO_DIR, self.app.rel_file)
+                        if self.app.rel_file
+                        else self.NO_SELECTION
                     )
                     if selected_rel:
                         active_raw = os.path.normpath(selected_rel)
@@ -4303,17 +4317,25 @@ class RepoModeFileList(FileListBase, RightSideBase):
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: recording app-level state failed")
             try:
-                selected_rel = os.path.join(self.app.rel_dir or "", self.app.rel_file) if self.app.rel_file else None
-                if selected_rel:
-                    self._highlight_filename(selected_rel)
-                else:
+                selected_rel = (
+                    os.path.join(self.app.rel_dir or self.app.NO_DIR, self.app.rel_file)
+                    if self.app.rel_file
+                    else self.NO_SELECTION
+                )
+                if selected_rel is self.NO_SELECTION:
                     self._highlight_top()
+                else:
+                    self._highlight_filename(selected_rel)
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: highlight failed")
 
             # Run centralized finalization so UI/app state is kept consistent
             try:
-                selected_rel = os.path.join(self.app.rel_dir or "", self.app.rel_file) if self.app.rel_file else None
+                selected_rel = (
+                    os.path.join(self.app.rel_dir or self.app.NO_DIR, self.app.rel_file)
+                    if self.app.rel_file
+                    else self.NO_SELECTION
+                )
                 self._finalize_filelist_prep(curr_hash=curr_hash, prev_hash=prev_hash, path=selected_rel)
             except Exception as e:
                 self.printException(e, "prepRepoModeFileList: finalize failed")
@@ -4367,8 +4389,8 @@ class RepoModeFileList(FileListBase, RightSideBase):
             try:
                 rel = os.path.normpath(filename)
                 rd, rf = os.path.split(rel)
-                self.app.rel_dir = rd or ""
-                self.app.rel_file = rf or ""
+                self.app.rel_dir = rd or self.app.NO_DIR
+                self.app.rel_file = rf or self.app.NO_FILE
             except Exception as _ex:
                 self.printException(_ex, "RepoModeFileList.key_right: setting app.rel_dir/rel_file failed")
 
@@ -4835,7 +4857,7 @@ class HistoryListBase(AppBase):
 
             # Get the complete commit message
             try:
-                filepath = self.app.rel_file or ""
+                filepath = self.app.rel_file or self.app.NO_FILE
                 complete_msg = self.app.gitRepo.getCompleteCommitMessage(filepath, hash_val)
                 if complete_msg is None:
                     self.error_message(f"Failed to retrieve commit message for {hash_val[:self.app.hash_length]}")
@@ -4927,8 +4949,8 @@ class FileModeHistoryList(HistoryListBase, RightSideBase):
             # rel_dir/rel_file pair. This is the canonical input to the
             # GitRepo helper used to obtain a normalized list of hashes.
             try:
-                rel_dir = self.app.rel_dir or ""
-                rel_file = self.app.rel_file or ""
+                rel_dir = self.app.rel_dir or self.app.NO_DIR
+                rel_file = self.app.rel_file or self.app.NO_FILE
                 rel_path = os.path.normpath(os.path.join(rel_dir, rel_file))
             except Exception as _e:
                 self.printException(_e, "prepFileModeHistoryList: computing rel_path failed")
@@ -5010,12 +5032,12 @@ class FileModeHistoryList(HistoryListBase, RightSideBase):
         try:
             # Build a repository-relative filename from rel_dir/rel_file
             try:
-                rd = self.app.rel_dir or ""
-                rf = self.app.rel_file or ""
-                filename = os.path.join(rd, rf) if rf else (rd or "")
+                rd = self.app.rel_dir or self.app.NO_DIR
+                rf = self.app.rel_file or self.app.NO_FILE
+                filename = os.path.join(rd, rf) if rf else (rd or self.app.NO_DIR)
             except Exception as _e:
                 self.printException(_e, "FileModeHistoryList.key_right: computing filename failed")
-                filename = self.app.rel_file or ""
+                filename = self.app.rel_file or self.app.NO_FILE
             # Ask the diff list to prepare the diff for this file and pair
             try:
                 # When opening from a file's history, ensure left returns to
@@ -6031,10 +6053,14 @@ class DiffList(FullScreenBase):
                 try:
                     rd = self.app.rel_dir
                     rf = self.app.rel_file
-                    filename = os.path.join(rd or "", rf) if rf else (rd or "")
+                    filename = (
+                        os.path.join(rd or self.app.NO_DIR, rf)
+                        if rf
+                        else (rd or self.app.NO_DIR)
+                    )
                 except Exception as e:
                     self.printException(e, "DiffList.key_d: computing filename failed")
-                    filename = ""
+                    filename = self.app.NO_FILE
                 if self.app.previous_hash is not None:
                     prev = self.app.previous_hash
                 else:
@@ -6460,6 +6486,9 @@ class GitDiffNavTool(AppException, App):
     """
 
     CSS = INLINE_CSS
+    # Canonical sentinels for "no directory" / "no file selected" app state.
+    NO_DIR = ""
+    NO_FILE = ""
 
     def __init__(
         self,
@@ -6509,7 +6538,7 @@ class GitDiffNavTool(AppException, App):
         # Record rel_dir/rel_file and compute canonical self.path for
         # backward compatibility with existing code paths.
         # Normalize and validate inputs per the documented contract
-        self.rel_dir = os.path.normpath(rel_dir) if rel_dir else ""
+        self.rel_dir = os.path.normpath(rel_dir) if rel_dir else self.NO_DIR
         # Normalize but reject any path separators in rel_file immediately.
         if rel_file:
             # Reject any rel_file that is not a basename (no subpath)
@@ -6518,11 +6547,11 @@ class GitDiffNavTool(AppException, App):
             # Assign the validated basename directly (no normalization needed)
             self.rel_file = rel_file
         else:
-            self.rel_file = ""
+            self.rel_file = self.NO_FILE
 
         # Normalize `.` to empty string for rel_dir
         if self.rel_dir == ".":
-            self.rel_dir = ""
+            self.rel_dir = self.NO_DIR
 
         # Application state uses only `rel_dir` and `rel_file`.
         # Do not maintain `self.path` to avoid multiple source-of-truth values.
@@ -7192,11 +7221,17 @@ class GitDiffNavTool(AppException, App):
 
             layout = self._current_layout
             current_rel_path = (
-                os.path.join(self.rel_dir or "", self.rel_file) if self.rel_file else (self.rel_dir or ".")
+                os.path.join(self.rel_dir or self.NO_DIR, self.rel_file)
+                if self.rel_file
+                else (self.rel_dir or ".")
             )
 
             def _refresh_diff() -> None:
-                filename = os.path.join(self.rel_dir or "", self.rel_file) if self.rel_file else (self.rel_dir or "")
+                filename = (
+                    os.path.join(self.rel_dir or self.NO_DIR, self.rel_file)
+                    if self.rel_file
+                    else (self.rel_dir or self.NO_DIR)
+                )
                 prev = self.previous_hash if self.previous_hash is not None else GitRepo.NEWREPO
                 self.diff_list.prepDiffList(
                     filename,
@@ -8052,8 +8087,8 @@ class GitDiffNavTool(AppException, App):
         try:
             # App state is already repo-relative; avoid absolute-path round trips.
             try:
-                self.file_mode_file_list.app.rel_dir = self.rel_dir or ""
-                self.file_mode_file_list.app.rel_file = self.rel_file or ""
+                self.file_mode_file_list.app.rel_dir = self.rel_dir or self.NO_DIR
+                self.file_mode_file_list.app.rel_file = self.rel_file or self.NO_FILE
             except Exception as _e:
                 self.printException(_e, "toggle_history_fullscreen: setting file_mode app rels failed")
 
@@ -8070,7 +8105,11 @@ class GitDiffNavTool(AppException, App):
         then prepares the repo file list highlighting the canonical filename.
         """
         # Save transient values (use repo-relative rel_dir/rel_file)
-        saved_path = os.path.join(self.rel_dir or "", self.rel_file) if self.rel_file else (self.rel_dir or "")
+        saved_path = (
+            os.path.join(self.rel_dir or self.NO_DIR, self.rel_file)
+            if self.rel_file
+            else (self.rel_dir or self.NO_DIR)
+        )
         try:
             logger.debug(
                 "toggle_file_history: before prepRepoModeHistoryList app.previous_hash=%r app.current_hash=%r saved_path=%r",
@@ -8120,7 +8159,11 @@ class GitDiffNavTool(AppException, App):
         switches the UI to the paired layout.
         """
         # Save transient values (use repo-relative rel_dir/rel_file)
-        saved_path = os.path.join(self.rel_dir or "", self.rel_file) if self.rel_file else (self.rel_dir or "")
+        saved_path = (
+            os.path.join(self.rel_dir or self.NO_DIR, self.rel_file)
+            if self.rel_file
+            else (self.rel_dir or self.NO_DIR)
+        )
         saved_curr = self.current_hash
         saved_prev = self.previous_hash
         logger.debug(
@@ -8130,34 +8173,13 @@ class GitDiffNavTool(AppException, App):
             saved_path,
         )
         try:
-            # Prepare the right file list (file pane on right) showing files
-            # Use repository-relative path as the highlight.
-            hl = saved_path
-            logger.debug("toggle_history_file: saved_path=%r computed_highlight=%r", saved_path, hl)
-            gitrepo = self.gitRepo
+            # App state is already repo-relative; avoid absolute-path round trips.
             try:
-                ip = saved_path or "."
-                root = gitrepo.get_repo_root()
-                if ip == root:
-                    rel = ""
-                elif ip.startswith(root + os.sep):
-                    rel = ip[len(root) + 1 :]
-                else:
-                    rel = os.path.relpath(ip, root)
-                if os.path.isdir(ip):
-                    rdir = rel
-                    rpath = None
-                else:
-                    rdir = os.path.dirname(rel) or ""
-                    rpath = os.path.basename(rel)
-                try:
-                    self.file_mode_file_list.app.rel_dir = rdir
-                    self.file_mode_file_list.app.rel_file = rpath
-                except Exception as _e:
-                    self.printException(_e, "toggle_history_file: setting file_mode app rels failed")
-                self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
-            except Exception as _ex:
-                self.printException(_ex, "toggle_history_file prepFileModeFileList failed")
+                self.file_mode_file_list.app.rel_dir = self.rel_dir or self.NO_DIR
+                self.file_mode_file_list.app.rel_file = self.rel_file or self.NO_FILE
+            except Exception as _e:
+                self.printException(_e, "toggle_history_file: setting file_mode app rels failed")
+            self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
         except Exception as e:
             self.printException(e, "toggle_history_file prepFileModeFileList failed")
         # Prepare the right history list for the current file and request

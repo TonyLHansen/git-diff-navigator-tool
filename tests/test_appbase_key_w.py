@@ -40,6 +40,8 @@ class HarnessForKeyWHelper:
         self.errors = []
         self.pushed = []
         self.app = types.SimpleNamespace(
+            NO_DIR="",
+            NO_FILE="",
             rel_dir="",
             rel_file="README.md",
             previous_hash="top_prev",
