@@ -1903,3 +1903,136 @@ def test_get_hash_list_new_repo_all_branches(monkeypatch, test_repo):
     # Exception path with limit > 0.
     out_exc_limited = test_repo.getHashListNewRepo(ignorecache=True, limit=1)
     assert len(out_exc_limited) == 1
+
+
+def test_get_file_list_ignored_all_branches(monkeypatch, test_repo):
+    test_repo._cmd_cache.clear()
+
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: "k-ignored")
+    monkeypatch.setattr(
+        test_repo,
+        "_git_run",
+        lambda *_args, **_kwargs: "\n\"a\\040b.txt\"\nplain.txt\nplain.txt\n",
+    )
+    monkeypatch.setattr(test_repo, "_git_cli_decode_quoted_path", lambda rel: "a b.txt" if rel.startswith('"') else rel)
+    monkeypatch.setattr(test_repo, "safe_mtime", lambda rel: 42.0 if rel == "a b.txt" else None)
+    monkeypatch.setattr(test_repo, "_epoch_to_iso", lambda ts: f"iso-{int(ts)}")
+    monkeypatch.setattr(test_repo, "index_mtime_iso", lambda: "idx-iso")
+
+    out = test_repo.getFileListIgnored(ignorecache=True)
+    assert out == [("a b.txt", "iso-42", "ignored"), ("plain.txt", "idx-iso", "ignored")]
+    assert test_repo._cmd_cache["k-ignored"] == out
+
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: (_ for _ in ()).throw(RuntimeError("key fail")))
+    assert test_repo.getFileListIgnored(ignorecache=True) == []
+
+
+def test_get_file_list_untracked_and_ignored_all_branches(monkeypatch, test_repo):
+    test_repo._cmd_cache.clear()
+
+    class _BadEntry:
+        def __len__(self):
+            raise RuntimeError("bad entry")
+
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: "k-combined")
+    cached = [("cached.txt", "iso", "untracked")]
+    test_repo._cmd_cache["k-combined"] = cached
+    assert test_repo.getFileListUntrackedAndIgnored(ignorecache=False) == cached
+
+    monkeypatch.setattr(
+        test_repo,
+        "getFileListUntracked",
+        lambda ignorecache=False: [("dup.txt", "iso1", "untracked"), _BadEntry(), (), ("u.txt", "iso2", "untracked")],
+    )
+    monkeypatch.setattr(
+        test_repo,
+        "getFileListIgnored",
+        lambda ignorecache=False: [("dup.txt", "iso3", "ignored"), ("i.txt", "iso4", "ignored")],
+    )
+
+    out = test_repo.getFileListUntrackedAndIgnored(ignorecache=True)
+    assert out == [("dup.txt", "iso1", "untracked"), ("i.txt", "iso4", "ignored"), ("u.txt", "iso2", "untracked")]
+    assert test_repo._cmd_cache["k-combined"] == out
+
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: "k-combined-exc")
+    monkeypatch.setattr(
+        test_repo,
+        "getFileListUntracked",
+        lambda ignorecache=False: (_ for _ in ()).throw(RuntimeError("untracked fail")),
+    )
+    assert test_repo.getFileListUntrackedAndIgnored(ignorecache=True) == []
+
+
+def test_module_print_exception_success_and_fallback(monkeypatch):
+    warning_calls = []
+
+    def _warning_ok(*args, **kwargs):
+        warning_calls.append((args, kwargs))
+
+    monkeypatch.setattr(gitrepo.logger, "warning", _warning_ok)
+    gitrepo.printException(RuntimeError("boom"), "msg")
+    assert len(warning_calls) == 2
+
+    writes = []
+    call_count = {"n": 0}
+
+    def _warning_fail(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise RuntimeError("logger failed")
+
+    monkeypatch.setattr(gitrepo.logger, "warning", _warning_fail)
+    monkeypatch.setattr(gitrepo.sys.stderr, "write", lambda s: writes.append(s))
+    gitrepo.printException(RuntimeError("boom2"), "msg2")
+    assert any("printException fallback: boom2" in s for s in writes)
+    assert any("secondary exception: logger failed" in s for s in writes)
+
+
+def test_get_file_list_at_hash_all_branches(monkeypatch, test_repo):
+    test_repo._cmd_cache.clear()
+
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: "k-at-hash")
+    test_repo._cmd_cache["k-at-hash"] = [("cached.txt", "iso", "committed")]
+    out = test_repo.getFileListAtHash("abc123", ignorecache=False)
+    assert out == [("cached.txt", "iso", "committed")]
+
+    def _fake_git_run(args, text=True, cache_key=None, ignorecache=False):
+        return "\nb.txt\na.txt\n\nc.txt\n"
+
+    monkeypatch.setattr(test_repo, "_git_run", _fake_git_run)
+    monkeypatch.setattr(test_repo, "_get_commit_timestamp", lambda _h: 123.0)
+    monkeypatch.setattr(test_repo, "_epoch_to_iso", lambda ts: f"iso-{int(ts)}")
+    out = test_repo.getFileListAtHash("abc123", ignorecache=True)
+    assert out == [("a.txt", "iso-123", "committed"), ("b.txt", "iso-123", "committed"), ("c.txt", "iso-123", "committed")]
+    assert test_repo._cmd_cache["k-at-hash"] == out
+
+    monkeypatch.setattr(test_repo, "_get_commit_timestamp", lambda _h: None)
+    monkeypatch.setattr(test_repo, "index_mtime_iso", lambda: "idx-iso")
+    out = test_repo.getFileListAtHash("abc123", ignorecache=True)
+    assert out[0][1] == "idx-iso"
+
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: "k-at-hash-exc")
+    monkeypatch.setattr(
+        test_repo,
+        "_git_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("git fail")),
+    )
+    assert test_repo.getFileListAtHash("abc123", ignorecache=True) == []
+
+
+def test_get_hash_list_entire_repo_limit_branch(monkeypatch, test_repo):
+    monkeypatch.setattr(test_repo, "_get_default_ref", lambda: "main")
+    monkeypatch.setattr(test_repo, "_git_run", lambda *_args, **_kwargs: "ignored")
+    monkeypatch.setattr(
+        test_repo,
+        "_parse_git_log_output",
+        lambda _out: [
+            (2, "h2", "author2", "e2", "subject2"),
+            (3, "h1", "author1", "e1", "subject1"),
+        ],
+    )
+    monkeypatch.setattr(test_repo, "getPushedHashes", lambda ignorecache=False: {"h1"})
+    monkeypatch.setattr(test_repo, "_epoch_to_iso", lambda ts: f"iso-{ts}")
+
+    out = test_repo.getHashListEntireRepo(ignorecache=True, limit=1)
+    assert out == [("iso-3", "h1", "subject1", "pushed", "author1", "e1")]
