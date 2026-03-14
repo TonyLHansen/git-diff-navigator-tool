@@ -929,9 +929,9 @@ class GitRepo(AppException):
                             out_txt = out.decode("utf-8", errors="replace")
                         else:
                             out_txt = str(out)
-                        logger.debug("_git_run response BEGIN<<<\n%s>>>END _git_run response", out_txt)
                     except Exception as e:
-                        self.printException(e, "_git_run: logging response failed")
+                    self.printException(e, "_git_run: decoding output for logging failed")
+                    logger.debug("_git_run response BEGIN<<<\n%s>>>END _git_run response", out_txt)
             except CalledProcessError as _use_logging:
                 if GitRepo.verbose > 0:
                     logger.debug("_git_run failed: %s", args)
