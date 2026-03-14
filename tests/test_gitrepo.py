@@ -1774,3 +1774,132 @@ def test_amend_commit_message_rebase_failure_and_cleanup_and_setup_failure(monke
     monkeypatch.setattr(gitrepo.tempfile, "NamedTemporaryFile", lambda **_kwargs: _BadTempFile())
     with pytest.raises(RuntimeError):
         test_repo.amendCommitMessage("cleanuphash", "msg")
+
+
+def test_get_index_mtime_all_branches(monkeypatch, test_repo):
+    # First candidate exists and returns immediately.
+    monkeypatch.setattr(gitrepo.os.path, "join", lambda *parts: "/".join(parts))
+    monkeypatch.setattr(gitrepo.os.path, "exists", lambda p: p.endswith(".git/index"))
+    monkeypatch.setattr(gitrepo.os.path, "getmtime", lambda _p: 111.0)
+    assert test_repo.getIndexMtime() == 111.0
+
+    # First missing, second exists path.
+    monkeypatch.setattr(gitrepo.os.path, "exists", lambda p: p.endswith("/index") and not p.endswith(".git/index"))
+    monkeypatch.setattr(gitrepo.os.path, "getmtime", lambda _p: 222.0)
+    assert test_repo.getIndexMtime() == 222.0
+
+    # Exception during stat is swallowed and function returns None.
+    def _exists_raise(_p):
+        raise RuntimeError("exists failed")
+
+    monkeypatch.setattr(gitrepo.os.path, "exists", _exists_raise)
+    assert test_repo.getIndexMtime() is None
+
+
+def test_get_file_list_untracked_all_branches(monkeypatch, test_repo):
+    test_repo._cmd_cache.clear()
+
+    # Non-cache path: includes blank line, quoted path decode, duplicate skip,
+    # and mtime None fallback to index timestamp.
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: "k-untracked")
+    monkeypatch.setattr(
+        test_repo,
+        "_git_run",
+        lambda *_args, **_kwargs: "\n\"a\\040b.txt\"\nplain.txt\nplain.txt\n",
+    )
+    monkeypatch.setattr(test_repo, "_git_cli_decode_quoted_path", lambda rel: "a b.txt" if rel.startswith('"') else rel)
+    monkeypatch.setattr(test_repo, "safe_mtime", lambda rel: 12.0 if rel == "a b.txt" else None)
+    monkeypatch.setattr(test_repo, "_epoch_to_iso", lambda ts: f"iso-{int(ts)}")
+    monkeypatch.setattr(test_repo, "index_mtime_iso", lambda: "idx-iso")
+
+    out = test_repo.getFileListUntracked(ignorecache=True)
+    assert out == [("a b.txt", "iso-12", "untracked"), ("plain.txt", "idx-iso", "untracked")]
+    assert test_repo._cmd_cache["k-untracked"] == out
+
+    # Cache-hit path.
+    cached = [("cached.txt", "cached-iso", "untracked")]
+    test_repo._cmd_cache["k-untracked"] = cached
+    assert test_repo.getFileListUntracked(ignorecache=False) == cached
+
+    # Outer exception returns empty list.
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: (_ for _ in ()).throw(RuntimeError("key fail")))
+    assert test_repo.getFileListUntracked(ignorecache=True) == []
+
+
+def test_get_file_list_between_new_repo_and_hash_all_branches(monkeypatch, test_repo):
+    test_repo._cmd_cache.clear()
+
+    # Cache-hit path.
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: "k-newrepo-hash")
+    test_repo._cmd_cache["k-newrepo-hash"] = [("cached.txt", "iso", "added")]
+    out = test_repo.getFileListBetweenNewRepoAndHash("abc123", ignorecache=False)
+    assert out == [("cached.txt", "iso", "added")]
+
+    # Main path: commit_ts not None, includes blank line to test skip, results sorted.
+    def _fake_git_run(args, text=True, cache_key=None, ignorecache=False):
+        return "\nb.txt\na.txt\n\nc.txt\n"
+
+    monkeypatch.setattr(test_repo, "_git_run", _fake_git_run)
+    monkeypatch.setattr(test_repo, "_get_commit_timestamp", lambda _h: 999.0)
+    monkeypatch.setattr(test_repo, "_epoch_to_iso", lambda ts: f"iso-{int(ts)}")
+
+    out = test_repo.getFileListBetweenNewRepoAndHash("abc123", ignorecache=True)
+    assert out == [("a.txt", "iso-999", "added"), ("b.txt", "iso-999", "added"), ("c.txt", "iso-999", "added")]
+    assert test_repo._cmd_cache["k-newrepo-hash"] == out
+
+    # commit_ts is None -> falls back to index_mtime_iso.
+    monkeypatch.setattr(test_repo, "_get_commit_timestamp", lambda _h: None)
+    monkeypatch.setattr(test_repo, "index_mtime_iso", lambda: "idx-iso")
+    out = test_repo.getFileListBetweenNewRepoAndHash("abc123", ignorecache=True)
+    assert out[0][1] == "idx-iso"
+
+    # Exception path returns empty list (_git_run raises inside the try block).
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: "k-newrepo-exc")
+    monkeypatch.setattr(
+        test_repo,
+        "_git_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("git fail")),
+    )
+    assert test_repo.getFileListBetweenNewRepoAndHash("abc123", ignorecache=True) == []
+
+
+def test_get_hash_list_new_repo_all_branches(monkeypatch, test_repo):
+    # Happy path with empty repo (no commits) -> oldest_status stays "unpushed".
+    monkeypatch.setattr(test_repo, "_newrepo_timestamp_iso", lambda ignorecache=False: "2025-01-01T00:00:00")
+    monkeypatch.setattr(test_repo, "getHashListEntireRepo", lambda ignorecache=False: [])
+    out = test_repo.getHashListNewRepo(ignorecache=True)
+    assert len(out) == 1
+    assert out[0][1] == test_repo.NEWREPO
+    assert out[0][3] == "unpushed"
+
+    # Happy path: oldest commit present -> inherits its pushed status.
+    monkeypatch.setattr(
+        test_repo,
+        "getHashListEntireRepo",
+        lambda ignorecache=False: [
+            ("iso1", "h1", "subject", "pushed", "", ""),
+            ("iso2", "h2", "subject2", "pushed", "", ""),
+        ],
+    )
+    out = test_repo.getHashListNewRepo(ignorecache=True)
+    assert out[0][3] == "pushed"
+
+    # limit > 0 path in happy path (limit=1 on 1-entry list keeps it; limit=0 means no limit).
+    out_limited = test_repo.getHashListNewRepo(ignorecache=True, limit=1)
+    assert len(out_limited) == 1
+
+    # Exception path: _newrepo_timestamp_iso raises; fallback entry returned.
+    monkeypatch.setattr(
+        test_repo,
+        "_newrepo_timestamp_iso",
+        lambda ignorecache=False: (_ for _ in ()).throw(RuntimeError("ts fail")),
+    )
+    monkeypatch.setattr(test_repo, "index_mtime_iso", lambda: "fallback-iso")
+    out_exc = test_repo.getHashListNewRepo(ignorecache=True)
+    assert len(out_exc) == 1
+    assert out_exc[0][0] == "fallback-iso"
+    assert out_exc[0][1] == test_repo.NEWREPO
+
+    # Exception path with limit > 0.
+    out_exc_limited = test_repo.getHashListNewRepo(ignorecache=True, limit=1)
+    assert len(out_exc_limited) == 1
