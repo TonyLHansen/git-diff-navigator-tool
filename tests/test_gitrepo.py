@@ -2036,3 +2036,116 @@ def test_get_hash_list_entire_repo_limit_branch(monkeypatch, test_repo):
 
     out = test_repo.getHashListEntireRepo(ignorecache=True, limit=1)
     assert out == [("iso-3", "h1", "subject1", "pushed", "author1", "e1")]
+
+
+def test_get_hashes_between_all_branches(monkeypatch, test_repo):
+    assert test_repo.getHashesBetween("", "a", "b") == []
+    assert test_repo.getHashesBetween("f.txt", "", "b") == []
+    assert test_repo.getHashesBetween("f.txt", "a", "") == []
+
+    entries = [
+        ("iso4", "h4", "s4", "unpushed", "", ""),
+        ("iso3", "h3", "s3", "unpushed", "", ""),
+        ("iso2", "h2", "s2", "unpushed", "", ""),
+        ("iso1", "h1", "s1", "unpushed", "", ""),
+        ("bad", None),
+        "not-a-sequence",
+    ]
+    monkeypatch.setattr(test_repo, "getNormalizedHashListFromFileName", lambda *_args, **_kwargs: entries)
+
+    assert test_repo.getHashesBetween("f.txt", "missing", "h2", ignorecache=True) == []
+    assert test_repo.getHashesBetween("f.txt", "h2", "h4", ignorecache=True) == ["h4", "h3", "h2"]
+    assert test_repo.getHashesBetween("f.txt", "h4", "h2", ignorecache=True) == ["h4", "h3", "h2"]
+
+    monkeypatch.setattr(
+        test_repo,
+        "getNormalizedHashListFromFileName",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("history fail")),
+    )
+    assert test_repo.getHashesBetween("f.txt", "h1", "h2", ignorecache=True) == []
+
+
+def test_get_complete_commit_message_exception_path(monkeypatch, test_repo):
+    monkeypatch.setattr(
+        test_repo,
+        "_git_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("git show failed")),
+    )
+    assert test_repo.getCompleteCommitMessage(test_repo.get_repo_root(), "abc123") is None
+
+
+def test_get_file_list_between_normalized_hashes_all_dispatches(monkeypatch, test_repo):
+    assert test_repo.getFileListBetweenNormalizedHashes("same", "same") == []
+
+    with pytest.raises(ValueError):
+        test_repo.getFileListBetweenNormalizedHashes(None, "abc")
+    with pytest.raises(ValueError):
+        test_repo.getFileListBetweenNormalizedHashes("abc", None)
+
+    monkeypatch.setattr(test_repo, "getFileListBetweenNewRepoAndHash", lambda curr_hash, ignorecache=False: [(curr_hash, "iso", "added")])
+    monkeypatch.setattr(test_repo, "getFileListBetweenNewRepoAndStaged", lambda ignorecache=False: [("staged", "iso", "added")])
+    monkeypatch.setattr(test_repo, "getFileListBetweenNewRepoAndMods", lambda ignorecache=False: [("mods", "iso", "modified")])
+    monkeypatch.setattr(test_repo, "getFileListBetweenTwoCommits", lambda prev_hash, curr_hash, ignorecache=False: [(f"{prev_hash}->{curr_hash}", "iso", "modified")])
+    monkeypatch.setattr(test_repo, "getFileListBetweenHashAndStaged", lambda hash, ignorecache=False: [(hash, "iso", "staged")])
+    monkeypatch.setattr(test_repo, "getFileListBetweenHashAndCurrentTime", lambda hash, ignorecache=False: [(hash, "iso", "modified")])
+    monkeypatch.setattr(test_repo, "getFileListBetweenStagedAndMods", lambda ignorecache=False: [("staged->mods", "iso", "modified")])
+
+    assert test_repo.getFileListBetweenNormalizedHashes(test_repo.NEWREPO, "abc", ignorecache=True) == [("abc", "iso", "added")]
+    assert test_repo.getFileListBetweenNormalizedHashes(test_repo.NEWREPO, test_repo.STAGED, ignorecache=True) == [("staged", "iso", "added")]
+    assert test_repo.getFileListBetweenNormalizedHashes(test_repo.NEWREPO, test_repo.MODS, ignorecache=True) == [("mods", "iso", "modified")]
+    assert test_repo.getFileListBetweenNormalizedHashes("a1", "b2", ignorecache=True) == [("a1->b2", "iso", "modified")]
+    assert test_repo.getFileListBetweenNormalizedHashes("a1", test_repo.STAGED, ignorecache=True) == [("a1", "iso", "staged")]
+    assert test_repo.getFileListBetweenNormalizedHashes("a1", test_repo.MODS, ignorecache=True) == [("a1", "iso", "modified")]
+    assert test_repo.getFileListBetweenNormalizedHashes(test_repo.STAGED, test_repo.MODS, ignorecache=True) == [("staged->mods", "iso", "modified")]
+    assert test_repo.getFileListBetweenNormalizedHashes(test_repo.STAGED, "abc", ignorecache=True) == [(f"{test_repo.STAGED}->abc", "iso", "modified")]
+
+
+def test_get_pushed_hashes_all_branches(monkeypatch, test_repo):
+    test_repo._cmd_cache.clear()
+
+    test_repo._cmd_cache["getPushedHashes"] = {"cached1"}
+    assert test_repo.getPushedHashes(ignorecache=False) == {"cached1"}
+
+    test_repo._cmd_cache["getPushedHashes"] = ["not-a-set"]
+    assert test_repo.getPushedHashes(ignorecache=False) == set()
+
+    test_repo._cmd_cache.clear()
+    monkeypatch.setattr(test_repo, "_get_upstream_ref", lambda: "origin/main")
+    monkeypatch.setattr(test_repo, "_git_run", lambda args, **_kwargs: "h1\n\nh2\n" if args[:2] == ["git", "rev-list"] else "")
+    assert test_repo.getPushedHashes(ignorecache=True) == {"h1", "h2"}
+
+    test_repo._cmd_cache.clear()
+
+    def _git_run_upstream_cpe(args, **_kwargs):
+        if args == ["git", "rev-list", "origin/main"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=args)
+        if args[:4] == ["git", "config", "--get", "remote.origin.url"]:
+            return "\n"
+        return ""
+
+    monkeypatch.setattr(test_repo, "_git_run", _git_run_upstream_cpe)
+    assert test_repo.getPushedHashes(ignorecache=True) == set()
+
+    def _git_run_remotes(args, **_kwargs):
+        if args[:4] == ["git", "config", "--get", "remote.origin.url"]:
+            return "origin-url\n"
+        if args == ["git", "rev-list", "--remotes"]:
+            return "r1\n\nr2\n"
+        return ""
+
+    monkeypatch.setattr(test_repo, "_get_upstream_ref", lambda: None)
+    monkeypatch.setattr(test_repo, "_git_run", _git_run_remotes)
+    assert test_repo.getPushedHashes(ignorecache=True) == {"r1", "r2"}
+
+    def _git_run_remotes_cpe(args, **_kwargs):
+        if args[:4] == ["git", "config", "--get", "remote.origin.url"]:
+            return "origin-url\n"
+        if args == ["git", "rev-list", "--remotes"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=args)
+        return ""
+
+    monkeypatch.setattr(test_repo, "_git_run", _git_run_remotes_cpe)
+    assert test_repo.getPushedHashes(ignorecache=True) == set()
+
+    monkeypatch.setattr(test_repo, "_get_upstream_ref", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert test_repo.getPushedHashes(ignorecache=True) == set()
