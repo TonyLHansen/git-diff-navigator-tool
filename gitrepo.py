@@ -228,6 +228,39 @@ class GitRepo(AppException):
         """
         return self._branch if self._branch else "HEAD"
 
+    def getCurrentBranch(self) -> str | None:
+        """
+        Return the name of the currently checked-out branch, or None if in detached HEAD state.
+        """
+        try:
+            out = check_output(
+                ["git", "symbolic-ref", "--short", "HEAD"],
+                cwd=self._repoRoot,
+                text=True,
+                stderr=open(os.devnull, "w"),
+            )
+            return out.strip() or None
+        except CalledProcessError as _no_logging:
+            # Detached HEAD — no branch name
+            return None
+
+    def getAllBranches(self, include_remote: bool = False) -> list[str]:
+        """
+        Return a sorted list of local branch names.
+
+        If *include_remote* is True, remote-tracking branches are included as well
+        (e.g. ``origin/main``).
+        """
+        cmd = ["git", "branch", "--format=%(refname:short)"]
+        if include_remote:
+            cmd.append("--all")
+        try:
+            out = check_output(cmd, cwd=self._repoRoot, text=True)
+            branches = [line.strip() for line in out.splitlines() if line.strip()]
+            return sorted(branches)
+        except CalledProcessError as _no_logging:
+            return []
+
     def _get_upstream_ref(self) -> str | None:
         """
         Return the upstream tracking branch for the default ref, or None if unavailable.

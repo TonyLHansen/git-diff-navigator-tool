@@ -211,3 +211,53 @@ def test_contract_validation_file_list_and_hash_list_methods(test_repo):
             assert status in {"pushed", "unpushed"}
             assert isinstance(author_name, str)
             assert isinstance(author_email, str)
+
+
+def test_get_current_branch_returns_string(test_repo):
+    branch = test_repo.getCurrentBranch()
+    # The fixture repo is initialised on 'main'
+    assert branch == "main"
+
+
+def test_get_current_branch_returns_none_for_detached_head(test_repo_dirs, tmp_path):
+    """Detached HEAD state should cause getCurrentBranch to return None."""
+    import shutil
+
+    detached_dir = tmp_path / "detached"
+    shutil.copytree(str(test_repo_dirs["base"]), str(detached_dir))
+
+    # Grab HEAD hash, then detach
+    head_hash = subprocess.check_output(
+        ["git", "-C", str(detached_dir), "rev-parse", "HEAD"],
+        text=True,
+    ).strip()
+    subprocess.run(
+        ["git", "-C", str(detached_dir), "checkout", "--detach", head_hash],
+        check=True,
+        capture_output=True,
+    )
+
+    repo = GitRepo(str(detached_dir))
+    assert repo.getCurrentBranch() is None
+
+
+def test_get_all_branches_returns_list_with_main(test_repo):
+    branches = test_repo.getAllBranches()
+    assert isinstance(branches, list)
+    assert "main" in branches
+
+
+def test_get_all_branches_is_sorted(test_repo):
+    branches = test_repo.getAllBranches()
+    assert branches == sorted(branches)
+
+
+def test_get_all_branches_include_remote(test_repo):
+    # The fixture remote is a bare repo; local clone has origin/main tracking it
+    branches_local = test_repo.getAllBranches(include_remote=False)
+    branches_all = test_repo.getAllBranches(include_remote=True)
+    # All local branches should still be present when remotes are included
+    for b in branches_local:
+        assert b in branches_all
+    # Result remains sorted
+    assert branches_all == sorted(branches_all)
