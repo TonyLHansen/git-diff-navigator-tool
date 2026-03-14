@@ -2411,11 +2411,11 @@ def main(argv=None):
     """
 
     parser = argparse.ArgumentParser(description="CLI helper for GitRepo internals")
-    parser.add_argument("path", help="file or directory used to discover the git repo")
     parser.add_argument("-1", "--hash1", dest="hash1", help="first hash/token")
     parser.add_argument("-2", "--hash2", dest="hash2", help="second hash/token")
     parser.add_argument("-f", "--file", dest="file", help="file (repo-relative or path)")
     parser.add_argument("-F", "--file2", dest="file2", help="second file")
+    parser.add_argument("path", help="file or directory used to discover the git repo")
 
     # Add boolean flags for many GitRepo methods (name matches method)
     flags = [

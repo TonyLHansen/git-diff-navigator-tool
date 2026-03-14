@@ -2149,3 +2149,79 @@ def test_get_pushed_hashes_all_branches(monkeypatch, test_repo):
 
     monkeypatch.setattr(test_repo, "_get_upstream_ref", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     assert test_repo.getPushedHashes(ignorecache=True) == set()
+
+
+def test_get_normalized_hash_list_complete_limit_paths(monkeypatch, test_repo):
+    new = [("niso", GitRepo.MODS, GitRepo.MODS_MESSAGE, "unpushed", "", "")]
+    staged = [("siso", GitRepo.STAGED, GitRepo.STAGED_MESSAGE, "unpushed", "", "")]
+    entire = [("eiso", "h1", "subject", "pushed", "name", "email")]
+    newrepo = [("riso", GitRepo.NEWREPO, GitRepo.NEWREPO_MESSAGE, "unpushed", "", "")]
+
+    monkeypatch.setattr(test_repo, "getHashListNewChanges", lambda ignorecache=False, limit=0: list(new))
+    monkeypatch.setattr(test_repo, "getHashListStagedChanges", lambda ignorecache=False, limit=0: list(staged))
+    monkeypatch.setattr(test_repo, "getHashListEntireRepo", lambda ignorecache=False, limit=0: list(entire))
+    monkeypatch.setattr(test_repo, "getHashListNewRepo", lambda ignorecache=False, limit=0: list(newrepo))
+
+    assert test_repo.getNormalizedHashListComplete(ignorecache=True, limit=1) == new
+    assert test_repo.getNormalizedHashListComplete(ignorecache=True, limit=2) == new + staged
+    assert test_repo.getNormalizedHashListComplete(ignorecache=True, limit=3) == new + staged + entire
+    assert test_repo.getNormalizedHashListComplete(ignorecache=True, limit=0) == new + staged + entire + newrepo
+
+
+def test_get_hash_list_staged_changes_all_branches(monkeypatch, test_repo):
+    test_repo._cmd_cache.clear()
+
+    monkeypatch.setattr(test_repo, "index_mtime_iso", lambda: "idx-iso")
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: "k-staged")
+
+    test_repo._cmd_cache["k-staged"] = [("cached", GitRepo.STAGED, GitRepo.STAGED_MESSAGE, "unpushed", "", "")]
+    assert test_repo.getHashListStagedChanges(ignorecache=False, limit=1) == [("cached", GitRepo.STAGED, GitRepo.STAGED_MESSAGE, "unpushed", "", "")]
+
+    test_repo._cmd_cache.clear()
+    monkeypatch.setattr(test_repo, "_git_run", lambda *_args, **_kwargs: "")
+    assert test_repo.getHashListStagedChanges(ignorecache=True) == []
+    assert test_repo._cmd_cache["k-staged"] == []
+
+    monkeypatch.setattr(test_repo, "_git_run", lambda *_args, **_kwargs: " \n\t\n")
+    assert test_repo.getHashListStagedChanges(ignorecache=True) == []
+
+    monkeypatch.setattr(test_repo, "_git_run", lambda *_args, **_kwargs: "a.txt\n")
+    out = test_repo.getHashListStagedChanges(ignorecache=True, limit=1)
+    assert out == [("idx-iso", GitRepo.STAGED, GitRepo.STAGED_MESSAGE, "unpushed", "", "")]
+    assert test_repo._cmd_cache["k-staged"] == out
+
+    monkeypatch.setattr(
+        test_repo,
+        "_git_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("staged fail")),
+    )
+    assert test_repo.getHashListStagedChanges(ignorecache=True) == []
+
+
+def test_get_hash_list_new_changes_all_branches(monkeypatch, test_repo):
+    test_repo._cmd_cache.clear()
+
+    monkeypatch.setattr(test_repo, "_git_run", lambda *_args, **_kwargs: "")
+    assert test_repo.getHashListNewChanges(ignorecache=True) == []
+
+    monkeypatch.setattr(test_repo, "_git_run", lambda *_args, **_kwargs: " \n\t\n")
+    assert test_repo.getHashListNewChanges(ignorecache=True) == []
+
+    monkeypatch.setattr(test_repo, "_git_run", lambda *_args, **_kwargs: "a.txt\nb.txt\n")
+    monkeypatch.setattr(test_repo, "_paths_mtime_iso", lambda paths: f"mods-{'-'.join(paths)}")
+    monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: "k-mods")
+
+    test_repo._cmd_cache["k-mods"] = [("cached", GitRepo.MODS, GitRepo.MODS_MESSAGE, "unpushed", "", "")]
+    assert test_repo.getHashListNewChanges(ignorecache=False, limit=1) == [("cached", GitRepo.MODS, GitRepo.MODS_MESSAGE, "unpushed", "", "")]
+
+    test_repo._cmd_cache.clear()
+    out = test_repo.getHashListNewChanges(ignorecache=True, limit=1)
+    assert out == [("mods-a.txt-b.txt", GitRepo.MODS, GitRepo.MODS_MESSAGE, "unpushed", "", "")]
+    assert test_repo._cmd_cache["k-mods"] == out
+
+    monkeypatch.setattr(
+        test_repo,
+        "_paths_mtime_iso",
+        lambda _paths: (_ for _ in ()).throw(RuntimeError("mods fail")),
+    )
+    assert test_repo.getHashListNewChanges(ignorecache=True) == []
