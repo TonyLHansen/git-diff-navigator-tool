@@ -1361,31 +1361,19 @@ class AppBase(AppException, ListView):
             if not nodes:
                 return
             if match:
-                # Normalize match to canonical full path when possible so
-                # comparisons against `_raw_text` (which we now store as
-                # full paths for repo-mode rows) succeed.
+                # `_raw_text` is expected to be repository-relative text.
+                # Normalize only for relative-path consistency.
                 try:
-                    repo_root_local = self.app.gitRepo.get_repo_root()
-                    match_full = self._canonical_relpath(match, repo_root_local)
+                    match_norm = os.path.normpath(str(match))
                 except Exception as e:
-                    match_full = match
+                    match_norm = str(match)
                     self.printException(e, "_highlight_match: normalizing match failed")
 
                 for i, node in enumerate(nodes):
                     try:
                         raw = getattr(node, "_raw_text", None)
                         h = getattr(node, "_hash", None)
-                        try:
-                            if raw is not None:
-                                repo_root_local = self.app.gitRepo.get_repo_root()
-                                node_full = self._canonical_relpath(raw, repo_root_local)
-                            else:
-                                node_full = None
-                        except Exception as e:
-                            node_full = raw
-                            self.printException(e, "_highlight_match: computing node_full failed")
-
-                        if node_full is not None and match_full is not None and node_full == match_full:
+                        if raw is not None and os.path.normpath(str(raw)) == match_norm:
                             self._activate_index(i)
                             return
 
@@ -2037,8 +2025,6 @@ class AppBase(AppException, ListView):
                 pass
 
             try:
-                # Prefer asking the GitRepo for the canonical repo root
-                repo_root_val = self.app.gitRepo.get_repo_root() # ????
                 relpath = os.path.normpath(os.path.join(self.app.rel_dir or "", self.app.rel_file or ""))
 
                 # Compute the full ordered list of hashes (newest→oldest) so
@@ -2071,7 +2057,7 @@ class AppBase(AppException, ListView):
                         filepath=filepath,
                         prev_hash=prev_hash,
                         curr_hash=curr_hash,
-                        repo_root=repo_root_val,
+                        source_relpath=relpath,
                         all_hashes=all_hashes if has_intermediates else None,
                         write_adds_timestamps=self.app.write_adds_timestamps,
                         write_hash_length=self.app.write_hash_length,
@@ -2100,7 +2086,7 @@ class SaveSnapshotModal(AppException, ModalScreen):
         filepath: str | None,
         prev_hash: str | None,
         curr_hash: str | None,
-        repo_root: str | None,
+        source_relpath: str | None,
         all_hashes: list[str] | None,
         write_adds_timestamps: bool,
         write_hash_length: int,
@@ -2112,7 +2098,7 @@ class SaveSnapshotModal(AppException, ModalScreen):
         self.filepath = filepath
         self.prev_hash = prev_hash
         self.curr_hash = curr_hash
-        self.repo_root = repo_root
+        self.source_relpath = source_relpath
         # Full ordered list (newest→oldest) when there are intermediates;
         # None means the "a" option is not available.
         self.all_hashes = all_hashes
@@ -2234,7 +2220,10 @@ class SaveSnapshotModal(AppException, ModalScreen):
             return None, "missing hash or filepath"
 
         try:
-            relpath = os.path.relpath(self.filepath, self.repo_root)
+            if self.source_relpath:
+                relpath = os.path.normpath(self.source_relpath)
+            else:
+                relpath = os.path.basename(self.filepath)
         except Exception as e:
             self.printException(e, "SaveSnapshotModal._save: computing relpath failed")
             relpath = os.path.basename(self.filepath)
@@ -2931,15 +2920,14 @@ class FileListBase(AppBase):
         """Find the first node matching `filename` and move the index there."""
         try:
             nodes = self.nodes()
-            # Normalize the provided filename to a canonical full path when
-            # possible so comparisons match stored `_raw_text` values.
+            # `_raw_text` is expected to be repository-relative text.
+            # Normalize only for relative-path consistency.
             try:
-                match_full = None
+                match_norm = None
                 if filename:
-                    repo_root_local = self.app.gitRepo.get_repo_root()
-                    match_full = self._canonical_relpath(filename, repo_root_local)
+                    match_norm = os.path.normpath(str(filename))
             except Exception as e:
-                match_full = filename
+                match_norm = filename
                 self.printException(e, "_highlight_filename: normalizing filename failed")
 
             for i, node in enumerate(nodes):
@@ -2947,14 +2935,8 @@ class FileListBase(AppBase):
                     # Prefer matching against canonical `_raw_text` when
                     # available; fall back to visible text equality.
                     raw = getattr(node, "_raw_text", None)
-                    if raw is not None and match_full is not None:
-                        try:
-                            repo_root_local = self.app.gitRepo.get_repo_root()
-                            node_full = self._canonical_relpath(raw, repo_root_local)
-                        except Exception as e:
-                            node_full = raw
-                            self.printException(e, "_highlight_filename: computing node_full failed")
-                        if node_full == match_full:
+                    if raw is not None and match_norm is not None:
+                        if os.path.normpath(str(raw)) == match_norm:
                             try:
                                 self.call_after_refresh(lambda: self._safe_activate_index(i))
                             except Exception as e:
@@ -8068,34 +8050,14 @@ class GitDiffNavTool(AppException, App):
         Prepares the file list and sets focus/footers appropriately.
         """
         try:
-            # Determine a highlight filename: prefer rel_file when present.
-            # Use empty string to indicate no highlight rather than None.
-            hl = self.rel_file or ""
-            gitrepo = self.gitRepo
-            init_path = os.path.join(gitrepo.get_repo_root(), self.rel_dir) if self.rel_dir else gitrepo.get_repo_root()
+            # App state is already repo-relative; avoid absolute-path round trips.
             try:
-                root = gitrepo.get_repo_root()
-                ip = init_path
-                if ip == root:
-                    rel = ""
-                elif ip.startswith(root + os.sep):
-                    rel = ip[len(root) + 1 :]
-                else:
-                    rel = os.path.relpath(ip, root)
-                if os.path.isdir(ip):
-                    rdir = rel
-                    rpath = None
-                else:
-                    rdir = os.path.dirname(rel) or ""
-                    rpath = os.path.basename(rel)
-                try:
-                    self.file_mode_file_list.app.rel_dir = rdir
-                    self.file_mode_file_list.app.rel_file = rpath
-                except Exception as _e:
-                    self.printException(_e, "toggle_history_fullscreen: setting file_mode app rels failed")
-                self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
-            except Exception as _ex:
-                self.printException(_ex, "toggle_history_fullscreen prepFileModeFileList failed")
+                self.file_mode_file_list.app.rel_dir = self.rel_dir or ""
+                self.file_mode_file_list.app.rel_file = self.rel_file or ""
+            except Exception as _e:
+                self.printException(_e, "toggle_history_fullscreen: setting file_mode app rels failed")
+
+            self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
         except Exception as e:
             self.printException(e, "toggle_history_fullscreen prepFileModeFileList failed")
         self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
@@ -8169,8 +8131,7 @@ class GitDiffNavTool(AppException, App):
         )
         try:
             # Prepare the right file list (file pane on right) showing files
-            # Use the full path as the highlight so matching is
-            # performed against canonical full paths instead of basenames.
+            # Use repository-relative path as the highlight.
             hl = saved_path
             logger.debug("toggle_history_file: saved_path=%r computed_highlight=%r", saved_path, hl)
             gitrepo = self.gitRepo

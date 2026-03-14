@@ -2401,7 +2401,7 @@ class GitRepo(AppException):
             raise
 
 
-def main(argv=None):
+def main(argv=None): # pragma: no cover
     """
     CLI entrypoint for exercising `GitRepo` helpers.
 
@@ -2570,5 +2570,5 @@ def main(argv=None):
                 break
 
 
-if __name__ == "__main__":
+if __name__ == "__main__": # pragma: no cover
     main()

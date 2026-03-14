@@ -146,3 +146,42 @@ def test_find_and_activate_returns_false_when_not_found():
     assert found is False
     assert h.activated == []
     assert h._last_search == "zzz"
+
+
+class HarnessForHighlightMatch:
+    def __init__(self):
+        self._nodes = [
+            types.SimpleNamespace(_raw_text="src/main.py", _hash=None),
+            types.SimpleNamespace(_raw_text="docs/readme.md", _hash=None),
+        ]
+        self.activated = []
+        self.highlighted_top = False
+        self.errors = []
+        # Intentionally no app.gitRepo on this harness. _highlight_match
+        # should not require get_repo_root when _raw_text is repo-relative.
+        self.app = types.SimpleNamespace()
+
+    def nodes(self):
+        return self._nodes
+
+    def _activate_index(self, idx):
+        self.activated.append(idx)
+
+    def _highlight_top(self):
+        self.highlighted_top = True
+
+    def text_of(self, node):
+        return getattr(node, "_raw_text", "")
+
+    def printException(self, exc, context=None):
+        self.errors.append((exc, context))
+
+
+def test_highlight_match_uses_repo_relative_raw_text_without_repo_root():
+    h = HarnessForHighlightMatch()
+
+    AppBase._highlight_match(h, "docs/readme.md")
+
+    assert h.activated == [1]
+    assert h.highlighted_top is False
+    assert h.errors == []

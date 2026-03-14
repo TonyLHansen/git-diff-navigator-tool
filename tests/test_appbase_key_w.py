@@ -24,9 +24,6 @@ class _FakeGitRepoForSnapshots:
             return f"{base}/{rel_dir}/{rel_file}"
         return f"{base}/{rel_file}"
 
-    def get_repo_root(self):
-        return "/tmp/repo"
-
     def getHashesBetween(self, file_name, prev_hash, curr_hash, ignorecache=False):
         self.hashes_between_calls.append((file_name, prev_hash, curr_hash, ignorecache))
         return ["selected_curr", "mid_1", "mid_2", "selected_prev"]
@@ -148,9 +145,9 @@ class _FakeGitRepoForSave:
 
 
 class _FakeModalForSave:
-    def __init__(self, filepath: str, repo_root: str, write_hash_length: int):
+    def __init__(self, filepath: str, source_relpath: str, write_hash_length: int):
         self.filepath = filepath
-        self.repo_root = repo_root
+        self.source_relpath = source_relpath
         self.write_adds_timestamps = False
         self.write_hash_length = write_hash_length
         self.write_uses_mtime = True
@@ -165,7 +162,7 @@ def test_save_uses_truncated_hash_in_output_name(tmp_path):
     src.write_bytes(b"hello")
     full_hash = "0123456789abcdef0123456789abcdef01234567"
 
-    modal = _FakeModalForSave(filepath=str(src), repo_root=str(tmp_path), write_hash_length=12)
+    modal = _FakeModalForSave(filepath=str(src), source_relpath="f.txt", write_hash_length=12)
 
     out_path, err = SaveSnapshotModal._save(modal, full_hash)
 
@@ -179,7 +176,7 @@ def test_save_uses_full_hash_when_write_hash_length_zero(tmp_path):
     src.write_bytes(b"hello")
     full_hash = "fedcba9876543210fedcba9876543210fedcba98"
 
-    modal = _FakeModalForSave(filepath=str(src), repo_root=str(tmp_path), write_hash_length=0)
+    modal = _FakeModalForSave(filepath=str(src), source_relpath="f.txt", write_hash_length=0)
 
     out_path, err = SaveSnapshotModal._save(modal, full_hash)
 
@@ -192,7 +189,7 @@ def test_save_sets_mtime_from_hash_when_enabled(tmp_path):
     src = tmp_path / "f.txt"
     src.write_bytes(b"hello")
 
-    modal = _FakeModalForSave(filepath=str(src), repo_root=str(tmp_path), write_hash_length=12)
+    modal = _FakeModalForSave(filepath=str(src), source_relpath="f.txt", write_hash_length=12)
     modal.write_uses_mtime = True
 
     out_path, err = SaveSnapshotModal._save(modal, "0123456789abcdef0123456789abcdef01234567")
@@ -207,7 +204,7 @@ def test_save_does_not_set_mtime_when_disabled(tmp_path):
     src = tmp_path / "f.txt"
     src.write_bytes(b"hello")
 
-    modal = _FakeModalForSave(filepath=str(src), repo_root=str(tmp_path), write_hash_length=12)
+    modal = _FakeModalForSave(filepath=str(src), source_relpath="f.txt", write_hash_length=12)
     modal.write_uses_mtime = False
 
     out_path, err = SaveSnapshotModal._save(modal, "fedcba9876543210fedcba9876543210fedcba98")
