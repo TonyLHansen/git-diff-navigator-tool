@@ -6606,7 +6606,10 @@ class GitDiffNavTool(AppException, App):
         # placeholders for runtime state
         # `repo_root` is provided by main and should not be modified further.
         # Set the application title to include the repository path
-        self.title = f"GitDiffNavTool ({self.gitRepo.get_repo_root()})"
+        _branch = self.gitRepo.getCurrentBranch()
+        if _branch == "HEAD":
+            _branch = self.gitRepo.getCurrentBranchOnDisk() or "HEAD"
+        self.title = f"GitDiffNavTool ({_branch} @ {self.gitRepo.get_repo_root()})"
         self._saved_state = None
         self._current_layout = None
         # Track current focus selector for save/restore; initialize here

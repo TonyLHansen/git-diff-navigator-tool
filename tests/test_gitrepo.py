@@ -214,14 +214,14 @@ def test_contract_validation_file_list_and_hash_list_methods(test_repo):
             assert isinstance(author_email, str)
 
 
-def test_get_current_branch_returns_string(test_repo):
-    branch = test_repo.getCurrentBranch()
+def test_get_current_branch_on_disk_returns_string(test_repo):
+    branch = test_repo.getCurrentBranchOnDisk()
     # The fixture repo is initialised on 'main'
     assert branch == "main"
 
 
-def test_get_current_branch_returns_none_for_detached_head(test_repo_dirs, tmp_path):
-    """Detached HEAD state should cause getCurrentBranch to return None."""
+def test_get_current_branch_on_disk_returns_none_for_detached_head(test_repo_dirs, tmp_path):
+    """Detached HEAD state should cause getCurrentBranchOnDisk to return None."""
     import shutil
 
     detached_dir = tmp_path / "detached"
@@ -239,7 +239,7 @@ def test_get_current_branch_returns_none_for_detached_head(test_repo_dirs, tmp_p
     )
 
     repo = GitRepo(str(detached_dir))
-    assert repo.getCurrentBranch() is None
+    assert repo.getCurrentBranchOnDisk() is None
 
 
 def test_get_all_branches_returns_list_with_main(test_repo):
@@ -270,20 +270,20 @@ def test_reset_cache_clears_command_cache(test_repo):
     assert test_repo._cmd_cache == {}
 
 
-def test_get_default_ref_prefers_configured_branch_and_falls_back_to_head(test_repo_dirs):
+def test_get_current_branch_prefers_configured_branch_and_falls_back_to_head(test_repo_dirs):
     repo_with_branch = GitRepo(str(test_repo_dirs["base"]), branch="main")
     repo_without_branch = GitRepo(str(test_repo_dirs["base"]))
 
-    assert repo_with_branch._get_default_ref() == "main"
-    assert repo_without_branch._get_default_ref() == "HEAD"
+    assert repo_with_branch.getCurrentBranch() == "main"
+    assert repo_without_branch.getCurrentBranch() == "HEAD"
 
 
-def test_get_current_branch_returns_none_when_symbolic_ref_empty(monkeypatch, test_repo):
+def test_get_current_branch_on_disk_returns_none_when_symbolic_ref_empty(monkeypatch, test_repo):
     def _fake_check_output(*_args, **_kwargs):
         return "\n"
 
     monkeypatch.setattr(gitrepo, "check_output", _fake_check_output)
-    assert test_repo.getCurrentBranch() is None
+    assert test_repo.getCurrentBranchOnDisk() is None
 
 
 def test_get_all_branches_remote_flag_sorts_and_filters_blank_lines(monkeypatch, test_repo):
@@ -625,7 +625,7 @@ def test_get_commit_timestamp_delegates_to_internal(monkeypatch, test_repo):
 
 
 def test_get_file_list_between_new_repo_and_top_hash_delegates(monkeypatch, test_repo):
-    monkeypatch.setattr(test_repo, "_get_default_ref", lambda: "main")
+    monkeypatch.setattr(test_repo, "getCurrentBranch", lambda: "main")
     seen = {}
 
     def _fake_newrepo_and_hash(curr_hash, ignorecache=False):
@@ -640,7 +640,7 @@ def test_get_file_list_between_new_repo_and_top_hash_delegates(monkeypatch, test
 
 
 def test_get_file_list_between_top_hash_and_current_time_delegates(monkeypatch, test_repo):
-    monkeypatch.setattr(test_repo, "_get_default_ref", lambda: "feature/x")
+    monkeypatch.setattr(test_repo, "getCurrentBranch", lambda: "feature/x")
     seen = {}
 
     def _fake_hash_to_now(hash, ignorecache=False):
@@ -655,7 +655,7 @@ def test_get_file_list_between_top_hash_and_current_time_delegates(monkeypatch, 
 
 
 def test_get_file_list_between_top_hash_and_staged_delegates(monkeypatch, test_repo):
-    monkeypatch.setattr(test_repo, "_get_default_ref", lambda: "dev")
+    monkeypatch.setattr(test_repo, "getCurrentBranch", lambda: "dev")
     seen = {}
 
     def _fake_hash_to_staged(hash, ignorecache=False):
@@ -926,7 +926,7 @@ def test_empty_tree_hash_paths(monkeypatch, test_repo):
 
 def test_newrepo_timestamp_iso_paths(monkeypatch, test_repo):
     # Path 1: parse failures/blank lines + symlink file + file-stat exception.
-    monkeypatch.setattr(test_repo, "_get_default_ref", lambda: "main")
+    monkeypatch.setattr(test_repo, "getCurrentBranch", lambda: "main")
     monkeypatch.setattr(test_repo, "_git_run", lambda *_args, **_kwargs: "\nnot-a-ts\n1700000000\n")
     monkeypatch.setattr(gitrepo.os.path, "exists", lambda _p: True)
     monkeypatch.setattr(gitrepo.os, "walk", lambda _p: [("/repo/.git", [], ["link", "bad", "norm"])])
@@ -1559,7 +1559,7 @@ def test_get_normalized_hash_list_from_file_name_cache_path(monkeypatch, test_re
 def test_get_normalized_hash_list_from_file_name_build_and_sort(monkeypatch, test_repo):
     key = "k-file-build"
     monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: key)
-    monkeypatch.setattr(test_repo, "_get_default_ref", lambda: "main")
+    monkeypatch.setattr(test_repo, "getCurrentBranch", lambda: "main")
 
     def _fake_git_run(args, text=True, cache_key=None, ignorecache=False):
         if args[:3] == ["git", "log", "main"]:
@@ -1597,7 +1597,7 @@ def test_get_normalized_hash_list_from_file_name_build_and_sort(monkeypatch, tes
 def test_get_normalized_hash_list_from_file_name_short_status_and_pseudo_ts_exception(monkeypatch, test_repo):
     key = "k-file-short-status"
     monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: key)
-    monkeypatch.setattr(test_repo, "_get_default_ref", lambda: "main")
+    monkeypatch.setattr(test_repo, "getCurrentBranch", lambda: "main")
 
     def _fake_git_run(args, text=True, cache_key=None, ignorecache=False):
         if args[:3] == ["git", "log", "main"]:
@@ -1617,7 +1617,7 @@ def test_get_normalized_hash_list_from_file_name_short_status_and_pseudo_ts_exce
 
 def test_get_normalized_hash_list_from_file_name_outer_exception_returns_empty(monkeypatch, test_repo):
     monkeypatch.setattr(test_repo, "_make_cache_key", lambda *_args: "k-file-outer")
-    monkeypatch.setattr(test_repo, "_get_default_ref", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(test_repo, "getCurrentBranch", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
 
     out = test_repo.getNormalizedHashListFromFileName("f.txt", ignorecache=True, limit=0)
     assert out == []
@@ -2021,7 +2021,7 @@ def test_get_file_list_at_hash_all_branches(monkeypatch, test_repo):
 
 
 def test_get_hash_list_entire_repo_limit_branch(monkeypatch, test_repo):
-    monkeypatch.setattr(test_repo, "_get_default_ref", lambda: "main")
+    monkeypatch.setattr(test_repo, "getCurrentBranch", lambda: "main")
     monkeypatch.setattr(test_repo, "_git_run", lambda *_args, **_kwargs: "ignored")
     monkeypatch.setattr(
         test_repo,

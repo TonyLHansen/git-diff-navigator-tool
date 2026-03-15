@@ -62,6 +62,13 @@ def _build_app(repo_path: Path, rel_file: str = "") -> GitDiffNavTool:
     )
 
 
+def test_app_title_uses_current_branch_when_no_explicit_branch_configured(tmp_path):
+    repo_path = _make_temp_repo(tmp_path)
+    app = _build_app(repo_path)
+
+    assert app.title == f"GitDiffNavTool (main @ {repo_path})"
+
+
 def _label_plain(label: Label) -> str:
     renderable = getattr(label, "renderable", None)
     if isinstance(renderable, Text):

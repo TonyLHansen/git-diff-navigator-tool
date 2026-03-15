@@ -219,16 +219,16 @@ class GitRepo(AppException):
         """Reset the per-process command/result cache."""
         self._cmd_cache = {}
 
-    def _get_default_ref(self) -> str:
+    def getCurrentBranch(self) -> str:
         """
-        Return the default git ref for this repository.
+        Return the configured branch for this repository.
 
         Returns the configured branch if set and valid, otherwise returns "HEAD".
         This ensures all history queries are branch-aware when a branch is configured.
         """
         return self._branch if self._branch else "HEAD"
 
-    def getCurrentBranch(self) -> str | None:
+    def getCurrentBranchOnDisk(self) -> str | None:
         """
         Return the name of the currently checked-out branch, or None if in detached HEAD state.
         """
@@ -272,7 +272,7 @@ class GitRepo(AppException):
         Used to compute pushed/unpushed status relative to the configured branch's upstream.
         """
         try:
-            default_ref = self._get_default_ref()
+            default_ref = self.getCurrentBranch()
             upstream_spec = f"{default_ref}@{{upstream}}"
             out = check_output(
                 ["git", "rev-parse", "--verify", upstream_spec],
@@ -734,7 +734,7 @@ class GitRepo(AppException):
         first_commit_ts: float | None = None
         git_dir = os.path.join(self._repoRoot, ".git")
         try:
-            default_ref = self._get_default_ref()
+            default_ref = self.getCurrentBranch()
             out = self._git_run(
                 ["git", "log", default_ref, "--reverse", "--pretty=format:%at"], text=True, ignorecache=ignorecache
             )
@@ -1170,7 +1170,7 @@ class GitRepo(AppException):
         given commit (HEAD).
         """
         # Delegate to the new initial->commit helper to avoid duplication
-        return self.getFileListBetweenNewRepoAndHash(self._get_default_ref(), ignorecache=ignorecache)
+        return self.getFileListBetweenNewRepoAndHash(self.getCurrentBranch(), ignorecache=ignorecache)
 
     def getFileListBetweenTwoCommits(
         self, prev_hash: str, curr_hash: str, ignorecache: bool = False
@@ -1280,7 +1280,7 @@ class GitRepo(AppException):
         Status will reflect the working-tree change type (modified/added/deleted).
         """
         # Delegate to the general handler to avoid duplicating logic
-        return self.getFileListBetweenHashAndCurrentTime(self._get_default_ref(), ignorecache=ignorecache)
+        return self.getFileListBetweenHashAndCurrentTime(self.getCurrentBranch(), ignorecache=ignorecache)
 
     def getFileListBetweenHashAndCurrentTime(self, hash: str, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
@@ -1295,7 +1295,7 @@ class GitRepo(AppException):
         """
         Return a list of `(path, status)` for files changed between HEAD and staged index."""
         # Delegate to the generalized staged-vs-hash implementation to avoid duplication
-        return self.getFileListBetweenHashAndStaged(self._get_default_ref(), ignorecache=ignorecache)
+        return self.getFileListBetweenHashAndStaged(self.getCurrentBranch(), ignorecache=ignorecache)
 
     def getFileListBetweenHashAndStaged(self, hash: str, ignorecache: bool = False) -> list[tuple[str, str, str]]:
         """
@@ -1583,7 +1583,7 @@ class GitRepo(AppException):
         self, ignorecache: bool = False, limit: int = 0
     ) -> list[tuple[str, str, str, str, str, str]]:
         """Return all commit hashes in the configured branch with pushed status."""
-        default_ref = self._get_default_ref()
+        default_ref = self.getCurrentBranch()
         output = self._git_run(
             ["git", "log", default_ref, "--pretty=format:%at %H %an %ae %s"], text=True, ignorecache=ignorecache
         )
@@ -1740,7 +1740,7 @@ class GitRepo(AppException):
                     result = result[:limit]
                 return result
 
-            default_ref = self._get_default_ref()
+            default_ref = self.getCurrentBranch()
             output = self._git_run(
                 ["git", "log", default_ref, "--pretty=format:%at %H %an %ae %s", "--", file_name],
                 text=True,
