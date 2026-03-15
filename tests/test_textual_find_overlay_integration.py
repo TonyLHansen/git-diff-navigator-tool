@@ -4,7 +4,7 @@ from pathlib import Path
 
 from rich.text import Text
 from textual.css.query import NoMatches
-from textual.widgets import Input, Label
+from textual.widgets import Input, Label, ListView
 
 from gitrepo import GitRepo
 from gitdiffnavtool import DIFF_FOOTER_2, GitDiffNavTool
@@ -35,12 +35,26 @@ def _make_temp_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _build_app(repo_path: Path, rel_file: str = "") -> GitDiffNavTool:
+def _add_switcher_branches(repo_path: Path) -> None:
+    _run(["git", "checkout", "-q", "-b", "feature/branch_switch_target"], repo_path)
+    (repo_path / "feature.txt").write_text("feature branch\n", encoding="utf-8")
+    _run(["git", "add", "feature.txt"], repo_path)
+    _run(["git", "commit", "-q", "-m", "feature branch"], repo_path)
+
+    _run(["git", "checkout", "-q", "main"], repo_path)
+    _run(["git", "checkout", "-q", "-b", "wip/branch_switch_target"], repo_path)
+    (repo_path / "wip.txt").write_text("wip branch\n", encoding="utf-8")
+    _run(["git", "add", "wip.txt"], repo_path)
+    _run(["git", "commit", "-q", "-m", "wip branch"], repo_path)
+    _run(["git", "checkout", "-q", "main"], repo_path)
+
+
+def _build_app(repo_path: Path, rel_file: str = "", repo_first: bool = False, branch: str | None = None) -> GitDiffNavTool:
     return GitDiffNavTool(
-        gitRepo=GitRepo(str(repo_path)),
+        gitRepo=GitRepo(str(repo_path), branch=branch),
         rel_dir="",
         rel_file=rel_file,
-        repo_first=False,
+        repo_first=repo_first,
         repo_hashes=[],
         no_ignored=True,
         no_untracked=True,
@@ -67,6 +81,68 @@ def test_app_title_uses_current_branch_when_no_explicit_branch_configured(tmp_pa
     app = _build_app(repo_path)
 
     assert app.title == f"GitDiffNavTool (main @ {repo_path})"
+
+
+def test_branch_switcher_opens_with_current_branch_highlighted_and_switches_filemode(tmp_path: Path):
+    repo_path = _make_temp_repo(tmp_path)
+    _add_switcher_branches(repo_path)
+    app = _build_app(repo_path)
+    app.gitRepo._cmd_cache = {"stale": "value"}
+
+    async def _scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            await pilot.press("b")
+            await pilot.pause()
+
+            branch_list = app.screen.query_one("#branch-switcher-list", ListView)
+            expected_index = app.gitRepo.getAllLocalBranches().index("main")
+            assert branch_list.index == expected_index
+
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.gitRepo.getCurrentBranch() == "wip/branch_switch_target"
+            assert "stale" not in app.gitRepo._cmd_cache
+            assert app._current_layout == "file_fullscreen"
+            assert app.title == f"GitDiffNavTool (wip/branch_switch_target @ {repo_path})"
+
+    asyncio.run(_scenario())
+
+
+def test_branch_switcher_uppercase_alias_switches_and_restarts_repomode(tmp_path: Path):
+    repo_path = _make_temp_repo(tmp_path)
+    _add_switcher_branches(repo_path)
+    app = _build_app(repo_path, repo_first=True)
+    app.gitRepo._cmd_cache = {"stale": "value"}
+
+    async def _scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            assert app._current_layout == "history_fullscreen"
+
+            await pilot.press("B")
+            await pilot.pause()
+
+            branch_list = app.screen.query_one("#branch-switcher-list", ListView)
+            expected_index = app.gitRepo.getAllLocalBranches().index("main")
+            assert branch_list.index == expected_index
+
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.gitRepo.getCurrentBranch() == "wip/branch_switch_target"
+            assert "stale" not in app.gitRepo._cmd_cache
+            assert app._current_layout == "history_fullscreen"
+            assert app.title == f"GitDiffNavTool (wip/branch_switch_target @ {repo_path})"
+
+    asyncio.run(_scenario())
 
 
 def _label_plain(label: Label) -> str:

@@ -2641,6 +2641,100 @@ class FindModal(ModalScreen):
             self.printException(e, "FindModal.on_input_submitted failed")
 
 
+class BranchSwitcherList(AppException, ListView):
+    """List widget used by BranchSwitcherModal."""
+
+    def key_enter(self, event: events.Key | None = None) -> None:
+        """Select the currently highlighted branch."""
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "BranchSwitcherList.key_enter: event.stop failed")
+            try:
+                modal = self.screen
+            except Exception as e:
+                self.printException(e, "BranchSwitcherList.key_enter: reading screen failed")
+                modal = None
+            if modal is not None and hasattr(modal, "select_current_branch"):
+                modal.select_current_branch()
+        except Exception as e:
+            self.printException(e, "BranchSwitcherList.key_enter failed")
+
+    def key_escape(self, event: events.Key | None = None) -> None:
+        """Close the branch switcher without applying a branch change."""
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "BranchSwitcherList.key_escape: event.stop failed")
+            try:
+                self.app.pop_screen()
+            except Exception as e:
+                self.printException(e, "BranchSwitcherList.key_escape: pop_screen failed")
+        except Exception as e:
+            self.printException(e, "BranchSwitcherList.key_escape failed")
+
+
+class BranchSwitcherModal(ModalScreen):
+    """Modal list of local branches available for switching."""
+
+    def __init__(self, branches: list[str], current_branch: str, on_submit=None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.branches = list(branches or [])
+        self.current_branch = current_branch or ""
+        self.on_submit = on_submit
+
+    def compose(self):
+        """Compose the switcher title and selectable branch list."""
+        try:
+            items = [ListItem(Label(Text(branch))) for branch in self.branches]
+            yield Vertical(
+                Label(Text("Switch Branch", style="bold"), id="branch-switcher-title"),
+                BranchSwitcherList(*items, id="branch-switcher-list"),
+                id="branch-switcher-wrapper",
+            )
+        except Exception as e:
+            self.printException(e, "BranchSwitcherModal.compose failed")
+
+    def on_mount(self) -> None:
+        """Focus the list and preselect the current configured branch."""
+        try:
+            branch_list = self.query_one("#branch-switcher-list", BranchSwitcherList)
+            branch_list.focus()
+            initial_index = self.branches.index(self.current_branch) if self.current_branch in self.branches else 0
+            if self.branches:
+                branch_list.index = initial_index
+        except Exception as e:
+            self.printException(e, "BranchSwitcherModal.on_mount failed")
+
+    def select_current_branch(self) -> None:
+        """Submit the currently highlighted branch and close the modal."""
+        try:
+            branch_list = self.query_one("#branch-switcher-list", BranchSwitcherList)
+            idx = getattr(branch_list, "index", None)
+            if idx is None or not (0 <= idx < len(self.branches)):
+                return
+            selected_branch = self.branches[idx]
+            try:
+                self.app.pop_screen()
+            except Exception as e:
+                self.printException(e, "BranchSwitcherModal.select_current_branch: pop_screen failed")
+            if self.on_submit:
+                try:
+                    self.on_submit(selected_branch)
+                except Exception as e:
+                    self.printException(e, "BranchSwitcherModal.select_current_branch: on_submit failed")
+        except Exception as e:
+            self.printException(e, "BranchSwitcherModal.select_current_branch failed")
+
+    def on_list_view_selected(self, _message) -> None:
+        """Selecting a row applies the selected branch."""
+        self.select_current_branch()
+
+
 class RightSideBase(AppBase):
     """
     Mixin for right-side widgets that support opening files with the 'o' key.
@@ -6605,11 +6699,7 @@ class GitDiffNavTool(AppException, App):
         self.repo_hashes = repo_hashes or []
         # placeholders for runtime state
         # `repo_root` is provided by main and should not be modified further.
-        # Set the application title to include the repository path
-        _branch = self.gitRepo.getCurrentBranch()
-        if _branch == "HEAD":
-            _branch = self.gitRepo.getCurrentBranchOnDisk() or "HEAD"
-        self.title = f"GitDiffNavTool ({_branch} @ {self.gitRepo.get_repo_root()})"
+        self._update_app_title()
         self._saved_state = None
         self._current_layout = None
         # Track current focus selector for save/restore; initialize here
@@ -6697,6 +6787,97 @@ class GitDiffNavTool(AppException, App):
         # Placing it outside the `Horizontal` ensures it always sits below
         # the columns and remains visible regardless of layout changes.
         yield Label(Text(""), id="footer")
+
+    def _branch_for_title(self) -> str:
+        """Return the branch name to display in the app title."""
+        branch = self.gitRepo.getCurrentBranch()
+        if branch == "HEAD":
+            branch = self.gitRepo.getCurrentBranchOnDisk() or "HEAD"
+        return branch
+
+    def _update_app_title(self) -> None:
+        """Update the application title using the configured/display branch."""
+        try:
+            branch = self._branch_for_title()
+            self.title = f"GitDiffNavTool ({branch} @ {self.gitRepo.get_repo_root()})"
+        except Exception as e:
+            self.printException(e, "_update_app_title failed")
+
+    def _branch_family_for_layout(self, layout: str | None) -> str:
+        """Infer whether the active UI state belongs to filemode or repomode."""
+        try:
+            effective_layout = layout
+            if effective_layout == "diff_fullscreen":
+                try:
+                    effective_layout = self.diff_list._go_back[0]
+                except Exception as e:
+                    self.printException(e, "_branch_family_for_layout: diff go_back failed")
+                    effective_layout = None
+            elif effective_layout == "open_file_fullscreen":
+                try:
+                    effective_layout = self.openfile_list._go_back[0]
+                except Exception as e:
+                    self.printException(e, "_branch_family_for_layout: open-file go_back failed")
+                    effective_layout = None
+            elif effective_layout == "help_fullscreen" and self._saved_state:
+                try:
+                    effective_layout = self._saved_state[0]
+                except Exception as e:
+                    self.printException(e, "_branch_family_for_layout: saved-state read failed")
+                    effective_layout = None
+
+            if isinstance(effective_layout, str) and effective_layout.startswith("history"):
+                return "repo"
+            return "file"
+        except Exception as e:
+            self.printException(e, "_branch_family_for_layout failed")
+            return "file"
+
+    def _restart_after_branch_switch(self) -> None:
+        """Restart the active filemode/repomode family after switching branches."""
+        try:
+            family = self._branch_family_for_layout(self._current_layout)
+            self.previous_hash = None
+            self.current_hash = None
+
+            if family == "repo":
+                self.repo_mode_history_list.prepRepoModeHistoryList(prev_hash=None, curr_hash=None)
+                self.change_state("history_fullscreen", f"#{LEFT_HISTORY_LIST_ID}", LEFT_HISTORY_FOOTER)
+                return
+
+            self.file_mode_file_list.prepFileModeFileList(highlight=self.highlight)
+            if self.rel_file:
+                current_rel_path = os.path.join(self.rel_dir or self.NO_DIR, self.rel_file)
+                self.file_mode_history_list.prepFileModeHistoryList(
+                    path=current_rel_path,
+                    prev_hash=None,
+                    curr_hash=None,
+                )
+                self.change_state("file_history", f"#{RIGHT_HISTORY_LIST_ID}", RIGHT_HISTORY_FOOTER)
+            else:
+                self.change_state("file_fullscreen", f"#{LEFT_FILE_LIST_ID}", LEFT_FILE_FOOTER)
+        except Exception as e:
+            self.printException(e, "_restart_after_branch_switch failed")
+
+    def _apply_selected_branch(self, branch: str) -> None:
+        """Switch to the selected branch, reset caches, and restart the active family."""
+        try:
+            selected_branch = (branch or "").strip()
+            if not selected_branch:
+                return
+            if selected_branch == self.gitRepo.getCurrentBranch():
+                return
+
+            self.gitRepo.setCurrentBranch(selected_branch)
+            self.gitRepo.reset_cache()
+            self._update_app_title()
+            self._restart_after_branch_switch()
+        except Exception as e:
+            self.printException(e, "_apply_selected_branch failed")
+            try:
+                self.push_screen(MessageModal(f"Failed to switch branch: {e}"))
+            except Exception as _e:
+                self.printException(_e, "_apply_selected_branch: push error modal failed")
 
     async def on_mount(self) -> None:
         """
@@ -7051,6 +7232,17 @@ class GitDiffNavTool(AppException, App):
             except Exception as e:
                 self.printException(e, "on_key: reading current screen failed")
                 current_screen = None
+
+            # Some terminals/Textual input paths don't dispatch Shift-B to
+            # key_B reliably. Route uppercase character input explicitly.
+            try:
+                if not isinstance(current_screen, ModalScreen) and getattr(event, "character", None) == "B":
+                    logger.debug("GitDiffNavTool.on_key: routing uppercase B to key_b handler")
+                    self.key_b(event, recursive=True)
+                    return
+            except Exception as e:
+                self.printException(e, "on_key: uppercase B routing failed")
+
             # If the non-modal find overlay is visible, handle Enter/Escape here
             try:
                 try:
@@ -7302,6 +7494,41 @@ class GitDiffNavTool(AppException, App):
         """Alias for `key_r` (Shift-R)."""
         logger.debug("GitDiffNavTool.key_R called: key=%r", getattr(event, "key", None))
         return self.key_r(event, recursive=True)
+
+    def key_b(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """Show a list of local branches and allow switching to one."""
+        if not recursive:
+            logger.debug("GitDiffNavTool.key_b called: key=%r", getattr(event, "key", None))
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "key_b: event.stop failed")
+
+            branches = self.gitRepo.getAllLocalBranches()
+            if not branches:
+                self.push_screen(MessageModal("No local branches available."))
+                return
+
+            current_branch = self.gitRepo.getCurrentBranch()
+            if current_branch == "HEAD":
+                current_branch = self.gitRepo.getCurrentBranchOnDisk() or "HEAD"
+
+            self.push_screen(
+                BranchSwitcherModal(
+                    branches=branches,
+                    current_branch=current_branch,
+                    on_submit=self._apply_selected_branch,
+                )
+            )
+        except Exception as e:
+            self.printException(e, "key_b failed")
+
+    def key_B(self, event: events.Key | None = None) -> None:
+        """Alias for `key_b` (Shift-B)."""
+        logger.debug("GitDiffNavTool.key_B called: key=%r", getattr(event, "key", None))
+        return self.key_b(event, recursive=True)
 
     def _apply_column_layout(
         self,

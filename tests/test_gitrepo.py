@@ -278,6 +278,53 @@ def test_get_current_branch_prefers_configured_branch_and_falls_back_to_head(tes
     assert repo_without_branch.getCurrentBranch() == "HEAD"
 
 
+def test_set_current_branch_sets_valid_branch_and_can_clear_to_head(test_repo_dirs):
+    repo = GitRepo(str(test_repo_dirs["base"]))
+
+    repo.setCurrentBranch("main")
+    assert repo.getCurrentBranch() == "main"
+
+    repo.setCurrentBranch(None)
+    assert repo.getCurrentBranch() == "HEAD"
+
+
+def test_set_current_branch_rejects_invalid_branch_without_mutating_existing_value(test_repo_dirs):
+    repo = GitRepo(str(test_repo_dirs["base"]), branch="main")
+
+    with pytest.raises(ValueError):
+        repo.setCurrentBranch("does-not-exist")
+
+    assert repo.getCurrentBranch() == "main"
+
+
+def test_set_current_branch_rejects_empty_validation_output(monkeypatch, test_repo_dirs):
+    repo = GitRepo(str(test_repo_dirs["base"]), branch="main")
+
+    def _fake_check_output(*_args, **_kwargs):
+        return "\n"
+
+    monkeypatch.setattr(gitrepo, "check_output", _fake_check_output)
+
+    with pytest.raises(ValueError):
+        repo.setCurrentBranch("main")
+
+    assert repo.getCurrentBranch() == "main"
+
+
+def test_set_current_branch_wraps_unexpected_validation_errors(monkeypatch, test_repo_dirs):
+    repo = GitRepo(str(test_repo_dirs["base"]), branch="main")
+
+    def _fake_check_output(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(gitrepo, "check_output", _fake_check_output)
+
+    with pytest.raises(ValueError):
+        repo.setCurrentBranch("main")
+
+    assert repo.getCurrentBranch() == "main"
+
+
 def test_get_current_branch_on_disk_returns_none_when_symbolic_ref_empty(monkeypatch, test_repo):
     def _fake_check_output(*_args, **_kwargs):
         return "\n"

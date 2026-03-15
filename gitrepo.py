@@ -228,6 +228,33 @@ class GitRepo(AppException):
         """
         return self._branch if self._branch else "HEAD"
 
+    def setCurrentBranch(self, branch: str | None) -> None:
+        """
+        Set the configured branch for this repository.
+
+        A blank or None branch clears the explicit branch and restores HEAD-based behavior.
+        """
+        new_branch = (branch or "").strip() or None
+        if new_branch:
+            try:
+                out = check_output(
+                    ["git", "rev-parse", "--verify", new_branch],
+                    cwd=self._repoRoot,
+                    text=True,
+                    stderr=open(os.devnull, "w"),
+                )
+                if not out or not out.strip():
+                    raise ValueError(
+                        f"setCurrentBranch: branch {new_branch!r} is not valid (did not resolve to a commit)"
+                    )
+            except CalledProcessError as _use_raise:
+                raise ValueError(
+                    f"setCurrentBranch: branch {new_branch!r} is not valid or does not exist in repository"
+                ) from _use_raise
+            except Exception as _use_raise:
+                raise ValueError(f"setCurrentBranch: failed to validate branch {new_branch!r}") from _use_raise
+        self._branch = new_branch
+
     def getCurrentBranchOnDisk(self) -> str | None:
         """
         Return the name of the currently checked-out branch, or None if in detached HEAD state.
