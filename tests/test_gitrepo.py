@@ -312,6 +312,41 @@ def test_get_all_branches_returns_empty_list_on_called_process_error(monkeypatch
     assert test_repo.getAllBranches() == []
 
 
+def test_get_all_local_branches_returns_list_with_main(test_repo):
+    branches = test_repo.getAllLocalBranches()
+    assert isinstance(branches, list)
+    assert "main" in branches
+
+
+def test_get_all_local_branches_is_sorted(test_repo):
+    branches = test_repo.getAllLocalBranches()
+    assert branches == sorted(branches)
+
+
+def test_get_all_local_branches_command_and_whitespace_filter(monkeypatch, test_repo):
+    calls = []
+
+    def _fake_check_output(cmd, **_kwargs):
+        calls.append(cmd)
+        return "zeta\n\n  alpha  \n"
+
+    monkeypatch.setattr(gitrepo, "check_output", _fake_check_output)
+    assert test_repo.getAllLocalBranches() == ["alpha", "zeta"]
+    assert calls[-1] == ["git", "branch", "--format=%(refname:short)"]
+
+
+def test_get_all_local_branches_equivalent_to_all_branches_local(test_repo):
+    assert test_repo.getAllLocalBranches() == test_repo.getAllBranches(include_remote=False)
+
+
+def test_get_all_local_branches_returns_empty_list_on_called_process_error(monkeypatch, test_repo):
+    def _fake_check_output(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(returncode=1, cmd=["git", "branch"])
+
+    monkeypatch.setattr(gitrepo, "check_output", _fake_check_output)
+    assert test_repo.getAllLocalBranches() == []
+
+
 def test_get_upstream_ref_success_and_none_paths(monkeypatch, test_repo_dirs):
     repo_with_branch = GitRepo(str(test_repo_dirs["base"]), branch="main")
     calls = []

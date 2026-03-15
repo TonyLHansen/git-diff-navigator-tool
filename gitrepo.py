@@ -261,6 +261,19 @@ class GitRepo(AppException):
         except CalledProcessError as _no_logging:
             return []
 
+    def getAllLocalBranches(self) -> list[str]:
+        """
+        Return a sorted list of local branch names available for checkout.
+
+        This excludes remote-tracking refs such as ``origin/main``.
+        """
+        try:
+            out = check_output(["git", "branch", "--format=%(refname:short)"], cwd=self._repoRoot, text=True)
+            branches = [line.strip() for line in out.splitlines() if line.strip()]
+            return sorted(branches)
+        except CalledProcessError as _no_logging:
+            return []
+
     def _get_upstream_ref(self) -> str | None:
         """
         Return the upstream tracking branch for the default ref, or None if unavailable.

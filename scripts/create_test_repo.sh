@@ -143,6 +143,36 @@ for c in $(seq 1 60); do
     git init --bare -q "$OUT_REMOTE"
     git remote add origin "$OUT_REMOTE"
     git push -u -q origin main
+
+    # Create a branch that will be merged later in history.
+    git checkout -q -b feature/merged_mid_history
+    echo "feature branch baseline" > docs/merged_mid_history_feature.txt
+    git add docs/merged_mid_history_feature.txt
+    commit_with_unique_ts "feature/merged_mid_history: add baseline feature file"
+    echo "feature branch follow-up" >> docs/merged_mid_history_feature.txt
+    git add docs/merged_mid_history_feature.txt
+    commit_with_unique_ts "feature/merged_mid_history: extend feature file"
+    git checkout -q main
+  fi
+
+  if [ "$c" -eq 45 ]
+  then
+    # Merge the mid-history feature branch with a deterministic timestamp.
+    git merge --no-ff --no-commit feature/merged_mid_history
+    commit_with_unique_ts "merge: feature/merged_mid_history into main"
+  fi
+
+  if [ "$c" -eq 50 ]
+  then
+    # Create a branch intentionally left open/unmerged.
+    git checkout -q -b wip/open_unmerged_tail
+    echo "open branch starts here" > docs/open_unmerged_tail_wip.txt
+    git add docs/open_unmerged_tail_wip.txt
+    commit_with_unique_ts "wip/open_unmerged_tail: add open branch marker"
+    echo "open branch keeps diverging" >> docs/open_unmerged_tail_wip.txt
+    git add docs/open_unmerged_tail_wip.txt
+    commit_with_unique_ts "wip/open_unmerged_tail: extend unmerged work"
+    git checkout -q main
   fi
 done
 # Add an extra data subdirectory with its own small set of files and commits
@@ -466,6 +496,9 @@ commit_with_unique_ts "diff_demo: add long-line variant"
 # Ensure the base repo is fully committed before creating variant copies.
 git add -A
 commit_with_unique_ts "finalize fixture base state"
+
+# Leave fixture default branch on main.
+git checkout -q main
 
 # Build variant repos from the fully committed base at $OUT.
 cd ..
