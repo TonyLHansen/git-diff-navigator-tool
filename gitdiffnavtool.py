@@ -6860,16 +6860,13 @@ class GitDiffNavTool(AppException, App):
             self.printException(e, "_restart_after_branch_switch failed")
 
     def _apply_selected_branch(self, branch: str) -> None:
-        """Switch to the selected branch, reset caches, and restart the active family."""
+        """Switch to the selected branch and restart the active family."""
         try:
             selected_branch = (branch or "").strip()
             if not selected_branch:
                 return
-            if selected_branch == self.gitRepo.getCurrentBranch():
-                return
 
             self.gitRepo.setCurrentBranch(selected_branch)
-            self.gitRepo.reset_cache()
             self._update_app_title()
             self._restart_after_branch_switch()
         except Exception as e:
@@ -7233,15 +7230,28 @@ class GitDiffNavTool(AppException, App):
                 self.printException(e, "on_key: reading current screen failed")
                 current_screen = None
 
-            # Some terminals/Textual input paths don't dispatch Shift-B to
-            # key_B reliably. Route uppercase character input explicitly.
+            # Some terminals/Textual input paths don't dispatch Shift+letter
+            # to key_<UPPER> methods reliably.  Route all uppercase letters
+            # directly to the matching lowercase handler.
             try:
-                if not isinstance(current_screen, ModalScreen) and getattr(event, "character", None) == "B":
-                    logger.debug("GitDiffNavTool.on_key: routing uppercase B to key_b handler")
-                    self.key_b(event, recursive=True)
-                    return
+                char = getattr(event, "character", None)
+                if (
+                    not isinstance(current_screen, ModalScreen)
+                    and char is not None
+                    and len(char) == 1
+                    and char.isupper()
+                ):
+                    handler = getattr(self, f"key_{char.lower()}", None)
+                    if callable(handler):
+                        logger.debug("GitDiffNavTool.on_key: routing uppercase %r to key_%s", char, char.lower())
+                        try:
+                            event.stop()
+                        except Exception as _e:
+                            self.printException(_e, f"on_key: event.stop failed routing {char!r}")
+                        handler(event, recursive=True)
+                        return
             except Exception as e:
-                self.printException(e, "on_key: uppercase B routing failed")
+                self.printException(e, "on_key: uppercase letter routing failed")
 
             # If the non-modal find overlay is visible, handle Enter/Escape here
             try:
@@ -7350,11 +7360,6 @@ class GitDiffNavTool(AppException, App):
         except Exception as e:
             self.printException(e, "key_q failed")
 
-    def key_Q(self, event: events.Key | None = None) -> None:
-        """Uppercase Q also quits."""
-        logger.debug("GitDiffNavTool.key_Q called: key=%r", getattr(event, "key", None))
-        return self.key_q(event, recursive=True)
-
     def key_h(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """
         Show help: save state, prepare help, then display help fullscreen.
@@ -7378,11 +7383,6 @@ class GitDiffNavTool(AppException, App):
             self.change_state("help_fullscreen", f"#{HELP_LIST_ID}", HELP_FOOTER)
         except Exception as e:
             self.printException(e, "key_h outer failure")
-
-    def key_H(self, event: events.Key | None = None) -> None:
-        """Alias for `key_h` (uppercase H)."""
-        logger.debug("GitDiffNavTool.key_H called: key=%r", getattr(event, "key", None))
-        return self.key_h(event, recursive=True)
 
     def key_question(self, event: events.Key | None = None) -> None:
         """Handle terminal mappings where '?' is reported as 'question' by delegating to help."""
@@ -7490,11 +7490,6 @@ class GitDiffNavTool(AppException, App):
         except Exception as e:
             self.printException(e, "key_r failed")
 
-    def key_R(self, event: events.Key | None = None) -> None:
-        """Alias for `key_r` (Shift-R)."""
-        logger.debug("GitDiffNavTool.key_R called: key=%r", getattr(event, "key", None))
-        return self.key_r(event, recursive=True)
-
     def key_b(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Show a list of local branches and allow switching to one."""
         if not recursive:
@@ -7524,11 +7519,6 @@ class GitDiffNavTool(AppException, App):
             )
         except Exception as e:
             self.printException(e, "key_b failed")
-
-    def key_B(self, event: events.Key | None = None) -> None:
-        """Alias for `key_b` (Shift-B)."""
-        logger.debug("GitDiffNavTool.key_B called: key=%r", getattr(event, "key", None))
-        return self.key_b(event, recursive=True)
 
     def _apply_column_layout(
         self,
@@ -8285,15 +8275,11 @@ class GitDiffNavTool(AppException, App):
         except Exception as e:
             self.printException(e, "toggle outer failure")
 
-    def key_t(self, event: events.Key | None = None) -> None:
+    def key_t(self, event: events.Key | None = None, recursive: bool = False) -> None:
         """Swap (Toggle) the paired layout for the current layout (invoked by 't')."""
-        logger.debug("GitDiffNavTool.key_t called: key=%r", getattr(event, "key", None))
+        if not recursive:
+            logger.debug("GitDiffNavTool.key_t called: key=%r", getattr(event, "key", None))
         return self.toggle(self._current_layout, event)
-
-    def key_T(self, event: events.Key | None = None) -> None:
-        """Alias for `key_t` (Shift-T)."""
-        logger.debug("GitDiffNavTool.key_T called: key=%r", getattr(event, "key", None))
-        return self.key_t(event, recursive=True)
 
     # Per-layout toggle implementations. These prepare lists and switch
     # layouts in pairs so the `t` key toggles between related views.
@@ -9147,7 +9133,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.no_trim_debug:
         args.trim_debug = False
     if args.no_branch:
-        args.branch = None
+        args.branch = GitRepo.DEFAULT_BRANCH
     if getattr(args, "no_blank_before_hunk", False):
         args.blank_before_hunk = False
 

@@ -175,6 +175,9 @@ class GitRepo(AppException):
     STAGED = "STAGED"
     MODS = "MODS"
 
+    # Default branch sentinel: empty string means "use HEAD" (no explicit branch configured)
+    DEFAULT_BRANCH = ""
+
     NEWREPO_MESSAGE = "Newly created repository"
     STAGED_MESSAGE = "Staged changes"
     MODS_MESSAGE = "Unstaged modifications"
@@ -190,25 +193,8 @@ class GitRepo(AppException):
         # resolve_repo_top should have raised on failure; assert for typing
         assert resolved is not None
         self._repoRoot: str = resolved
-        self._branch: str | None = (branch or "").strip() or None
-
-        # Validate the configured branch if provided; throw exception if invalid
-        if self._branch:
-            try:
-                out = check_output(
-                    ["git", "rev-parse", "--verify", self._branch],
-                    cwd=self._repoRoot,
-                    text=True,
-                    stderr=open(os.devnull, "w"),
-                )
-                if not out or not out.strip():
-                    raise ValueError(f"__init__: branch {self._branch!r} is not valid (did not resolve to a commit)")
-            except CalledProcessError as _use_raise:
-                raise ValueError(
-                    f"__init__: branch {self._branch!r} is not valid or does not exist in repository"
-                ) from _use_raise
-            except Exception as _use_raise:
-                raise ValueError(f"__init__: failed to validate branch {self._branch!r}") from _use_raise
+        self._branch: str | None = GitRepo.DEFAULT_BRANCH
+        self.setCurrentBranch(branch)
 
     @classmethod
     def setVerbosity(cls, level: int) -> None:
@@ -233,8 +219,12 @@ class GitRepo(AppException):
         Set the configured branch for this repository.
 
         A blank or None branch clears the explicit branch and restores HEAD-based behavior.
+        Does nothing if the new branch equals the already-configured branch.
+        Resets the command cache when the branch truly changes.
         """
         new_branch = (branch or "").strip() or None
+        if new_branch == self._branch:
+            return
         if new_branch:
             try:
                 out = check_output(
@@ -254,6 +244,7 @@ class GitRepo(AppException):
             except Exception as _use_raise:
                 raise ValueError(f"setCurrentBranch: failed to validate branch {new_branch!r}") from _use_raise
         self._branch = new_branch
+        self.reset_cache()
 
     def getCurrentBranchOnDisk(self) -> str | None:
         """

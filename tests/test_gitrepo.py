@@ -284,6 +284,10 @@ def test_set_current_branch_sets_valid_branch_and_can_clear_to_head(test_repo_di
     repo.setCurrentBranch("main")
     assert repo.getCurrentBranch() == "main"
 
+    # No-op: setting the same branch again should not change anything
+    repo.setCurrentBranch("main")
+    assert repo.getCurrentBranch() == "main"
+
     repo.setCurrentBranch(None)
     assert repo.getCurrentBranch() == "HEAD"
 
@@ -306,7 +310,7 @@ def test_set_current_branch_rejects_empty_validation_output(monkeypatch, test_re
     monkeypatch.setattr(gitrepo, "check_output", _fake_check_output)
 
     with pytest.raises(ValueError):
-        repo.setCurrentBranch("main")
+        repo.setCurrentBranch("other-branch")
 
     assert repo.getCurrentBranch() == "main"
 
@@ -320,7 +324,7 @@ def test_set_current_branch_wraps_unexpected_validation_errors(monkeypatch, test
     monkeypatch.setattr(gitrepo, "check_output", _fake_check_output)
 
     with pytest.raises(ValueError):
-        repo.setCurrentBranch("main")
+        repo.setCurrentBranch("other-branch")
 
     assert repo.getCurrentBranch() == "main"
 
