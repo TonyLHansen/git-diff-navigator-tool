@@ -3432,12 +3432,18 @@ class FileModeFileList(FileListBase):
         # slice quickly without holding full absolute paths.
         try:
             gitrepo = self.app.gitRepo
-            # Gather committed, untracked and ignored entries and working-tree mods.
+            # Gather committed, staged, untracked, ignored, and working-tree mods.
             try:
                 committed = gitrepo.getFileListAtHash("HEAD")
             except Exception as e:
                 self.printException(e, "_collect_filemode_nodes: getFileListAtHash failed")
                 committed = []
+
+            try:
+                staged = gitrepo.getFileListBetweenHashAndStaged("HEAD")
+            except Exception as e:
+                self.printException(e, "_collect_filemode_nodes: getFileListBetweenHashAndStaged failed")
+                staged = []
 
             if not self.app.no_untracked:
                 try:
@@ -3503,6 +3509,16 @@ class FileModeFileList(FileListBase):
                     self.printException(e, "_collect_filemode_nodes: registering untracked file failed")
                     continue
 
+            # Add staged entries: any index-vs-HEAD difference should render
+            # with the staged marker/color in file mode. Working-tree mods are
+            # overlaid later and intentionally win for MM-style paths.
+            for p, iso, _status in staged:
+                try:
+                    register_file(p, "staged", iso)
+                except Exception as e:
+                    self.printException(e, "_collect_filemode_nodes: registering staged file failed")
+                    continue
+
             # Add ignored entries: (path, iso, status)
             for p, iso, status in ignored:
                 try:
@@ -3511,9 +3527,27 @@ class FileModeFileList(FileListBase):
                     self.printException(e, "_collect_filemode_nodes: registering ignored file failed")
                     continue
 
-            # Add mods entries: (path, iso, status) - override committed
+            # Add mods entries: (path, iso, status) - override committed.
+            # Exception: when the mods diff reports a file as "added" but the
+            # staged overlay already registered it as "staged", keep "staged".
+            # `git diff --name-status HEAD` (HEAD vs working tree, no --cached)
+            # includes staged-new files as "added" because they exist in the
+            # working tree but not in HEAD, even though no extra working-tree
+            # modifications were made after staging.  The staged overlay is the
+            # authoritative status in that case, so we leave it untouched.
+            # Working-tree modifications to previously committed files (status
+            # "modified") still win so that MM-style paths display correctly.
             for p, iso, s in mods:
                 try:
+                    if s == "added":
+                        parent = os.path.dirname(p) or ""
+                        fname = os.path.basename(p)
+                        cur_status = next(
+                            (st for n, st, _ in nodes_by_dir.get(parent, {}).get("files", []) if n == fname),
+                            None,
+                        )
+                        if cur_status == "staged":
+                            continue
                     register_file(p, s, iso)
                 except Exception as e:
                     self.printException(e, "_collect_filemode_nodes: registering mod file failed")
@@ -4293,6 +4327,65 @@ class FileModeFileList(FileListBase):
     def key_u(self, event: events.Key | None = None) -> None:
         """Toggle untracked-file visibility and refresh the file-mode list."""
         return self.toggle_untracked(event)
+
+    def key_a(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """
+        Stage the currently-selected file when it is modified or untracked.
+
+        Uses the selected file-list row as the source of truth. Directories,
+        missing selections, and files whose repo status is not ``modified`` or
+        ``untracked`` produce a modal error instead of staging.
+        """
+        if not recursive:
+            logger.debug("FileModeFileList.key_a called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "FileModeFileList.key_a: event.stop failed")
+
+            idx = self.index or 0
+            nodes = self.nodes()
+            if not (0 <= idx < len(nodes)):
+                self.error_message("No file selected for staging")
+                return
+
+            item = nodes[idx]
+            if getattr(item, "_is_dir", False):
+                self.error_message("No file selected for staging")
+                return
+
+            repo_status = getattr(item, "_repo_status", None)
+            if repo_status not in ("modified", "untracked"):
+                self.error_message("Selected file is not modified or untracked")
+                return
+
+            rel_path = getattr(item, "_raw_text", None) or getattr(item, "_filename", None)
+            if not rel_path:
+                self.error_message("No file selected for staging")
+                return
+
+            rel_path = os.path.normpath(rel_path)
+            rd, rf = os.path.split(rel_path)
+            self.app.rel_dir = rd or self.app.NO_DIR
+            self.app.rel_file = rf or self.app.NO_FILE
+
+            try:
+                self.app.gitRepo.commitFile(rel_path)
+            except ValueError as ve:
+                self.printException(ve, "FileModeFileList.key_a: commitFile rejected")
+                self.error_message(str(ve))
+                return
+
+            self.prepFileModeFileList()
+        except Exception as e:
+            self.printException(e, "FileModeFileList.key_a failed")
+
+    def key_A(self, event: events.Key | None = None) -> None:
+        """Alias for key_a to support Shift-A bindings."""
+        logger.debug("FileModeFileList.key_A called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_a(event, recursive=True)
 
 
 class RepoModeFileList(FileListBase, RightSideBase):
@@ -5221,51 +5314,6 @@ class FileModeHistoryList(HistoryListBase, RightSideBase):
 
 class RepoModeHistoryList(HistoryListBase):
     """History list for repository-wide commits. Stubbed prep method."""
-
-    def key_a(self, event: events.Key | None = None, recursive: bool = False) -> None:
-        """
-        Stage the currently-selected file when it is modified or untracked.
-
-        Uses ``GitRepo.commitFile`` for eligibility checks and staging. Shows
-        a modal error when no file is selected or when the file is not
-        modified/untracked.
-        """
-        if not recursive:
-            logger.debug("RepoModeHistoryList.key_a called: key=%r index=%r", getattr(event, "key", None), self.index)
-        try:
-            if event is not None:
-                try:
-                    event.stop()
-                except Exception as e:
-                    self.printException(e, "RepoModeHistoryList.key_a: event.stop failed")
-
-            rel_dir = self.app.rel_dir or self.app.NO_DIR
-            rel_file = self.app.rel_file or self.app.NO_FILE
-            if not rel_file:
-                self.error_message("No file selected for staging")
-                return
-
-            rel_path = os.path.normpath(os.path.join(rel_dir, rel_file))
-            try:
-                self.app.gitRepo.commitFile(rel_path)
-            except ValueError as ve:
-                self.printException(ve, "RepoModeHistoryList.key_a: commitFile rejected")
-                self.error_message(str(ve))
-                return
-
-            # Refresh repo file list so status transitions (U/M -> A) are visible.
-            self.app.repo_mode_file_list.prepRepoModeFileList(
-                self.app.previous_hash,
-                self.app.current_hash,
-                ignorecache=True,
-            )
-        except Exception as e:
-            self.printException(e, "RepoModeHistoryList.key_a failed")
-
-    def key_A(self, event: events.Key | None = None) -> None:
-        """Alias for key_a to support Shift-A bindings."""
-        logger.debug("RepoModeHistoryList.key_A called: key=%r index=%r", getattr(event, "key", None), self.index)
-        return self.key_a(event, recursive=True)
 
     def prepRepoModeHistoryList(
         self,

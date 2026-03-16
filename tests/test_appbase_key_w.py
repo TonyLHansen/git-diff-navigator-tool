@@ -1,6 +1,7 @@
 import types
+import unittest.mock as mock
 
-from gitdiffnavtool import AppBase, RepoModeFileList, RepoModeHistoryList, SaveSnapshotModal
+from gitdiffnavtool import AppBase, FileModeFileList, RepoModeFileList, SaveSnapshotModal, MARKERS, STYLE_STAGED
 from gitrepo import GitRepo
 
 
@@ -131,32 +132,40 @@ def test_repo_mode_key_w_always_calls_helper():
     assert h.helper_calls == 1
 
 
-class HarnessForRepoModeHistoryKeyA:
-    def __init__(self, rel_dir="", rel_file="notes.txt"):
+class HarnessForFileModeKeyA:
+    def __init__(self, rel_dir="", rel_file="notes.txt", repo_status="modified", is_dir=False):
         self.index = 0
         self.errors = []
         self.messages = []
         self.commit_calls = []
         self.refresh_calls = []
+        raw_text = f"{rel_dir}/{rel_file}" if rel_dir and rel_file else (rel_file or rel_dir)
+        self._nodes = [
+            types.SimpleNamespace(
+                _is_dir=is_dir,
+                _repo_status=repo_status,
+                _raw_text=raw_text,
+                _filename=rel_file or raw_text,
+            )
+        ]
 
         git_repo = types.SimpleNamespace(commitFile=self._commit_file)
-        repo_file_list = types.SimpleNamespace(prepRepoModeFileList=self._refresh)
         self.app = types.SimpleNamespace(
             rel_dir=rel_dir,
             rel_file=rel_file,
             NO_DIR="",
             NO_FILE="",
-            previous_hash="prev",
-            current_hash="curr",
             gitRepo=git_repo,
-            repo_mode_file_list=repo_file_list,
         )
 
     def _commit_file(self, rel_path):
         self.commit_calls.append(rel_path)
 
-    def _refresh(self, prev_hash, curr_hash, ignorecache=False):
-        self.refresh_calls.append((prev_hash, curr_hash, ignorecache))
+    def prepFileModeFileList(self, highlight=None):
+        self.refresh_calls.append(highlight)
+
+    def nodes(self):
+        return self._nodes
 
     def error_message(self, message: str):
         self.messages.append(message)
@@ -165,26 +174,87 @@ class HarnessForRepoModeHistoryKeyA:
         self.errors.append((exc, context))
 
     def key_a(self, event=None, recursive=False):
-        return RepoModeHistoryList.key_a(self, event, recursive=recursive)
+        return FileModeFileList.key_a(self, event, recursive=recursive)
 
 
-def test_repo_mode_history_key_a_stages_selected_file_and_refreshes():
-    h = HarnessForRepoModeHistoryKeyA(rel_dir="docs", rel_file="notes.txt")
+class HarnessForCollectFileModeNodes:
+    def __init__(self, mods=None):
+        self.errors = []
+        _mods = mods if mods is not None else [("both.txt", "iso-mod", "modified")]
+        self.app = types.SimpleNamespace(
+            no_untracked=False,
+            no_ignored=False,
+            gitRepo=types.SimpleNamespace(
+                getFileListAtHash=lambda _hash: [("tracked.txt", "iso-head", "committed")],
+                getFileListBetweenHashAndStaged=lambda _hash: [
+                    ("staged.txt", "iso-staged", "added"),
+                    ("both.txt", "iso-staged-both", "modified"),
+                ],
+                getFileListUntracked=lambda: [("untracked.txt", "iso-u", "untracked")],
+                getFileListIgnored=lambda: [("ignored.txt", "iso-i", "ignored")],
+                getFileListBetweenNormalizedHashes=lambda _prev, _curr: _mods,
+            ),
+        )
+
+    def printException(self, exc, context=None):
+        self.errors.append((exc, context))
+
+
+def test_collect_filemode_nodes_includes_staged_and_mods_override_staged():
+    h = HarnessForCollectFileModeNodes()
+
+    FileModeFileList._collect_filemode_nodes(h)
+
+    files = sorted(h._nodes_by_dir[""]["files"])
+    assert ("tracked.txt", "tracked_clean", None) in files
+    assert ("staged.txt", "staged", "iso-staged") in files
+    assert ("untracked.txt", "untracked", "iso-u") in files
+    assert ("ignored.txt", "ignored", "iso-i") in files
+    assert ("both.txt", "modified", "iso-mod") in files
+
+
+def test_collect_filemode_nodes_staged_new_not_overridden_by_mods_added():
+    # Simulate a staged-new file that also appears in git diff HEAD as "added".
+    # The mods pass must NOT override the staged status in this case.
+    h = HarnessForCollectFileModeNodes(
+        mods=[
+            ("staged.txt", "iso-mod-staged", "added"),   # git diff HEAD sees staged-new as "added"
+            ("both.txt", "iso-mod", "modified"),          # MM file: mods still win
+        ]
+    )
+
+    FileModeFileList._collect_filemode_nodes(h)
+
+    files = {name: (status, iso) for name, status, iso in h._nodes_by_dir[""]["files"]}
+    # staged.txt must keep "staged" - not be overridden by mods "added"
+    assert files["staged.txt"] == ("staged", "iso-staged"), (
+        f"Expected staged.txt to stay 'staged', got {files['staged.txt']}"
+    )
+    # both.txt: staged pass gave "staged", mods pass gives "modified" -> mods wins
+    assert files["both.txt"][0] == "modified", (
+        f"Expected both.txt to be 'modified', got {files['both.txt'][0]}"
+    )
+
+
+def test_file_mode_key_a_stages_selected_file_and_refreshes():
+    h = HarnessForFileModeKeyA(rel_dir="docs", rel_file="notes.txt", repo_status="modified")
     event = FakeEvent(key="a", character="a")
 
-    RepoModeHistoryList.key_a(h, event)
+    FileModeFileList.key_a(h, event)
 
     assert event.stopped is True
     assert h.commit_calls == ["docs/notes.txt"]
-    assert h.refresh_calls == [("prev", "curr", True)]
+    assert h.refresh_calls == [None]
     assert h.messages == []
+    assert h.app.rel_dir == "docs"
+    assert h.app.rel_file == "notes.txt"
 
 
-def test_repo_mode_history_key_a_shows_error_when_no_file_selected():
-    h = HarnessForRepoModeHistoryKeyA(rel_dir="docs", rel_file="")
+def test_file_mode_key_a_shows_error_when_no_file_selected():
+    h = HarnessForFileModeKeyA(rel_dir="docs", rel_file="", repo_status="modified", is_dir=True)
     event = FakeEvent(key="a", character="a")
 
-    RepoModeHistoryList.key_a(h, event)
+    FileModeFileList.key_a(h, event)
 
     assert event.stopped is True
     assert h.commit_calls == []
@@ -192,8 +262,20 @@ def test_repo_mode_history_key_a_shows_error_when_no_file_selected():
     assert h.messages == ["No file selected for staging"]
 
 
-def test_repo_mode_history_key_a_surfaces_commit_file_validation_errors():
-    h = HarnessForRepoModeHistoryKeyA(rel_dir="docs", rel_file="notes.txt")
+def test_file_mode_key_a_rejects_non_modified_or_untracked_selection():
+    h = HarnessForFileModeKeyA(rel_dir="docs", rel_file="notes.txt", repo_status="staged")
+    event = FakeEvent(key="a", character="a")
+
+    FileModeFileList.key_a(h, event)
+
+    assert event.stopped is True
+    assert h.commit_calls == []
+    assert h.refresh_calls == []
+    assert h.messages == ["Selected file is not modified or untracked"]
+
+
+def test_file_mode_key_a_surfaces_commit_file_validation_errors():
+    h = HarnessForFileModeKeyA(rel_dir="docs", rel_file="notes.txt", repo_status="modified")
 
     def _raise_validation(_rel_path):
         raise ValueError("commitFile: file 'docs/notes.txt' is not modified or untracked")
@@ -201,18 +283,18 @@ def test_repo_mode_history_key_a_surfaces_commit_file_validation_errors():
     h.app.gitRepo.commitFile = _raise_validation
     event = FakeEvent(key="a", character="a")
 
-    RepoModeHistoryList.key_a(h, event)
+    FileModeFileList.key_a(h, event)
 
     assert event.stopped is True
     assert h.refresh_calls == []
     assert h.messages == ["commitFile: file 'docs/notes.txt' is not modified or untracked"]
 
 
-def test_repo_mode_history_key_A_alias_calls_key_a_path():
-    h = HarnessForRepoModeHistoryKeyA(rel_dir="docs", rel_file="notes.txt")
+def test_file_mode_key_A_alias_calls_key_a_path():
+    h = HarnessForFileModeKeyA(rel_dir="docs", rel_file="notes.txt", repo_status="untracked")
     event = FakeEvent(key="A", character="A")
 
-    RepoModeHistoryList.key_A(h, event)
+    FileModeFileList.key_A(h, event)
 
     assert event.stopped is True
     assert h.commit_calls == ["docs/notes.txt"]
@@ -303,3 +385,107 @@ def test_save_does_not_set_mtime_when_disabled(tmp_path):
     # When disabled, mtime should remain around current time, not fake repo timestamp.
     # Use a generous threshold to avoid flaky timing checks.
     assert abs((tmp_path / (src.name + ".fedcba987654")).stat().st_mtime - 1778049045.0) > 60.0
+
+
+# ---------------------------------------------------------------------------
+# Helpers for _render_filemode_display marker tests
+# ---------------------------------------------------------------------------
+
+class _FakeLabel:
+    def __init__(self, renderable):
+        self.renderable = renderable
+
+
+class _FakeListItem:
+    def __init__(self, label):
+        self._label = label
+        self._repo_status = None
+        self._is_dir = False
+        self._raw_text = ""
+        self._filename = ""
+
+    def set_class(self, *_args, **_kwargs):
+        pass
+
+    def add_class(self, *_args, **_kwargs):
+        pass
+
+
+class HarnessForRenderFilemodeDisplay:
+    def __init__(self):
+        self._render_filemode_in_progress = False
+        self._populated = False
+        self._min_index = 0
+        self._preselected_filename = None
+        self._highlight_history = []
+        self._highlight_pos = -1
+        self.index = 0
+        self.children = []
+        self.items = []
+        self.errors = []
+        self.app = None  # skip header-label updates
+
+    def clear(self):
+        self.items.clear()
+        self.children.clear()
+
+    def append(self, item):
+        self.items.append(item)
+        self.children.append(item)
+
+    def call_after_refresh(self, fn):
+        pass
+
+    def printException(self, exc, context=None):
+        self.errors.append((exc, context))
+
+
+def test_markers_staged_constant_is_A():
+    assert MARKERS["staged"] == "A"
+    assert STYLE_STAGED == "cyan"
+
+
+def test_render_filemode_display_staged_file_uses_A_marker():
+    h = HarnessForRenderFilemodeDisplay()
+    nodes_by_dir = {"":{"dirs": set(), "files": [("staged.txt", "staged", "2026-01-01T00:00:00")]}}
+
+    with mock.patch("gitdiffnavtool.ListItem", _FakeListItem), mock.patch("gitdiffnavtool.Label", _FakeLabel):
+        FileModeFileList._render_filemode_display(h, nodes_by_dir, "", "")
+
+    staged = [it for it in h.items if getattr(it, "_repo_status", None) == "staged"]
+    assert staged, f"No staged item rendered; statuses={[getattr(it, '_repo_status', None) for it in h.items]}"
+    txt = staged[0]._label.renderable
+    assert txt.plain.startswith("A "), f"Expected 'A ' prefix, got {txt.plain!r}"
+
+
+def test_render_filemode_display_staged_file_uses_staged_style():
+    h = HarnessForRenderFilemodeDisplay()
+    nodes_by_dir = {"":{"dirs": set(), "files": [("staged.txt", "staged", None)]}}
+
+    with mock.patch("gitdiffnavtool.ListItem", _FakeListItem), mock.patch("gitdiffnavtool.Label", _FakeLabel):
+        FileModeFileList._render_filemode_display(h, nodes_by_dir, "", "")
+
+    staged = [it for it in h.items if getattr(it, "_repo_status", None) == "staged"]
+    assert staged
+    txt = staged[0]._label.renderable
+    assert str(txt.style) == STYLE_STAGED, f"Expected style={STYLE_STAGED!r}, got {str(txt.style)!r}"
+
+
+def test_render_filemode_display_staged_vs_modified_markers():
+    h = HarnessForRenderFilemodeDisplay()
+    nodes_by_dir = {
+        "": {
+            "dirs": set(),
+            "files": [
+                ("m.txt", "modified", None),
+                ("s.txt", "staged", None),
+            ],
+        }
+    }
+
+    with mock.patch("gitdiffnavtool.ListItem", _FakeListItem), mock.patch("gitdiffnavtool.Label", _FakeLabel):
+        FileModeFileList._render_filemode_display(h, nodes_by_dir, "", "")
+
+    by_status = {it._repo_status: it for it in h.items}
+    assert by_status["staged"]._label.renderable.plain.startswith("A "), "staged must use 'A' marker"
+    assert by_status["modified"]._label.renderable.plain.startswith("M "), "modified must use 'M' marker"
