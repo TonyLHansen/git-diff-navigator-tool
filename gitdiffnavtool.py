@@ -5222,6 +5222,51 @@ class FileModeHistoryList(HistoryListBase, RightSideBase):
 class RepoModeHistoryList(HistoryListBase):
     """History list for repository-wide commits. Stubbed prep method."""
 
+    def key_a(self, event: events.Key | None = None, recursive: bool = False) -> None:
+        """
+        Stage the currently-selected file when it is modified or untracked.
+
+        Uses ``GitRepo.commitFile`` for eligibility checks and staging. Shows
+        a modal error when no file is selected or when the file is not
+        modified/untracked.
+        """
+        if not recursive:
+            logger.debug("RepoModeHistoryList.key_a called: key=%r index=%r", getattr(event, "key", None), self.index)
+        try:
+            if event is not None:
+                try:
+                    event.stop()
+                except Exception as e:
+                    self.printException(e, "RepoModeHistoryList.key_a: event.stop failed")
+
+            rel_dir = self.app.rel_dir or self.app.NO_DIR
+            rel_file = self.app.rel_file or self.app.NO_FILE
+            if not rel_file:
+                self.error_message("No file selected for staging")
+                return
+
+            rel_path = os.path.normpath(os.path.join(rel_dir, rel_file))
+            try:
+                self.app.gitRepo.commitFile(rel_path)
+            except ValueError as ve:
+                self.printException(ve, "RepoModeHistoryList.key_a: commitFile rejected")
+                self.error_message(str(ve))
+                return
+
+            # Refresh repo file list so status transitions (U/M -> A) are visible.
+            self.app.repo_mode_file_list.prepRepoModeFileList(
+                self.app.previous_hash,
+                self.app.current_hash,
+                ignorecache=True,
+            )
+        except Exception as e:
+            self.printException(e, "RepoModeHistoryList.key_a failed")
+
+    def key_A(self, event: events.Key | None = None) -> None:
+        """Alias for key_a to support Shift-A bindings."""
+        logger.debug("RepoModeHistoryList.key_A called: key=%r index=%r", getattr(event, "key", None), self.index)
+        return self.key_a(event, recursive=True)
+
     def prepRepoModeHistoryList(
         self,
         prev_hash: str | None = None,

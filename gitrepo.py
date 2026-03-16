@@ -214,6 +214,86 @@ class GitRepo(AppException):
         """
         return self._branch if self._branch else "HEAD"
 
+    def commitFile(self, filename: str) -> None:
+        """
+        Stage a repository-relative file using ``git add``.
+
+        Only files that are currently untracked (``??``) or have an
+        unstaged working-tree modification (porcelain ``*M``) are allowed.
+        Raises ``ValueError`` when the file is outside the repository,
+        empty, not eligible for staging, or when ``git add`` fails.
+        """
+        try:
+            raw = (filename or "").strip()
+            if not raw:
+                raise ValueError("commitFile: filename is required")
+
+            # Accept either repo-relative paths or absolute paths inside this repo.
+            if os.path.isabs(raw):
+                norm_abs = os.path.normpath(raw)
+                repo_norm = os.path.normpath(self._repoRoot)
+                try:
+                    common = os.path.commonpath([repo_norm, norm_abs])
+                except Exception as _use_raise:
+                    raise ValueError(f"commitFile: invalid path {filename!r}") from _use_raise
+                if common != repo_norm:
+                    raise ValueError(f"commitFile: path {filename!r} is outside repository")
+                rel = os.path.relpath(norm_abs, repo_norm)
+            else:
+                rel = raw
+
+            rel = os.path.normpath(rel)
+            if rel in ("", "."):
+                raise ValueError("commitFile: filename must resolve to a file")
+            if rel == ".." or rel.startswith(f"..{os.sep}"):
+                raise ValueError(f"commitFile: path {filename!r} is outside repository")
+
+            status_out = self._git_run(
+                ["git", "status", "--porcelain", "--", rel],
+                text=True,
+                ignorecache=True,
+            )
+            status_text = status_out if isinstance(status_out, str) else str(status_out or "")
+            lines = [ln for ln in status_text.splitlines() if ln.strip()]
+            if not lines:
+                raise ValueError(
+                    f"commitFile: file {rel!r} is not modified or untracked"
+                )
+
+            eligible = False
+            for ln in lines:
+                if ln.startswith("?? "):
+                    eligible = True
+                    break
+                # Porcelain format: XY <path>; Y == 'M' means unstaged modification.
+                if len(ln) >= 2 and ln[1] == "M":
+                    eligible = True
+                    break
+
+            if not eligible:
+                raise ValueError(
+                    f"commitFile: file {rel!r} is not modified or untracked"
+                )
+
+            try:
+                run(
+                    ["git", "add", "--", rel],
+                    cwd=self._repoRoot,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+            except CalledProcessError as _use_raise:
+                raise ValueError(f"commitFile: git add failed for {rel!r}") from _use_raise
+            except Exception as _use_raise:
+                raise ValueError(f"commitFile: failed to stage {rel!r}") from _use_raise
+
+            self.reset_cache()
+        except Exception as _use_raise:
+            if isinstance(_use_raise, ValueError):
+                raise
+            raise ValueError(f"commitFile: unexpected failure for {filename!r}") from _use_raise
+
     def setCurrentBranch(self, branch: str | None) -> None:
         """
         Set the configured branch for this repository.

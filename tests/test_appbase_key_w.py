@@ -1,6 +1,6 @@
 import types
 
-from gitdiffnavtool import AppBase, RepoModeFileList, SaveSnapshotModal
+from gitdiffnavtool import AppBase, RepoModeFileList, RepoModeHistoryList, SaveSnapshotModal
 from gitrepo import GitRepo
 
 
@@ -129,6 +129,93 @@ def test_repo_mode_key_w_always_calls_helper():
 
     assert event.stopped is True
     assert h.helper_calls == 1
+
+
+class HarnessForRepoModeHistoryKeyA:
+    def __init__(self, rel_dir="", rel_file="notes.txt"):
+        self.index = 0
+        self.errors = []
+        self.messages = []
+        self.commit_calls = []
+        self.refresh_calls = []
+
+        git_repo = types.SimpleNamespace(commitFile=self._commit_file)
+        repo_file_list = types.SimpleNamespace(prepRepoModeFileList=self._refresh)
+        self.app = types.SimpleNamespace(
+            rel_dir=rel_dir,
+            rel_file=rel_file,
+            NO_DIR="",
+            NO_FILE="",
+            previous_hash="prev",
+            current_hash="curr",
+            gitRepo=git_repo,
+            repo_mode_file_list=repo_file_list,
+        )
+
+    def _commit_file(self, rel_path):
+        self.commit_calls.append(rel_path)
+
+    def _refresh(self, prev_hash, curr_hash, ignorecache=False):
+        self.refresh_calls.append((prev_hash, curr_hash, ignorecache))
+
+    def error_message(self, message: str):
+        self.messages.append(message)
+
+    def printException(self, exc, context=None):
+        self.errors.append((exc, context))
+
+    def key_a(self, event=None, recursive=False):
+        return RepoModeHistoryList.key_a(self, event, recursive=recursive)
+
+
+def test_repo_mode_history_key_a_stages_selected_file_and_refreshes():
+    h = HarnessForRepoModeHistoryKeyA(rel_dir="docs", rel_file="notes.txt")
+    event = FakeEvent(key="a", character="a")
+
+    RepoModeHistoryList.key_a(h, event)
+
+    assert event.stopped is True
+    assert h.commit_calls == ["docs/notes.txt"]
+    assert h.refresh_calls == [("prev", "curr", True)]
+    assert h.messages == []
+
+
+def test_repo_mode_history_key_a_shows_error_when_no_file_selected():
+    h = HarnessForRepoModeHistoryKeyA(rel_dir="docs", rel_file="")
+    event = FakeEvent(key="a", character="a")
+
+    RepoModeHistoryList.key_a(h, event)
+
+    assert event.stopped is True
+    assert h.commit_calls == []
+    assert h.refresh_calls == []
+    assert h.messages == ["No file selected for staging"]
+
+
+def test_repo_mode_history_key_a_surfaces_commit_file_validation_errors():
+    h = HarnessForRepoModeHistoryKeyA(rel_dir="docs", rel_file="notes.txt")
+
+    def _raise_validation(_rel_path):
+        raise ValueError("commitFile: file 'docs/notes.txt' is not modified or untracked")
+
+    h.app.gitRepo.commitFile = _raise_validation
+    event = FakeEvent(key="a", character="a")
+
+    RepoModeHistoryList.key_a(h, event)
+
+    assert event.stopped is True
+    assert h.refresh_calls == []
+    assert h.messages == ["commitFile: file 'docs/notes.txt' is not modified or untracked"]
+
+
+def test_repo_mode_history_key_A_alias_calls_key_a_path():
+    h = HarnessForRepoModeHistoryKeyA(rel_dir="docs", rel_file="notes.txt")
+    event = FakeEvent(key="A", character="A")
+
+    RepoModeHistoryList.key_A(h, event)
+
+    assert event.stopped is True
+    assert h.commit_calls == ["docs/notes.txt"]
 
 
 class _FakeGitRepoForSave:

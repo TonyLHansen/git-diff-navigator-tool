@@ -329,6 +329,147 @@ def test_set_current_branch_wraps_unexpected_validation_errors(monkeypatch, test
     assert repo.getCurrentBranch() == "main"
 
 
+def test_commit_file_stages_untracked_file_and_resets_cache(monkeypatch, test_repo):
+    calls = []
+
+    def _fake_git_run(args, text=True, cache_key=None, ignorecache=False):
+        assert args == ["git", "status", "--porcelain", "--", "new.txt"]
+        return "?? new.txt\n"
+
+    def _fake_run(args, cwd=None, text=False, capture_output=False, check=False):
+        calls.append((args, cwd, text, capture_output, check))
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(test_repo, "_git_run", _fake_git_run)
+    monkeypatch.setattr(gitrepo, "run", _fake_run)
+
+    test_repo._cmd_cache = {"x": "y"}
+    test_repo.commitFile("new.txt")
+
+    assert calls == [(["git", "add", "--", "new.txt"], test_repo.get_repo_root(), True, True, True)]
+    assert test_repo._cmd_cache == {}
+
+
+def test_commit_file_stages_modified_file(monkeypatch, test_repo):
+    calls = []
+
+    def _fake_git_run(args, text=True, cache_key=None, ignorecache=False):
+        assert args == ["git", "status", "--porcelain", "--", "docs/notes.txt"]
+        return " M docs/notes.txt\n"
+
+    def _fake_run(args, cwd=None, text=False, capture_output=False, check=False):
+        calls.append(args)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(test_repo, "_git_run", _fake_git_run)
+    monkeypatch.setattr(gitrepo, "run", _fake_run)
+
+    test_repo.commitFile("docs/notes.txt")
+
+    assert calls == [["git", "add", "--", "docs/notes.txt"]]
+
+
+def test_commit_file_rejects_non_modified_non_untracked_status(monkeypatch, test_repo):
+    add_calls = []
+
+    def _fake_git_run(_args, text=True, cache_key=None, ignorecache=False):
+        return "M  docs/notes.txt\n"
+
+    def _fake_run(*_args, **_kwargs):
+        add_calls.append(True)
+        return subprocess.CompletedProcess(args=["git"], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(test_repo, "_git_run", _fake_git_run)
+    monkeypatch.setattr(gitrepo, "run", _fake_run)
+
+    with pytest.raises(ValueError, match="not modified or untracked"):
+        test_repo.commitFile("docs/notes.txt")
+
+    assert add_calls == []
+
+
+def test_commit_file_wraps_git_add_failures(monkeypatch, test_repo):
+    def _fake_git_run(_args, text=True, cache_key=None, ignorecache=False):
+        return "?? nope.txt\n"
+
+    def _fake_run(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(returncode=1, cmd=["git", "add"])
+
+    monkeypatch.setattr(test_repo, "_git_run", _fake_git_run)
+    monkeypatch.setattr(gitrepo, "run", _fake_run)
+
+    with pytest.raises(ValueError, match="git add failed"):
+        test_repo.commitFile("nope.txt")
+
+
+def test_commit_file_validates_filename_and_status_paths(monkeypatch, test_repo):
+    with pytest.raises(ValueError, match="filename is required"):
+        test_repo.commitFile("")
+
+    with pytest.raises(ValueError, match="filename must resolve to a file"):
+        test_repo.commitFile(".")
+
+    with pytest.raises(ValueError, match="outside repository"):
+        test_repo.commitFile("../escape.txt")
+
+    monkeypatch.setattr(test_repo, "_git_run", lambda *_args, **_kwargs: "")
+    with pytest.raises(ValueError, match="not modified or untracked"):
+        test_repo.commitFile("docs/notes.txt")
+
+
+def test_commit_file_absolute_paths_and_generic_failures(monkeypatch, test_repo):
+    add_calls = []
+
+    def _fake_git_run(args, text=True, cache_key=None, ignorecache=False):
+        assert args[:4] == ["git", "status", "--porcelain", "--"]
+        return "?? docs/notes.txt\n"
+
+    def _fake_run(args, cwd=None, text=False, capture_output=False, check=False):
+        add_calls.append(args)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(test_repo, "_git_run", _fake_git_run)
+    monkeypatch.setattr(gitrepo, "run", _fake_run)
+
+    abs_inside = os.path.join(test_repo.get_repo_root(), "docs", "notes.txt")
+    test_repo.commitFile(abs_inside)
+    assert add_calls == [["git", "add", "--", os.path.normpath("docs/notes.txt")]]
+
+    with pytest.raises(ValueError, match="outside repository"):
+        test_repo.commitFile("/tmp/definitely-not-this-repo.txt")
+
+    def _raise_generic(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(gitrepo, "run", _raise_generic)
+    with pytest.raises(ValueError, match="failed to stage"):
+        test_repo.commitFile("docs/notes.txt")
+
+
+def test_commit_file_wraps_unexpected_outer_failures(monkeypatch, test_repo):
+    original_normpath = gitrepo.os.path.normpath
+
+    def _fake_normpath(path):
+        if path == "boom.txt":
+            raise RuntimeError("normpath boom")
+        return original_normpath(path)
+
+    monkeypatch.setattr(gitrepo.os.path, "normpath", _fake_normpath)
+
+    with pytest.raises(ValueError, match="unexpected failure"):
+        test_repo.commitFile("boom.txt")
+
+
+def test_commit_file_wraps_commonpath_failures_for_absolute_input(monkeypatch, test_repo):
+    def _raise_commonpath(_paths):
+        raise RuntimeError("commonpath boom")
+
+    monkeypatch.setattr(gitrepo.os.path, "commonpath", _raise_commonpath)
+
+    with pytest.raises(ValueError, match="invalid path"):
+        test_repo.commitFile("/tmp/boom.txt")
+
+
 def test_get_current_branch_on_disk_returns_none_when_symbolic_ref_empty(monkeypatch, test_repo):
     def _fake_check_output(*_args, **_kwargs):
         return "\n"
