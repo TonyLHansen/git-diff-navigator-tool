@@ -9,6 +9,10 @@
   - Add docstrings for non-trivial methods.
 - Keep `gitrepo.py` UI-agnostic: no Textual widgets, no display formatting.
 - Keep UI formatting/status markers in `gitdiffnavtool.py`.
+ - Formatting: use `black` with a line length of 120 characters. The repo provides a make target:
+   - `make run-black` — runs `black -l 120` across the primary source files.
+   - Prefer keeping changes within the 120-column limit to minimize unrelated diffs.
+ - Axioms and style rules: see `docs/axioms.md` for the project-specific axioms (exception handling, required docstrings, and other enforced conventions). Refer to that document when making Python changes.
 
 ## Architecture
 - `gitrepo.py`:
